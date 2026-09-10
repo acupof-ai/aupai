@@ -133,9 +133,13 @@ def _selftest():
         fails.append(f"untying did not ADD parameters ({n1} -> {n2}); the head is not a real "
                      f"second tensor")
 
-    # THE PAD ROWS, BOTH TENSORS. Untied, tok's alignment padding must still be zero: while tied,
-    # model.py's single zero_() covered both, and untying it would leave the untied arm training
-    # pad rows the tied arm never touched.
+    # PAD ROWS. The 2026-09-10 V4.1 tokenizer has ZERO padding (vocab_real == Cfg.vocab ==
+    # 32768), so there are no [real:vocab] rows for the old zero-padding check to inspect.
+    # Re-derived for that geometry: the condition under which pad garbage CAN exist is
+    # vocab_real < vocab; when they are equal the invariant to hold is that the head's width
+    # is exactly the tokenizer's id range -- every row is a real token and there is no extra
+    # row to leak into the softmax. A future rebuild that reintroduces padding must restore
+    # the explicit zero check on [real:vocab] below; assert both branches so neither dies.
     real = getattr(train.Cfg, "vocab_real", train.Cfg.vocab)
     if real < train.Cfg.vocab:
         for tag, mm in (("tied", m1), ("untied", m2)):
@@ -147,10 +151,14 @@ def _selftest():
                                  f"softmax denominator mass (eff.vocab_padding_softmax_defect) and "
                                  f"in the untied arm they also become trainable, which the tied "
                                  f"arm's pad rows are not")
+    elif real != train.Cfg.vocab:
+        fails.append(f"vocab_real {real} above vocab {train.Cfg.vocab}: the head cannot hold every token id")
     else:
-        fails.append(f"vocab_real {real} is not below vocab {train.Cfg.vocab}, so the pad-row "
-                     f"check tested nothing -- if the tokenizer changed, re-derive this check "
-                     f"rather than deleting it")
+        # zero-pad geometry: every head row index is a real tokenizer id, in both arms
+        for tag, mm in (("tied", m1), ("untied", m2)):
+            if mm.head.weight.shape[0] != real:
+                fails.append(f"{tag} head width {mm.head.weight.shape[0]} != vocab_real {real} "
+                             f"despite zero declared padding -- an unnamed row exists")
 
     # FP8: the head stays excluded BY NAME, untied or not. Untying makes it a standalone
     # 33.6M-parameter matmul, and the audit table records the head as fp8-excluded.
@@ -181,11 +189,12 @@ def _selftest():
           "match on parameter count and differ only in head lr, which is the design: arm 3 "
           "collapsing into arm 2 is the failure that errors nowhere and prints one number for two "
           "experiments. The head lr is read by TENSOR IDENTITY, not by group name, so an absent "
-          "group cannot pass as a match. Alignment pad rows are zero in BOTH head and tok for the "
-          "untied arm (tied, one zero_() covered both; untied, tok's pad rows would otherwise "
-          "train in only one arm). The head stays fp8-excluded by name in both arms. And the real "
-          "width's arithmetic is pinned: 32832*1024 = 33,619,968 = +16.3% of 206.1M, the same "
-          "capacity confound A/B (4) carried.")
+          "group cannot pass as a match. The V4.1 tokenizer carries zero alignment padding "
+          "(vocab_real == vocab == 32768), so the check now holds that every head row is a real "
+          "tokenizer id in both arms; the [real:vocab] zero-pad branch is kept for any future "
+          "rebuild that reintroduces padding. The head stays fp8-excluded by name in both arms. "
+          "And the real width's arithmetic is pinned for the untie A/B: "
+          "32832*1024 = 33,619,968 = +16.3% of 206.1M, the same capacity confound A/B (4) carried.")
     return 0
 
 
