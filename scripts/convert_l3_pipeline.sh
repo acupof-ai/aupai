@@ -56,12 +56,10 @@ run_group() {
   done
   env PYTHONPATH=/work/aupai python3 datagen/ultradata_shards.py \
     --level L3 --first "$first" --last "$last" --exec-workers "$EW" \
-    --tag "$tag" --stats-name "stats_$tag.json" --out "$OUT"
+    --tag "$tag" --stats-name "stats_$tag.json" --out "$OUT" \
+    || { echo "CONVERT_FAILED $tag -- raw RETAINED"; return 1; }
 
-  local man="$MLOG/deleted_l3_$tag.manifest"
-  { echo "# deleted after verified conversion of group $tag (shards $first-$last)"
-    for p in "${paths[@]}"; do stat -c '%s %n' "$p"; done; } > "$man"
-  env PYTHONPATH=/work/aupai python3 - "$first" "$last" "$OUT" "$tag" <<'PY'
+  if ! env PYTHONPATH=/work/aupai python3 - "$first" "$last" "$OUT" "$tag" <<'PY'
 import json, sys
 import pyarrow.parquet as pq
 
@@ -79,6 +77,11 @@ assert s["total_rows"] == expected, (
 assert s["n_shards"] > 0
 print("MANIFEST_OK", tag, "rows", expected, "kept", s["kept"], "shards", s["n_shards"])
 PY
+  then echo "VERIFY_FAILED $tag -- raw RETAINED"; return 1; fi
+
+  local man="$MLOG/deleted_l3_$tag.manifest"
+  { echo "# deleted after verified conversion of group $tag (shards $first-$last)"
+    for p in "${paths[@]}"; do stat -c '%s %n' "$p"; done; } > "$man"
   for p in "${paths[@]}"; do rm -f "$p"; done
   echo "GROUP_DELETED $tag $((${#paths[@]})) paths"
 }
