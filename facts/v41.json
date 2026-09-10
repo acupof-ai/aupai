@@ -346,6 +346,44 @@
    "uncertainty": "tok/s are rounded integer K window means; i and g differ by one smoke run (compiled kernel version + flash path), so same-number agreement is a smoke-level equivalence, not a parity test.",
    "status": "measured",
    "boundary": "Establishes the compiled training batch ceiling: B4 fits with headroom, B8 does not. No capability inference (0.2B smoke tokens); flash-vs-eager numerics agree at smoke precision but were not compared bitwise."
+  },
+  {
+   "id": "v41.humaneval_v41_smoke_g_0911",
+   "value": "HumanEval gate instrument on the first V4.1 checkpoint (ckpt_v41_smoke_0910g.pt, CSA2/SWA/RoPE64 MoE 48, 381 steps, 0.2B smoke tokens): greedy pass@1 = 0/164, empty 52/164 (20/40/60/80/100/120/140/164 partial counts all 0 pass). This is a SMOKE/UNDER-TRAINING number, NOT the gate target (pass@1 >= 30%) and not comparable to the 2026-09-09 trained SFT (3/72 greedy on a different stack). The instrument itself is proven working: the architecture-agnostic cfg-driven loader builds the model, all 164 generations run, the shared judge/STOPS/truncate path is byte-identical to eval/humaneval_gen (imported), and every known-answer control passed through the sampled path -- canonical_solution 164/164, constant-False on HumanEval/0 fails as required, empty/newline/pass 0/164. A follow-up raw 4-prompt probe (0/2/7/45, gen loop without truncation) ruled out decode/wiring bugs: all completions are on-prompt, correctly-indented def/docstring code that emits eos cleanly at max_new (110-1187 chars), with no format junk, one-token loops or prompt leakage; the bodies are semantically degenerate (e.g. unconditional return True, repeated return 1), the expected output of 381 steps of warmup training. The humaneval_sample quality gate therefore (3,72)-hard-gated the sampled arm, so no n=1 sampled rows were scored.",
+   "measured": "2026-09-11",
+   "source": "runs/humaneval_v41_g_0910_summary.log (all greedy partial counts + 4 controls, committed this PR); runs/genprobe_v41_g_0911.log raw-generation probe on prompts 0/2/7/45; data/eval/preds_humaneval_sample_ckpt_v41_smoke_0910g.pt.p1_v41g_0910.jsonl (165 rows, sha 80cc9f1dac1ee2e8d566582ce18907ac94026b332259e7bdd5fdc619d4f03f4d, attested in runs/artifact_refs.jsonl)",
+   "config": {
+    "runner": "eval/humaneval_sample.py --n 1 greedy continuation format, card 6, 1058 s greedy",
+    "pass1_greedy": 0,
+    "n_problems": 164,
+    "empty": 52,
+    "partial_pass_counts": {
+     "20": 0,
+     "40": 0,
+     "60": 0,
+     "80": 0,
+     "100": 0,
+     "120": 0,
+     "140": 0,
+     "164": 0
+    },
+    "controls": {
+     "canonical_solution": "164/164",
+     "constant_false_H0": "fails as required",
+     "empty_newline_pass": "0/164 each",
+     "strip_docstring": "164/164 prompts carry docstring"
+    },
+    "sampled_arm": "not run: quality-gate requires 3/72 to reproduce the trained-SFT reference",
+    "probe": "4 prompts raw gen, all well-formed on-prompt code, 0 ok; eos clean, no wiring bug",
+    "gate_status": "instrument ready; model nowhere near gate; evaluation re-runs on a trained V4.1 checkpoint",
+    "artifact_sha256": "80cc9f1dac1ee2e8d566582ce18907ac94026b332259e7bdd5fdc619d4f03f4d"
+   },
+   "uncertainty": "A 0.2B-token smoke has no training-trajectory variance estimate; 0/164 is a point reading on one seed, not a convergence claim. Comparisons to the trained SFT are across architectures and training amounts.",
+   "status": "measured",
+   "boundary": "Proves the 66-2 architecture-agnostic conclusion on real hardware and bounds the current model at essentially zero coding ability. Says nothing about the gate mix or the 0.5B+ token trained V4.1 runs to come.",
+   "artifact_sha256": {
+    "preds_humaneval_sample_ckpt_v41_smoke_0910g.pt.p1_v41g_0910.jsonl": "80cc9f1dac1ee2e8d566582ce18907ac94026b332259e7bdd5fdc619d4f03f4d"
+   }
   }
  ]
 }
