@@ -562,23 +562,71 @@
    "value": {
     "english_prose_proxy": {
      "prose_domain": "en_c4_stage2",
-     "never_used_frac": [0.6247, 0.6338, 0.6373],
-     "hanzi_whole_char": [0.3844, 0.0027, 0.001],
-     "chars_per_token": [3.4256, 3.4332, 3.3962],
-     "en_fertility": [1.463, 1.4592, 1.4914],
+     "never_used_frac": [
+      0.6247,
+      0.6338,
+      0.6373
+     ],
+     "hanzi_whole_char": [
+      0.3844,
+      0.0027,
+      0.001
+     ],
+     "chars_per_token": [
+      3.4256,
+      3.4332,
+      3.3962
+     ],
+     "en_fertility": [
+      1.463,
+      1.4592,
+      1.4914
+     ],
      "ref_fertility": 1.4286,
-     "utilised": [0.3784, 0.3695, 0.3659],
-     "byte_fragment_tokens": [0.0166, 0.0161, 0.0151]
+     "utilised": [
+      0.3784,
+      0.3695,
+      0.3659
+     ],
+     "byte_fragment_tokens": [
+      0.0166,
+      0.0161,
+      0.0151
+     ]
     },
     "chinese_prose_proxy": {
      "prose_domain": "textbook",
-     "never_used_frac": [0.0855, 0.0843, 0.0831],
-     "hanzi_whole_char": [0.9943, 0.9927, 0.9936],
-     "chars_per_token": [2.0694, 2.076, 2.0751],
-     "en_fertility": [1.5135, 1.5574, 1.5155],
+     "never_used_frac": [
+      0.0855,
+      0.0843,
+      0.0831
+     ],
+     "hanzi_whole_char": [
+      0.9943,
+      0.9927,
+      0.9936
+     ],
+     "chars_per_token": [
+      2.0694,
+      2.076,
+      2.0751
+     ],
+     "en_fertility": [
+      1.5135,
+      1.5574,
+      1.5155
+     ],
      "ref_fertility": 1.4286,
-     "utilised": [0.9131, 0.9141, 0.9155],
-     "byte_fragment_tokens": [0.0559, 0.0561, 0.0569]
+     "utilised": [
+      0.9131,
+      0.9141,
+      0.9155
+     ],
+     "byte_fragment_tokens": [
+      0.0559,
+      0.0561,
+      0.0569
+     ]
     }
    },
    "measured": "2026-09-09",
@@ -596,11 +644,39 @@
   {
    "id": "tok.p1_vocab_sweep_bits_per_char",
    "value": {
-    "bits_per_char": {"16384": 2.0465, "20000": 2.0484, "24576": 2.0504, "32768": 2.0552, "frozen_oldmix_32773": 2.0546},
-    "bits_per_token": {"16384": 7.714, "20000": 7.8829, "24576": 8.0403, "32768": 8.2415, "frozen_oldmix_32773": 7.0249},
-    "chars_per_token": {"16384": 3.7693, "20000": 3.8484, "24576": 3.9213, "32768": 4.0102, "frozen_oldmix_32773": 3.4191},
-    "never_used_frac_on_800_eval_rows": {"16384": 0.0609, "20000": 0.0948, "24576": 0.1463, "32768": 0.2386},
-    "ref_fertility": {"16384": 1.3896, "20000": 1.3117, "24576": 1.2338, "32768": 1.1948},
+    "bits_per_char": {
+     "16384": 2.0465,
+     "20000": 2.0484,
+     "24576": 2.0504,
+     "32768": 2.0552,
+     "frozen_oldmix_32773": 2.0546
+    },
+    "bits_per_token": {
+     "16384": 7.714,
+     "20000": 7.8829,
+     "24576": 8.0403,
+     "32768": 8.2415,
+     "frozen_oldmix_32773": 7.0249
+    },
+    "chars_per_token": {
+     "16384": 3.7693,
+     "20000": 3.8484,
+     "24576": 3.9213,
+     "32768": 4.0102,
+     "frozen_oldmix_32773": 3.4191
+    },
+    "never_used_frac_on_800_eval_rows": {
+     "16384": 0.0609,
+     "20000": 0.0948,
+     "24576": 0.1463,
+     "32768": 0.2386
+    },
+    "ref_fertility": {
+     "16384": 1.3896,
+     "20000": 1.3117,
+     "24576": 1.2338,
+     "32768": 1.1948
+    },
     "marginal_20k_to_32k": "+0.33% bits/char -- point estimate is that bigger V is slightly WORSE on this composition; no measurable compression gain from growing past 20K"
    },
    "measured": "2026-09-09",
@@ -613,6 +689,22 @@
    },
    "uncertainty": "The estimator's train-size dependence is measured, not assumed: at 3000 train rows the 16K->32K spread was +1.35%, at 30000 it is +0.43% -- the sign (bigger V slightly worse on bits/char) survives, the magnitude shrinks. The 20K->32K marginal is +0.33% at 30K. The repo's standing claim that bits/char is 'strictly monotone in size' (tokenizer_eval.py, the reason it cannot rank across sizes) does not hold on this composition at either train size. never_used is on 800 eval rows (~200K tokens) and is size-bound (tok.never_used_not_decidable); the load-bearing part is its direction -- larger V wastes more slots on the same text (6.1% at 16K to 23.9% at 32K).",
    "boundary": "Intrinsic proxy; screens, does not rank (TokEval). The verdict on vocabulary size remains two pretrains differing only in vocabulary (unfreeze condition 3), not this sweep. This satisfies freeze condition 1 of the V=20,000 working target (4c, 2026-09-09): the 20K->32K segment is measured on the English proxy. Condition 2 (never_used re-measure on the first real synthetic textbooks) is still open -- the proxy is English WEB prose, not synthetic textbook prose, and 4c's standing instruction is that the real sample wins over the proxy. The embedding-param arithmetic at the pinned d's (scripts/p1_size.py, 4c 2026-09-09): shrinking 32,784->20,000 saves 13.1M tied params on p1-small (d=1024, 1.21% of 1.08B) and 26.2M on p1 (d=2048, 0.44% of 5.92B), and 39.0% of LM-head FLOP/token at both d's. The sweep conclusion itself is d-independent: bits/char does not depend on d, and the vocabulary is shared between p1-small and p1.",
+   "status": "measured"
+  },
+  {
+   "id": "tok.ultra_freeze_tax_0910",
+   "value": "On the V4.1 distribution (openbmb/UltraData-Code python, L2 natural code + L3 task/analysis/solution/test, decontaminated and exact-deduped 3-parquet-shard sample per level: data/corpus/code_ultra_l2_sample + code_ultra_l3_sample on the pod), the frozen 32,773-slot vocabulary spends MORE tokens per byte than a fresh 20,000-slot BPE fitted on the same distribution. Freeze tax (candidate chars/token / frozen chars/token - 1, the build_p1_tokenizer convention): pooled +8.5%/+8.6%/+8.5% at seeds 7/13/21 on three DOCUMENT-DISJOINT held-out segments (40M bytes/level each; fit was 80M bytes/level, 35,666 docs, disjoint from every eval segment). Per level: L2 +9.5/+9.2/+9.2%, L3 +7.7/+7.9/+7.9%. The proxy candidate fitted on the OLD keep-set+textbooks composition (data/vocab_sweep/p1_v20000.json) taxes only +2.1/+2.1/+2.2% pooled -- distribution-fit is most of the gain and the old +3.4% keep-set fact (tok.p1_freeze_tax_real_composition) does not transfer. Frozen chars/token pooled 3.191/3.250/3.198 vs ultra-20K 3.464/3.528/3.471. Never-used (reported, not gated, tok.never_used_not_decidable): frozen 0.540/0.547/0.557 of non-reserved slots unreached vs ultra-20K 0.012/0.013/0.013; utilised 0.446-0.462 vs 0.984-0.985. The fresh candidate passes the vetoes: round-trip lossless, 256/256 bytes, ref fertility 1.4545 <= 1.55 (frozen 1.4286). Hanzi whole-char is 6.56% frozen / 16.70% ultra-20K / 1.71% proxy on this English-code sample (CJK appears in comments/identifiers); it is REPORTED here, not a veto -- p1 trains English+code, no Chinese, as in the p1-real composition ruling. Byte-fragment token fraction ~2.7-3.7% for all three, no ordering. Rebuild cost on 2026-09-10: zero -- no V4.1 checkpoint exists yet (every prior checkpoint is on the retired line), so no trained artifact inherits an id change. This is the extrinsic condition-3 test the gate list names: two vocabularies on one held-out sample. SIGN HISTORY: the first run printed the tax as -7.9% because it ratioed frozen/candidate in chars/token; the ratio in tokens-per-byte is candidate/frozen chars/token, so the correct sign is positive. Raw artifact runs/tokenizer_ultra_ruling.json holds the unsigned columns.",
+   "measured": "2026-09-10",
+   "source": "python3 scripts/tokenizer_ultra_ruling.py (ae, PR #225) on the pod, head b3934dca; raw 3-seed per-level+pooled unsigned metrics at runs/tokenizer_ultra_ruling.json (chars/token columns; the +8.5% tax is candidate/frozen chars/token - 1). Fresh 20K candidate /tmp/ultra_v20000.json on the pod is a derived artifact, regenerable from the script; frozen is data/tokenizer.json; the proxy candidate is the 20K from the old keep-set+textbooks fit cited in tok.p1_vocab_sweep. Hanzi ratios from tokenizer_report.utf8_integrity on the same seed-7 sample. 3b reviewed the script (changes-requested on identical seed columns, fixed at b3934dca; ledger row 115feb61).",
+   "config": {
+    "sample": "UltraData-Code python parquet shards 1-3 of 119 L2 / 147 L3, converted by 0e (PR #221 pipeline, decontam against HumanEval/MBPP + MultiPL-E python, exact normalized hash dedup), {content,source,url} contract; L3 field full_content. 52,294 L2 + 36,518 L3 docs read; fit 80M bytes/level (seed 7, 21,323+14,343 docs); tail partitioned by one fixed shuffle into three DISJOINT 40M-byte segments (10,542/10,080/10,349 L2 and 7,342/7,403/7,430 L3 eval docs)",
+    "candidate_fit": "deterministic BPE, 20,000 slots, build_p1_tokenizer.fit_vocab (initial_alphabet=ByteLevel.alphabet(), specials <unk>/<eos> + CHAT_SPECIALS, same trainer shape as every prior candidate), fitted once on seed-7 fit text only",
+    "metrics": "scripts/tokenizer_eval.collect: tokenizer tokenization, no clip on eval; freeze tax in tokens/byte = candidate_chars_per_token/frozen_chars_per_token - 1; ref fertility is the fixed REF_EN string (corpus-independent); never-used excludes the 256 seeded byte tokens and specials",
+    "population_ceiling": "3 of 119/147 parquet shards; full-set conversion was still running at measurement time. L3 sample census 704,380,823 frozen tokens / 2.298B chars over 423,479 kept rows (0e build_corpus_stats.json) = 3.263 chars/token, consistent with this measurement. 0e labels full-set ~34.5B L3 tokens EXTRAPOLATED.",
+    "prior_fact_superseded_for_v41": "tok.p1_freeze_tax_real_composition (+3.4%) was measured on keep-set code + synthetic textbooks, a distribution V4.1 no longer trains (teacher synthesis stopped 2026-09-10). It stays true of that corpus; this fact replaces it for the V4.1 gate decision."
+   },
+   "uncertainty": "The tax is tight across the three disjoint segments (pooled +8.5/+8.6/+8.5; range 0.1pt), so the direction and the ~8.5% magnitude are not seed noise at this sample. Residual uncertainty: (a) 3 of 119/147 parquet shards -- the full distribution could shift chars/token; 0e's full-set stats and a re-measure after full conversion will bound this, the L3 census already matches the sample; (b) intrinsic metrics screen, they do not prove a model trained on the 20K wins -- the remaining condition-3 step is two pretrains differing only in vocabulary, which the rebuild now enables at zero checkpoint cost; (c) the fit is 80M chars/level, smaller than the build_p1 default 62.5M-token budget -- the candidate may improve marginally with more fit text, which would increase, not erase, the tax.",
+   "boundary": "Holds for the UltraData python L2/L3 sample on 2026-09-10 and the frozen vs 20K-slot comparison. Says nothing about non-python UltraData levels (not fetched), about Chinese (absent from this corpus by ruling), or about downstream HumanEval performance. If the controller rules rebuild, the artifact is a fresh data/tokenizer_p1.json built from this script's candidate path and every corpus token count must be restated in its unit (the 0e build_corpus_stats counts above are frozen-tokenizer counts).",
    "status": "measured"
   }
  ]
