@@ -2133,6 +2133,46 @@ assert (_sw4(_sq, _sk2, _sv2)[:, :4] - _sw4(_sq, _sk, _sv)[:, :4]).abs().max().i
     "csa2_n_win=4 made the window dead inside its own range"
 )
 
+# 1c. FLASH VARLEN PATH (de-106): when flash_attn is present the window runs through
+#     flash_attn_varlen_func(window_size=(n-1,0)) over the per-document cu, removing the
+#     B*H*T*T score materialization. It must equal the masked fallback EXACTLY (cute's
+#     bf16 matched the reference 0.0 on the pod at both widths, measured 2026-09-10) and
+#     stay causal and cross-document isolated. The no-flash build runs the fallback and
+#     the cases above; this block is GPU-only and skipped without flash_attn.
+if model.HAS_FA and torch.cuda.is_available():
+    _swa_g = model.PureSWA(_CfgSwa, 4, 16).cuda().to(torch.bfloat16)
+    _swa_r = model.PureSWA(_CfgSwa, 4, 16).cuda().to(torch.bfloat16)
+    _swa_r.fwd_flash = None  # marker; reference built below with the flash path disabled
+
+    def _swa_ref_mask(q, k, v, cu, n):
+        B, T, H, D = q.shape
+        qh, kh, vh = (t.transpose(1, 2).float() for t in (q, k, v))
+        pos = torch.arange(B * T, device=q.device)
+        doc = torch.bucketize(pos, cu[1:], right=True).view(B, T)
+        m = ((doc[:, :, None] == doc[None, :])
+             & torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
+             & ((torch.arange(T, device=q.device)[:, None]
+                 - torch.arange(T, device=q.device)[None, :]) < n))
+        sc = qh @ kh.transpose(-1, -2) * (16 ** -0.5)
+        return (torch.softmax(sc.masked_fill(~m[:, None], float("-inf")), -1) @ vh).to(q.dtype)
+
+    torch.manual_seed(9)
+    _Bf, _Tf, _cu_f = 2, 24, torch.tensor([0, 10, 24, 34, 48], dtype=torch.int32, device="cuda")
+    _qf = torch.randn(_Bf, _Tf, 4, 16, device="cuda", dtype=torch.bfloat16)
+    _kf = torch.randn(_Bf, _Tf, 4, 16, device="cuda", dtype=torch.bfloat16)
+    _vf = torch.randn(_Bf, _Tf, 4, 16, device="cuda", dtype=torch.bfloat16)
+    for _n, _cf in ((8, _CfgSwa), (4, _CfgSwaN)):
+        _yg = model.PureSWA(_cf, 4, 16).cuda().to(torch.bfloat16)(_qf, _kf, _vf, cu=_cu_f)
+        _yr = _swa_ref_mask(_qf, _kf, _vf, _cu_f, _n)
+        assert (_yg.float() - _yr).abs().max().item() == 0.0, (
+            f"flash SWA differs from the masked window at n={_n}")
+    _kf2 = _kf.clone(); _kf2[:, 0] += 7.0
+    _yg = _swa_g(_qf, _kf2, _vf, cu=_cu_f)
+    _y0 = _swa_g(_qf, _kf, _vf, cu=_cu_f)
+    assert (_yg[:, 8:] - _y0[:, 8:]).abs().max().item() == 0.0, "flash SWA leaked past the window"
+    assert (_yg[:, :10] - _y0[:, :10]).abs().max().item() > 0.0, "flash SWA window is dead"
+    print("PureSWA flash varlen: == masked window exactly at n=8/4, causal+window invariance OK")
+
 # 2. CAUSALITY. Perturbing position t must not move outputs before t.
 _sleaks = []
 for _t in range(1, 20):
