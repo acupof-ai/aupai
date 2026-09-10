@@ -56,7 +56,7 @@ def group_bytes(model):
 def budget(tag, over):
     for k, v in over.items():
         setattr(Cfg, k, v)
-    Cfg.vocab = 32784
+    Cfg.vocab = 32768  # V4.1 gate tokenizer (rebuilt 2026-09-10), zero padding
     model = HybridLM(Cfg)
     groups, total_el = group_bytes(model)
 
