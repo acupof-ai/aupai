@@ -1408,6 +1408,67 @@
    "tokens_status": "measured",
    "guard_phrases": [],
    "retracted_value": []
+  },
+  {
+   "id": "cs.v41_gate_token_caches_rebuilt_f1f86097_0911",
+   "value": {
+    "cot": 400121214,
+    "code_py_rp1t": 379623923,
+    "en_c4_stage2": 1985230029,
+    "math_owm_stage2": 5869046731,
+    "code_py_starcoder": 7951977919
+   },
+   "unit": "packed pool tokens (rows x 4097, int32 stream truncated to a multiple of seq+1)",
+   "measured": "2026-09-11",
+   "source": "scripts/pretokenize_domains.py over train._domain_seqs (32 fork workers x RAYON_NUM_THREADS=5, CPU only) rebuilding pod /data00/tokens_<domain>.pt after the ae-5 tokenizer rebuild; every domain's REPORT line, .vocab stamp read back as f1f860970d15d623 and .seed 42",
+   "config": {
+    "vocab_id": "f1f860970d15d623 (32,768 tokens, [NUM]=32767, <eos>=1; merge 6dc6b1ba, pod push dirty=0); supersedes cs.v41_gate_token_caches_0910 which was built at 0bce3584bc24f255 / 32,773",
+    "frozen_retained": "data/tokenizer_frozen_0829.json kept; in-flight smoke checkpoints still load from their stored vocab_id",
+    "per_domain": {
+     "cot": {
+      "rows": 97662,
+      "sha256_16": "f8f37f4400668de7",
+      "bytes": 1600496510,
+      "seconds": 26
+     },
+     "code_py_rp1t": {
+      "rows": 92659,
+      "sha256_16": "a5dd557d586df96b",
+      "bytes": 1518513597,
+      "seconds": 25
+     },
+     "en_c4_stage2": {
+      "rows": 484557,
+      "sha256_16": "592b0691f95ede53",
+      "bytes": 7940937201,
+      "seconds": 168
+     },
+     "math_owm_stage2": {
+      "rows": 1432523,
+      "sha256_16": "70a80c73fe1f6074",
+      "bytes": 23476193478,
+      "seconds": 453
+     },
+     "code_py_starcoder": {
+      "rows": 1940927,
+      "sha256_16": "39b47666a2871d60",
+      "bytes": 31807921108,
+      "seconds": 767
+     }
+    },
+    "total_packed_tokens": 16585999816,
+    "total_rows": 4048328,
+    "total_bytes": 66344061894,
+    "total_encode_seconds": 1439,
+    "delta_vs_old_vocab": "pool 16,585,999,816 vs 18,561,516,123 at 0bce3584 = 89.4% (-10.6%); bytes 74.2 GB -> 66.3 GB. Domain ratios: cot 0.944, rp1t 0.902, en_c4 0.827 (largest saving, English prose), math_owm 0.899, starcoder 0.905",
+    "note": "all five seconds measured by the committed driver this pass (the earlier mtime reconstruction no longer applies); rows differ from the prior fact because both tokenization and tail truncation run under the new vocab"
+   },
+   "uncertainty": "none; exact full-population counts and driver-measured seconds",
+   "boundary": "does not cover UltraData code_ultra_l2/l3 (0e) or the smoke domains; pool tokens are the packed stream, not raw document tokens",
+   "status": "measured",
+   "tokens_status": "measured",
+   "guard_phrases": [],
+   "retracted_value": []
   }
  ]
 }
