@@ -1003,6 +1003,11 @@ def main():
         # still looks like a body), and a HumanEval-vendored function must be dropped by the
         # contamination scan. The selftest builds both worlds and asserts on them.
         "datagen/extract_code_if_pairs.py",
+        # The phi-1-shaped exercise generator (0e-1). Registered because its acceptance is
+        # decontamination: a missing HumanEval/MBPP benchmark file must FAIL LOUDLY and the
+        # planted known-positive control must be caught in the main path, not only in the
+        # selftest. The selftest is the only place those two refusals are exercised.
+        "datagen/gen_exercises.py",
         "scripts/corpus_snapshot.py",
         # The exact token counter behind cs.code_rp1t_landed and cs.code_dedup08_landed.
         # Registered because it is the instrument that CORRECTS a measurement-basis defect:
