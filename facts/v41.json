@@ -346,6 +346,44 @@
    "uncertainty": "tok/s are rounded integer K window means; i and g differ by one smoke run (compiled kernel version + flash path), so same-number agreement is a smoke-level equivalence, not a parity test.",
    "status": "measured",
    "boundary": "Establishes the compiled training batch ceiling: B4 fits with headroom, B8 does not. No capability inference (0.2B smoke tokens); flash-vs-eager numerics agree at smoke precision but were not compared bitwise."
+  },
+  {
+   "id": "v41.external_moe_kernel_bench_0911",
+   "value": "ADOPT/SKIP ruling for external MoE kernels on the p1 V4.1 stack (H20 = SM90, torch 2.11.0+cu129, d=1024, 48 experts, top-3 + 1 shared, expert_ffn=1728, seq 4096, batch 4-8). SKIP both on H20 as of 2026-09-11, decided by CPU/API reading before any card time: (1) DeepGEMM 'Mega MoE' and 'Mega Gate' (PR #432, merged 2026-09-10, v2.6.1->2.80) ship ONLY sm100_* kernel implementations (csrc/jit_kernels/impls/sm100_bf16_mega_gate.hpp, sm100_bf16_mega_moe.hpp, sm100_fp8_fp4_mega_moe.hpp; deep_gemm/include/deep_gemm/impls/sm100_*.cuh), gated __CUDA_ARCH__ >= 1000 with Blackwell UMMA/TMA descriptors; no sm90 variant exists. Their Hopper coverage stops at the older m_grouped_* GEMMs, the same op class as our torch._grouped_mm. Mega MoE additionally mandates multi-process symmetric memory (PyTorch >= 2.9; single-rank size==1 path exists but is a rendezvous no-op). The claimed ~20% faster MoE backward and 30-75% Mega Gate gains do not transfer to SM90. (2) deepseek-ai/tilekernels (TileLang 0.1.14 present on the pod) DOES support SM90, but tile_kernels/moe/ is routing/dispatch/combine primitives only (topk_gate, get_fused_mapping, expand_to_fused, reduce_fused, aux_fi, group_count, inplace_unique_group_indices, normalize_weight): there is no expert grouped GEMM (that is DeepGEMM's layer), and the only autograd gate wrapper, modeling/engram/engram_gate.py (EngramGateFn), computes sigmoid(signed_sqrt(dot(RMSNorm(x),RMSNorm(k)))) — a different routing function from our fp32 softmax + selection-only expert_bias MoEFFN gate, so no drop-in and no direct bit-parity. The routing primitives remain a candidate for a future microbenchmark of the dispatch chain alone; neither package can replace model.MoEFFN end-to-end on H20, so no wrapper work is justified. The pod already carries sgl-deep-gemm 0.1.0+cu129 with the mega Python bindings, consistent with the source reading (kernels absent at runtime for SM90).",
+   "measured": "2026-09-11",
+   "source": "https://github.com/deepseek-ai/DeepGEMM/pull/432 (merged 2026-09-10); https://github.com/deepseek-ai/DeepGEMM tree deep_gemm/mega/__init__.py and csrc/jit_kernels/impls (all sm100_*); https://github.com/deepseek-ai/tilekernels tree tile_kernels/moe and tile_kernels/modeling/engram/engram_gate.py; pod: nvidia-smi compute_cap 9.0, sgl-deep-gemm 0.1.0+cu129 installed, tilelang 0.1.14, tile-kernels not installed; model.py:1476 MoEFFN uses torch._grouped_mm, fp32 softmax router with selection-only bias",
+   "config": {
+    "hardware": "H20 SM90 compute_capability (9,0)",
+    "torch": "2.11.0+cu129",
+    "target_shape": {
+     "d": 1024,
+     "experts": 48,
+     "top_k": 3,
+     "shared": 1,
+     "expert_ffn": 1728,
+     "seq": 4096,
+     "batch": [
+      4,
+      8
+     ]
+    },
+    "deepgemm_pr432": {
+     "mega_gate": "sm100-only (bf16, UMMA)",
+     "mega_moe": "sm100-only bf16/fp8_fp4, symmetric memory, PT>=2.9",
+     "hopper_path": "m_grouped_* only",
+     "ruling": "SKIP on H20"
+    },
+    "tilekernels": {
+     "sm90": true,
+     "moe_coverage": "routing/dispatch/combine primitives, no expert GEMM",
+     "autograd_gate": "engram sigmoid-RMSNorm, mismatches softmax+bias",
+     "ruling": "SKIP for end-to-end; routing microbench optional later"
+    },
+    "gpu_benchmark": "not run: nothing to adopt on SM90; runtime arch capture would only restate the source gate"
+   },
+   "uncertainty": "A future TileKernels routing-primitive microbenchmark might show a dispatch-chain speedup independent of expert GEMMs; not assessed and not blocking anything. DeepGEMM could add sm90 Mega kernels later; this ruling is of the 2026-09-10 merge.",
+   "status": "measured",
+   "boundary": "CPU/API-source conclusion: no runtime timing, peak bytes, or bit-parity numbers exist because neither candidate offers a runnable H20 code path for the benchmark shape. Reopen if upstream ships sm90 Mega kernels."
   }
  ]
 }
