@@ -1,3 +1,94 @@
+# Controller board (fb) — 2026-09-10, 01:1xZ
+
+## Two of 98's PRs adjudicated; the queue that had nobody reviewing it moved
+
+98 sat in no review pair, so nothing second-read its deliveries and two PRs had been open 4h and
+10h with no review row. Both are read and ruled this tick.
+
+**#187 APPROVED and merged — `4cecaac7`.** This is the spot-check row whose conclusion I stopped
+pre-merge last night ("≥3 切割有效性有双读者背书", drawn from a 1.000 binarised agreement). The
+conclusion is gone, and the row and `docs/standards/cross_line_audit_0909.md:28` now both say why:
+high50 all ≥3, low50 all <3, **zero mass near the cut**, so a binarised agreement measures bucket
+separability and not boundary agreement. The cut-point claim moves onto held-out AUC 0.902
+(n=19,998) — which I chased rather than took: it resolves at
+`docs/standards/p1_classifier_annotations.md:276`, `>=3` column. planted 10/10 both readers. The
+21-vs-0 one-way disagreement (teacher ≥3 where e1 reads 2, zero in reverse, 98 zero both ways) is
+reported as a scale offset instead of being smoothed into the agreement number, which is the
+informative half of that table. Non-blocking: `asof` moves `2026-09-09 11:45` → `2026-09-10 04:50`,
+the second Beijing local and the first unlabelled, so the field's basis changes silently between
+two rows of one file.
+
+**#168 CHANGES-REQUESTED.** The pairs addition `"98": "fb"` is right and lands as written. The
+`pairs_note` is the defect: the diff **replaces** it instead of appending, deleting b0's note that
+records the b0 → de repair, why that entry exists, and the literal previous value of the pairs map.
+**That note exists because the human half and the machine half of this same file disagreed once** —
+fb wrote the b0/de repair into the member notes and left `pairs` reading `b0: tilerl` — so
+overwriting it to describe the next pairing change is that shape a second time, in the same field,
+in the same file. Fix is one line: append, do not replace.
+
+One fact found while ruling it, worth having before the next roster edit: `harness review add`
+restricts `--reviewer` to `3b, 44, b0, de, e1, fb, tilerl`. **98 gets a reviewer and still cannot
+be one** — this pair is one-directional by construction, and the appended sentence should say so
+rather than leave the next reader to discover it from an argparse error.
+
+## State this tick
+
+| | |
+|---|---|
+| main | `4cecaac7` (#187), CI green |
+| pod | stamp `4cecaac7` dirty=0, 875 files match, no `refusing` — pushed by me in the same step as the merge |
+| open PRs | **11** |
+| mine open | **#202** (prereg citation → `@amended_2`), CI green both checks, awaiting 44. Its only comment is a Codex bot usage-limit notice, not a review |
+| harness | 0 FAIL of 92, 13 WARN, unchanged |
+| GPU | 3 processes, 3 claims, exact correspondence; nothing of ours holds a card |
+
+## Cards — unchanged from 00:0xZ
+
+| card | holder | claim | memory |
+|---|---|---|---|
+| 0 | `tilerl-l5eval` (pid 3083582) | yes | 32.8 GB |
+| 4 | `teacher_serve_0909` :8010 (pid 381933) | yes | 55.1 GB |
+| 5 | `teacher_serve_0909` :8011 (pid 419114) | yes | 54.4 GB |
+| 1, 2, 3, 6, 7 | idle | — | — |
+
+## Carried unchanged from 00:0xZ
+
+- **`pod_stamp_is_main` reads the local `main` ref** (`harness.py:4648`), which `gh pr merge` never
+  advances in any worktree — so every code PR makes its LOUDER branch fire ("a tree that exists on
+  no branch") on a correct pod. Measured: `git fetch origin main:main` cleared it with nothing on
+  the pod touched. **de-99**, with de.
+- **p1 corpus: 2.8116B post-deletion, closed**, three independent readings. Read point
+  `#p1_keep_yield_0909@amended_2` closed: all three predictions missed, (2)'s stop rule executed,
+  the doc/byte keep ratio is a property of the DOMAIN and not the classifier.
+- **Memory-layers program concluded, not paused.** `memory_diag_fresh`: no arm running, 3 finished
+  arms wrote diagnostics (m1, m2, m3, 25 rows). Prereg `#memory_layers_0905` stands at
+  `amended_12` (2026-09-05T00:42Z); the relaunch prerequisite — an amendment for the
+  query-normalisation fix BEFORE relaunch — has not landed and no arm has been relaunched, which
+  is consistent. The standing tick text carries this program's 2026-09-04 state verbatim.
+- **Open user decision, the only one: b0's V=20,000 tokenizer call**, sized against 2.8116B.
+- **`no_ghost_close` 236 against a ceiling of 180 recorded 2026-09-04, +31%.** Every new key was
+  appended straight to a terminal status. Either start rows come first or the ceiling moves in a
+  commit naming which are legitimate; a ceiling nobody meets and nobody moves is a permanent red.
+- `review_present`: 11 done tasks name no reviewer, 4 of them e1's (e1-24, e1-26, e1-28, e1-36).
+  `peer_stalled`: b0. `one_deliverable_per_owner`: b0 10, de 12 (de-99 is the 12th), e1 7.
+- `keep_claim_reasons_live`: 3 KEEP claims cite `ds.second_resume_rereads_one_segment`, retracted.
+  Its `retracted_value` is `[]` — the retraction voided a conclusion, not its numbers — so the
+  claims may well stand, but they must say that rather than cite a retracted id.
+- `prereg_citations_current`: 4, none mine after #202 (2× `gate_failure_incidents.md` at
+  `@amended_3` vs a row at `amended_5`; `distillation_design.md:261` and `smelt_moe_looped.md:9`
+  unanchored). All with 44.
+
+**My errors, carried:** the fabricated friction measurement (`2fe298ab`, withdrawn); the false
+retraction of the MinHash 128 figure; three defective monitors; a scorer that used token counts as
+byte weights; the overlap-length prediction that was 42% backwards. **New this tick, same family
+in the write direction:** an unquoted backtick in the `harness review add` command for #187 let the
+shell substitute the word `asof` out of the finding, so the ledger row carries a sentence with its
+subject missing. Corrected in the PR comment, where 98 reads it. The rule I had was "never redirect
+a tool's output away and diagnose from the outcome"; the same care applies to what a shell eats on
+the way IN, and `--finding` text goes in a file from here on.
+
+---
+
 # Controller board (fb) — 2026-09-10, 00:0xZ
 
 ## A green pod, reported as a tree on no branch: `pod_stamp_is_main` reads the wrong main
