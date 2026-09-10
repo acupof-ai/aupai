@@ -273,6 +273,21 @@
    "uncertainty": "10-step windows are rounded to integer K tok/s/gpu; loss points are one window each on a 200-token smoke mix, not a capability curve. Steady-state read from steps 70-380 window spread 11-19K with 18K mode.",
    "status": "measured",
    "boundary": "Proves the V4.1 MoE stack compiles after de-106, steps the full schedule and fits 95 GiB at batch 4/accum4. It is a 0.2B-token smoke: no capability, convergence or balance inference; HumanEval/score-matrix reads land separately against the saved checkpoint."
+  },
+  {
+   "id": "v41.dk_kernel_training_feasibility_0911",
+   "value": "None of the DeepSeek V4.1 kernels released 2026-09-10/11 is usable for TRAINING the CSA2 stack on the pod's H20 (SM90): (1) FlashMLA sparse prefill flash_mla_sparse_fwd (indices [s_q,h_kv,topk], -> out,max_logits,lse) is forward-only -- no sparse _bwd/autograd; its only backward kernel is DENSE MHA prefill (flash_attn_varlen_func, tests/test_fmha_sm100.py) and is SM100-only. Sparse prefill/decode declare SM90&SM100 but V4.1 sparse decode is SM100-only. (2) DeepGEMM PR #432 (merged 66081d4c, v2.8.0) Sparse Indexer get_sparse_mqa_logits_metadata/fp8_fp4_sparse_mqa_logits (csrc/apis/attention.hpp), Mega Gate (csrc/apis/mega_gate.hpp), Mega mHC (csrc/apis/mega_mhc.hpp) guard arch_major()==10 (SM100) and ship no autograd.Function; only pre-existing MoE grouped-GEMM backward was sped up. (3) DeepSelect v1.0.0 deep_select.topk (deep_select/interface.py, bf16, topk<=4096) is a forward selection kernel with no backward and torch.topk is not the training bottleneck (hard topk carries no grad; the STE supplies it). Training path stays hand-rolled: flash_attn.cute varlen window with backward for PureSWA and the PyTorch indexer+STE for CSA2. FlashMLA sparse_fwd is an eval/inference candidate for later.",
+   "measured": "2026-09-11",
+   "source": "github.com/deepseek-ai/FlashMLA README kernel matrix; github.com/deepseek-ai/DeepGEMM pull/432 (merge 66081d4c); github.com/deepseek-ai/DeepSelect v1.0.0 README/interface.py -- read by de (de-107), web fetch, not built or run on hardware",
+   "config": {
+    "pod_gpu": "H20 SM90",
+    "flashmla_cuda": "12.8+ (12.9 for SM100)",
+    "deepgemm_sparse": "SM100, CUDA 12.9, torch 2.3+",
+    "torch_mega_symmetric": "2.9"
+   },
+   "uncertainty": "README-level feasibility; no build was attempted on the H20 (pod disk unavailable). A source-level audit could confirm the absence of a sparse FlashMLA bwd symbol, but the docs name none.",
+   "boundary": "This is adoptability for TRAINING on SM90 only. FlashMLA sparse_fwd may serve eval/inference on H20 as-is (SM90 listed), and all three kernels are usable on SM100/Blackwell inference; DeepGEMM MoE dense/grouped GEMMs (not the V4.1 sparse additions) are SM90-class and were already an option.",
+   "status": "measured"
   }
  ]
 }
