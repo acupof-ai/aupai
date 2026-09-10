@@ -273,6 +273,79 @@
    "uncertainty": "10-step windows are rounded to integer K tok/s/gpu; loss points are one window each on a 200-token smoke mix, not a capability curve. Steady-state read from steps 70-380 window spread 11-19K with 18K mode.",
    "status": "measured",
    "boundary": "Proves the V4.1 MoE stack compiles after de-106, steps the full schedule and fits 95 GiB at batch 4/accum4. It is a 0.2B-token smoke: no capability, convergence or balance inference; HumanEval/score-matrix reads land separately against the saved checkpoint."
+  },
+  {
+   "id": "v41.dk_kernel_training_feasibility_0911",
+   "value": "None of the DeepSeek V4.1 kernels released 2026-09-10/11 is usable for TRAINING the CSA2 stack on the pod's H20 (SM90): (1) FlashMLA sparse prefill flash_mla_sparse_fwd (indices [s_q,h_kv,topk], -> out,max_logits,lse) is forward-only -- no sparse _bwd/autograd; its only backward kernel is DENSE MHA prefill (flash_attn_varlen_func, tests/test_fmha_sm100.py) and is SM100-only. Sparse prefill/decode declare SM90&SM100 but V4.1 sparse decode is SM100-only. (2) DeepGEMM PR #432 (merged 66081d4c, v2.8.0) Sparse Indexer get_sparse_mqa_logits_metadata/fp8_fp4_sparse_mqa_logits (csrc/apis/attention.hpp), Mega Gate (csrc/apis/mega_gate.hpp), Mega mHC (csrc/apis/mega_mhc.hpp) guard arch_major()==10 (SM100) and ship no autograd.Function; only pre-existing MoE grouped-GEMM backward was sped up. (3) DeepSelect v1.0.0 deep_select.topk (deep_select/interface.py, bf16, topk<=4096) is a forward selection kernel with no backward and torch.topk is not the training bottleneck (hard topk carries no grad; the STE supplies it). Training path stays hand-rolled: flash_attn.cute varlen window with backward for PureSWA and the PyTorch indexer+STE for CSA2. FlashMLA sparse_fwd is an eval/inference candidate for later.",
+   "measured": "2026-09-11",
+   "source": "github.com/deepseek-ai/FlashMLA README kernel matrix; github.com/deepseek-ai/DeepGEMM pull/432 (merge 66081d4c); github.com/deepseek-ai/DeepSelect v1.0.0 README/interface.py -- read by de (de-107), web fetch, not built or run on hardware",
+   "config": {
+    "pod_gpu": "H20 SM90",
+    "flashmla_cuda": "12.8+ (12.9 for SM100)",
+    "deepgemm_sparse": "SM100, CUDA 12.9, torch 2.3+",
+    "torch_mega_symmetric": "2.9"
+   },
+   "uncertainty": "README-level feasibility; no build was attempted on the H20 (pod disk unavailable). A source-level audit could confirm the absence of a sparse FlashMLA bwd symbol, but the docs name none.",
+   "boundary": "This is adoptability for TRAINING on SM90 only. FlashMLA sparse_fwd may serve eval/inference on H20 as-is (SM90 listed), and all three kernels are usable on SM100/Blackwell inference; DeepGEMM MoE dense/grouped GEMMs (not the V4.1 sparse additions) are SM90-class and were already an option.",
+   "status": "measured"
+  },
+  {
+   "id": "v41.smoke_compiled_flash_h_i_0911",
+   "value": "Compiled flash-SWA batch ladder for the V4.1 MoE stack after de-106 and PR #236 (flash_attn_varlen window in PureSWA): v41_smoke_0911h at batch 8 accum 2 OOMed before step 1 on all 8 ranks at 94.6 GiB in use / 93.1 allocated (+1.16 GiB requested, empty_strided (8,8,4096,4611) bf16); v41_smoke_0911i at batch 4 accum 4 COMPLETED 381 steps, train 3.412 val 2.828 in 2415 s, no NaN, peak 72.64 GiB, with ckpt_v41_smoke_0911i.pt saved. i's compiled curve: loss 7.648/5.809/6.070/4.669/4.931/4.649 at steps 10/20/30/40/50/60 and 3.649/2.863/3.163/2.932/2.599/3.412 at 130/190/250/310/370/380; tok/s/gpu 2/5/8/9/9/14 warmup to 18K by step 70, with 7-19K windows through 380 (mode 18K). i reproduces g's batch-4 result with the flash SWA path instead of eager: same peak (72.6 vs 72.56 GiB), same steady 18K, same final train/val -- the flash-SWA swap is throughput- and memory-neutral at batch 4, and batch 8 is the excluded point (~1.3x activation demand crosses 95 GiB even compiled).",
+   "measured": "2026-09-11",
+   "source": "runs/v41_smoke_0911h.log OOM lines 383-1195 (all 8 ranks, zero step lines); runs/v41_smoke_0911i.log ep line and 38 step/10 lines, committed this PR; host cmdlines pids 383673-383680 identified as i's ranks",
+   "config": {
+    "arch": "same as g: MoE 48/top3/shared1 expert_ffn1728, csa2, 2 swa-only, rope64, fp8, compiled",
+    "h": {
+     "batch": 8,
+     "accum": 2,
+     "grad_ckpt": false,
+     "result": "OOM pre-step",
+     "rank0_inuse_gib": 94.62,
+     "allocated_gib": 93.06,
+     "tried_gib": 1.16,
+     "steps": 0,
+     "flash_swa": true
+    },
+    "i": {
+     "batch": 4,
+     "accum": 4,
+     "grad_ckpt": false,
+     "result": "completed 381 steps",
+     "peak_gib_per_rank": 72.64,
+     "train_loss": 3.412,
+     "val_loss": 2.828,
+     "duration_s": 2415,
+     "nan": false,
+     "flash_swa_path": "model.py:746-754 flash_attn_varlen_func window_size=(n_win-1,0)"
+    },
+    "loss_steps": {
+     "10": 7.648,
+     "20": 5.809,
+     "30": 6.07,
+     "40": 4.669,
+     "50": 4.931,
+     "60": 4.649,
+     "130": 3.649,
+     "190": 2.863,
+     "250": 3.163,
+     "310": 2.932,
+     "370": 2.599,
+     "380": 3.412
+    },
+    "tok_s_gpu_steps": {
+     "10": 2000,
+     "20": 5000,
+     "30": 8000,
+     "40": 9000,
+     "50": 9000,
+     "60": 14000,
+     "70+": "mode 18K, window 7-19K"
+    }
+   },
+   "uncertainty": "tok/s are rounded integer K window means; i and g differ by one smoke run (compiled kernel version + flash path), so same-number agreement is a smoke-level equivalence, not a parity test.",
+   "status": "measured",
+   "boundary": "Establishes the compiled training batch ceiling: B4 fits with headroom, B8 does not. No capability inference (0.2B smoke tokens); flash-vs-eager numerics agree at smoke precision but were not compared bitwise."
   }
  ]
 }
