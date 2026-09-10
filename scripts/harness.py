@@ -14010,6 +14010,15 @@ def _run_holds_the_block(root):
             return True, str(a.get("note", ""))[:60]
     except (OSError, ValueError):
         pass
+    # The fresh-log fallback exists ONLY because pod_push skips runs/, so the pod's
+    # card_assignment.json can be stale while a run is live. In a git tree the grant is
+    # synced and authoritative, so do not scan runs/*.log mtime there: in a CI clone every
+    # tracked file's mtime is checkout time, which made a committed run log false-arm this
+    # predicate and then fail frozen_paths on the banner sha the shallow push-event clone
+    # does not contain (the PR-event clone fetches the base and passed). de-107 is the
+    # sibling ledger defect; this is the environment-predicate half (#233 push red).
+    if not pod_drift.is_pod(root):
+        return False, "no block grant; fresh-log fallback is pod-only, a git tree trusts the grant"
     now = time.time()
     for p in glob.glob(os.path.join(root, "runs", "*.log")):
         try:
@@ -14147,6 +14156,43 @@ def _broken_frozen_paths():
     sp.run(["git", *ident, "commit", "-m", "touch a frozen path"], cwd=d,
            capture_output=True, env=env)
     return d
+
+
+def _selftest_holds_block_log_scope():
+    """A fresh runs/*.log arms _run_holds_the_block ONLY on the pod (no .git).
+
+    Incident: #233's push-event CI failed frozen_paths because a committed run log
+    (v41_smoke_0911{h,i}.log) has checkout-time mtime in a fresh clone, so the mtime
+    fallback armed in a git tree, read the log's `pod code:` banner, and that sha was
+    absent from the shallow push clone. The grant stays the authority in git trees; the
+    log fallback exists only because pod_push skips runs/ (the pod's grant can be stale).
+    """
+    import tempfile
+
+    def world(make_git, grant=None):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        if make_git:
+            os.makedirs(os.path.join(d, ".git"), exist_ok=True)
+        with open(os.path.join(d, "runs", "x.log"), "w") as f:
+            f.write("fresh\n")  # mtime = now, inside the fresh window
+        if grant is not None:
+            with open(os.path.join(d, "runs", "card_assignment.json"), "w") as f:
+                json.dump(grant, f)
+        return d
+
+    # no grant, fresh log: armed on the pod (no .git), disarmed in a git tree
+    gitd = world(make_git=True)
+    podd = world(make_git=False)
+    g_holds, _ = _run_holds_the_block(gitd)
+    p_holds, _ = _run_holds_the_block(podd)
+    assert not g_holds, "a fresh run log must NOT arm the block predicate in a git tree (CI clone flake)"
+    assert p_holds, "a fresh run log must arm the block predicate on the pod, whose grant can be stale"
+    # the grant arms in BOTH views, so scoping the log arm does not disarm real runs
+    grant = {"launch_block_granted": True, "next_grant": {"blocked_on": "the run itself"}}
+    grant_git = world(make_git=True, grant=grant)
+    holds, _ = _run_holds_the_block(grant_git)
+    assert holds, "a current block grant must arm in a git tree independent of the log fallback"
 
 
 def _cfg_known_names(root):
@@ -24144,6 +24190,7 @@ def _demo(only=None):
         _selftest_auto_resume,
         _selftest_devs_map,
         _selftest_gpu_descendants,
+        _selftest_holds_block_log_scope,
         _selftest_exp_fold,
         _selftest_exp_reclassify_monitor_close,
         _selftest_main_in_no_worktree_discriminates,
