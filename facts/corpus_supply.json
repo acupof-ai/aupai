@@ -1347,6 +1347,67 @@
    "uncertainty": null,
    "boundary": "The '1,200' under audit was supplied in dispatch, not read from any file; no 1,200 constant exists in mathbank/ (the only 1200s are arithmetic parameters in math_programs_l3_ext6.py). The provenance line's '509 programs x 150 = 57,771' justification is arithmetically wrong (509x150=76,350); the stall is real but its recorded explanation is not.",
    "status": "measured"
+  },
+  {
+   "id": "cs.v41_gate_token_caches_0910",
+   "value": {
+    "cot": 424056227,
+    "code_py_rp1t": 420855850,
+    "en_c4_stage2": 2401144188,
+    "math_owm_stage2": 6528546115,
+    "code_py_starcoder": 8786913743
+   },
+   "unit": "packed pool tokens (rows x 4097, int32 stream truncated to a multiple of seq+1)",
+   "measured": "2026-09-10",
+   "source": "scripts/pretokenize_domains.py (repo driver over train._domain_seqs; 32 fork workers x RAYON_NUM_THREADS=5, CPU only, CUDA_VISIBLE_DEVICES empty) writing pod /data00/tokens_<domain>.pt; rows and sha256 prefixes are the driver's REPORT lines read back from the caches",
+   "config": {
+    "cache_dir": "/data00 (the /mnt/data02 NVMe mount was gone after restart; mkdir ENOENT, fb 2026-09-10; train._token_cache_dir default used, AUPAI_TOKEN_CACHE_DIR unset)",
+    "tokenizer": "data/tokenizer.json frozen V=20000 rebuild (vocab stamp beside every cache)",
+    "sample_seed": "42 (Cfg.seed; sample_seed unset), stream shuffled random.Random(42)",
+    "convention": "ids + one <eos> per doc, then truncated to a multiple of 4097; code_py_starcoder packed 8,786,913,743 vs raw full-pass 8,786,916,332 (cs.code_py_starcoder_landed), delta 2,589 = the dropped tail < one row",
+    "per_domain": {
+     "cot": {
+      "rows": 103504,
+      "sha256_16": "c65b518234319372",
+      "bytes": 1696226494,
+      "seconds": "约 (log muted; finished 13:43:15, first after import)"
+     },
+     "code_py_rp1t": {
+      "rows": 102722,
+      "sha256_16": "d527c3cadc03e809",
+      "bytes": 1683425021,
+      "seconds": "约 19 (completion-mtime delta 13:43:15->13:43:34)"
+     },
+     "en_c4_stage2": {
+      "rows": 586073,
+      "sha256_16": "f242c18ff3f2acc8",
+      "bytes": 9604578481,
+      "seconds": "约 111 (mtime delta ->13:45:25)"
+     },
+     "math_owm_stage2": {
+      "rows": 1593494,
+      "sha256_16": "3f6f79556d34472a",
+      "bytes": 26114186246,
+      "seconds": "约 411 (mtime delta ->13:52:16)"
+     },
+     "code_py_starcoder": {
+      "rows": 2144719,
+      "sha256_16": "5cfbcf8a5229c6de",
+      "bytes": 35147667156,
+      "seconds": 385
+     }
+    },
+    "total_packed_tokens": 18561516123,
+    "total_rows": 4530512,
+    "total_bytes": 74245883398,
+    "first_run_note": "the first execution used an identical pre-commit copy of the driver pushed to the pod and its log was muted by a flattened double redirect (CLAUDE.md pod rule: the outer >/dev/null overrode the inner log redirect); caches and stamps were unaffected, four domains finished before the process was killed by exact PID and the committed driver was run for the fifth; seconds for the first four are mtime-reconstructed, starcoder's 385s measured"
+   },
+   "uncertainty": "seconds for 4 of 5 domains are completion-mtime deltas (约); token and row counts are exact",
+   "boundary": "pool tokens are the on-disk packed stream after tail truncation, not the raw document token count; does not cover the UltraData domains (0e owns those) or the smoke domains fb encoded",
+   "status": "measured",
+   "tokens_status": "measured",
+   "guard_phrases": [],
+   "retracted_value": []
   }
  ]
 }
