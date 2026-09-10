@@ -28,7 +28,7 @@ from tokenizers import Tokenizer
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from datagen.gen_exercises import _norm, decontam, load_benchmarks, planted_control
-from datagen.ud_solution_exec import FAIL, PASS, TIMEOUT, execute
+from datagen.ud_solution_exec import FAIL, PASS, TIMEOUT, execute, nontrivial
 
 DOC_FIELD = {"L2": "content", "L3": "full_content"}
 N_SHARDS = {"L2": 119, "L3": 147}
@@ -69,7 +69,7 @@ class ShardWriter:
 
 def _exec_pair(pair):
     solution, test = pair
-    return execute(solution, test)[0]
+    return execute(solution, test)[0], nontrivial(solution)
 
 
 def fp_of(*paths):
@@ -118,7 +118,7 @@ def main():
     field = DOC_FIELD[args.level]
     seen = set()
     stats = {"kept": 0, "decontam": 0, "dup": 0, "empty": 0, "category_drop": 0,
-             "exec_fail": 0, "exec_timeout": 0}
+             "exec_fail": 0, "exec_timeout": 0, "non_trivial": 0}
     kept_chars = 0
     kept_tokens = 0
     total = 0
@@ -159,13 +159,16 @@ def main():
                 pairs = [(cols["solution"][r], cols["test"][r]) for r in survivors]
                 verdicts = list(exec_pool.map(_exec_pair, pairs))
             else:
-                verdicts = [PASS] * len(survivors)
-            for r, verdict in zip(survivors, verdicts, strict=True):
+                verdicts = [(PASS, True)] * len(survivors)
+            for r, (verdict, nt) in zip(survivors, verdicts, strict=True):
                 if verdict == TIMEOUT:
                     stats["exec_timeout"] += 1
                     continue
                 if verdict == FAIL:
                     stats["exec_fail"] += 1
+                    continue
+                if not nt:
+                    stats["non_trivial"] += 1
                     continue
                 doc = cols[field][r]
                 if args.level == "L3":
@@ -179,8 +182,8 @@ def main():
             if total % 100000 == 0:
                 print(f"[{i}] rows={total} kept={stats['kept']} decontam={stats['decontam']} "
                       f"dup={stats['dup']} empty={stats['empty']} cat={stats['category_drop']} "
-                      f"exec_fail={stats['exec_fail']} exec_timeout={stats['exec_timeout']}",
-                      flush=True)
+                      f"exec_fail={stats['exec_fail']} exec_timeout={stats['exec_timeout']} "
+                      f"non_trivial={stats['non_trivial']}", flush=True)
             if args.limit_rows and total >= args.limit_rows:
                 break
         print(f"done shard {i}: rows={total} kept={stats['kept']}", flush=True)
@@ -201,7 +204,7 @@ def main():
         "tokens_status": "measured",
         "tokens_config": f"{args.tokenizer}, exact per-doc ids + one <eos> per doc "
                          "(code_rp1t convention)",
-        "filters": ("decontam(humaneval,mbpp)+exact-dedup+solution-test-exec-pass"
+        "filters": ("decontam(humaneval,mbpp)+exact-dedup+exec-pass+non-triviality"
                     if args.level == "L3"
                     else "decontam(humaneval,mbpp)+exact-dedup+drop-CONFIG,TEST"),
         "workers": args.exec_workers if args.level == "L3" else 1,
