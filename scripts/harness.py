@@ -24367,6 +24367,8 @@ _FROZEN_KEYS = (
     # wide the exact window is), so a resume that moved one would alter the receptive field
     # mid-run while the loss curve carried a single name.
     "csa", "csa_compress", "csa_topk", "csa_window",
+    "csa2", "csa2_m", "csa2_top_k", "csa2_n_win", "csa2_indexer_heads", "csa2_indexer_dim",
+    "csa2_modes", "rope_dims", "n_swa_only_layers",  # V4.1 flat stack (fb, 2026-09-10)
     # b0-17: untie_head acts only at __init__ (model.py:359) -- the arm's weights carry the
     # architecture and a resume silently ignores the flag, which is the drift this set catches.
     # head_lr is NOT here: it is the A/B knob that exists to take two values (1e's ruling

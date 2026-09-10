@@ -3032,6 +3032,13 @@ def main():
                           "moe_expert_ffn). Exists because the latent variant spends its parity "
                           "budget on three shapes, and a free shared width is what makes an exact "
                           "parity-and-parameter match possible",
+        "rope_dims": "V4.1: rotate the last N dims of each head (0 = NoPE; needs >0 when attn_every=1)",
+        "n_swa_only_layers": "V4.1: the first N attention layers are pure SWA, no CSA2 branch",
+        "csa2_m": "CSA2: tokens per learned KV entry",
+        "csa2_top_k": "CSA2: entries selected per query",
+        "csa2_n_win": "CSA2/PureSWA: sliding-window width in tokens",
+        "csa2_indexer_heads": "CSA2: indexer heads (must divide heads)",
+        "csa2_indexer_dim": "CSA2: indexer low dim",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, required=name in RECIPE_REQUIRED,
                             help=f"{help_} (default: Cfg.{name})")
@@ -3053,6 +3060,8 @@ def main():
         "attn_res_dyn_q": "AttnRes input-dependent pseudo-query",
         "fone": "Fourier number embedding: one [NUM] per number, value in, digits out",
         "mem_sparse": "sparse memory: nn.Embedding(sparse=True) COO grads (--no-mem_sparse forces a dense grad on the whole table)",
+        "csa": "CSA attention arm in GatedMLA (required by --csa2)",
+        "csa2": "V4.1 CSA2: learned entries + indexer + one softmax over entries and SWA",
     }.items():
         parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
                             default=None, required=name in RECIPE_REQUIRED, help=help_)
@@ -3066,6 +3075,9 @@ def main():
                         help="MoE: block indices that replace their dense FFN, \"0-11\", \"0,3,6\" or a list "
                              "(default: Cfg.moe_layers). Parsed by model._moe_layers in ONE place so a "
                              "checkpoint written from a string and one from a list are the SAME arm")
+    parser.add_argument("--csa2_modes", type=str, default=None,
+                        help="CSA2 per-layer modes for the non-SWA-only attention layers, F/R/X comma "
+                             "string (default: Cfg.csa2_modes); parsed by model.HybridLM")
     parser.add_argument("--mem_layers", type=str, default=None,
                         help="sparse memory: block indices sharing the one pool, e.g. 3,6,9 "
                              "(default: Cfg.mem_layers)")
