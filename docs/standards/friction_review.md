@@ -285,7 +285,7 @@ Basis: main, not the worktree file -- the local friction.jsonl had diverged (row
 | hook: test_launch_claims AST walk misses the refactor | 1 | ~25 | fix carried |
 | other (136 mechanisms, count=1) | 136 | mixed | mixed |
 
-## 2026-09-10 (341 rows, 155 mechanisms; basis 55b27e73 = main at 04:30Z, ran 04:39Z)
+## 2026-09-10 (341 rows, 155 mechanisms; basis 55b27e73 = main at 04:30Z, ran 04:39Z; dedup count — raw 347 lines, union-merge duplicates)
 
 | cause | count | minutes | resolution |
 |---|---|---|---|
