@@ -27,11 +27,14 @@ SEQ = 4096  # gate-run sequence length
 MOE_EXPERTS = 48  # pivot: reuse MoEFFN as-is, 48/top-3/1-shared
 MOE_TOP_K = 3
 MOE_SHARED = 1
-MOE_EXPERT_FFN = 1536  # the knob that hits ~350M active at L=12, d=1024.
+MOE_EXPERT_FFN = 1728  # the knob that hits ~350M active at L=12, d=1024.
 # fb ruling 2026-09-10: do NOT relax MoEFFN's equal-active parity check -- set
-# ffn_hidden = (top_k+shared)*expert_ffn = 6144 so the config stays within it.
+# ffn_hidden = (top_k+shared)*expert_ffn = 6912 so the config stays within it.
 # ffn_hidden is the parity reference only (all 12 layers are MoE), so it adds
-# no active params and the 342.9M count is unchanged.
+# no active params. 3b's PR #213 review corrected the per-layer attention
+# counts (Reuse reuses Main KV, so it saves 2d^2): at 1536 the count was 324.0M,
+# 26M under target; 1728 restores 352.3M. The 340-360M assertion band catches
+# that class of overcount (the old 300-400M band passed it).
 
 M = 8  # tokens per main-KV entry (fb's start range 4..8; see below)
 TOP_K = 64  # entries selected per query (fb's range 64..128; see below)
@@ -51,22 +54,27 @@ MODE_MAP = "S,S,F,R,R,R,X,R,R,R,R,R"
 
 
 def active_params():
-    """Active params per token. Embedding counted once (tied head). Per layer:
-    Q shared across global+SWA; each branch has its own K, V, O (paper Fig. 4:
-    Main K/V and SWA K/V are separate boxes). Indexer Q/K projections exist
-    only on F/X layers. Active FFN = (top_k + shared) experts, each 3*d*w."""
+    """Active params per token. Embedding counted once (tied head). Per the
+    paper's Fig. 4 (3b's PR #213 review): only Full computes Main K/V -- Reuse
+    reuses the preceding Full's Main KV and Top-K, Reindex reuses Main KV and
+    runs its own indexer. So:
+      S = Q + SWA(K,V,O)        = 4d^2   (no global branch)
+      F = Q + Main(K,V,O) + SWA(K,V,O) + idx = 7d^2 + idx
+      X = Q + Main O + SWA(K,V,O) + idx   = 5d^2 + idx
+      R = Q + Main O + SWA(K,V,O)         = 5d^2
+    (paper text 2.3.1 also reuses indexer K in Reindex, worth 0.26M; 3b's
+    prescription counts the full indexer, kept as the conservative reading.)
+    Active FFN = (top_k + shared) experts, each 3*d*w."""
     d2 = D * D
-    attn_dual = 7 * d2  # Q + 2x(K,V,O)
-    attn_swa_only = 4 * d2  # Q + (K,V,O), no global branch
-    idx = 2 * D * (IDX_HEADS * IDX_DIM)  # indexer Q proj + K proj, F/X only
     ffn = (MOE_TOP_K + MOE_SHARED) * 3 * D * MOE_EXPERT_FFN
+    idx = 2 * D * (IDX_HEADS * IDX_DIM)  # indexer Q proj + K proj, F/X only
     emb = D * VOCAB
 
     per = {
-        "S": attn_swa_only + ffn,
-        "F": attn_dual + idx + ffn,
-        "X": attn_dual + idx + ffn,
-        "R": attn_dual + ffn,
+        "S": 4 * d2 + ffn,
+        "F": 7 * d2 + idx + ffn,
+        "X": 5 * d2 + idx + ffn,
+        "R": 5 * d2 + ffn,
     }
     modes = MODE_MAP.split(",")
     layers = sum(per[m] for m in modes)
@@ -133,13 +141,13 @@ def main():
     first_csa2, max_gap = check_mode_map(modes)
 
     # the checks: fail loud if a proposed value stops satisfying its constraint
-    assert 300e6 < active < 400e6, f"active {active / 1e6:.0f}M outside ~350M"
+    assert 340e6 < active < 360e6, f"active {active / 1e6:.1f}M outside ~350M (band 340-360)"
     assert M in (4, 8) or 4 <= M <= 8, "m must start in 4..8 (fb)"
     assert 64 <= TOP_K <= 128, "top-k must start in 64..128 (fb)"
     assert IDX_HEADS * IDX_DIM == D // 4, "indexer latent must be d//4"
     assert D % (IDX_HEADS * IDX_DIM) == 0 and (IDX_HEADS * IDX_DIM) % IDX_HEADS == 0
     assert dens["attended_fraction"] < 0.5, "top-k is effectively dense"
-    assert (MOE_TOP_K + MOE_SHARED) * MOE_EXPERT_FFN == 6144, "ffn_hidden must be 6144"
+    assert (MOE_TOP_K + MOE_SHARED) * MOE_EXPERT_FFN == 6912, "ffn_hidden must be 6912"
 
     print(f"active params/token: {active / 1e6:.1f}M (emb {emb / 1e6:.1f}M tied, layers {layers / 1e6:.1f}M)")
     print(
@@ -175,7 +183,7 @@ def main():
     print("  layers = 12  d = 1024  heads = 8  (unchanged)")
     print(
         f"  moe_experts = {MOE_EXPERTS}  moe_top_k = {MOE_TOP_K}  moe_shared = {MOE_SHARED}"
-        f"  moe_expert_ffn = {MOE_EXPERT_FFN}  ffn_hidden = 6144"
+        f"  moe_expert_ffn = {MOE_EXPERT_FFN}  ffn_hidden = {(MOE_TOP_K + MOE_SHARED) * MOE_EXPERT_FFN}"
     )
     print(f"  csa2_m = {M}  csa2_top_k = {TOP_K}  csa2_n_win = {N_WIN}")
     print(f'  csa2_indexer_heads = {IDX_HEADS}  csa2_indexer_dim = {IDX_DIM}  csa2_modes = "{MODE_MAP}"')
