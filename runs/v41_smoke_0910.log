@@ -1,0 +1,946 @@
+pod code: a823bd1a02588048bc07a4b9d6f70813f3153863 (clean, synced 2026-09-10T13:32:32Z, manifest verified)
+W0910 13:34:55.939000 2587220 torch/distributed/run.py:851] 
+W0910 13:34:55.939000 2587220 torch/distributed/run.py:851] *****************************************
+W0910 13:34:55.939000 2587220 torch/distributed/run.py:851] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0910 13:34:55.939000 2587220 torch/distributed/run.py:851] *****************************************
+corpus_fp: {'textbook': '3f237c5191cb8571', 'wiki': '44eb88458cfb3ed5', 'en': '9f37cb35219bb617', 'math': 'e1e86aa0b594c5ed', 'code': '5bb775eae9029669', 'chat': '080fdd63401b4ff9'}
+cache read: 8,370 MiB (8.17 GiB) over 6 cache(s)
+     6.00 GiB  textbook
+     0.92 GiB  wiki
+     0.60 GiB  en
+     0.30 GiB  math
+     0.21 GiB  code
+     0.14 GiB  chat
+/usr/local/lib/python3.12/dist-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+[rank0]:[W910 13:35:13.395612229 ProcessGroupNCCL.cpp:5188] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+mix: textbook 35833 rows = 0.09 epochs
+mix: wiki 5468 rows = 0.10 epochs
+mix: en 3577 rows = 0.10 epochs
+mix: math 1817 rows = 0.10 epochs
+mix: code 1281 rows = 0.10 epochs
+mix: chat 849 rows = 0.10 epochs
+mix: 48825 rows = 0.20B tokens scheduled
+FP8 compute enabled
+params 3209.5M | tokens 6103 | seqs 6103 | device cuda:0 | world 8 | fa True | fp8 True
+cfg batch 16 accum 1 seq 4096 grad_ckpt False doc_mask True attn_res False/0 softcap 15.0 warmup 20 epochs 1 lr_scale 1.0 mix data/mix_smoke_warmup.json fone False seed 42 sample_seed 42 (follows seed) warmdown 0.65 anneal_frac 0.0 val_every 500 attn_every 1
+cfg non-default: anneal_frac=0.0, attn_every=1, attn_res=False, batch=16, csa=True, csa2=True, ffn_hidden=6912, mix='data/mix_smoke_warmup.json', moe_arm='v41smoke', moe_expert_ffn=1728, moe_experts=48, rope_dims=64
+[rank4]:W0910 13:35:41.046000 2587298 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank6]:W0910 13:35:41.073000 2587300 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2642, in forward
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2557, in _body
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2129, in forward
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1030, in forward
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 520, in forward
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 606, in _forward_csa2
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 369, in entries_per_doc
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 303, in _doc_blocks
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank4]:W0910 13:35:41.680000 2587298 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2642, in forward
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2557, in _body
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2129, in forward
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1030, in forward
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 520, in forward
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 606, in _forward_csa2
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 369, in entries_per_doc
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 303, in _doc_blocks
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank6]:W0910 13:35:41.689000 2587300 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank2]:W0910 13:35:41.711000 2587296 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0910 13:35:41.743000 2587294 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank1]:W0910 13:35:41.792000 2587295 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank3]:W0910 13:35:41.861000 2587297 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank7]:W0910 13:35:41.965000 2587301 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank5]:W0910 13:35:42.085000 2587299 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2642, in forward
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2557, in _body
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2129, in forward
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1030, in forward
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 520, in forward
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 606, in _forward_csa2
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 369, in entries_per_doc
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 303, in _doc_blocks
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank2]:W0910 13:35:42.321000 2587296 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2642, in forward
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2557, in _body
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2129, in forward
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1030, in forward
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 520, in forward
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 606, in _forward_csa2
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 369, in entries_per_doc
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 303, in _doc_blocks
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank0]:W0910 13:35:42.356000 2587294 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2642, in forward
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2557, in _body
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2129, in forward
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1030, in forward
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 520, in forward
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 606, in _forward_csa2
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 369, in entries_per_doc
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 303, in _doc_blocks
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank1]:W0910 13:35:42.392000 2587295 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2642, in forward
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2557, in _body
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2129, in forward
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1030, in forward
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 520, in forward
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 606, in _forward_csa2
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 369, in entries_per_doc
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 303, in _doc_blocks
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank3]:W0910 13:35:42.499000 2587297 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2642, in forward
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2557, in _body
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2129, in forward
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1030, in forward
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 520, in forward
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 606, in _forward_csa2
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 369, in entries_per_doc
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 303, in _doc_blocks
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank7]:W0910 13:35:42.629000 2587301 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2642, in forward
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2557, in _body
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2129, in forward
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1030, in forward
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 520, in forward
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 606, in _forward_csa2
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 369, in entries_per_doc
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 303, in _doc_blocks
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank5]:W0910 13:35:42.689000 2587299 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank2]: Traceback (most recent call last):
+[rank2]:   File "/work/aupai/train.py", line 4495, in <module>
+[rank2]:     main()
+[rank2]:   File "/work/aupai/train.py", line 3926, in main
+[rank2]:     hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
+[rank2]:                 ^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 472, in __call__
+[rank2]:     return super().__call__(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank2]:     return self._call_impl(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank2]:     return forward_call(*args, **kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1038, in compile_wrapper
+[rank2]:     raise e.remove_dynamo_frames() from None  # see TORCHDYNAMO_VERBOSE=1
+[rank2]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1053, in _compile_fx_inner
+[rank2]:     raise InductorError(e, currentframe()).with_traceback(
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1037, in _compile_fx_inner
+[rank2]:     mb_compiled_graph = fx_codegen_and_compile(
+[rank2]:                         ^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1798, in fx_codegen_and_compile
+[rank2]:     return scheme.codegen_and_compile(gm, example_inputs, inputs_to_check, graph_kwargs)
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1485, in codegen_and_compile
+[rank2]:     graph.run(*example_inputs)
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1025, in run
+[rank2]:     return super().run(*args)
+[rank2]:            ^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/fx/interpreter.py", line 200, in run
+[rank2]:     self.env[node] = self.run_node(node)
+[rank2]:                      ^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1997, in run_node
+[rank2]:     self.register_users_of(result)
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1072, in register_users_of
+[rank2]:     register(node_output)
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1069, in register
+[rank2]:     for read_name in value.get_read_names():
+[rank2]:                      ^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank2]:     return self.data.get_read_names()
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank2]:     return self.data.get_read_names()
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 4766, in get_read_names
+[rank2]:     return self.data.get_read_names()
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1042, in get_read_names
+[rank2]:     return OrderedSet(self.inner_fn_opcount().read_buffers)
+[rank2]:                       ^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "<string>", line 6, in inner_fn_opcount_cache_on_self
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1005, in inner_fn_opcount
+[rank2]:     self.inner_fn(*self.inner_fn_args())
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2735, in inner_fn
+[rank2]:     _boundaries_helper(boundaries),
+[rank2]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2589, in _boundaries_helper
+[rank2]:     stride = tb.get_stride()
+[rank2]:              ^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8573, in get_stride
+[rank2]:     return self.data.get_stride()
+[rank2]:            ^^^^^^^^^^^^^^^^^^^^^^
+[rank2]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 758, in get_stride
+[rank2]:     raise NotImplementedError(type(self).__name__)
+[rank2]: torch._inductor.exc.InductorError: NotImplementedError: SliceView
+
+[rank2]: While executing %submod_1 : [num_users=4] = call_module[target=submod_1](args = (%l_self_modules_qg_parameters_weight_, %getitem, %getitem_1, %getitem_2, %l_cu_, %s42, %l_self_modules_rope_buffers_inv_freq_), kwargs = {})
+[rank2]: Original traceback:
+[rank2]: None
+[rank2]: Use tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)
+
+[rank2]: Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS="+dynamo"
+
+[rank1]: Traceback (most recent call last):
+[rank1]:   File "/work/aupai/train.py", line 4495, in <module>
+[rank1]:     main()
+[rank1]:   File "/work/aupai/train.py", line 3926, in main
+[rank1]:     hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
+[rank1]:                 ^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 472, in __call__
+[rank1]:     return super().__call__(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1038, in compile_wrapper
+[rank1]:     raise e.remove_dynamo_frames() from None  # see TORCHDYNAMO_VERBOSE=1
+[rank1]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1053, in _compile_fx_inner
+[rank1]:     raise InductorError(e, currentframe()).with_traceback(
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1037, in _compile_fx_inner
+[rank1]:     mb_compiled_graph = fx_codegen_and_compile(
+[rank1]:                         ^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1798, in fx_codegen_and_compile
+[rank1]:     return scheme.codegen_and_compile(gm, example_inputs, inputs_to_check, graph_kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1485, in codegen_and_compile
+[rank1]:     graph.run(*example_inputs)
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1025, in run
+[rank1]:     return super().run(*args)
+[rank1]:            ^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/fx/interpreter.py", line 200, in run
+[rank1]:     self.env[node] = self.run_node(node)
+[rank1]:                      ^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1997, in run_node
+[rank1]:     self.register_users_of(result)
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1072, in register_users_of
+[rank1]:     register(node_output)
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1069, in register
+[rank1]:     for read_name in value.get_read_names():
+[rank1]:                      ^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank1]:     return self.data.get_read_names()
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank1]:     return self.data.get_read_names()
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 4766, in get_read_names
+[rank1]:     return self.data.get_read_names()
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1042, in get_read_names
+[rank1]:     return OrderedSet(self.inner_fn_opcount().read_buffers)
+[rank1]:                       ^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "<string>", line 6, in inner_fn_opcount_cache_on_self
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1005, in inner_fn_opcount
+[rank1]:     self.inner_fn(*self.inner_fn_args())
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2735, in inner_fn
+[rank1]:     _boundaries_helper(boundaries),
+[rank1]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2589, in _boundaries_helper
+[rank1]:     stride = tb.get_stride()
+[rank1]:              ^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8573, in get_stride
+[rank1]:     return self.data.get_stride()
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 758, in get_stride
+[rank1]:     raise NotImplementedError(type(self).__name__)
+[rank1]: torch._inductor.exc.InductorError: NotImplementedError: SliceView
+
+[rank1]: While executing %submod_1 : [num_users=4] = call_module[target=submod_1](args = (%l_self_modules_qg_parameters_weight_, %getitem, %getitem_1, %getitem_2, %l_cu_, %s42, %l_self_modules_rope_buffers_inv_freq_), kwargs = {})
+[rank1]: Original traceback:
+[rank1]: None
+[rank1]: Use tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)
+
+[rank1]: Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS="+dynamo"
+
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/work/aupai/train.py", line 4495, in <module>
+[rank0]:     main()
+[rank0]:   File "/work/aupai/train.py", line 3926, in main
+[rank0]:     hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
+[rank0]:                 ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 472, in __call__
+[rank0]:     return super().__call__(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1038, in compile_wrapper
+[rank0]:     raise e.remove_dynamo_frames() from None  # see TORCHDYNAMO_VERBOSE=1
+[rank0]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1053, in _compile_fx_inner
+[rank0]:     raise InductorError(e, currentframe()).with_traceback(
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1037, in _compile_fx_inner
+[rank0]:     mb_compiled_graph = fx_codegen_and_compile(
+[rank0]:                         ^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1798, in fx_codegen_and_compile
+[rank0]:     return scheme.codegen_and_compile(gm, example_inputs, inputs_to_check, graph_kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1485, in codegen_and_compile
+[rank0]:     graph.run(*example_inputs)
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1025, in run
+[rank0]:     return super().run(*args)
+[rank0]:            ^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/fx/interpreter.py", line 200, in run
+[rank0]:     self.env[node] = self.run_node(node)
+[rank0]:                      ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1997, in run_node
+[rank0]:     self.register_users_of(result)
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1072, in register_users_of
+[rank0]:     register(node_output)
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1069, in register
+[rank0]:     for read_name in value.get_read_names():
+[rank0]:                      ^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank0]:     return self.data.get_read_names()
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank0]:     return self.data.get_read_names()
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 4766, in get_read_names
+[rank0]:     return self.data.get_read_names()
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1042, in get_read_names
+[rank0]:     return OrderedSet(self.inner_fn_opcount().read_buffers)
+[rank0]:                       ^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "<string>", line 6, in inner_fn_opcount_cache_on_self
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1005, in inner_fn_opcount
+[rank0]:     self.inner_fn(*self.inner_fn_args())
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2735, in inner_fn
+[rank0]:     _boundaries_helper(boundaries),
+[rank0]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2589, in _boundaries_helper
+[rank0]:     stride = tb.get_stride()
+[rank0]:              ^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8573, in get_stride
+[rank0]:     return self.data.get_stride()
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 758, in get_stride
+[rank0]:     raise NotImplementedError(type(self).__name__)
+[rank0]: torch._inductor.exc.InductorError: NotImplementedError: SliceView
+
+[rank0]: While executing %submod_1 : [num_users=4] = call_module[target=submod_1](args = (%l_self_modules_qg_parameters_weight_, %getitem, %getitem_1, %getitem_2, %l_cu_, %s42, %l_self_modules_rope_buffers_inv_freq_), kwargs = {})
+[rank0]: Original traceback:
+[rank0]: None
+[rank0]: Use tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)
+
+[rank0]: Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS="+dynamo"
+
+[rank3]: Traceback (most recent call last):
+[rank3]:   File "/work/aupai/train.py", line 4495, in <module>
+[rank3]:     main()
+[rank3]:   File "/work/aupai/train.py", line 3926, in main
+[rank3]:     hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
+[rank3]:                 ^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 472, in __call__
+[rank3]:     return super().__call__(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank3]:     return self._call_impl(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank3]:     return forward_call(*args, **kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1038, in compile_wrapper
+[rank3]:     raise e.remove_dynamo_frames() from None  # see TORCHDYNAMO_VERBOSE=1
+[rank3]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1053, in _compile_fx_inner
+[rank3]:     raise InductorError(e, currentframe()).with_traceback(
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1037, in _compile_fx_inner
+[rank3]:     mb_compiled_graph = fx_codegen_and_compile(
+[rank3]:                         ^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1798, in fx_codegen_and_compile
+[rank3]:     return scheme.codegen_and_compile(gm, example_inputs, inputs_to_check, graph_kwargs)
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1485, in codegen_and_compile
+[rank3]:     graph.run(*example_inputs)
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1025, in run
+[rank3]:     return super().run(*args)
+[rank3]:            ^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/fx/interpreter.py", line 200, in run
+[rank3]:     self.env[node] = self.run_node(node)
+[rank3]:                      ^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1997, in run_node
+[rank3]:     self.register_users_of(result)
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1072, in register_users_of
+[rank3]:     register(node_output)
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1069, in register
+[rank3]:     for read_name in value.get_read_names():
+[rank3]:                      ^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank3]:     return self.data.get_read_names()
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank3]:     return self.data.get_read_names()
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 4766, in get_read_names
+[rank3]:     return self.data.get_read_names()
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1042, in get_read_names
+[rank3]:     return OrderedSet(self.inner_fn_opcount().read_buffers)
+[rank3]:                       ^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "<string>", line 6, in inner_fn_opcount_cache_on_self
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1005, in inner_fn_opcount
+[rank3]:     self.inner_fn(*self.inner_fn_args())
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2735, in inner_fn
+[rank3]:     _boundaries_helper(boundaries),
+[rank3]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2589, in _boundaries_helper
+[rank3]:     stride = tb.get_stride()
+[rank3]:              ^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8573, in get_stride
+[rank3]:     return self.data.get_stride()
+[rank3]:            ^^^^^^^^^^^^^^^^^^^^^^
+[rank3]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 758, in get_stride
+[rank3]:     raise NotImplementedError(type(self).__name__)
+[rank3]: torch._inductor.exc.InductorError: NotImplementedError: SliceView
+
+[rank3]: While executing %submod_1 : [num_users=4] = call_module[target=submod_1](args = (%l_self_modules_qg_parameters_weight_, %getitem, %getitem_1, %getitem_2, %l_cu_, %s42, %l_self_modules_rope_buffers_inv_freq_), kwargs = {})
+[rank3]: Original traceback:
+[rank3]: None
+[rank3]: Use tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)
+
+[rank3]: Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS="+dynamo"
+
+[rank4]: Traceback (most recent call last):
+[rank4]:   File "/work/aupai/train.py", line 4495, in <module>
+[rank4]:     main()
+[rank4]:   File "/work/aupai/train.py", line 3926, in main
+[rank4]:     hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
+[rank4]:                 ^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 472, in __call__
+[rank4]:     return super().__call__(*args, **kwargs)
+[rank4]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank4]:     return self._call_impl(*args, **kwargs)
+[rank4]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank4]:     return forward_call(*args, **kwargs)
+[rank4]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1038, in compile_wrapper
+[rank4]:     raise e.remove_dynamo_frames() from None  # see TORCHDYNAMO_VERBOSE=1
+[rank4]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1053, in _compile_fx_inner
+[rank4]:     raise InductorError(e, currentframe()).with_traceback(
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1037, in _compile_fx_inner
+[rank4]:     mb_compiled_graph = fx_codegen_and_compile(
+[rank4]:                         ^^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1798, in fx_codegen_and_compile
+[rank4]:     return scheme.codegen_and_compile(gm, example_inputs, inputs_to_check, graph_kwargs)
+[rank4]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1485, in codegen_and_compile
+[rank4]:     graph.run(*example_inputs)
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1025, in run
+[rank4]:     return super().run(*args)
+[rank4]:            ^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/fx/interpreter.py", line 200, in run
+[rank4]:     self.env[node] = self.run_node(node)
+[rank4]:                      ^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1997, in run_node
+[rank4]:     self.register_users_of(result)
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1072, in register_users_of
+[rank4]:     register(node_output)
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1069, in register
+[rank4]:     for read_name in value.get_read_names():
+[rank4]:                      ^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank4]:     return self.data.get_read_names()
+[rank4]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank4]:     return self.data.get_read_names()
+[rank4]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 4766, in get_read_names
+[rank4]:     return self.data.get_read_names()
+[rank4]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1042, in get_read_names
+[rank4]:     return OrderedSet(self.inner_fn_opcount().read_buffers)
+[rank4]:                       ^^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "<string>", line 6, in inner_fn_opcount_cache_on_self
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1005, in inner_fn_opcount
+[rank4]:     self.inner_fn(*self.inner_fn_args())
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2735, in inner_fn
+[rank4]:     _boundaries_helper(boundaries),
+[rank4]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2589, in _boundaries_helper
+[rank4]:     stride = tb.get_stride()
+[rank4]:              ^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8573, in get_stride
+[rank4]:     return self.data.get_stride()
+[rank4]:            ^^^^^^^^^^^^^^^^^^^^^^
+[rank4]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 758, in get_stride
+[rank4]:     raise NotImplementedError(type(self).__name__)
+[rank4]: torch._inductor.exc.InductorError: NotImplementedError: SliceView
+
+[rank4]: While executing %submod_1 : [num_users=4] = call_module[target=submod_1](args = (%l_self_modules_qg_parameters_weight_, %getitem, %getitem_1, %getitem_2, %l_cu_, %s42, %l_self_modules_rope_buffers_inv_freq_), kwargs = {})
+[rank4]: Original traceback:
+[rank4]: None
+[rank4]: Use tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)
+
+[rank4]: Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS="+dynamo"
+
+[rank6]: Traceback (most recent call last):
+[rank6]:   File "/work/aupai/train.py", line 4495, in <module>
+[rank6]:     main()
+[rank6]:   File "/work/aupai/train.py", line 3926, in main
+[rank6]:     hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
+[rank6]:                 ^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 472, in __call__
+[rank6]:     return super().__call__(*args, **kwargs)
+[rank6]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank6]:     return self._call_impl(*args, **kwargs)
+[rank6]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank6]:     return forward_call(*args, **kwargs)
+[rank6]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1038, in compile_wrapper
+[rank6]:     raise e.remove_dynamo_frames() from None  # see TORCHDYNAMO_VERBOSE=1
+[rank6]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1053, in _compile_fx_inner
+[rank6]:     raise InductorError(e, currentframe()).with_traceback(
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1037, in _compile_fx_inner
+[rank6]:     mb_compiled_graph = fx_codegen_and_compile(
+[rank6]:                         ^^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1798, in fx_codegen_and_compile
+[rank6]:     return scheme.codegen_and_compile(gm, example_inputs, inputs_to_check, graph_kwargs)
+[rank6]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1485, in codegen_and_compile
+[rank6]:     graph.run(*example_inputs)
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1025, in run
+[rank6]:     return super().run(*args)
+[rank6]:            ^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/fx/interpreter.py", line 200, in run
+[rank6]:     self.env[node] = self.run_node(node)
+[rank6]:                      ^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1997, in run_node
+[rank6]:     self.register_users_of(result)
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1072, in register_users_of
+[rank6]:     register(node_output)
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1069, in register
+[rank6]:     for read_name in value.get_read_names():
+[rank6]:                      ^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank6]:     return self.data.get_read_names()
+[rank6]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank6]:     return self.data.get_read_names()
+[rank6]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 4766, in get_read_names
+[rank6]:     return self.data.get_read_names()
+[rank6]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1042, in get_read_names
+[rank6]:     return OrderedSet(self.inner_fn_opcount().read_buffers)
+[rank6]:                       ^^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "<string>", line 6, in inner_fn_opcount_cache_on_self
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1005, in inner_fn_opcount
+[rank6]:     self.inner_fn(*self.inner_fn_args())
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2735, in inner_fn
+[rank6]:     _boundaries_helper(boundaries),
+[rank6]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2589, in _boundaries_helper
+[rank6]:     stride = tb.get_stride()
+[rank6]:              ^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8573, in get_stride
+[rank6]:     return self.data.get_stride()
+[rank6]:            ^^^^^^^^^^^^^^^^^^^^^^
+[rank6]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 758, in get_stride
+[rank6]:     raise NotImplementedError(type(self).__name__)
+[rank6]: torch._inductor.exc.InductorError: NotImplementedError: SliceView
+
+[rank6]: While executing %submod_1 : [num_users=4] = call_module[target=submod_1](args = (%l_self_modules_qg_parameters_weight_, %getitem, %getitem_1, %getitem_2, %l_cu_, %s42, %l_self_modules_rope_buffers_inv_freq_), kwargs = {})
+[rank6]: Original traceback:
+[rank6]: None
+[rank6]: Use tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)
+
+[rank6]: Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS="+dynamo"
+
+[rank0]:[W910 13:35:47.035754820 ProcessGroupNCCL.cpp:1575] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+[rank5]: Traceback (most recent call last):
+[rank5]:   File "/work/aupai/train.py", line 4495, in <module>
+[rank5]:     main()
+[rank5]:   File "/work/aupai/train.py", line 3926, in main
+[rank5]:     hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
+[rank5]:                 ^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 472, in __call__
+[rank5]:     return super().__call__(*args, **kwargs)
+[rank5]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank5]:     return self._call_impl(*args, **kwargs)
+[rank5]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank5]:     return forward_call(*args, **kwargs)
+[rank5]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1038, in compile_wrapper
+[rank5]:     raise e.remove_dynamo_frames() from None  # see TORCHDYNAMO_VERBOSE=1
+[rank5]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1053, in _compile_fx_inner
+[rank5]:     raise InductorError(e, currentframe()).with_traceback(
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1037, in _compile_fx_inner
+[rank5]:     mb_compiled_graph = fx_codegen_and_compile(
+[rank5]:                         ^^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1798, in fx_codegen_and_compile
+[rank5]:     return scheme.codegen_and_compile(gm, example_inputs, inputs_to_check, graph_kwargs)
+[rank5]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1485, in codegen_and_compile
+[rank5]:     graph.run(*example_inputs)
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1025, in run
+[rank5]:     return super().run(*args)
+[rank5]:            ^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/fx/interpreter.py", line 200, in run
+[rank5]:     self.env[node] = self.run_node(node)
+[rank5]:                      ^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1997, in run_node
+[rank5]:     self.register_users_of(result)
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1072, in register_users_of
+[rank5]:     register(node_output)
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1069, in register
+[rank5]:     for read_name in value.get_read_names():
+[rank5]:                      ^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank5]:     return self.data.get_read_names()
+[rank5]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank5]:     return self.data.get_read_names()
+[rank5]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 4766, in get_read_names
+[rank5]:     return self.data.get_read_names()
+[rank5]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1042, in get_read_names
+[rank5]:     return OrderedSet(self.inner_fn_opcount().read_buffers)
+[rank5]:                       ^^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "<string>", line 6, in inner_fn_opcount_cache_on_self
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1005, in inner_fn_opcount
+[rank5]:     self.inner_fn(*self.inner_fn_args())
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2735, in inner_fn
+[rank5]:     _boundaries_helper(boundaries),
+[rank5]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2589, in _boundaries_helper
+[rank5]:     stride = tb.get_stride()
+[rank5]:              ^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8573, in get_stride
+[rank5]:     return self.data.get_stride()
+[rank5]:            ^^^^^^^^^^^^^^^^^^^^^^
+[rank5]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 758, in get_stride
+[rank5]:     raise NotImplementedError(type(self).__name__)
+[rank5]: torch._inductor.exc.InductorError: NotImplementedError: SliceView
+
+[rank5]: While executing %submod_1 : [num_users=4] = call_module[target=submod_1](args = (%l_self_modules_qg_parameters_weight_, %getitem, %getitem_1, %getitem_2, %l_cu_, %s42, %l_self_modules_rope_buffers_inv_freq_), kwargs = {})
+[rank5]: Original traceback:
+[rank5]: None
+[rank5]: Use tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)
+
+[rank5]: Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS="+dynamo"
+
+[rank7]: Traceback (most recent call last):
+[rank7]:   File "/work/aupai/train.py", line 4495, in <module>
+[rank7]:     main()
+[rank7]:   File "/work/aupai/train.py", line 3926, in main
+[rank7]:     hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
+[rank7]:                 ^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 472, in __call__
+[rank7]:     return super().__call__(*args, **kwargs)
+[rank7]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank7]:     return self._call_impl(*args, **kwargs)
+[rank7]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank7]:     return forward_call(*args, **kwargs)
+[rank7]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1038, in compile_wrapper
+[rank7]:     raise e.remove_dynamo_frames() from None  # see TORCHDYNAMO_VERBOSE=1
+[rank7]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1053, in _compile_fx_inner
+[rank7]:     raise InductorError(e, currentframe()).with_traceback(
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1037, in _compile_fx_inner
+[rank7]:     mb_compiled_graph = fx_codegen_and_compile(
+[rank7]:                         ^^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1798, in fx_codegen_and_compile
+[rank7]:     return scheme.codegen_and_compile(gm, example_inputs, inputs_to_check, graph_kwargs)
+[rank7]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_fx.py", line 1485, in codegen_and_compile
+[rank7]:     graph.run(*example_inputs)
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1025, in run
+[rank7]:     return super().run(*args)
+[rank7]:            ^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/fx/interpreter.py", line 200, in run
+[rank7]:     self.env[node] = self.run_node(node)
+[rank7]:                      ^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1997, in run_node
+[rank7]:     self.register_users_of(result)
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1072, in register_users_of
+[rank7]:     register(node_output)
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/graph.py", line 1069, in register
+[rank7]:     for read_name in value.get_read_names():
+[rank7]:                      ^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank7]:     return self.data.get_read_names()
+[rank7]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8658, in get_read_names
+[rank7]:     return self.data.get_read_names()
+[rank7]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 4766, in get_read_names
+[rank7]:     return self.data.get_read_names()
+[rank7]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1042, in get_read_names
+[rank7]:     return OrderedSet(self.inner_fn_opcount().read_buffers)
+[rank7]:                       ^^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "<string>", line 6, in inner_fn_opcount_cache_on_self
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 1005, in inner_fn_opcount
+[rank7]:     self.inner_fn(*self.inner_fn_args())
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2735, in inner_fn
+[rank7]:     _boundaries_helper(boundaries),
+[rank7]:     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/lowering.py", line 2589, in _boundaries_helper
+[rank7]:     stride = tb.get_stride()
+[rank7]:              ^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 8573, in get_stride
+[rank7]:     return self.data.get_stride()
+[rank7]:            ^^^^^^^^^^^^^^^^^^^^^^
+[rank7]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/ir.py", line 758, in get_stride
+[rank7]:     raise NotImplementedError(type(self).__name__)
+[rank7]: torch._inductor.exc.InductorError: NotImplementedError: SliceView
+
+[rank7]: While executing %submod_1 : [num_users=4] = call_module[target=submod_1](args = (%l_self_modules_qg_parameters_weight_, %getitem, %getitem_1, %getitem_2, %l_cu_, %s42, %l_self_modules_rope_buffers_inv_freq_), kwargs = {})
+[rank7]: Original traceback:
+[rank7]: None
+[rank7]: Use tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)
+
+[rank7]: Set TORCHDYNAMO_VERBOSE=1 for the internal stack trace (please do this especially if you're reporting a bug to PyTorch). For even more developer context, set TORCH_LOGS="+dynamo"
+
+W0910 13:35:48.615000 2587220 torch/distributed/elastic/multiprocessing/api.py:1012] Sending process 2587294 closing signal SIGTERM
+W0910 13:35:48.616000 2587220 torch/distributed/elastic/multiprocessing/api.py:1012] Sending process 2587295 closing signal SIGTERM
+W0910 13:35:48.621000 2587220 torch/distributed/elastic/multiprocessing/api.py:1012] Sending process 2587297 closing signal SIGTERM
+W0910 13:35:48.624000 2587220 torch/distributed/elastic/multiprocessing/api.py:1012] Sending process 2587298 closing signal SIGTERM
+W0910 13:35:48.624000 2587220 torch/distributed/elastic/multiprocessing/api.py:1012] Sending process 2587299 closing signal SIGTERM
+W0910 13:35:48.627000 2587220 torch/distributed/elastic/multiprocessing/api.py:1012] Sending process 2587300 closing signal SIGTERM
+W0910 13:35:48.627000 2587220 torch/distributed/elastic/multiprocessing/api.py:1012] Sending process 2587301 closing signal SIGTERM
+Exception ignored in atexit callback: <function shutdown_compile_workers at 0x7ff713941f80>
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/async_compile.py", line 151, in shutdown_compile_workers
+    pool.shutdown()
+  File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/compile_worker/subproc_pool.py", line 342, in shutdown
+    self.process.wait(300)
+  File "/usr/lib/python3.12/subprocess.py", line 1264, in wait
+    return self._wait(timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/subprocess.py", line 2047, in _wait
+    time.sleep(delay)
+  File "/work/aupai/train.py", line 3863, in _save_on_interrupt
+    raise KeyboardInterrupt(f"signal {signum}")
+KeyboardInterrupt: signal 15
+E0910 13:35:51.206000 2587220 torch/distributed/elastic/multiprocessing/api.py:986] failed (exitcode: 1) local_rank: 2 (pid: 2587296) of binary: /usr/bin/python3
+Traceback (most recent call last):
+  File "/usr/local/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 362, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 990, in main
+    run(args)
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 981, in run
+    elastic_launch(
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 170, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 317, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+train.py FAILED
+------------------------------------------------------------
+Failures:
+[1]:
+  time      : 2026-09-10_13:35:51
+  host      : iv-yeozpb5g5cbw80bls64e
+  rank      : 0 (local_rank: 0)
+  exitcode  : -15 (pid: 2587294)
+  error_file: <N/A>
+  traceback : Signal 15 (SIGTERM) received by PID 2587294
+[2]:
+  time      : 2026-09-10_13:35:51
+  host      : iv-yeozpb5g5cbw80bls64e
+  rank      : 1 (local_rank: 1)
+  exitcode  : -15 (pid: 2587295)
+  error_file: <N/A>
+  traceback : Signal 15 (SIGTERM) received by PID 2587295
+[3]:
+  time      : 2026-09-10_13:35:51
+  host      : iv-yeozpb5g5cbw80bls64e
+  rank      : 3 (local_rank: 3)
+  exitcode  : -15 (pid: 2587297)
+  error_file: <N/A>
+  traceback : Signal 15 (SIGTERM) received by PID 2587297
+[4]:
+  time      : 2026-09-10_13:35:51
+  host      : iv-yeozpb5g5cbw80bls64e
+  rank      : 4 (local_rank: 4)
+  exitcode  : -15 (pid: 2587298)
+  error_file: <N/A>
+  traceback : Signal 15 (SIGTERM) received by PID 2587298
+[5]:
+  time      : 2026-09-10_13:35:51
+  host      : iv-yeozpb5g5cbw80bls64e
+  rank      : 5 (local_rank: 5)
+  exitcode  : -15 (pid: 2587299)
+  error_file: <N/A>
+  traceback : Signal 15 (SIGTERM) received by PID 2587299
+[6]:
+  time      : 2026-09-10_13:35:51
+  host      : iv-yeozpb5g5cbw80bls64e
+  rank      : 6 (local_rank: 6)
+  exitcode  : -15 (pid: 2587300)
+  error_file: <N/A>
+  traceback : Signal 15 (SIGTERM) received by PID 2587300
+[7]:
+  time      : 2026-09-10_13:35:51
+  host      : iv-yeozpb5g5cbw80bls64e
+  rank      : 7 (local_rank: 7)
+  exitcode  : 1 (pid: 2587301)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-09-10_13:35:48
+  host      : iv-yeozpb5g5cbw80bls64e
+  rank      : 2 (local_rank: 2)
+  exitcode  : 1 (pid: 2587296)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
