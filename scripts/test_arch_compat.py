@@ -1781,3 +1781,135 @@ assert (_y16c[:, 1:4] - _y16[:, 1:4]).abs().max().item() > 1e-6, (
 print(f"CSA: off constructs nothing, on adds {len(_added)} params; causal at all {_T - 1} "
       f"perturbed positions; doc-packed input isolated (cross-doc delta 0.0, within-doc "
       f"{_within:.2e}); sub-block-length docs isolated and self-visible")
+
+# ---------------------------------------------------------------------------
+# CSA2 (de-103): learned entries + dedicated indexer + one softmax over entries + SWA.
+# Same property suite as CSA, plus the indexer's own leak path and a gradient for the
+# non-differentiable top-k's parameters.
+# ---------------------------------------------------------------------------
+class _CfgCsa2On(_CfgCsaOff):
+    csa, csa2 = True, True
+    csa2_m, csa2_top_k, csa2_n_win = 4, 2, 8
+    csa2_indexer_heads, csa2_indexer_dim = 2, 8   # 2 divides heads=4; each indexer head scores its group's mean
+
+
+class _CfgCsa2M1(_CfgCsa2On):
+    csa2_m = 1                             # the paper's uncompressed-main-KV special case
+
+
+# 1. FINITE ON A CLEAN INPUT, packed and unpacked.
+_csa2 = model.CompressedSparseAttention(_CfgCsa2On, 4, 16).double()
+_T2 = 20
+torch.manual_seed(11)
+_q2, _k2, _v2 = (torch.randn(1, _T2, 4, 16, dtype=torch.double) for _ in range(3))
+_x2 = torch.randn(1, _T2, 64, dtype=torch.double)
+_y2 = _csa2(_q2, _k2, _v2, x=_x2)
+assert torch.isfinite(_y2).all(), "CSA2 produced non-finite output on a clean input"
+_cu2 = torch.tensor([0, 10, 20], dtype=torch.int32)
+_y2c = _csa2(_q2, _k2, _v2, cu=_cu2, x=_x2)
+assert torch.isfinite(_y2c).all(), "CSA2 produced non-finite output on a doc-packed input"
+
+# 2. CAUSALITY BY PERTURBATION, now covering THREE leak paths: the learned entries, the
+#    SWA window, and the indexer selection (a future block ranked top-k).
+_leaks = []
+for _t in range(1, _T2):
+    _k3, _v3 = _k2.clone(), _v2.clone()
+    _k3[:, _t] += 7.0
+    _v3[:, _t] += 7.0
+    _d = (_csa2(_q2, _k3, _v3, x=_x2)[:, :_t] - _y2[:, :_t]).abs().max().item()
+    if _d > 1e-12:
+        _leaks.append((_t, _d))
+assert not _leaks, (
+    f"CSA2 leaks the future: perturbing position t moved outputs BEFORE t at {_leaks[:4]}. "
+    f"Check the entry visibility mask AND the indexer mask -- isc must be masked before topk")
+
+# 3. THE INDEXER MASK IS LOAD-BEARING, NOT JUST PRESENT. At t=1 no block is complete
+#    (m=4), so vis is empty there: an unmasked topk would still pick a block, the masked
+#    one picks nothing, and the output equals PLAIN WINDOWED ATTENTION exactly -- the
+#    entry branch contributes zero rather than a silent fallback.
+_m2 = _CfgCsa2On.csa2_m
+with torch.no_grad():
+    _kc3, _, _vis3, _ = model.entries_per_doc(
+        _q2, _k2.transpose(1, 2), _v2.transpose(1, 2),
+        torch.arange(0, _T2 + 1, _T2, dtype=torch.int32), _m2,
+        _csa2.compress_k, _csa2.compress_v)
+    _kc3g = _kc3.view(1, _csa2.ih, 4 // _csa2.ih, _kc3.shape[-2], 16).mean(2)
+    _iq3 = _csa2.indexer_q(_x2).view(1, _T2, _csa2.ih, _csa2.di)
+    _ik3 = torch.einsum("bhnd,hde->bhne", _kc3g, _csa2.ik_weight)
+    _isc3 = (_iq3.transpose(1, 2) @ _ik3.transpose(-1, -2))
+assert _vis3[0, 1].sum() == 0, "t=1 has a visible block at m=4; the test premise is wrong"
+assert torch.isfinite(_isc3[0, :, 1]).any(), (
+    "the unmasked indexer has no finite scores at t=1 -- nothing for the mask to block, "
+    "so this assertion would pass over a world where the leak cannot occur")
+with torch.no_grad():
+    _qh, _kh, _vh = _q2.transpose(1, 2), _k2.transpose(1, 2), _v2.transpose(1, 2)
+    _full = (_qh @ _kh.transpose(-1, -2)) * (16 ** -0.5)
+    _ar = torch.arange(_T2)
+    _mw = (torch.ones(_T2, _T2, dtype=torch.bool).tril()
+           & ((_ar[:, None] - _ar[None, :]) < _CfgCsa2On.csa2_n_win))
+    _ref = torch.softmax(_full.masked_fill(~_mw[None, None], float("-inf")), -1) @ _vh
+_dwin = (_y2[:, 1] - _ref[:, :, 1]).abs().max().item()
+assert _dwin < 1e-12, (
+    f"CSA2 at t=1 (no visible block) differs from plain windowed attention by {_dwin:.2e} "
+    f"-- the entry branch must contribute exactly zero, not a silent fallback")
+
+# 4. CROSS-DOCUMENT ISOLATION, and the perturbation is visible inside its own document.
+_cross = []
+for _t in range(10):
+    _k3, _v3 = _k2.clone(), _v2.clone()
+    _k3[:, _t] += 7.0
+    _v3[:, _t] += 7.0
+    _d = (_csa2(_q2, _k3, _v3, cu=_cu2, x=_x2)[:, 10:] - _y2c[:, 10:]).abs().max().item()
+    if _d > 1e-12:
+        _cross.append((_t, _d))
+assert not _cross, f"CSA2 leaks across documents at {_cross[:4]}"
+_k3, _v3 = _k2.clone(), _v2.clone()
+_k3[:, 5] += 7.0
+_v3[:, 5] += 7.0
+_within2 = (_csa2(_q2, _k3, _v3, cu=_cu2, x=_x2)[:, :10] - _y2c[:, :10]).abs().max().item()
+assert _within2 > 1e-6, (
+    f"a perturbation is invisible inside its own document (delta {_within2:.2e}); the "
+    f"cross-document assertion is then asserting over a dead path")
+
+# 5. BACKWARD IS FINITE THROUGH EVERY PARAMETER, and the indexer gets a gradient at all.
+#    The hard top-k is non-differentiable; without the straight-through softmax the
+#    indexer parameters would have NO grad and could never learn.
+_csa2.zero_grad()
+_y2.sum().backward()
+_bad = [n for n, p in _csa2.named_parameters()
+        if p.grad is None or not torch.isfinite(p.grad).all()]
+assert not _bad, f"CSA2 backward missing or non-finite grads at: {_bad}"
+assert _csa2.ik_weight.grad is not None and _csa2.indexer_q.weight.grad is not None, (
+    "the indexer got no gradient -- the straight-through path is gone and the top-k is "
+    "a dead selector")
+
+# 6. m=1 IS THE UNCOMPRESSED SPECIAL CASE: no compressor is built, and the path still runs.
+_csa2m1 = model.CompressedSparseAttention(_CfgCsa2M1, 4, 16).double()
+assert _csa2m1.compress_k is None and _csa2m1.compress_v is None, (
+    "m=1 built a compressor; the paper's uncompressed-main-KV special case is identity")
+assert torch.isfinite(_csa2m1(_q2, _k2, _v2, x=_x2)).all(), "CSA2 m=1 produced non-finite output"
+
+# 7. csa2 WITHOUT csa IS A CONSTRUCTION ERROR, not a silent no-op.
+class _CfgCsa2Alone(_CfgCsa2On):
+    csa = False
+try:
+    model.CompressedSparseAttention(_CfgCsa2Alone, 4, 16)
+except ValueError:
+    pass
+else:
+    raise AssertionError("csa2=True without csa=True constructed silently; the arm/variant "
+                         "convention must refuse")
+
+# 8. STATE_DICT: csa2 on adds the new parameters and drops branch_gate.
+_on2 = model.GatedMLA(_CfgCsa2On)
+_added2 = sorted(set(_on2.state_dict()) - set(_off.state_dict()))
+assert _added2 == ["csa.compress_k.bias", "csa.compress_k.weight",
+                   "csa.compress_v.bias", "csa.compress_v.weight",
+                   "csa.ik_weight", "csa.indexer_q.weight"], (
+    f"CSA2 on adds unexpected parameters: {_added2}")
+assert not [k for k in _on2.state_dict() if "branch_gate" in k], (
+    "csa2 still carries the deleted branch gate")
+print(f"CSA2: finite packed+unpacked; causal at all {_T2 - 1} perturbed positions; indexer "
+      f"mask load-bearing (t=1 output == window-only, {_dwin:.1e}); cross-doc delta 0.0, "
+      f"within-doc {_within2:.2e}; backward finite on {len(list(_csa2.parameters()))} params "
+      f"with indexer grad; m=1 uncompressed; csa2-alone refuses; {len(_added2)} new state_dict keys")
