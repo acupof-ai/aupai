@@ -79,6 +79,7 @@ def main():
     ap.add_argument("--raw", default="data/raw/ultradata")
     ap.add_argument("--out", default=None)
     ap.add_argument("--tokenizer", default="data/tokenizer.json")
+    ap.add_argument("--limit-rows", type=int, default=0, help="stop after N rows (dry run)")
     args = ap.parse_args()
     out = args.out or f"data/corpus/ultradata_{args.level.lower()}_py"
 
@@ -128,6 +129,10 @@ def main():
                 if total % 100000 == 0:
                     print(f"[{i}] rows={total} kept={stats['kept']} decontam={stats['decontam']} "
                           f"dup={stats['dup']} empty={stats['empty']}", flush=True)
+                if args.limit_rows and total >= args.limit_rows:
+                    break
+            if args.limit_rows and total >= args.limit_rows:
+                break
         print(f"done shard {i}: rows={total} kept={stats['kept']}", flush=True)
     writer.close()
 
