@@ -1923,6 +1923,159 @@ print(f"CSA2: finite packed+unpacked; causal at all {_T2 - 1} perturbed position
       f"within-doc {_within2:.2e}; backward finite on {len(list(_csa2.parameters()))} params "
       f"with indexer grad; m=1 uncompressed; csa2-alone refuses; {len(_added2)} new state_dict keys")
 
+# ── CSA2 Reuse (3b-20): Full emits a KV package, Reuse consumes it ────────────
+# The acceptance contract: a Reuse layer's output CHANGES when its source package
+# changes, does NOT change when a neighbouring Reuse layer's parameters change,
+# and Reuse adds zero global-branch parameters of its own.
+_mla_f = model.GatedMLA(_CfgCsa2On).double()
+_mla_r = model.GatedMLA(_CfgCsa2On, csa2_mode="R").double()
+assert isinstance(_mla_r.csa, model.CSA2Reuse), "csa2_mode=R must build CSA2Reuse"
+torch.manual_seed(31)
+_xr = torch.randn(1, 20, 64, dtype=torch.double)
+_cur = torch.tensor([0, 12, 20], dtype=torch.int32)
+_yf = _mla_f(_xr, cu=_cur)
+_pkg = _mla_f._pkg
+assert _pkg is not None and _pkg.nb == 5, (
+    f"Full must emit a package (20 tokens, m=4, 2 docs -> 5 blocks), got nb={_pkg.nb if _pkg else None}")
+_mla_r._pkg = _pkg
+_yr = _mla_r(_xr, cu=_cur)
+assert torch.isfinite(_yr).all(), "Reuse produced non-finite output"
+
+# (a) SOURCE-CHANGE PROPAGATES. Block 0 is the only complete block at t=3..6, so it
+# is selected there for every head -- mutating it must move the output.
+# Indexing note: kc is [B,H,NB,D], so block 0 of every head is [:, :, 0, :];
+# [..., 0, :, :] would select HEAD 0 of every block instead.
+for _field in ("kc", "vc"):
+    _alt = _pkg._replace(**{_field: getattr(_pkg, _field).clone()})
+    with torch.no_grad():
+        getattr(_alt, _field)[:, :, 0, :] += 7.0
+    _mla_r._pkg = _alt
+    _d = (_mla_r(_xr, cu=_cur) - _yr).abs().max().item()
+    assert _d > 1e-6, f"Reuse output unchanged by a {_field} mutation ({_d:.2e})"
+_alt = _pkg._replace(topk_idx=_pkg.topk_idx.clone())
+with torch.no_grad():
+    _alt.topk_idx[...] = 0          # every query selects block 0 only
+_mla_r._pkg = _alt
+assert (_mla_r(_xr, cu=_cur) - _yr).abs().max().item() > 1e-6, (
+    "Reuse output unchanged by a topk_idx mutation")
+
+# (b) NEIGHBOUR INVARIANCE: a second Reuse layer's parameters are not read here.
+_mla_r2 = model.GatedMLA(_CfgCsa2On, csa2_mode="R").double()
+_mla_r2.load_state_dict(_mla_r.state_dict())
+_mla_r2._pkg = _pkg
+assert (_mla_r2(_xr, cu=_cur) - _yr).abs().max().item() == 0.0, (
+    "identical Reuse weights+package gave different outputs -- shared state slipped in")
+with torch.no_grad():
+    _mla_r2.qg.weight += 0.5
+    _mla_r2.o.weight += 0.5
+_mla_r2._pkg = _pkg
+assert (_mla_r2(_xr, cu=_cur) - _yr).abs().max().item() > 1e-6, (
+    "a Reuse layer is blind to its own parameters")
+_mla_r._pkg = _pkg
+assert (_mla_r(_xr, cu=_cur) - _yr).abs().max().item() == 0.0, (
+    "Reuse output moved when a NEIGHBOURING Reuse layer's parameters changed")
+
+# (c) ZERO GLOBAL-BRANCH PARAMETERS: the Reuse module itself is parameter-free,
+# and the layer's params are exactly Full's minus the global-branch set.
+assert len(list(model.CSA2Reuse(_CfgCsa2On, 4, 16).parameters())) == 0, (
+    "CSA2Reuse must hold no parameters of its own")
+_pf, _pr = set(_mla_f.state_dict()), set(_mla_r.state_dict())
+assert _pr <= _pf, f"Reuse carries params Full lacks: {sorted(_pr - _pf)}"
+assert sorted(_pf - _pr) == ["csa.compress_k.bias", "csa.compress_k.weight",
+                             "csa.compress_v.bias", "csa.compress_v.weight",
+                             "csa.ik_weight", "csa.indexer_q.weight"], (
+    f"Reuse must drop exactly the global-branch params, got {sorted(_pf - _pr)}")
+
+# (d) MASKING AT THE CONSUMER, by perturbation: block 1 (positions 4..7) is
+# invisible before t=4; the last block belongs to doc 2 and is invisible in doc 1.
+_pkg_k = _pkg._replace(kc=_pkg.kc.clone())
+with torch.no_grad():
+    _pkg_k.kc[:, :, 1, :] += 7.0
+_mla_r._pkg = _pkg_k
+assert (_mla_r(_xr, cu=_cur)[:, :4] - _yr[:, :4]).abs().max().item() == 0.0, (
+    "a package entry for a future block moved a past output -- causal leak")
+_pkg_v = _pkg._replace(vc=_pkg.vc.clone())
+with torch.no_grad():
+    _pkg_v.vc[:, :, -1, :] += 7.0
+_mla_r._pkg = _pkg_v
+assert (_mla_r(_xr, cu=_cur)[:, :12] - _yr[:, :12]).abs().max().item() == 0.0, (
+    "a package entry from another document moved this doc's output -- doc leak")
+
+# (e) A PACKAGE CANNOT CROSS STREAMS: built for one cu, refused against another.
+_mla_r._pkg = _pkg
+try:
+    _mla_r(_xr, cu=torch.tensor([0, 20], dtype=torch.int32))
+except ValueError:
+    pass
+else:
+    raise AssertionError("Reuse read a package against a different packed stream")
+# and no package at all is a forward error, not a silent zero-branch
+_mla_r0 = model.GatedMLA(_CfgCsa2On, csa2_mode="R").double()
+try:
+    _mla_r0(_xr, cu=_cur)
+except ValueError:
+    pass
+else:
+    raise AssertionError("Reuse ran with no package (a Reuse-first stack must refuse)")
+
+# (f) END-TO-END THREADING through HybridLM._body: the slot is set, the Reuse
+# layer receives that exact package, a Full-weight perturbation reaches it, and
+# the slot is cleared after the forward.
+class _CfgReuseStack(_CfgPaDense):
+    layers, attn_every, attn_hybrid = 2, 1, True
+    csa, csa2 = True, True
+    csa2_m, csa2_top_k, csa2_n_win = 4, 2, 8
+    csa2_indexer_heads, csa2_indexer_dim = 2, 8
+    csa2_modes, n_swa_only_layers = "F,R", 0
+    rope_dims = 8  # all-attention stack: lifts the zero-KDA refusal
+
+
+_stack = HybridLM(_CfgReuseStack).double()
+assert isinstance(_stack.blocks[0].mixer.csa, model.CompressedSparseAttention)
+assert isinstance(_stack.blocks[1].mixer.csa, model.CSA2Reuse)
+assert _stack.csa2_modes == {0: "F", 1: "R"}
+_seen = []
+_stack.blocks[1].mixer.csa.register_forward_pre_hook(
+    lambda _m, _a: _seen.append(_a[-1]))
+torch.manual_seed(32)
+_idx = torch.randint(0, 256, (1, 20))
+_y1 = _stack(_idx)[0]
+assert len(_seen) == 1 and _seen[0] is not None and _seen[0].nb == 5, (
+    "the Reuse layer did not receive the Full layer's package through _body")
+with torch.no_grad():
+    _stack.blocks[0].mixer.csa.compress_k.weight += 0.3
+assert (_stack(_idx)[0] - _y1).abs().max().item() > 1e-6, (
+    "the Reuse layer's output did not move when its source package changed")
+assert _stack.blocks[0].mixer._pkg is None and _stack.blocks[1].mixer._pkg is None, (
+    "the package slot outlived the forward -- a stale package would reach the next caller")
+
+
+class _CfgReuseFirst(_CfgReuseStack):
+    csa2_modes = "R,F"
+
+
+try:
+    HybridLM(_CfgReuseFirst)
+except ValueError:
+    pass
+else:
+    raise AssertionError("a Reuse-first mode map constructed -- the package source is missing")
+
+
+class _CfgReuseCkpt(_CfgReuseStack):
+    grad_ckpt = True
+
+
+try:
+    HybridLM(_CfgReuseCkpt)
+except ValueError:
+    pass
+else:
+    raise AssertionError("grad_ckpt + Reuse constructed -- the stash is not a checkpoint input")
+print("CSA2Reuse: source-change propagates (kc/vc/topk_idx); neighbour-change invariant; "
+      "zero global-branch params (6 keys dropped); causal+doc masking exact; stream mismatch, "
+      "no-package, Reuse-first and grad_ckpt refuse; F,R body threads the package and clears the slot")
+
 # ── PureSWA (V4.1 Step 3, task 0e-2): CSA's window branch, alone ──────────────
 # Same perturbation discipline as the CSA cases above: a masked position must be EXACTLY
 # invisible (its softmax weight is exactly 0), and the perturbation must be visible where
