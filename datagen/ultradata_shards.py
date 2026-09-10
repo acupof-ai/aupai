@@ -32,6 +32,7 @@ from datagen.ud_solution_exec import FAIL, PASS, TIMEOUT, execute
 
 DOC_FIELD = {"L2": "content", "L3": "full_content"}
 N_SHARDS = {"L2": 119, "L3": 147}
+DROP_CATEGORIES = {"CONFIG", "TEST"}  # fb ruling 2026-09-10, 3b's category audit
 SHARD_BYTES = 100 * 1024 * 1024
 
 
@@ -116,7 +117,8 @@ def main():
 
     field = DOC_FIELD[args.level]
     seen = set()
-    stats = {"kept": 0, "decontam": 0, "dup": 0, "empty": 0, "exec_fail": 0, "exec_timeout": 0}
+    stats = {"kept": 0, "decontam": 0, "dup": 0, "empty": 0, "category_drop": 0,
+             "exec_fail": 0, "exec_timeout": 0}
     kept_chars = 0
     kept_tokens = 0
     total = 0
@@ -140,6 +142,8 @@ def main():
                 doc = cols[field][r]
                 if not doc or not doc.strip():
                     stats["empty"] += 1
+                elif args.level == "L2" and cols["category"][r] in DROP_CATEGORIES:
+                    stats["category_drop"] += 1
                 elif decontam({"prompt": doc, "output": ""}, bench):
                     stats["decontam"] += 1
                 else:
@@ -174,8 +178,9 @@ def main():
                 kept_tokens += len(tok.encode(doc).ids) + 1
             if total % 100000 == 0:
                 print(f"[{i}] rows={total} kept={stats['kept']} decontam={stats['decontam']} "
-                      f"dup={stats['dup']} empty={stats['empty']} exec_fail={stats['exec_fail']} "
-                      f"exec_timeout={stats['exec_timeout']}", flush=True)
+                      f"dup={stats['dup']} empty={stats['empty']} cat={stats['category_drop']} "
+                      f"exec_fail={stats['exec_fail']} exec_timeout={stats['exec_timeout']}",
+                      flush=True)
             if args.limit_rows and total >= args.limit_rows:
                 break
         print(f"done shard {i}: rows={total} kept={stats['kept']}", flush=True)
@@ -197,7 +202,8 @@ def main():
         "tokens_config": f"{args.tokenizer}, exact per-doc ids + one <eos> per doc "
                          "(code_rp1t convention)",
         "filters": ("decontam(humaneval,mbpp)+exact-dedup+solution-test-exec-pass"
-                    if args.level == "L3" else "decontam(humaneval,mbpp)+exact-dedup"),
+                    if args.level == "L3"
+                    else "decontam(humaneval,mbpp)+exact-dedup+drop-CONFIG,TEST"),
         "workers": args.exec_workers if args.level == "L3" else 1,
         "n_shards": writer.n,
         "filters_fp": fp_of(__file__, sys.modules["datagen.gen_exercises"].__file__,
