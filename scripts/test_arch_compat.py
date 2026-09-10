@@ -1889,7 +1889,9 @@ assert _csa2m1.compress_k is None and _csa2m1.compress_v is None, (
     "m=1 built a compressor; the paper's uncompressed-main-KV special case is identity")
 assert torch.isfinite(_csa2m1(_q2, _k2, _v2, x=_x2)).all(), "CSA2 m=1 produced non-finite output"
 
-# 7. csa2 WITHOUT csa IS A CONSTRUCTION ERROR, not a silent no-op.
+# 7. csa2 WITHOUT csa IS A CONSTRUCTION ERROR, not a silent no-op -- at both construction
+#    sites: the module directly, and GatedMLA (which builds the arm only when csa is on,
+#    so the refusal must live there too, not only inside the module).
 class _CfgCsa2Alone(_CfgCsa2On):
     csa = False
 try:
@@ -1899,6 +1901,13 @@ except ValueError:
 else:
     raise AssertionError("csa2=True without csa=True constructed silently; the arm/variant "
                          "convention must refuse")
+try:
+    model.GatedMLA(_CfgCsa2Alone)
+except ValueError:
+    pass
+else:
+    raise AssertionError("csa2=True without csa=True constructed silently through GatedMLA "
+                         "-- the refusal must fire at the layer level, where the arm is built")
 
 # 8. STATE_DICT: csa2 on adds the new parameters and drops branch_gate.
 _on2 = model.GatedMLA(_CfgCsa2On)
