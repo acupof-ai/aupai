@@ -131,7 +131,7 @@
    "listagents_ref": "59e76a",
    "state": "active-session-unknown",
    "exited": "the roster's session (tilerl-0a / 59e76a) exited 2026-09-09, reported by the user",
-   "departed_note": "moved to departed 2026-09-10 23:5xZ (fb): absent from ListAgents, socket dead"
+   "departed_note": "moved to departed 2026-09-11 02:1xZ (fb): absent from ListAgents, socket dead"
   },
   {
    "name": "b0",
@@ -144,7 +144,7 @@
    "note": "architecture, LR scaling, the mix generator; model extraction out of train.py (b0-8) for the structure-experiment platform ListAgents name lessons-62 as of 2026-09-03 14:3xZ (reached fb directly for the first time that day; earlier relays went via 3b). REVIEWER REASSIGNED 2026-09-09 by fb: tilerl exited, and the fixed pair tilerl<->b0 left b0 with no second reader and b0's open PRs #105 and #102 with no reviewer. New pair b0<->de. This is a controller reassignment forced by an exit, not a change to the user's 2026-08-31 pairing order; it is the minimum edit that keeps every roster member paired, and the user can overrule it. SOCKET CORRECTED 2026-09-09 after a resume. Identity verified: the roster's 92633.sock pid is dead and the file absent; PR #102 head 98f005d2 on b0-46-score-matrix-trace and #105 head 8a182adc on b0-47-code-decode match exactly; review.jsonl rows 277/278/281/292/293 read reviewer=b0; c4c0a7af exists.",
    "listagents_name": "lessons-d1",
    "listagents_ref": "0e4d13",
-   "departed_note": "moved to departed 2026-09-10 23:5xZ (fb): absent from ListAgents, socket dead"
+   "departed_note": "moved to departed 2026-09-11 02:1xZ (fb): absent from ListAgents, socket dead"
   },
   {
    "name": "e1",
@@ -156,7 +156,7 @@
    "note": "tokenizer, FoNE, launch-gate; recipe reconciliation gate (e1-9), milestone_profile throughput number (e1-10). Session lessons-03 (13136) died 01:51Z on an API 400 with its branch fully in main; back 02:05Z as lessons-58. The 'departed' ruling rested on the socket ENOENT and the session missing from ListAgents; lessons-e1 answering 不是 was a name collision, not evidence. ListAgents name lessons-58 as of 2026-09-03. SOCKET CORRECTED 2026-09-09 after a resume: was lessons-58 / 92... Identity verified against becd96f7, 18bd3842, f53aed11 and 7c121c37 on main, all present with matching subjects. A resume changes the label and the socket while the work continues -- that is the general case, not an exception, and this file is the one that has to be corrected each time.",
    "listagents_name": "lessons-eb",
    "listagents_ref": "75ded7",
-   "departed_note": "moved to departed 2026-09-10 23:5xZ (fb): absent from ListAgents, socket dead"
+   "departed_note": "moved to departed 2026-09-11 02:1xZ (fb): absent from ListAgents, socket dead"
   },
   {
    "name": "44",
@@ -168,7 +168,7 @@
    "note": "surveys, review, readout design; resume/plan arithmetic facts (44-11), AUTHORITY into checks (44-10) ListAgents name lessons-44 [c5bf0d] as of 2026-09-03.",
    "listagents_name": "lessons-44",
    "listagents_ref": "c5bf0d",
-   "departed_note": "moved to departed 2026-09-10 23:5xZ (fb): absent from ListAgents, socket dead"
+   "departed_note": "moved to departed 2026-09-11 02:1xZ (fb): absent from ListAgents, socket dead"
   }
  ],
  "pairs": {
@@ -180,6 +180,6 @@
   "0e": "3b",
   "66": "3b"
  },
- "refreshed": "2026-09-10T23:5xZ by fb: roster reconciled against ListAgents; ae socket corrected 83243->89510 (read from ae's from= address); four departed members moved out of members[].",
- "pairs_note": "2026-09-10 23:5xZ fb: seven live members only. Pairs: fb<->de, 3b->fb, 98->fb, ae->de, 0e->3b, 66->3b. tilerl/b0/e1/44 departed; every pair that named them is re-pointed. A reviewer is the pair above; a second reader for a PR may be any other live member if the pair is busy, named in the review row."
+ "refreshed": "2026-09-11T02:1xZ by fb: roster reconciled against ListAgents; ae socket corrected 83243->89510 (read from ae's from= address); four departed members moved out of members[].",
+ "pairs_note": "2026-09-11 02:1xZ fb: seven live members only. Pairs: fb<->de, 3b->fb, 98->fb, ae->de, 0e->3b, 66->3b. tilerl/b0/e1/44 departed; every pair that named them is re-pointed. A reviewer is the pair above; a second reader for a PR may be any other live member if the pair is busy, named in the review row."
 }
