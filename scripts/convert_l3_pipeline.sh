@@ -98,7 +98,14 @@ rc=0
 for p in $pids; do wait "$p" || rc=1; done
 [ $rc -ne 0 ] && { echo "GROUP_FAILURE rc=$rc -- no aggregate"; exit 1; }
 
-env PYTHONPATH=/work/aupai python3 datagen/ultradata_shards.py \
-  --level L3 --aggregate "stats_g*.json" --out "$OUT" \
-  2>&1 | tee runs/ultra_groups/l3_aggregate.log
+# Aggregate is opt-in (RUN_AGGREGATE=1): until ae's 13-gram decontam is wired
+# into the aggregate step, groups finish and STOP here rather than emit final
+# shards without solution-body decontamination (fb ruling 2026-09-11).
+if [ "${RUN_AGGREGATE:-0}" = "1" ]; then
+  env PYTHONPATH=/work/aupai python3 datagen/ultradata_shards.py \
+    --level L3 --aggregate "stats_g*.json" --out "$OUT" \
+    2>&1 | tee runs/ultra_groups/l3_aggregate.log
+else
+  echo "GROUPS_DONE_AGGREGATE_HELD (set RUN_AGGREGATE=1 once n-gram decontam is wired)"
+fi
 echo L3_PIPELINE_DONE
