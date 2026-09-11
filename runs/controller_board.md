@@ -1,9 +1,13 @@
-# Controller board (fb) — 2026-09-11 09:5xZ
+# Controller board (fb) — 2026-09-11 18:3xZ
 
 Goal: HumanEval pass@1 >= 30% on the V4.1 gate run (`runs/prereg.jsonl#v41_gate_0911@amended_7`).
 Everything below is ordered by distance from that number. Task ids are `runs/tasks.jsonl` rows.
 
-## P0 — launch critical path (blocks the number)
+## P0 — launch critical path: DONE, gate is up 15:11Z
+
+v41_gate_0911 step 10/38146 at 15:11Z, loss 7.36, peak 43.4 GiB, ranks 0-5 at 69.5 GB, stamp 544532a6, launcher sha 46f7d105. 66 GREEN on all five enforcement items at 14:5xZ; go given 15:0xZ. L3 cache 26.697B (vocab f1f86097, srcfp 63a3b0e6). Lost ~4h to the tunnel outage (friction row 3028e6ae) and ~15 min to the old-driver root path.
+
+Historical P0 table (all rows closed):
 
 | step | owner | task | state | acceptance | ETA |
 |---|---|---|---|---|---|
@@ -14,6 +18,15 @@ Everything below is ordered by distance from that number. Task ids are `runs/tas
 | launch | 66 | 66-9 | script on pod md5 f619eed7, `--csa2_win_flash` | first step line; peak <= 80 GiB; tok/s >= 15K; no NaN to step 100 | ~11:15Z |
 
 Waived (amendment 7): launch_gate.py's two inline-mix advisories. Retired by user order: L3 sandbox exec.
+
+## Run state 18:3xZ and the switch plan
+
+- v41_gate_0911 step ~2600, val 2.444/2.208/2.108 at 500/1000/2000, 28K tok/s/gpu, 4.65 s/step, peak 43.4 GiB, 0 NaN. Saves at 2000 (pinned ckpt_v41_gate_0911.milestone_he2k_step2000.pt, sha 0ad1fee5).
+- HumanEval .step2000 = 0/164 is an INSTRUMENT number: the model re-declares the function ("\ndef <entry_point>") and the "\ndef " stop truncated 143/164 to empty; 21 EOS-first are real. 66-14 fixes the stop (self re-declaration is not a stop) with PASS/FAIL controls; corrected .step2000 + .step4000 numbers due ~20:40Z on card 6.
+- USER RULING: formal run on 8 cards. Decided path C (de, train.py resume is world-agnostic): at the .step6000 save (~23:00Z) stop the w6 job by PID and resume the same run at world 8, accum 6 (786,432 tok/step, schedule unchanged): 31.3 h to 30B vs 41.5 h continuing on 6. #275 reworked into the resume line; rehearse_cursor assertion 3 before the go; prereg amendment 9 at the go.
+- OPEN USER DECISION: the win_flash checkpoints have no CPU path (flash kernel asserts fp16/bf16), so no CPU HumanEval. A = world 7 + card 6 lane, GPU eval every 2000 steps, +4.5 h (fb recommends). B = world 8 + a CPU fallback in model.py (de), eval every 6000 steps. Default A at 23:00Z if unanswered.
+- Cards: 6 handed to aupai for eval windows (tilerl-a3), 7 after tileRL's MMLU run (~21:00Z); both to aupai outright thereafter (user ruling via tilerl-a3).
+- Merged today: #260 #266 #268 #269 #271 #273 #274 #276; pod stamp 1f6a8021 restored after a cleared stamp. Open: #270 (0e pipeline), #272 (98 cache facts), #275 (w8 resume launcher), 66-14 eval fix PR.
 
 ## P1 — during the run (2-3 days, 38.1K steps)
 
