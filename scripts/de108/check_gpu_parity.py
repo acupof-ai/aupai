@@ -101,7 +101,8 @@ def measure(joint, B, T, h, hd, d, device, iters=5):
     torch.cuda.reset_peak_memory_stats()
     m = build(joint, device=device)
     q, k, v, x = inputs(B, T, h, hd, d, torch.bfloat16, device)
-    cu = torch.tensor([0, T // 2, T, 2 * T], dtype=torch.int32, device=device)
+    # two equal docs per row over the B*T stream: 0,T/2,T, 3T/2,... -> B*T
+    cu = (torch.arange(0, 2 * B + 1, dtype=torch.int32, device=device) * (T // 2))
 
     def step():
         for z in (q, k, v, x):
