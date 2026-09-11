@@ -150,7 +150,7 @@ every dip in the measured 30B window: 10.3 min of 6.04 h, 2.8%
 | pass@k gate for RL | `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` — needs pass@8 − pass@1 ≥ 15pt |
 | Launch the V4.1 gate run | `bash runs/v41_gate_0911.sh` (pod) — world 6, block 0-5 at launch (no lane; temporary pre-launch lane is card 5), B4/accum8, `data/mix_v41_gate.json`; committed DRAFT, it runs only on the controller's explicit go and the `runs/prereg.jsonl#v41_gate_0911` checklist (mix caches present, de-108 merged or waived, cards 0-5 cleared on the one-hour notice). The script is also the pod-side launch file: place it on the pod (pod_push skips `runs/`) before the go |
 | V4.1 smoke launch shape | the gate line is proven at smoke scale (B4/accum4, 381 steps, 72.6 GiB/rank): see `facts/v41.json#v41.smoke_compiled_flash_h_i_0911`; the smoke launcher lived only on the pod and the tracked gate launcher `runs/v41_gate_0911.sh` carries the same architecture flags — `--csa2 --rope_dims 64 --n_swa_only_layers 2 --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11` |
-| Decontaminate the six non-ultra gate domains | `python scripts/filter_gate_domains.py --domains <comma-list>` — 13-gram overlap removal against HumanEval/MBPP, writes a `_dc` domain + summary (facts in `facts/contamination.json`). The overlap engine is the library `filters/decontam_ngram.py` (CLI runs only with `--selftest`); this script is NOT the ultra path — code_ultra_l{2,3}_dc decontaminate inside `datagen/ultradata_shards.py --aggregate` |
+| Decontaminate the six non-ultra gate domains | `python scripts/filter_gate_domains.py --domains <comma-list>` — 13-gram overlap removal against HumanEval/MBPP, writes a `_dc` domain + summary (facts in `facts/contamination.json`). The overlap engine is the library `filters/decontam_ngram.py` (CLI runs only with `--selftest`); this script is NOT the ultra path — code_ultra_l2_dc and code_ultra_l3_noexec_dc decontaminate inside `datagen/ultradata_shards.py --aggregate` |
 | Corpus | `python datagen/build_corpus.py --domain X --source Y --target_tokens 6e9`; `--dry --limit N` prints the rejects histogram. Math generators: `mathbank/vet_programs.py` is the registry root that reaches `math_programs_l*`. UltraData L2/L3 keep rules: 0e's filters (`#237`) |
 | AttnRes A/B | retired with the KDA/MLA line; the ablation script stays in history but nothing launches it |
 | FP8 NaN probe | `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python eval/nan_probe.py` (pod) |
@@ -296,15 +296,17 @@ Cite a fact as `facts/<file>.json#<id>`; the id must exist. Numeric conclusions 
 
 Per-domain weight, epoch cap, anneal weight. `train.py` builds the schedule and consumes it in order, so `Cfg.epochs` is forced to 1. **It is the only data path** — a named-but-missing mix raises. The flat-corpus fallback was deleted: it once trained on 244KB in silence. `data/mix_sample.json` is the 2,000-document sample a checkout ships.
 
-The V4.1 gate mix is `data/mix_v41_gate.json` (ae; the launch version with the
-decontaminated domain names is open PR #254): `total_tokens` 30.0B is the **budget, not
+The V4.1 gate mix is `data/mix_v41_gate.json` (ae; decontaminated domain names landed in
+#254, the L3 noexec rename in #261): `total_tokens` 30.0B is the **budget, not
 supply** — shape code 86% / math 8% / English 4.5% / CoT 1.5%, **weights are TARGET
 composition, not supply shares**, and `anneal` is a separate late-training composition
 (6 of 8 domains' anneal differs from their main weight). All domains run one epoch except
 `cot`, which repeats 3× against its small measured supply. The launch mix names eight
 13-gram-decontaminated `_dc` directories: `code_ultra_l2_dc` (natural code) and
-`code_ultra_l3_dc` (task/analysis/solution/test) from openbmb/UltraData-Code python under
-0e's keep rules (#237), plus `code_py_starcoder_dc`, `math_owm_stage2_dc`,
+`code_ultra_l3_noexec_dc` (L3 static aggregate — dedup + nontriviality + decontam, with
+NO sandbox solution-exec filter, user order 2026-09-11; the exec-filtered `code_ultra_l3_dc`
+arm is retained for a later A/B, it is not in the mix) from openbmb/UltraData-Code python
+under 0e's keep rules (#237), plus `code_py_starcoder_dc`, `math_owm_stage2_dc`,
 `code_keep_p1_dc` (the 2.8116B classifier keep set, assembled flat by
 `scripts/assemble_keep_p1.py`), `en_c4_stage2_dc`, `cot_dc`, `code_py_rp1t_dc`.
 **Every gate code domain is decontaminated against HumanEval/MBPP before it enters the mix**
