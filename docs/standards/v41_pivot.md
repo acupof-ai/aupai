@@ -92,8 +92,18 @@ close before the gate run; each needs a one-line ruling in this table, not a new
   decontaminated against HumanEval/MBPP via `scripts/filter_gate_domains.py` (engine: the `filters/decontam_ngram.py` library; results in
   facts/contamination.json), and mixed with the existing math/CoT/en domains and the
   2.8116B classifier keep set (now `code_keep_p1`, assembled flat by
-  scripts/assemble_keep_p1.py). The mix is `data/mix_v41_gate.json`: total_tokens 30.0B,
-  one epoch, eight domains (PR #246; weights re-normalise to 0e's measured totals).
+  scripts/assemble_keep_p1.py). The mix is `data/mix_v41_gate.json`: total_tokens 30.0B is
+  the BUDGET not supply; weights are TARGET composition (code 86% / math 8% / English 4.5%
+  / CoT 1.5%), not supply shares; `anneal` is a separate late-training composition and
+  differs from the main weight in 6 of 8 domains; all domains run one epoch except cot
+  (3×). The launch mix names eight decontaminated `_dc` dirs (open PR #254):
+  code_ultra_l{2,3}_dc plus code_py_starcoder_dc, math_owm_stage2_dc, code_keep_p1_dc,
+  en_c4_stage2_dc, cot_dc, code_py_rp1t_dc. The six non-ultra decontaminate via
+  scripts/filter_gate_domains.py (facts/contamination.json cont.gate_dc_*; packed _dc
+  supplies measured in
+  facts/corpus_supply.json#cs.gate_domains_decontaminated_tokenized_0911); the two ultra
+  domains decontaminate inside 0e's aggregate and their exact totals remain estimates
+  until that lands.
   **Tokeniser: rebuilt 2026-09-10 to 32,768 slots under unfreeze condition 2** — the
   measured freeze tax on UltraData was ~8.5% (PR #233,
   facts/tokenizer.json#tok.ultra_freeze_tax_0910); the 32,773-slot vocab is preserved on
