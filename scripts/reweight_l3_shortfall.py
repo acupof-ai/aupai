@@ -60,7 +60,7 @@ SUPPLY_NONULTRA = {
     "cot_dc": 399_994_207,
     "code_py_rp1t_dc": 379_599_341,
 }
-L2, L3, STAR = "code_ultra_l2_dc", "code_ultra_l3_dc", "code_py_starcoder_dc"
+L2, L3, STAR = "code_ultra_l2_dc", "code_ultra_l3_noexec_dc", "code_py_starcoder_dc"
 
 
 def reweight(kept_l3, kept_l2, mix):
@@ -136,7 +136,8 @@ def table(mix, kept_l3, kept_l2):
 def run(kept_l3, kept_l2, root, apply):
     """Pure driver: returns (table_text, exit_code). main() and the selftest share it."""
     path = os.path.join(root, MIX_REL)
-    mix = json.load(open(path, encoding="utf-8"))
+    with open(path, encoding="utf-8") as fh:
+        mix = json.load(fh)
     out = reweight(kept_l3, kept_l2, mix)
     text = table(out, kept_l3, kept_l2)
     ws = sum(v["weight"] for v in out["domains"].values())
@@ -171,7 +172,7 @@ def main():
 
 _BASE_MIX = {"domains": {
     "code_ultra_l2_dc": {"weight": 0.45, "anneal": 0.30, "epochs": 1},
-    "code_ultra_l3_dc": {"weight": 0.30, "anneal": 0.40, "epochs": 1},
+    "code_ultra_l3_noexec_dc": {"weight": 0.30, "anneal": 0.40, "epochs": 1},
     "code_py_starcoder_dc": {"weight": 0.07, "anneal": 0.05, "epochs": 1},
     "code_keep_p1_dc": {"weight": 0.03, "anneal": 0.03, "epochs": 1},
     "code_py_rp1t_dc": {"weight": 0.01, "anneal": 0.01, "epochs": 1},
@@ -225,14 +226,16 @@ def _selftest():
     with tempfile.TemporaryDirectory() as root:
         os.makedirs(os.path.join(root, "data"))
         mix_path = os.path.join(root, "data", "mix_v41_gate.json")
-        json.dump(_BASE_MIX, open(mix_path, "w"))
+        with open(mix_path, "w") as fh:
+            json.dump(_BASE_MIX, fh)
 
         # 5. end-to-end --apply at kept_l3=6B (fb case): exit 0, file rewritten,
         #    vectors sum 1.0 and every domain within supply*epochs on the 27/3 basis.
         _t, o6, code6, p6 = run(6e9, DEFAULT_KEPT_L2, root, apply=True)
         assert code6 == 0, _t
         assert infeasible(o6, 6e9, DEFAULT_KEPT_L2) == []
-        on_disk = json.load(open(p6))
+        with open(p6) as fh:
+            on_disk = json.load(fh)
         assert on_disk["domains"][L3]["weight"] == o6["domains"][L3]["weight"]
         assert round(sum(v["weight"] for v in on_disk["domains"].values()), 6) == 1.0
         assert round(sum(v["anneal"] for v in on_disk["domains"].values()), 6) == 1.0
@@ -254,9 +257,11 @@ def _selftest():
         try:
             _t4, _o4, code4, _ = run(0.0, DEFAULT_KEPT_L2, root, apply=False)
             assert code4 == 2, _t4
-            before = open(mix_path).read()
+            with open(mix_path) as fh:
+                before = fh.read()
             _t5, _o5, code5, _ = run(0.0, DEFAULT_KEPT_L2, root, apply=True)
-            assert code5 == 2 and open(mix_path).read() == before
+            with open(mix_path) as fh:
+                assert code5 == 2 and fh.read() == before
         finally:
             SUPPLY_NONULTRA[STAR] = orig_star
     print("reweight_l3_shortfall selftest OK")
