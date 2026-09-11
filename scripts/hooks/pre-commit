@@ -1034,6 +1034,12 @@ def main():
         # run and broke the word-token assertion). Runs synthetic-only here; the real
         # HumanEval/55 control runs where the gitignored benchmark files exist.
         "filters/decontam_ngram.py",
+        # The ae-7 _dc production writer. Registered because its stamp is what train.py
+        # _assert_mix_domains checks at launch: the first stamps omitted "fingerprint" and
+        # the launch would have refused every _dc domain. The selftest builds a real gate +
+        # corpus, runs filter_domain, asserts the drops, and runs the ACTUAL train.py launch
+        # guard on the stamped output (accept, then refuse after a stamp mutation).
+        "scripts/filter_gate_domains.py",
         "scripts/corpus_snapshot.py",
         # The exact token counter behind cs.code_rp1t_landed and cs.code_dedup08_landed.
         # Registered because it is the instrument that CORRECTS a measurement-basis defect:
