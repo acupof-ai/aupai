@@ -1040,6 +1040,13 @@ def main():
         # corpus, runs filter_domain, asserts the drops, and runs the ACTUAL train.py launch
         # guard on the stamped output (accept, then refuse after a stamp mutation).
         "scripts/filter_gate_domains.py",
+        # The 23:00Z L3-shortfall reweight (fb ruling 2026-09-11). Registered because the
+        # whole risk is over-reading L3/L2 supply: the selftest pins full-L3 no-op,
+        # zero-L3 and 6B cases on known answers, and the script refuses --apply if any
+        # non-cot scheduled main+anneal exceeds supply. A sign error in the anneal shift
+        # (the first version scheduled 17.4B of a 16.57B L2) would rewrite the launch
+        # mix silently without the known-answer cases.
+        "scripts/reweight_l3_shortfall.py",
         "scripts/corpus_snapshot.py",
         # The exact token counter behind cs.code_rp1t_landed and cs.code_dedup08_landed.
         # Registered because it is the instrument that CORRECTS a measurement-basis defect:
