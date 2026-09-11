@@ -29,7 +29,18 @@ overlay on `/dev/vda2` (inode verified identical to containerd snapshot 1650); t
 host NVMe `/data00` holds a different, older token set. So the gate token caches
 98 builds into the container's `/data00/tokens_*.pt` are physically written to the
 91%-full **root disk**, not to an NVMe. The container's `/work` is a bind to
-`/dev/vda2` as well. `/mnt/data02` inside the container *is* the nvme2n1 mount.
+`/dev/vda2` as well.
+
+**NVMe is NOT writable inside the container (corrected after probe):** the in-container
+`/mnt/data02` and `/mnt/nvme_probe` mountpoints for nvme2n1 are dead binds — `mkdir`
+returns ENOENT (`df` lists them but they are inaccessible). `/mnt/data01`,
+`/mnt/nvme02`, `/mnt/recover` appear writable but `df` resolves them to the **overlay**
+(root disk), so they are ordinary root-disk directories, not NVMe. Net: as of
+2026-09-11 the container has **zero reachable writable NVMe**; all four 3.5 TB NVMe
+devices (host /data00-/data03, ~10.4 TB free) are usable only from the host via
+`tn exec`. This is also why a byte-identical copy of a model on host `/data00` is NOT
+usable by an in-container job — it must be copied into the container/root disk (proven
+by the Qwen3.8-NVFP4 delete/restore, noted in runs/deletion_0911b.txt row 4).
 
 ## Entries >= 2 GiB, largest first
 
@@ -101,11 +112,12 @@ host NVMe `/data00` holds a different, older token set. So the gate token caches
 ## Operational note (factual, not a recommendation)
 
 The gate-run token caches and the active UltraData raw copy are being written to
-the 91%-full root disk because the container `/data00` is an overlay path on
-`/dev/vda2`, while the 10.4 TB of free NVMe capacity is reachable in-container only
-at `/mnt/data02` (nvme2n1; the host mounts nvme0/1/3 at /data00,/data01,/data03
-which the container does not mount). The approver column is the only prescriptive
-content; the user decides.
+the root disk because the container `/data00` is an overlay path on `/dev/vda2`,
+and the container currently has **no writable NVMe mount** (the /mnt binds are dead
+or overlay; the 10.4 TB free on nvme0-3 is reachable only from the host). Moving the
+caches off root therefore needs a working NVMe bind-mount into the container first;
+a 2026-09-10 attempt to `mkdir /mnt/data02/tokens` already failed ENOENT. The
+approver column is the only prescriptive content; the user decides.
 
 ## Method and gaps
 
