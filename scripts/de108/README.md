@@ -51,8 +51,30 @@ ragged-gather backward are not yet landed; report at gather-backward parity.
 
 ## PR acceptance (fb, 2026-09-11)
 
-Single card (CUDA_VISIBLE_DEVICES=7) on the smoke shape (d=1024, L=12, csa2 x10):
-1. forward max-abs diff and backward grad diff vs the materialized path on a fixed
-   batch, bf16 tolerance stated in the PR;
-2. peak memory and tok/s/gpu at batch 4 and batch 8.
-Measured numbers decide the PR, not the derivation.
+## CRITICAL: the indexer STE gradient must be rebuilt (check_ste_indexer_*.py)
+
+A naive flash port that selects entries via detached top-k SILENTLY REMOVES the
+indexer's gradient. In the materialized path the entry weight is `w_entry * ste` where
+`ste = hard + soft_sel - soft_sel.detach()`; the `soft_sel - soft_sel.detach()` term is
+the ONLY route by which the indexer scores `isc` learn (proved: hard gather alone gives
+`indexer isc grad nonzero: False`, materialized gives True).
+
+The attention flash calls cannot produce it (their K/V are the detached-selection
+gather). It is computed separately from the SMALL indexer softmax (B,ih,T,NB, no T*T):
+
+    g_e[b,h,t,n] = dL/d(entry_weight_n)           # per selected entry, from flash bwd
+    dL/disc     = soft_sel * (g_e - sum_n soft_sel*g_e)   # softmax Jacobian, exact
+                                                   # (maxdiff 0.0 vs autograd, analytic)
+
+g_e is recovered at B,H,T,topk (0.0625 GiB/layer) from the entry branch attention
+probabilities P_e = exp(qk_e - lse_e) and the upstream dO: g_e = P_e * (c_e*dO @ ve),
+with the branch mixing c_e from the LSE combine. Masked/dead entries contribute 0.
+The attention-value gradient (to the compressors/kc/vc) still flows normally through the
+ragged gather backward; ONLY the indexer-score gradient is the separate small term.
+
+model.py contains a draft `_CSA2JointFlash`/`csa2_joint_flash` (compiles, not yet wired
+into `_forward_csa2`, not yet parity-tested); it does the two flash calls and LSE
+combine but still needs: (1) the indexer STE gradient term above added to the
+indexer_q/ik_weight grads; (2) a pure-PyTorch combine reference for CPU CI; (3) wire
+into `_forward_csa2` under HAS_FA with the materialized path as fallback; (4) CPU parity
++ card-7 B4/B8 numbers.
