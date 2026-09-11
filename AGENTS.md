@@ -20,7 +20,7 @@ and `model.py`.
   flash-attn varlen (`window_size=(n_win-1,0)`).
 - **Partial RoPE** (`--rope_dims 64`): the last 64 dims of each head rotate; there is no
   recurrent state and no KDA.
-- **MoE in every block** (`model.py:1476` MoEFFN): 48 experts, top-3 routed + 1 shared,
+- **MoE in every block** (`model.py:1508` MoEFFN): 48 experts, top-3 routed + 1 shared,
   `expert_ffn` 1728, fp32 softmax router with selection-only expert_bias, grouped via
   `torch._grouped_mm`. 3,209.5M total / ~342.9M active params at the smoke shape.
 - fp8 Float8Linear, `torch.compile`, no attention residuals (`--no-attn_res`).
@@ -34,7 +34,7 @@ world 6: 786,432 tokens/step, 38.1K steps over 30B; peak stays at the measured 7
 **Retired 2026-09-10: the 0830v1 KDA + gated-MLA hybrid.** That line stacked Kimi Delta
 linear attention (`fla.ops.kda.chunk_kda`, recurrent state carries position, NoPE) with
 gated MLA (latent KV, full causal attention), alternating, with optional Attention
-Residuals (`model.py:494`, arXiv 2603.15031) on by default. It produced the 0830v1 ladder
+Residuals (`model.py:1129`, arXiv 2603.15031) on by default. It produced the 0830v1 ladder
 and the 30B run stopped at .step22500; V4.1 has no recurrent state, so KDA is dropped, and
 AttnRes does not cross the future CED boundary. Old checkpoints still load via `_cfg`
 (`scripts/loader.py`); the history is in git before this date.
