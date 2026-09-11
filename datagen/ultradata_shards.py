@@ -249,9 +249,15 @@ def aggregate(out, pattern, prefix, tokenizer_path, level):
             f"fb ruling 2026-09-11) on the import path: {e}")
     decon = Decontaminator.load_default(root)
 
-    tagged = sorted(glob.glob(os.path.join(out, f"{prefix}_g??_*.jsonl")))
+    # Tagged intermediates carry an underscore tag (g00 groups or s001 per-shard
+    # redo); final shards are prefix_NNN with no tag. Read the tag set from the
+    # matched stats files so aggregate works for either launch topology.
+    tags = sorted({os.path.basename(p)[len("stats_"):-len(".json")] for p in paths})
+    tagged = sorted(
+        p for tag in tags
+        for p in glob.glob(os.path.join(out, f"{prefix}_{tag}_*.jsonl")))
     if not tagged:
-        raise SystemExit(f"aggregate: no tagged group shards {prefix}_g??_*.jsonl in {out}")
+        raise SystemExit(f"aggregate: no tagged shards for tags {tags} in {out}")
     tok = Tokenizer.from_file(tokenizer_path)
     for stale in glob.glob(os.path.join(out, f"{prefix}_[0-9][0-9][0-9].jsonl")):
         os.remove(stale)
