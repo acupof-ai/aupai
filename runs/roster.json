@@ -12,13 +12,13 @@
  "members": [
   {
    "name": "fb",
-   "socket": "uds:/tmp/cc-socks/99800.sock",
+   "socket": "uds:/tmp/cc-socks/34049.sock",
    "role": "controller",
    "topics": [
     "*"
    ],
    "note": "Controller session CONTINUES across resume (same session, label changed aupai-4c -> aupai-96). Socket uds:/tmp/cc-socks/99800.sock, listagents ref 96dfeb, verified 2026-09-10 17:1xZ from the from= address of the controller's own outbound messages and PPID. Earlier sockets 67870 (aupai-4c) and 61638d are dead after the restart. Rulings, card allocation, launch; worktree /Users/bytedance/code/aupai-fb.",
-   "listagents_name": "aupai-96",
+   "listagents_name": "aupai-c1",
    "listagents_ref": "96dfeb",
    "ref": "61638d",
    "label": "aupai-c1"
@@ -31,7 +31,7 @@
     "corpus"
    ],
    "note": "corpus fetch, filters, token counts; pod-only file classification (3b-4); pair is b0 since e1 left ListAgents name aupai-3b as of 2026-09-03. SOCKET CORRECTED 2026-09-09 after a resume. Identity verified: 984bce9a on main is 'train: --sample_seed, so a seed sweep varies init without reshuffling the corpus (3b)' -- the commit the anneal arms' pin depends on -- and 3c815555 is their review row for PR #113. | 2026-09-10 14:2xZ fb sweep: all six restarted ~13:15Z; socket 90364, label aupai-7b, from the session's own from= address.",
-   "listagents_name": "aupai-89",
+   "listagents_name": "aupai-7b",
    "listagents_ref": "92ce31",
    "listagents": "aupai-7b",
    "label": "aupai-7b"
@@ -45,7 +45,7 @@
     "launch_gate"
    ],
    "note": "eval instruments, harness checks; inherited launch_gate from e1: allocation off the ladder config (de-15), recipe reconciliation (de-17), fact fixes (de-16) ListAgents name aupai-db as of 2026-09-03. Also pairs b0 from 2026-09-09 (tilerl exited); de now second-reads both 44 and b0. SOCKET CORRECTED 2026-09-09 after a resume; the roster's 4e353c is dead. Identity verified against d49bb673 on main. NOTE de's own warning: rows de wrote before this correction carry a PLACEHOLDER socket built from the listagents ref (47baf0), which is not an address -- the same mistake fb made in de-85. A ref is not a socket, and a row carrying one addresses nobody. | 2026-09-10 14:2xZ fb sweep: all six restarted ~13:15Z; socket 87705, label aupai-08, from the session's own from= address.",
-   "listagents_name": "aupai-dd",
+   "listagents_name": "aupai-08",
    "listagents_ref": "47baf0",
    "listagents": "aupai-08",
    "label": "aupai-08"
@@ -56,7 +56,7 @@
    "role": "reporting",
    "topics": [],
    "note": "owns ~/aupai-progress.html and every user-facing line ListAgents name aupai-98 as of 2026-09-03. | 2026-09-10 14:2xZ fb sweep: all six restarted ~13:15Z; socket 91900, label aupai-b2, from the session's own from= address.",
-   "listagents_name": "aupai-98",
+   "listagents_name": "aupai-b2",
    "listagents_ref": "2d0371",
    "listagents": "aupai-b2",
    "label": "aupai-b2"
@@ -66,7 +66,7 @@
    "socket": "uds:/tmp/cc-socks/89510.sock",
    "role": "implement",
    "note": "New session 2026-09-10 after the restart; took over b0 slot. Owns V4.1 Step-0 config (ae-2, v41_size.py/facts/v41.json) and reviewed de-103 CSA2. Worktree /Users/bytedance/code/aupai-ae. Verified aupai-ae/7a9482 from its own messages. | 2026-09-10 14:2xZ fb sweep: all six restarted ~13:15Z; socket 83243, label aupai-2b, from the session's own from= address.",
-   "listagents_name": "aupai-ae",
+   "listagents_name": "aupai-2b",
    "listagents_ref": "7a9482",
    "ref": "7a9482",
    "listagents": "aupai-2b",
@@ -77,7 +77,7 @@
    "socket": "uds:/tmp/cc-socks/92665.sock",
    "role": "implement",
    "note": "New session 2026-09-10 after the restart; took over 44 slot. Owns V4.1 Step-3 pure-SWA (0e-2, merged PR #216) and the frozen exercise generator. Worktree /Users/bytedance/code/aupai-0e. Verified aupai-0e/2fe82f. | 2026-09-10 14:2xZ fb sweep: all six restarted ~13:15Z; socket 92665, label aupai-54, from the session's own from= address.",
-   "listagents_name": "aupai-0e",
+   "listagents_name": "aupai-54",
    "listagents_ref": "2fe82f",
    "ref": "2fe82f",
    "listagents": "aupai-54",
@@ -88,7 +88,7 @@
    "socket": "uds:/tmp/cc-socks/88495.sock",
    "role": "implement",
    "note": "New session 2026-09-10 after the restart; took over e1 slot. Owns the HumanEval gate instrument (66-1, PR #207; 66-2 eval-agnostic, PR #212). Worktree /Users/bytedance/code/aupai-66. Verified aupai-66/f7ea6b. | 2026-09-10 14:2xZ fb sweep: all six restarted ~13:15Z; socket 88495, label aupai-74, from the session's own from= address.",
-   "listagents_name": "aupai-66",
+   "listagents_name": "aupai-74",
    "listagents_ref": "f7ea6b",
    "ref": "f7ea6b",
    "listagents": "aupai-74",
@@ -180,6 +180,6 @@
   "0e": "3b",
   "66": "3b"
  },
- "refreshed": "2026-09-11T02:1xZ by fb: roster reconciled against ListAgents; ae socket corrected 83243->89510 (read from ae's from= address); four departed members moved out of members[].",
+ "refreshed": "2026-09-11T02:1xZ by fb: roster reconciled against ListAgents; ae socket corrected 83243->89510 (read from ae's from= address); four departed members moved out of members[]. | 2026-09-11 02:3xZ fb: fb socket corrected 99800->34049 (99800 ENOENT; peers read 34049 from fb's from= address); listagents_name aligned to label for all seven.",
  "pairs_note": "2026-09-11 02:1xZ fb: seven live members only. Pairs: fb<->de, 3b->fb, 98->fb, ae->de, 0e->3b, 66->3b. tilerl/b0/e1/44 departed; every pair that named them is re-pointed. A reviewer is the pair above; a second reader for a PR may be any other live member if the pair is busy, named in the review row."
 }
