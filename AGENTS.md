@@ -15,14 +15,14 @@ and `model.py`.
   8-token KV entries; a lightweight indexer selects top-k entries; one concatenated softmax
   over [selected global entries ; local SWA keys]. Full/Reuse modes thread a cross-layer KV
   package.
-- **PureSWA sliding window** (`model.py:740-768`): the first two layers are SWA-only
-  (`--n_swa_only_layers 2`), every other layer carries a local SWA branch, window 128,
-  flash-attn varlen (`window_size=(n_win-1,0)`).
+- **PureSWA sliding window** (`class PureSWA` in `model.py`): the first two layers are
+  SWA-only (`--n_swa_only_layers 2`), every other layer carries a local SWA branch, window
+  128, flash-attn varlen (`window_size=(n_win-1,0)`).
 - **Partial RoPE** (`--rope_dims 64`): the last 64 dims of each head rotate; there is no
   recurrent state and no KDA.
-- **MoE in every block** (`model.py:1508` MoEFFN): 48 experts, top-3 routed + 1 shared,
-  `expert_ffn` 1728, fp32 softmax router with selection-only expert_bias, grouped via
-  `torch._grouped_mm`. 3,209.5M total / ~342.9M active params at the smoke shape.
+- **MoE in every block** (`class MoEFFN` in `model.py`): 48 experts, top-3 routed + 1
+  shared, `expert_ffn` 1728, fp32 softmax router with selection-only expert_bias, grouped
+  via `torch._grouped_mm`. 3,209.5M total / ~342.9M active params at the smoke shape.
 - fp8 Float8Linear, `torch.compile`, no attention residuals (`--no-attn_res`).
 
 The smoke ladder that sized the gate launch: compiled+flash B8 OOMs at 94.6 GiB pre-step,
@@ -31,10 +31,18 @@ B4/accum4 measured 72.64 GiB/rank across 381 steps with no NaN
 world 6: 786,432 tokens/step, 38.1K steps over 30B; peak stays at the measured 72.6 GiB
 (accum and world do not move per-rank peak).
 
+`--csa2_win_flash` (de-109, default off until the smoke passes) keeps the CSA2 entry
+branch materialized and runs only the local SWA window on flash-attn; it matches the
+all-materialized softmax to the bf16 kernel floor, is 3.2-3.3x faster on attention and
+2.9x lighter at T=4096 B4, and makes B8 fit
+(`facts/v41.json#v41.de109_win_flash_parity_speed_0911`). The gate line gains the flag
+only on a passing csa2_win_flash smoke; without it the released DeepSeek kernels remain
+unusable for SM90 training (`facts/v41.json#v41.dk_kernel_training_feasibility_0911`).
+
 **Retired 2026-09-10: the 0830v1 KDA + gated-MLA hybrid.** That line stacked Kimi Delta
 linear attention (`fla.ops.kda.chunk_kda`, recurrent state carries position, NoPE) with
 gated MLA (latent KV, full causal attention), alternating, with optional Attention
-Residuals (`model.py:1129`, arXiv 2603.15031) on by default. It produced the 0830v1 ladder
+Residuals (`class AttnRes` in `model.py`, arXiv 2603.15031) on by default. It produced the 0830v1 ladder
 and the 30B run stopped at .step22500; V4.1 has no recurrent state, so KDA is dropped, and
 AttnRes does not cross the future CED boundary. Old checkpoints still load via `_cfg`
 (`scripts/loader.py`); the history is in git before this date.
@@ -183,8 +191,7 @@ Any `--flag` in `train.py`'s parser overrides `Cfg.<flag>` — a fixed whitelist
 not a reflection over `Cfg`; a `Cfg` field without a parser entry cannot be set from the
 CLI. The gate recipe (controller ruling, prereg amendment 1): 30B tokens, B4/accum8 on
 world 6 = 786,432 tokens/step, 38.1K steps; warmup 500 absolute steps, warmdown 0.65,
-anneal_frac 0.10; B4×accum8 fixed — when de-108 lands its speed gain goes to wall-clock,
-never to batch. The retired
+anneal_frac 0.10; B4×accum8 fixed — de-109 `csa2_win_flash` (adopted, `facts/v41.json#v41.de109_win_flash_parity_speed_0911`) takes attention peak 72.6→43.5 GiB and that headroom goes to wall-clock, never to batch; de-108 joint flash is post-gate (2.3-3.2x slower eager, `facts/v41.json#v41.de108_joint_flash_parity_speed_0911`). The retired
 0830v1 budget points were six geometric mixes, `mix_scale_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.json`.
 Checkpoints save as `ckpt_{name}.pt`; naming convention `ckpt_{arch}_{tokens}_{date}.pt`.
 
