@@ -18,7 +18,7 @@ unchanged: HumanEval pass@1 >= 30% at ~350M (docs/standards/p1_data_recipe.md:25
   the package, own Q + SWA only), or Reindex (consume KV, re-run own indexer). This is cross-layer
   KV reuse and it replaces HCA.
 - **SWA local branch in every layer**, pure SWA for the first two layers, n_win=128 at 552B.
-- Partial RoPE retained (we already have it, model.py:541). KDA / NoPE is dropped — V4.1 has no
+- Partial RoPE retained (`class PartialRoPE` in model.py). KDA / NoPE is dropped — V4.1 has no
   recurrent state.
 - MoE in every block, DeepSeekMoE 1-shared + routed, aux-free bias selection (we already have this).
 - **Deferred past the gate (single-node 350M / 4096 context):** FP4 KV cache + QAT, SSD/host KV
