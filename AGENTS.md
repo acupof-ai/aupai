@@ -1,33 +1,60 @@
-# aupai — 200M reasoning LLM, coding and math (KDA + gated MLA hybrid, optional Attention Residuals)
+# aupai — V4.1 coding/math model: flat CSA2 + SWA MoE, target HumanEval pass@1 ≥ 30%
 
-**Objective changed 2026-08-30, by the user.** This was a 200M *Chinese* LLM. It is now a
-reasoning model targeting coding and math capability at ~30B tokens, and the corpus follows
-the capability rather than the language: roughly 60:40 English-leaning, because code is
-written in English and the math and chain-of-thought sources are overwhelmingly English.
-Chinese web drops from a planned 16B to 3-4B. The scaling law is no longer the deliverable.
+**Pivot 2026-09-10, user order.** Target is DeepSeek-V4.1-Flash
+(`docs/standards/v41_pivot.md`): a small coding/math model that clears HumanEval pass@1 ≥ 30%
+at ~350M-active on the UltraData gate mix (`data/mix_v41_gate.json`, 30B tokens). The
+acceptance gate is unchanged from the p1 recipe (`docs/standards/p1_data_recipe.md:256`).
+V2/KDA work is stopped. The gate runs single-node at seq 4096; the launch line is
+`runs/v41_gate_0911.sh` and the stop rules are `runs/prereg.jsonl#v41_gate_0911`. (The
+script/prereg were written for world 6 and are being re-sized to the 2026-09-11 world-5
+block on a controller ruling — do not launch until NGPU/block and the step count there
+match `runs/card_assignment.json`.)
 
-One consequence is already known and gates the corpus build: the frozen 32,784-slot
-vocabulary was fitted on Chinese web and cosmopedia, so it now faces a material
-distribution change plus a third distribution — code — that it has never seen.
-`tokenizer_eval` runs against a sample of the new composition **before any fetch**, and a
-failure is a rebuild decision that invalidates every existing checkpoint. What survives the
-change and what it supersedes: `docs/standards/0830v1_gates.md`.
+Architecture, in the terms the code uses. The gate stack is a flat 12-layer model at
+d=1024/H=8; every fact below is read from `docs/standards/v41_pivot.md`, `facts/v41.json`
+and `model.py`.
 
-Architecture, in the terms the code uses. Three names carry most of the file, so they are spelled out once here and used bare afterwards.
+- **CSA2 — Compressed Sparse Attention 2** (`model.py`, `--csa2`): learned non-overlapping
+  8-token KV entries; a lightweight indexer selects top-k entries; one concatenated softmax
+  over [selected global entries ; local SWA keys]. Full/Reuse modes thread a cross-layer KV
+  package.
+- **PureSWA sliding window** (`model.py:740-768`): the first two layers are SWA-only
+  (`--n_swa_only_layers 2`), every other layer carries a local SWA branch, window 128,
+  flash-attn varlen (`window_size=(n_win-1,0)`).
+- **Partial RoPE** (`--rope_dims 64`): the last 64 dims of each head rotate; there is no
+  recurrent state and no KDA.
+- **MoE in every block** (`model.py:1476` MoEFFN): 48 experts, top-3 routed + 1 shared,
+  `expert_ffn` 1728, fp32 softmax router with selection-only expert_bias, grouped via
+  `torch._grouped_mm`. 3,209.5M total / ~342.9M active params at the smoke shape.
+- fp8 Float8Linear, `torch.compile`, no attention residuals (`--no-attn_res`).
 
-- **KDA — Kimi Delta Attention** (`model.py:97`): a linear-attention layer with bounded decay, a short convolution and QK-norm, running through `fla.ops.kda.chunk_kda`. Its recurrent state is what carries position.
-- **MLA — Multi-head Latent Attention**, gated (`model.py:342`): compresses keys and values into a lower-dimensional latent before full causal attention over the 4096-token sequence, document-masked so one document cannot attend into another.
-- **AttnRes — Attention Residuals** (`model.py:494`, Kimi, arXiv 2603.15031): a layer may read the values of earlier attention layers directly, weighted by softmax over its own query, rather than only through the residual stream. On by default.
+The smoke ladder that sized the gate launch: compiled+flash B8 OOMs at 94.6 GiB pre-step,
+B4/accum4 measured 72.64 GiB/rank across 381 steps with no NaN
+(`facts/v41.json#v41.smoke_compiled_flash_h_i_0911`). The per-rank recipe is B4/accum8; the
+effective-batch/step count depends on the world size and is being re-stated for the
+2026-09-11 world-5 block (the committed launcher still shows the earlier world-6 numbers).
+Peak stays at the measured 72.6 GiB regardless of world or accum.
 
-The layers alternate KDA and MLA — that hybrid is what the title means. **NoPE** means no positional encoding of any kind: no RoPE (rotary position embeddings, the usual choice) and no learned position embeddings, because KDA's state already carries position. The 1024-token sliding window was removed 2026-08-30: `infer_local.py` never implemented it, so every generation ran a wider attention than training.
+**Retired 2026-09-10: the 0830v1 KDA + gated-MLA hybrid.** That line stacked Kimi Delta
+linear attention (`fla.ops.kda.chunk_kda`, recurrent state carries position, NoPE) with
+gated MLA (latent KV, full causal attention), alternating, with optional Attention
+Residuals (`model.py:494`, arXiv 2603.15031) on by default. It produced the 0830v1 ladder
+and the 30B run stopped at .step22500; V4.1 has no recurrent state, so KDA is dropped, and
+AttnRes does not cross the future CED boundary. Old checkpoints still load via `_cfg`
+(`scripts/loader.py`); the history is in git before this date.
 
 ## Writing rules (all docs, commit messages, register rows, and replies)
 
 The standard is `docs/standards/writing.md` (user, 2026-08-31): no metaphors, no filler, no verdict-first tone, few quotes and parentheses, formulas set as formulas, bold for the key part only, three consecutive paragraphs become a table, every rewrite raises density, four review passes before hand-over.
 
-## 0830v1 reset (2026-08-30)
+## Resets
 
-Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. Kept: corpus bytes (`data/corpus/*`), the tokenizer, reusable methods (`docs/lessons/kept_methods.md`), dataset properties (`facts/`). The experiment log restarts empty with 0830v1. Full history is in git log before this date; nothing was kept "just in case".
+Two resets frame the history. The **0830v1 reset (2026-08-30)** zeroed pre-0830v1
+checkpoints, runs and recipes; it kept corpus bytes, the tokenizer (rebuilt since, see
+Tokenizer), reusable methods (`docs/lessons/kept_methods.md`) and dataset properties
+(`facts/`). The **V4.1 pivot (2026-09-10)** retired the KDA/MLA line and the
+teacher-synthesis data plan; the acceptance gate survives both. The experiment log before
+each date is history only, readable in git log; nothing is kept "just in case".
 
 ## Layout
 
@@ -41,8 +68,9 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | `algorithms/` | RL |
 | `mathbank/` | synthetic math generators |
 | `data/corpus/*` | corpus bytes (gitignored except `sample/`) |
-| `data/mix_scale_*.json` | the 0830v1 mixes |
-| `data/tokenizer.json` | the frozen vocabulary |
+| `data/mix_v41_gate.json` | the V4.1 gate mix, 30B over 8 UltraData/math/code domains |
+| `data/mix_scale_*.json` | the retired 0830v1 ladder mixes |
+| `data/tokenizer.json` | the gate vocabulary, rebuilt 2026-09-10 (32,768 slots; not tracked, copy from the pod) |
 | `docs/lessons/` | research, with frontmatter |
 | `docs/audits/` | source audits |
 | `docs/standards/` | standards and recipes |
@@ -51,16 +79,58 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 
 ## Hard constraints
 
-- **Tokenizer frozen 2026-08-29.** Rebuild only under the three unfreeze conditions (see Tokenizer), and copy the live file to `data/tokenizer_<name>.json` first. A rebuild invalidates every checkpoint trained on the old vocabulary.
+- **Tokenizer rebuilt 2026-09-10 under unfreeze condition 2** (32,768 slots, `[NUM]=32767`;
+the old 32,773-slot vocab is preserved on the pod as `data/tokenizer_frozen_0829.json`). A
+rebuild is allowed only under the three unfreeze conditions and invalidates every checkpoint
+trained on the old vocabulary.
 - **Vocabulary identity.** Score every checkpoint with the vocabulary it was trained on; checkpoints and packs carry `vocab_id`, and a mismatch refuses. For an older checkpoint pass `--tokenizer`.
-- **GPUs.** Cards 1,2,3,4,5,7 belong to this repo; cards 0 and 6 are tileRL's (user order 2026-09-06, "0,6 tileRL"; the earlier all-8 grant of 2026-08-30 is superseded). `runs/card_assignment.json` records the order and `harness launch` refuses a tileRL card unless its note carries a controller lend (PR #45). The controller session allocates the six; ask before starting a GPU process. Kill by exact PID, never `pkill -f`. A process the controller cannot account for gets killed.
+- **GPUs. Gate-run allocation, user ruling 2026-09-11 (latest; `runs/card_assignment.json`
+is the record).** The V4.1 gate trains on **world 5, block 0-4** — all five are aupai's,
+though tileRL may use card 0 until aupai's **one-hour notice**, at which point it must be
+clear for launch. **Card 5 is the lane** until the gate launch: one eval/probe at a time;
+de-108's single-card steps run there by controller assignment and the lane returns to the
+ordinary queue after. **Cards 6 and 7 are tileRL's for the whole gate run (2-3 days)**;
+aupai jobs there only by asking tilerl-58, and they revert to aupai when the gate run ends.
+The standing-order list the grant pins for lend expiry remains **theirs_baseline [0,6]** —
+it is the expiry mechanism, distinct from the per-card owner decisions above. `harness
+launch` reads the grant and refuses a card outside the current allocation. The controller
+allocates; ask before starting a GPU process. Kill by exact PID, never `pkill -f`. A
+process the controller cannot account for gets killed.
+(History: the 2026-09-06 "0,6 tileRL" order and the 2026-09-10 "all eight to V4.1" order
+are both superseded by this 2026-09-11 gate-run split.)
 - **A kill is not finished until `nvidia-smi` says the card is free.** Killing what you launched does not kill what it launched. 2026-09-01: after the milestone watcher's chain was killed by exact PID, `eval/run_eval.py` (pid 313429) still held GPU7 at 5.7 GB / 95% — a grandchild reparented to init whose pgid still named the dead leader, so `ps` by pgid could not see it as an orphan and only the card showed it. It would have contended with the next job on the lane. After any kill of a GPU job: read `nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader`, and kill by exact PID whatever still holds memory. A killed process can stay in the process table as a zombie: `kill -0 <pid>` returns 0 and `ps -p <pid>` prints a row for it, so neither says whether the kill worked. Read `ps -o stat= -p <pid>`: `Z` is dead (e1, 2026-09-03: three scan pids read as surviving `kill` and `kill -9` for ten minutes while the card had been free since the first signal). Killing the local wrapper (a `~/bin/pod` call, a timed-out foreground command) does not kill the process it started in the container: read the container's `ps` after every local kill and kill by exact PID there (e1, 2026-09-03: a CPU scoring run of 10,421 items kept running on the pod after its local wrapper was killed).
-- **Lanes: a 7-card training block, and one lane card for everything else.** `world` is 7, so 8 cards leave exactly one for evals, probes, and verification runs — there is no arrangement that yields more. The block's card indices are allocation and the controller names them (`cards` in `data/mix_scale_run_config.json`); the lane is whichever card is not in `cards`. Two rules follow, and the second is the one that cost time:
-  - **Small jobs queue on the lane card. They never spill into the block, not even onto a card that is idle at that instant.** A 7-card run needs all seven *simultaneously*, so one 10-minute eval on one block card blocks a 55-minute training job completely — contention only slows, occupancy stops. On 2026-08-30 a bf16 A/B waited ~40 minutes for a window, and the window it finally got was closed within seconds by a confirmatory eval landing on a block card.
-  - **The lane holds one job at a time.** The round routinely wants two or three concurrent probes; they serialize. The previous version of this rule named a single bench card without saying jobs must queue on it, so three concurrent small jobs spilled into the block *by necessity* — an under-provisioned lane is violated for cause, not by carelessness, and a rule people must break is not a rule.
-  - When the block is idle and no 7-card job is pending, the controller may lend block cards out explicitly. Idle is not the same as free: a card's owner is the script still running or the job the controller has queued, never the instantaneous `nvidia-smi` row.
-  - **When there is no lane card at all — `NGPU=8`, as p500m_20b_0902 runs — co-residency is judged by host IO and seconds, not by metric class.** The rule stated on 2026-09-02 was "likelihood evals may share a card, generative ones wait", derived from one eval (`score_matrix`, 2.3 GiB). MEASURED against the run's own control — `--save_every 500`, and steps 500/1000/1500/2000 all read 7K tok/s/gpu with **no eval running**, because a 2.1 GB `torch.save` plus a val pass costs 78 s by itself: `score_matrix`'s four likelihood metrics cost **46 s**, cheaper than the control; `l1_fewshot` (generative) **209 s**; `ppl` **109 s** and climbing when it was killed. The class was never the variable. What separates `ppl` from `score_matrix` inside one class is that `ppl` `torch.load`s a whole token cache per domain — 85 GB for `zh_web`, ~166 GB across the nine. So: an eval that reads a token cache off `/data00` waits for the run; one that only loads a checkpoint costs about what a save costs. `python3 scripts/eval_load_cost.py` is the table, with the unmeasured evals listed as unmeasured rather than as zero. **The threshold is enforced at the read, not by this table**: `eval/cache_guard.assert_not_co_resident` refuses when a live claim holds cards and the domains being read exceed `CO_RESIDENCY_BYTES` (10 GB), warns by name when a domain's size is unrecorded, and takes `AUPAI_ALLOW_CORESIDENT_CACHE=1` when the controller granted the card. It sits in `assert_caches_fresh`, which every cache reader already passes, because the quantity is the read's — one of `score_matrix`'s fourteen metrics touches a cache, so refusing per tool would refuse the four likelihood metrics that cost 46 s.
-  - **Judge the cost in seconds against what the run already spends on itself, never by the printed ETA.** ETA extrapolates a single 10-step interval over 19,151 steps, so one interval 54 s slow prints as 29 lost hours, and every checkpoint save prints ~99 h. Total across every dip in the first 1990 steps: 10.3 min of 6.04 h elapsed, 2.8% (`docs/lessons/gate_failure_shapes.md` §50).
+- **Lanes: a 5-card gate block, one lane card, and two cards on loan to tileRL.** The gate
+block is 0-4 (`world` 5); the run needs all five *at once*, so one probe on a block card
+stops occupancy, not just speed. Two rules follow, and the second is the one that cost
+time:
+  - **Small jobs queue on lane card 5. They never spill into the block, not even onto a card
+that is idle at that instant.** The lane holds one job at a time; concurrent probes
+serialize rather than each taking a card. Until the gate launch, de-108's single-card steps
+run on 5 by controller assignment; the queue resumes after.
+  - Card 0 is tileRL-usable only until aupai's one-hour launch notice; cards 6,7 are
+tileRL's for the gate run. Idle is not free: a card's owner is the script still running or
+the job the controller has queued, never the instantaneous `nvidia-smi` row.
+  - **When there is no lane card at all, co-residency is judged by host IO and seconds, not
+by metric class.** Measured against the 30B run's own control — `--save_every 500`, and steps 500/1000/1500/2000 all read 7K
+tok/s/gpu with **no eval running**, because a 2.1 GB `torch.save` plus a val pass costs 78 s
+by itself: `score_matrix`'s four likelihood metrics cost **46 s**, cheaper than the
+control; `l1_fewshot` (generative) **209 s**; `ppl` **109 s** and climbing when it was
+killed. The class was never the variable. What separates `ppl` from `score_matrix` inside
+one class is that `ppl` `torch.load`s a whole token cache per domain — 85 GB for
+`zh_web`, ~166 GB across the nine. So: an eval that reads a token cache off `/data00` waits
+for the run; one that only loads a checkpoint costs about what a save costs.
+`python3 scripts/eval_load_cost.py` is the table, with unmeasured evals listed as
+unmeasured rather than as zero. **The threshold is enforced at the read, not by this
+table**: `eval/cache_guard.assert_not_co_resident` refuses when a live claim holds cards
+and the domains being read exceed `CO_RESIDENCY_BYTES` (10 GB), warns by name when a
+domain's size is unrecorded, and takes `AUPAI_ALLOW_CORESIDENT_CACHE=1` when the
+controller granted the card. It sits in `assert_caches_fresh`, which every cache reader
+already passes.
+  - **Judge co-resident cost in seconds against what the run spends on itself, never by the
+printed ETA.** ETA extrapolates one 10-step interval over the whole run, so a single 54 s
+slow interval prints as 29 lost hours and every checkpoint save prints ~99 h. Total across
+every dip in the measured 30B window: 10.3 min of 6.04 h, 2.8%
+(`docs/lessons/gate_failure_shapes.md` §50).
 - **Long jobs detach.** `pod "<cmd>"` in the foreground dies with the tn tunnel after 5 minutes, but the container process keeps running — it becomes an orphan holding a whole card at 100%. One such orphan silently contaminated a seven-card profile before anyone noticed. Always `setsid nohup ... </dev/null &`, then poll the log.
 - **Shared files.** Announce before editing `train.py`/`sft*.py`/`AGENTS.md`, commit promptly, hand the file back.
 - **CI gates.** ruff E9/F, py_compile, `test_arch_compat`, `eqcheck`, `holdout` on every push.
@@ -72,7 +142,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | task | command |
 |---|---|
 | Launch any GPU or corpus job | `python scripts/harness.py launch <name> [--training] [--hypothesis "..."] -- <cmd>` — exp row first, card allocation from controller config, startup gate for training, monitor on process-gone/log-silent. Returns once the job holds a device (poll, 90 s), or reports that it claimed nothing |
-| Pretrain | `./run_ddp.sh [train.py flags]` — wraps `torchrun ... train.py --fp8` on all 8 GPUs |
+| Pretrain | `./run_ddp.sh [train.py flags]` — wraps `torchrun ... train.py --fp8` on NGPU cards (the gate launch sets NGPU=6; run_ddp defaults to 8) |
 | SFT | `scripts/run_sft.sh <name> <resume_ckpt> <sft_pt> [sft_math.py args]` |
 | Eval, one metric | `eval/eval_hard.sh <ckpt> [ngpu]` |
 | Eval, full matrix | `eval/eval_all.sh <ckpt> [tokenizer]` — math-hard, math-500, MC suite, digit head |
@@ -82,8 +152,11 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | Is it safe to overwrite a RUNNING .sh | `python3 scripts/pod_sh_offset.py --check <rel>` — reads each live shell's script offset from `/proc/<pid>/fdinfo` on the pod and exits 2 unless every differing byte is at or after the earliest of them. `pod_push.sh` calls it, so `POD_PUSH_ALLOW_RUNNING_SH=1` is now checked rather than trusted: the safety is a property of the diff, not of the flag |
 | Measure everything unscored | `python scripts/harness.py measure` |
 | pass@k gate for RL | `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` — needs pass@8 − pass@1 ≥ 15pt |
-| Corpus | `python datagen/build_corpus.py --domain X --source Y --target_tokens 6e9`; `--dry --limit N` prints the rejects histogram. Math generators: `mathbank/vet_programs.py` is the registry root that reaches `math_programs_l*` |
-| AttnRes A/B | `NGPU=6 STEPS=500 scripts/run_ablation.sh` |
+| Launch the V4.1 gate run | `bash runs/v41_gate_0911.sh` (pod) — block 0-4/world 5, lane 5, B4 micro-batch, `data/mix_v41_gate.json`; committed DRAFT pending the world-5 re-size ruling, it runs only on the controller's explicit go and the `runs/prereg.jsonl#v41_gate_0911` checklist (mix caches present, de-108 merged or waived, cards 0-4 cleared on the one-hour notice). The script is also the pod-side launch file: place it on the pod (pod_push skips `runs/`) before the go |
+| V4.1 smoke launch shape | the gate line is proven at smoke scale (B4/accum4, 381 steps, 72.6 GiB/rank): see `facts/v41.json#v41.smoke_compiled_flash_h_i_0911`; the smoke launcher lived only on the pod and the tracked gate launcher `runs/v41_gate_0911.sh` carries the same architecture flags — `--csa2 --rope_dims 64 --n_swa_only_layers 2 --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11` |
+| Decontaminate a corpus against the code evals | `python filters/decontam_ngram.py <corpus_dir>` — 13-gram overlap removal against HumanEval/MBPP; a gate prerequisite for every UltraData code domain (ae, facts in `facts/contamination.json`) |
+| Corpus | `python datagen/build_corpus.py --domain X --source Y --target_tokens 6e9`; `--dry --limit N` prints the rejects histogram. Math generators: `mathbank/vet_programs.py` is the registry root that reaches `math_programs_l*`. UltraData L2/L3 keep rules: 0e's filters (`#237`) |
+| AttnRes A/B | retired with the KDA/MLA line; the ablation script stays in history but nothing launches it |
 | FP8 NaN probe | `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python eval/nan_probe.py` (pod) |
 | Reachability | `python scripts/reachability.py` — which scripts are reachable from entry points; `runs/reachability.txt` is the committed listing with fate rulings |
 | Provision an empty pod | `bash scripts/bootstrap_pod.sh [verify\|fetch\|build\|vocab\|check]` — idempotent, one stage at a time, stopping on error rather than feeding a broken artifact forward. Launching the pretrain is deliberately NOT a stage |
@@ -99,16 +172,32 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 
 ## Run pretraining
 
+The committed gate line is `runs/v41_gate_0911.sh`; the direct shape is:
+
 ```bash
-./run_ddp.sh --mix data/mix_scale_3.24b.json --name <name> [--attn_res] [--warmup 150] [--lr_scale 0.5]
+./run_ddp.sh --mix data/mix_v41_gate.json --name v41_gate_0911 \
+  --dim 1024 --layers 12 --heads 8 --ffn_hidden 6912 --batch 4 --accum 8 \
+  --lr_scale 1.0 --warmdown 0.65 --anneal_frac 0.10 --warmup 500 --save_every 2000 --no-grad_ckpt \
+  --attn_every 1 --csa --csa2 --rope_dims 64 --n_swa_only_layers 2 --no-attn_res \
+  --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11 --moe_arm v41gate
 ```
 
-Any `--flag` in `train.py`'s parser overrides `Cfg.<flag>` — a fixed whitelist (seq/batch/accum/vocab/seed/attn_every/attn_res_blocks/val_*/warmup + the boolean flags), not a reflection over `Cfg`; a `Cfg` field without a parser entry cannot be set from the CLI. The 0830v1 budget points are six mixes — `mix_scale_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.json` — identical weights, scaled `total_tokens`. Five are a ×2 geometric series: three points would exactly identify the three parameters of E + B/D^β and leave no residual degrees of freedom to expose a bad fit. Checkpoints save as `ckpt_{name}.pt`; naming convention `ckpt_{arch}_{tokens}_{date}.pt`.
+Any `--flag` in `train.py`'s parser overrides `Cfg.<flag>` — a fixed whitelist
+(seq/batch/accum/vocab/seed/attn_every/attn_res_blocks/val_*/warmup + the boolean flags),
+not a reflection over `Cfg`; a `Cfg` field without a parser entry cannot be set from the
+CLI. The per-rank recipe is controller-pinned: B4/accum8, warmup 500 absolute steps,
+warmdown 0.65, anneal_frac 0.10. The committed launcher currently carries the earlier
+world-6 effective-batch/step counts (786,432 tokens/step, 38.1K steps over 30B); those are
+re-stated for world 5 on the controller's ruling before launch — per-rank peak and B4 never
+move. The retired
+0830v1 budget points were six geometric mixes, `mix_scale_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.json`.
+Checkpoints save as `ckpt_{name}.pt`; naming convention `ckpt_{arch}_{tokens}_{date}.pt`.
 
-On the pod, launch detached (see Pod):
+On the pod, launch through a pod-side script file (pod refuses a `cd ... &` string), then
+detach it:
 
 ```bash
-pod "cd /work/aupai && setsid nohup bash -c './run_ddp.sh --mix data/mix_scale_3.24b.json --name k9 > runs/k9.log 2>&1' </dev/null >/dev/null 2>&1 &"
+pod "cd /work/aupai && setsid nohup bash runs/v41_gate_0911.sh > runs/v41_gate_0911.launch.log 2>&1 </dev/null &"
 ```
 
 ## Record a run
@@ -144,7 +233,7 @@ python scripts/exp.py render   # rewrites EXPERIMENTS.md, newest first
 | `mix_shards_present` | every default-mix domain has shards (GPU boxes only) | tokenize the missing domain; SKIP on machines without GPUs |
 | `no_oversized_blob` | no tracked file over 5MB | `git rm --cached` it; large files are gitignored |
 | `tokenizer_roundtrip` | NUL, tab, hanzi, digits decode to the exact bytes | the vocabulary drops a byte; rebuild with `initial_alphabet` |
-| `pinned_ids` | `<eos>=1`, `[NUM]=32772` | a rebuild moved the specials; re-pin or update the check |
+| `pinned_ids` | `<eos>=1`, `[NUM]=32767` in the rebuilt 32,768-slot gate vocabulary | a rebuild moved the specials; re-pin or update the check |
 | `no_stale_running` | no experiments row is `running` over 24h | the job died without `exp.py done`; close the row |
 | `guard_on_path` | `train.py main()` calls the mix guard | the guard moved off the entry path; restore it |
 | `facts_well_formed` | every fact carries its config; guarded phrases absent | a fact landed without its measurement config; add it |
@@ -212,6 +301,8 @@ Cite a fact as `facts/<file>.json#<id>`; the id must exist. Numeric conclusions 
 
 Per-domain weight, epoch cap, anneal weight. `train.py` builds the schedule and consumes it in order, so `Cfg.epochs` is forced to 1. **It is the only data path** — a named-but-missing mix raises. The flat-corpus fallback was deleted: it once trained on 244KB in silence. `data/mix_sample.json` is the 2,000-document sample a checkout ships.
 
+The V4.1 gate mix is `data/mix_v41_gate.json` (ae, merged #246; weights re-normalised to 0e's measured UltraData totals): 30.0B tokens, one epoch, anneal=weight, eight domains — `code_ultra_l2` (natural code) and `code_ultra_l3` (task/analysis/solution/test) from openbmb/UltraData-Code python under 0e's keep rules (#237), plus `code_py_starcoder`, `math_owm_stage2`, `code_keep_p1` (the 2.8116B classifier keep set, assembled flat by `scripts/assemble_keep_p1.py`), `en_c4_stage2`, `cot`, `code_py_rp1t`. **Every gate code domain is 13-gram decontaminated against HumanEval/MBPP by `filters/decontam_ngram.py` before it enters the mix** — a launch prerequisite, with results in `facts/contamination.json`. Every domain's token cache must exist in `/data00` in the gate vocabulary before launch (the prereg checklist names which remain on 0e). The old ladder mixes (`mix_scale_*`) and teacher synthesis (textbooks/exercises, stopped by the pivot) are the retired data plan.
+
 ### Chat format
 
 ChatML, owned by `scripts/loader.format_prompt / format_example / format_history`. **The pretraining corpus effectively contains no ChatML** — `<|im_start|>` occurs 0 times in 168,000 rows sampled across all 42 domains, and the chat domain is `问：/答：` plain text in 4000 of 4000 rows (de, 2026-09-01). Stated as a bound, not as zero: 0 of 4000 puts a domain's rate below 0.075% at 95% (rule of three), so `wiki_chat`'s 372,827 rows could still hold ~279 ChatML documents. The bound is what survives contact — a zero is overturned by one counterexample, and a format present in under 0.1% of the chat domain is not a format the model learned. The line that stood here said the opposite and was believed for weeks.
@@ -232,14 +323,30 @@ Every checkpoint is scored with the vocabulary it was trained on. `data/tokenize
 
 ## Tokenizer
 
-Frozen 2026-08-29. A rebuild is allowed only under the three unfreeze conditions, and invalidates every checkpoint trained on the old vocabulary.
+**Rebuilt 2026-09-10 under unfreeze condition 2 (the corpus distribution changed), PR
+#233.** The live `data/tokenizer.json` (pod only, gitignored) is a fresh **32,768-slot** BPE
+fitted on the V4.1 UltraData gate composition: `<eos>=1`, **`[NUM]=32767`** (last id;
+`Cfg.num_id` is derived from the file, never hardcoded). The pre-rebuild vocabulary is
+preserved on the pod as **`data/tokenizer_frozen_0829.json`** (32,773 slots, `[NUM]=32772`);
+every pre-2026-09-10 checkpoint scores against that copy with `--tokenizer`, because
+checkpoints and packs carry `vocab_id` and a mismatch refuses. Ruling: on held-out
+UltraData L2/L3 segments the old vocabulary spent ~8.5% more tokens per byte
+(`facts/tokenizer.json#tok.ultra_freeze_tax_0910`, pooled, three document-disjoint seeds),
+which is the material-distribution change condition 2 names. All gate caches are rebuilt at
+the new vocab (stamp f1f860970d15d623); a cache at an older vocab refuses. A future rebuild
+again needs one of the three unfreeze conditions and again invalidates every checkpoint
+trained on the vocabulary it replaces.
 
 - **Gates** (`scripts/tokenizer_eval.py --tokenizers <paths>`): round-trip lossless and all 256 bytes are vetoes; hanzi whole-char ≥ 0.95 is a veto; ref fertility ≤ 1.55 is a regression guard. Never-used is **reported, not gated** — the 0.01 threshold was set 0.003 above a single measured 0.0070 (`143f5d4a`), and the three-seed range at one fixed setting is 0.0110, larger than the whole threshold, so the seed decides pass or fail. To restore it, record a setting whose three-seed range is under a third of the threshold in `facts/tokenizer.json#tok.never_used_not_decidable`.
-- **Build** (`scripts/build_tokenizer.py`): always pass `initial_alphabet=ByteLevel.alphabet()` — without it NUL silently drops; stratified equal-byte sample per domain.
+- **Build** (`scripts/build_gate_tokenizer.py` for the 32K gate vocabulary;
+`scripts/build_tokenizer.py` is the general builder): always pass
+`initial_alphabet=ByteLevel.alphabet()` — without it NUL silently drops; stratified
+equal-byte sample per domain.
 - **Measure** with `scripts/tokenizer_report.py --selftest` — mandatory before believing any number it prints.
 - **Unfreeze conditions — three, and nothing else:**
-  1. The model outgrows the fitted 12–20K optimum (arXiv 2407.13623).
-  2. The corpus distribution changes materially.
+  1. The model outgrows the fitted optimum (arXiv 2407.13623).
+  2. The corpus distribution changes materially. **This is the condition the 2026-09-10
+rebuild used.**
   3. An extrinsic test — two pretrains differing only in the vocabulary — says a candidate is better.
 
 Facts (fingerprint, sizes, gate values, frontier, sweeps): `facts/tokenizer.json`.
@@ -278,6 +385,13 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 - **`cd` inside a backgrounded chain stays in it.** `pod "cd X && cmd & followup"` runs `followup` in the original cwd: the `&` backgrounds the whole `cd X && cmd` list in a subshell. Everything that needs the cwd goes inside the chain; everything outside it uses absolute paths.
 - **The pod is frozen from a training launch until that run prints its first step.** A launch reads `data/pod_synced_head` and the manifest at startup (`run_ddp.sh:36-41`), and `build_mix` then spends minutes loading token caches before the first step — 156 GB and ~2.5 minutes for `mix_200m_4b`. A push landing inside that window turns the drift gate red on a run that is already committed to the cards, and the failure names the pushed file rather than the push. Whoever wants to push waits for the first step line; whoever launches says so when the run is up (2026-09-02: a `profile_step_cost.py` push landed between p200m_4b_0902's launch and its first step — harmless only because the run reads `train.py`).
 - **Check a launch line's shape against `facts/efficiency.json` before it reaches a card.** The fact store already holds the answer for the shapes people try, down to which ranks die first: `eff.microbatch_32_oom` records that micro-batch 32 × accum 1 OOMs at seq 4096 fp8 at 93.8/95.2 GB with ranks 3/6 first, and states the verdict — grow the effective batch via accum, not micro-batch. p200m_4b_0902 launched on 32×1 twice on 2026-09-02 and reproduced that fact to two decimals (93.78 GiB, rank3 first), because nothing reads the fact store at launch time. `harness` check `launch_line_vs_oom_facts` now joins the two sides (44-20, 2026-09-02): a stop-window launch line or a running experiments row matching a recorded OOM config on (dim, layers, batch, accum, seq) is FAIL; grad_ckpt and world are printed for adjudication, never joined on.
+- **The 2026-09-10 disk deletion is recorded in `runs/deletion_0911.txt`.** The pod root disk
+filled to 100% on 2026-09-10/11; after user approval, 199 entries (609 GB) — superseded code
+corpus dirs (`code_rp1t*`, `code_dedup08*`), stale smoke checkpoints (kept g per order;
+deleted f/h/ooms and `.step0` interrupts) and task logs — were deleted from the pod only.
+The manifest (kind, name, size, one DELETED line with the UTC stamp) is the audit record and
+is tracked here; the files are not in git. A future deletion follows the same discipline:
+broadcast candidates, delete only named-and-approved entries, commit the manifest.
 - **A fact's `source` names only checkpoints that still exist.** A checkpoint on the pod deletion list (`runs/pod_ckpt_candidates_*.txt`) must be KEEP-claimed by name; a source that names a pruned, zeroed, or misnamed checkpoint is a fact defect, not a footnote. `eff.kda_mla_growth_ratio_l32`'s step1500 was pruned with nothing red and the same day's list nearly took step2000/2500/3000 too (b0, 2026-09-02). `harness` check `ckpt_facts_sources_present` (44-22) joins every fact's source/config against the newest listing and FAILs both classes — `[deletion-candidate]` (on the list, unkept) and `[absent]` (not in the listing: pruned, zeroed, or misnamed) — naming the fact and the file on both sides. A source the fact's own uncertainty/boundary already names as gone is WARN, not FAIL: honest provenance stays visible (three tiers, fb ruling 2026-09-02). Names match exactly: a fact that shortens a name is wrong, and the check says so.
 
 ## Ten gate-failure rules (compressed from `docs/lessons/gate_failure_shapes.md`)
@@ -322,11 +436,11 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 
 | Rule | Enforced by |
 |---|---|
-| Tokenizer frozen 2026-08-29 | `pinned_ids` |
+| Vocabulary rebuilt 2026-09-10 (condition 2) | `pinned_ids` |
 | Vocabulary identity | `vocab_id_on_load_path` |
 | GPUs (9) | manual: card ownership is a controller decision, not a file state |
 | A kill is not finished until `nvidia-smi` says the card is free (4) | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
-| Lanes: a 7-card training block, and one lane card for everything else (3) | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy |
+| Lanes: a 5-card gate block, one lane card, and two cards on loan to tileRL | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy; allocation_reads_the_grant pins the standing-order list theirs_baseline [0,6] |
 | Small jobs queue on the lane card. They never spill into the block, not even o (3) | manual: queueing is operator behaviour over time; lane_respected catches the instantaneous violation |
 | When there is no lane card at all — `NGPU=8`, as p500m_ | `coresident_cache_refusal` |
 | Judge the cost in seconds against what the run already (2) | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |
@@ -355,7 +469,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | The shared corpus, checkpoints, and GPUs on the pod are unch | `pod_drift` |
 | A commit that touches a file in the manifest's scope is pushed by its committer | `pod_drift` |
 | `harness task` and `harness friction` write the ledger of the tree they are invoked from | `test_integration_tree_guard` |
-| Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
+| Mix-named corpus directories are frozen | `ladder_config_frozen` |
 | Code goes through a GitHub PR; ledger-only commits keep `merge_main` | `merge_main.sh --selftest` |
 | A push now happens AFTER the merge, not in the same step (4) | manual: the ORDER of two operator actions leaves no artifact recording which came first. `pod_drift --check` catches the consequence — a stamp naming a sha main does not hold reads as drift — but not the discipline |
 
@@ -452,7 +566,20 @@ The domain files, named here because `facts_well_formed` requires it in both dir
 - `scripts/pod_push.sh` pushes only content reachable from `main`; a branch-only file is refused. CI reads `main`.
 - The shared corpus, checkpoints, and GPUs on the pod are unchanged by this; `harness launch` and the allocation file still own them.
 
-**Every delivery has a second reader (user order, 2026-08-31 22:00).** Fixed pairs: de↔ 44, tilerl↔ b0, 3b→ b0, e1→ 3b, fb→ 44; `runs/roster.json` is the roster of record. `harness task done` requires `--reviewer`, a roster member other than the owner, and refuses otherwise. The reviewer writes a row to `runs/review.jsonl` naming the artifact path or failing case they actually opened; a review that names neither is not a review. `review_present` WARNs while a review is pending and FAILs 30 minutes after the close — a sleeping reviewer never blocks a close, and a review that never arrives never stays invisible. Reviews of controller rulings keep the 15-minute window below.
+**Every delivery has a second reader (user order, 2026-08-31).** The seven live members and
+their sockets are in `runs/roster.json` (roster of record; 2026-09-11): **fb** controller
+(aupai-c1), **de** implement/architecture (aupai-08), **3b** data + reviewer of record
+(aupai-7b), **98** reporting/cache builds (aupai-b2), **ae** tokenizer/gate-mix/decontam
+(aupai-2b), **0e** UltraData conversion (aupai-54), **66** gate instrument/launcher
+(aupai-74). Review pairs: fb↔de, 3b→fb, 98→fb, ae→de, 0e→3b, 66→3b. If a pair is busy, any
+other live member may be the second reader, named in the review row. **Departed sessions
+(tilerl, b0, e1, 44) are out of the roster: do not message, assign, or wait on them.**
+`harness task done` requires `--reviewer`, a live roster member other than the owner. The
+reviewer writes a row to `runs/review.jsonl` naming the artifact path or failing case they
+actually opened; a review that names neither is not a review. `review_present` WARNs while a
+review is pending and FAILs 30 minutes after the close — a sleeping reviewer never blocks a
+close, and a review that never arrives never stays invisible. Controller rulings keep the
+15-minute review window.
 
 **The controller is reviewed too (user order, 2026-08-31).** Every controller ruling that changes data composition, launches or kills a job, sets a recipe value or threshold, or reports a number to the user is sent to the reviewer session (44) as it is issued; a challenge within 15 minutes must name a failing case or an artifact, otherwise the ruling stands; urgent kills execute first and are reviewed after. Challenges and outcomes: `runs/review.jsonl`; accepted corrections go into the gates doc under the controller's name. The controller made four evidenced errors that day that no one was positioned to catch first.
 
@@ -465,4 +592,10 @@ Three rules from the day one session's `git checkout` erased another session's u
 - **A hook edit made in a branch worktree does not run until it is merged.** `.git/hooks/pre-commit` is a symlink to `../../scripts/hooks/pre-commit` resolved against **main's** worktree, so every worktree executes main's copy. The consequence, not the mechanism, is what bites: edit a hook in your worktree, commit, watch it not fire, and conclude your change is broken — it was never loaded. **This covers the `SELFTEST_FILES` registration, not just hook logic**: adding your file to that set in your own worktree gates nothing, and the hook still prints a `selftests` timing line, so a small number reads as "ran, fast" when it means "ran zero of them". Two incidents: 2026-09-01, a readout commit landed with its own selftest red under five green hook lines, and the fix for that ran the old hook too; e1 2026-09-02, `build_agentic_sft.py` was registered on the e1 branch, every commit printed `selftests 0.03s`, and the selftest had never run at a single commit. Verify a hook change by running its logic directly against a deliberately-broken input, and verify a registration with `readlink -f "$(git rev-parse --git-common-dir)/hooks/pre-commit"` then grep that file for your own filename; a timing line cannot tell you whether the run was empty.
 - The hook runs `--selftest` on staged files in its `SELFTEST_FILES` map. A file carrying a selftest that is not in the map is unguarded: the hook checks what it happens to check, not what the commit changed. Add the path when you add a selftest.
 - A commit that touches a file in the manifest's scope (`python3 scripts/pod_drift.py --list-scoped`) is pushed to the pod by its committer in the same step (`scripts/pod_push.sh <file>`, which generates the manifest and ships it after the files). The pod runs the pushed copy, not HEAD; 2026-08-31 the drift gate stopped the A/B launch twice on files another session had committed and not pushed.
-- Corpus directories named by any ladder mix (`data/mix_scale_*.json`) are frozen: they carry `build_corpus`'s stamp and every ladder point and A/B reads them. New corpus goes to a new directory that the 30B mix names (`data/corpus/code_rp1t/`, not `data/corpus/code/`). 2026-08-31: ten new shards written into `data/corpus/code/` changed its fingerprint and `_assert_mix_domains` stopped the A/B at startup — correctly.
+- Mix-named corpus directories are frozen: a domain carries its build stamp and every run
+that reads it must see the same bytes — this applied to the retired ladder mixes
+(`data/mix_scale_*.json`) and applies now to every `data/mix_v41_gate.json` domain. New
+corpus goes to a new directory the gate mix names (`data/corpus/code_ultra_l2/`,
+`data/corpus/code_keep_p1/`), never into an existing domain's directory. 2026-08-31: ten new
+shards written into `data/corpus/code/` changed its fingerprint and `_assert_mix_domains`
+stopped the A/B at startup — correctly.

@@ -85,9 +85,19 @@ close before the gate run; each needs a one-line ruling in this table, not a new
 - **AttnRes**: do not carry across the CED boundary; evaluate within-half only if CED is built.
 - MoE: reuse MoEFFN as-is, all blocks, 48/top-3/1-shared — the 384-expert / top-6 / expert-2304
   numbers are 552B-only. Keep SiTU-GLU; do not add SwiGLU clamp without an A/B.
-- **The data recipe CHANGED 2026-09-10 (user order).** Teacher synthesis (textbooks, exercises;
-  de-101 / 0e-1) is stopped and dropped. The p1 code+exercise corpus is openbmb/UltraData-Code L2
-  (natural code) and L3 (exercises with tests), python subsets, fetched from hf-mirror,
-  decontaminated against HumanEval/MBPP, mixed with the existing math/CoT/en domains (task 0e-3,
-  PR #221). Only the highest-quality tier is kept; the 2.8116B keep set stays as a domain. The
-  tokenizer is re-measured on an UltraData sample before the gate run (ae).
+- **The data recipe CHANGED 2026-09-10 (user order); state as of 2026-09-11.** Teacher
+  synthesis (textbooks/exercises, de-101) is stopped; the gate corpus is
+  openbmb/UltraData-Code L2 (natural code) and L3 (task/analysis/solution/test) python
+  subsets, fetched from hf-mirror and kept under 0e's L2/L3 keep rules (#237), 13-gram
+  decontaminated against HumanEval/MBPP (`filters/decontam_ngram.py`; results in
+  facts/contamination.json), and mixed with the existing math/CoT/en domains and the
+  2.8116B classifier keep set (now `code_keep_p1`, assembled flat by
+  scripts/assemble_keep_p1.py). The mix is `data/mix_v41_gate.json`: total_tokens 30.0B,
+  one epoch, eight domains (PR #246; weights re-normalise to 0e's measured totals).
+  **Tokeniser: rebuilt 2026-09-10 to 32,768 slots under unfreeze condition 2** — the
+  measured freeze tax on UltraData was ~8.5% (PR #233,
+  facts/tokenizer.json#tok.ultra_freeze_tax_0910); the 32,773-slot vocab is preserved on
+  the pod as `data/tokenizer_frozen_0829.json`, and every gate cache is stamped at the new
+  vocab f1f860970d15d623. Gate-run recipe (fb 2026-09-11, prereg v41_gate_0911 amendment 1):
+  world 6, B4/accum8, 786,432 tokens/step, 38.1K steps; warmup 500, warmdown 0.65,
+  anneal_frac 0.10.
