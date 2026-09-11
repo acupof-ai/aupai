@@ -471,3 +471,5 @@
 {"ts": "2026-09-10T15:12Z", "reviewer": "0e", "task": "0e-3", "artifact": "datagen/ud_solution_exec.py", "verdict": "approved", "pr": 229}
 {"ts": "2026-09-10T17:02Z", "reviewer": "0e", "task": "0e-3", "artifact": "datagen/ud_solution_exec.py", "verdict": "approved", "pr": 235}
 {"ts": "2026-09-11T05:02Z", "reviewer": "0e", "task": "0e-3", "artifact": "re-review head 9d0041b6: AGENTS.md:153,299-307,614; v41_pivot.md:91-112; F1/F2/N1/N2 all resolved", "verdict": "approved", "pr": 256}
+{"ts": "2026-09-11T05:47Z", "reviewer": "3b", "task": "ae-7", "artifact": "cont.gate_dc_residual_0911: evidence 1287 shards (16+13+83+284+206+685) all 0 residual, fp 86e19705 + gate shas; output-side vs writer tally", "verdict": "approved", "pr": 257}
+{"ts": "2026-09-11T05:47Z", "reviewer": "3b", "task": "0e-3", "artifact": "redo30 per-shard verify gate + parallel 3-phase aggregate; kept_tokens subtraction exact (len(ids)+1 both sides, 3 partition asserts); canonical fp_dir stamp; ud_solution_exec killpg orphan reaping selftest proves grandchild dead", "verdict": "approved", "pr": 258}
