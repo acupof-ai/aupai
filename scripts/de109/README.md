@@ -41,8 +41,11 @@ materialized path. The entries output MUST be this matmul; materializing `pe*vc`
 
 - `check_cpu_parity.py` — float64 materialized vs split, fwd + every q/k/v/x and parameter
   gradient, fixed multi-doc `cu=[0,7,12,24]`; max diff <= 1e-15.
-- `check_default_identical.py` — with `csa2_win_flash` unset the layer is byte-identical
-  to origin/main; pins the fixed-seed SHA256 of y + all gradients.
+- `check_default_identical.py <candidate_model.py> --ref <baseline_model.py>` — with
+  `csa2_win_flash` unset the layer is byte-identical to the pre-flag baseline. Hashes both
+  trees in one process on the current device and compares; no baked constant (the float64
+  hash is environment-dependent, so a laptop value never matches a pod value). Provide the
+  baseline file directly; on a git box `git show <pre-flag-sha>:model.py > /tmp/ref.py`.
 - `check_gpu_parity.py` — H20 bf16 fwd/bwd parity at T=512 B=2 and B4/B8 peak GiB + tok/s
   of 10 stacked CSA2 layers at T=4096. Measured 2026-09-11:
   fact `facts/v41.json#v41.de109_win_flash_parity_speed_0911`.
