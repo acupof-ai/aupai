@@ -188,7 +188,7 @@
  "launch_block_granted": true,
  "block_cards": "0,1,2,3,4,5",
  "lane_card": null,
- "note": "GATE RUN v41_gate_0911 (fb, 2026-09-11 14:32Z): block 0-5 world 6, NO lane; cards 6,7 owner tilerl through the run (user ruling 2026-09-11 04:1xZ); one-hour notice sent tilerl-58 14:32Z. Pre-launch lane 5 ended.",
+ "note": "GATE RUN v41_gate_0911 (fb, 2026-09-11 14:32Z): block 0-5 world 6, NO lane; cards 6,7 owner tilerl through the run (user ruling 2026-09-11 04:1xZ); one-hour notice sent tilerl-58 14:32Z. Pre-launch lane 5 ended. | 16:0xZ user ruling: card 6 lent to aupai for HumanEval windows only.",
  "verified": "2026-09-08 fb: nvidia-smi read 2,4,5,7 at 0 MiB / 0% before the grant; runs/claims/ held only tilerl-ppsn/curve2/l5eval",
  "next_grant": {
   "to": "0.2b_8b_b192 (e1-43; prereg runs/prereg.jsonl#matched_batch_dense_0906@amended_1), dense comparator for 1.5b-a0.2b-e48_8b",
@@ -222,10 +222,7 @@
    "owner": "aupai",
    "note": "LANE card until the gate launch (fb 2026-09-11 04:3xZ): de-108 step 4 (de, aupai-08, ~15 card-minutes, single process) runs here first; at the one-hour notice block_cards becomes 0-5 again and the lane disappears (tileRL holds 6,7 by user ruling)."
   },
-  "6": {
-   "owner": "tilerl",
-   "note": "USER RULING 2026-09-11 04:1xZ (ckl via fb): tileRL's for the whole V4.1 gate run (2-3 days from launch); tileRL GRPO grpo-gsm8k-27b ranks hold it now. aupai jobs here only by asking tilerl-58. Reverts to aupai when the gate run ends."
-  },
+  "6": "tileRL's for the V4.1 gate run (user ruling 2026-09-11 04:1xZ). Lent to aupai (66, eval/humaneval_gen.py, checkpoint-load only) 2026-09-11 17:30-23:59Z for the HumanEval windows after ckpt saves at steps 2000/4000/6000, user ruling 2026-09-11 16:0xZ; 66 starts only if the card reads 0 MiB with no tilerl claim and tilerl-58 was told 10 min before; fb re-extends the window daily while the run lasts. granted_by fb.",
   "7": {
    "owner": "tilerl",
    "note": "USER RULING 2026-09-11 04:1xZ (ckl via fb): tileRL's for the whole V4.1 gate run (2-3 days from launch); tileRL GRPO grpo-gsm8k-27b ranks hold it now. aupai jobs here only by asking tilerl-58. Reverts to aupai when the gate run ends."
