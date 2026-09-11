@@ -80,3 +80,19 @@ combine but still needs: (1) the indexer STE gradient term above added to the
 indexer_q/ik_weight grads; (2) a pure-PyTorch combine reference for CPU CI; (3) wire
 into `_forward_csa2` under HAS_FA with the materialized path as fallback; (4) CPU parity
 + card-7 B4/B8 numbers.
+
+## Status and scripts (updated 2026-09-11)
+
+The four draft items above are done; `csa2_joint_attention` is wired into
+`_forward_csa2` under `cfg.csa2_joint` (default False). de-108 is gated and ships
+post-gate: measured 2.3-3.2x slower than materialized, and the gate uses the de-109
+`csa2_win_flash` path instead (facts/v41.json#v41.de109_win_flash_parity_speed_0911).
+
+- `check_cpu_parity.py` — float64 joint vs materialized, fwd + every gradient <= 1e-15.
+- `check_default_identical.py <candidate_model.py> --ref <baseline_model.py>` — with
+  `csa2_joint` unset the layer is byte-identical to the pre-flag baseline. Hashes both
+  trees in one process on the current device and compares; no baked constant (the float64
+  hash is environment-dependent: laptop f84c27ff... vs pod 2d9d97cd... are the same
+  default path). Provide the baseline file directly; on a git box
+  `git show <pre-flag-sha>:model.py > /tmp/ref.py`.
+- `check_gpu_parity.py` — H20 bf16 parity and B4/B8 peak/tok/s.
