@@ -296,10 +296,28 @@ Cite a fact as `facts/<file>.json#<id>`; the id must exist. Numeric conclusions 
 
 Per-domain weight, epoch cap, anneal weight. `train.py` builds the schedule and consumes it in order, so `Cfg.epochs` is forced to 1. **It is the only data path** — a named-but-missing mix raises. The flat-corpus fallback was deleted: it once trained on 244KB in silence. `data/mix_sample.json` is the 2,000-document sample a checkout ships.
 
-The V4.1 gate mix is `data/mix_v41_gate.json` (ae, merged #246; weights re-normalised to 0e's measured UltraData totals): 30.0B tokens, one epoch, anneal=weight, eight domains — `code_ultra_l2` (natural code) and `code_ultra_l3` (task/analysis/solution/test) from openbmb/UltraData-Code python under 0e's keep rules (#237), plus `code_py_starcoder`, `math_owm_stage2`, `code_keep_p1` (the 2.8116B classifier keep set, assembled flat by `scripts/assemble_keep_p1.py`), `en_c4_stage2`, `cot`, `code_py_rp1t`. **Every gate code domain is 13-gram decontaminated against HumanEval/MBPP before it
-enters the mix** — run `scripts/filter_gate_domains.py --domains ...` (the overlap engine is
-the `filters/decontam_ngram.py` library, not a CLI); this is a launch prerequisite, with
-results in `facts/contamination.json`. Every domain's token cache must exist in `/data00` in the gate vocabulary before launch (the prereg checklist names which remain on 0e). The old ladder mixes (`mix_scale_*`) and teacher synthesis (textbooks/exercises, stopped by the pivot) are the retired data plan.
+The V4.1 gate mix is `data/mix_v41_gate.json` (ae; the launch version with the
+decontaminated domain names is open PR #254): `total_tokens` 30.0B is the **budget, not
+supply** — shape code 86% / math 8% / English 4.5% / CoT 1.5%, **weights are TARGET
+composition, not supply shares**, and `anneal` is a separate late-training composition
+(6 of 8 domains' anneal differs from their main weight). All domains run one epoch except
+`cot`, which repeats 3× against its small measured supply. The launch mix names eight
+13-gram-decontaminated `_dc` directories: `code_ultra_l2_dc` (natural code) and
+`code_ultra_l3_dc` (task/analysis/solution/test) from openbmb/UltraData-Code python under
+0e's keep rules (#237), plus `code_py_starcoder_dc`, `math_owm_stage2_dc`,
+`code_keep_p1_dc` (the 2.8116B classifier keep set, assembled flat by
+`scripts/assemble_keep_p1.py`), `en_c4_stage2_dc`, `cot_dc`, `code_py_rp1t_dc`.
+**Every gate code domain is decontaminated against HumanEval/MBPP before it enters the mix**
+— the six non-ultra domains via `scripts/filter_gate_domains.py --domains ...` (engine: the
+`filters/decontam_ngram.py` library, not a CLI), the two ultra domains inside 0e's
+aggregate; this is a launch prerequisite, with dropped fractions and packed token counts in
+`facts/contamination.json` (cont.gate_dc_*) and
+`facts/corpus_supply.json#cs.gate_domains_decontaminated_tokenized_0911` — the six
+non-ultra supplies are measured packed `_dc` tokens; the two ultra totals are labelled
+estimates until 0e's aggregate lands. Every domain's token cache must exist in `/data00` in
+the gate vocabulary before launch (the prereg checklist names which remain on 0e). The old
+ladder mixes (`mix_scale_*`) and teacher synthesis (textbooks/exercises, stopped by the
+pivot) are the retired data plan.
 
 ### Chat format
 
@@ -593,7 +611,7 @@ Three rules from the day one session's `git checkout` erased another session's u
 - Mix-named corpus directories are frozen: a domain carries its build stamp and every run
 that reads it must see the same bytes — this applied to the retired ladder mixes
 (`data/mix_scale_*.json`) and applies now to every `data/mix_v41_gate.json` domain. New
-corpus goes to a new directory the gate mix names (`data/corpus/code_ultra_l2/`,
-`data/corpus/code_keep_p1/`), never into an existing domain's directory. 2026-08-31: ten new
+corpus goes to a new directory the gate mix names (`data/corpus/code_ultra_l2_dc/`,
+`data/corpus/code_keep_p1_dc/`), never into an existing domain's directory. 2026-08-31: ten new
 shards written into `data/corpus/code/` changed its fingerprint and `_assert_mix_domains`
 stopped the A/B at startup — correctly.
