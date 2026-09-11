@@ -299,7 +299,9 @@ def aggregate(out, pattern, prefix, tokenizer_path, level):
     reasons["cross_group_dup"] = cross_dup
     reasons["decontam_ngram"] = ngram_drop
     try:
-        ngram_fp = decon.decontam_fp()
+        ngram_fp = decon.decontam_fp(
+            os.path.join(root, "data", "eval", "humaneval", "humaneval_164.jsonl"),
+            os.path.join(root, "data", "eval", "mbpp_holdouts.jsonl"))
     except AttributeError:
         ngram_fp = None
     final_shards = sorted(glob.glob(os.path.join(out, f"{prefix}_[0-9]*.jsonl")))
