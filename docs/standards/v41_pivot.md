@@ -88,11 +88,18 @@ close before the gate run; each needs a one-line ruling in this table, not a new
 - **The data recipe CHANGED 2026-09-10 (user order); state as of 2026-09-11.** Teacher
   synthesis (textbooks/exercises, de-101) is stopped; the gate corpus is
   openbmb/UltraData-Code L2 (natural code) and L3 (task/analysis/solution/test) python
-  subsets, fetched from hf-mirror and kept under 0e's L2/L3 keep rules (#237), 13-gram
-  decontaminated against HumanEval/MBPP via `scripts/filter_gate_domains.py` (engine: the `filters/decontam_ngram.py` library; results in
-  facts/contamination.json), and mixed with the existing math/CoT/en domains and the
-  2.8116B classifier keep set (now `code_keep_p1`, assembled flat by
-  scripts/assemble_keep_p1.py). The mix is `data/mix_v41_gate.json`: total_tokens 30.0B is
+  subsets, fetched from hf-mirror and kept under 0e's L2/L3 keep rules (#237,
+  `datagen/ultradata_shards.py`): L2 drops category CONFIG/TEST and runs per-group
+  HumanEval/MBPP decontam + exact dedup; L3 keeps a row only when its solution passes its
+  own bundled exec test AND clears the nontriviality floor (AST nodes ≥90, or control-flow
+  ≥3 with ≥2 loops; `datagen/ud_solution_exec.py` — exec-only was 43% precision in 3b's
+  audit). The two ultra domains are then decontaminated inside the aggregate
+  (`ultradata_shards.py --aggregate`, which runs the same 13-gram engine from
+  `filters/decontam_ngram.py` and global cross-group dedup before emitting
+  `code_ultra_l{2,3}_dc`) — NOT through `scripts/filter_gate_domains.py`, whose scope is
+  the six non-ultra domains. Results land in facts/contamination.json, and they are mixed
+  with the existing math/CoT/en domains and the 2.8116B classifier keep set (now
+  `code_keep_p1`, assembled flat by scripts/assemble_keep_p1.py). The mix is `data/mix_v41_gate.json`: total_tokens 30.0B is
   the BUDGET not supply; weights are TARGET composition (code 86% / math 8% / English 4.5%
   / CoT 1.5%), not supply shares; `anneal` is a separate late-training composition and
   differs from the main weight in 6 of 8 domains; all domains run one epoch except cot
