@@ -492,6 +492,32 @@
    "uncertainty": "tok/s and s/step are compile-warmed window means; peak is the per-rank torch max_memory tracker printed each log line. Throughput is not yet a steady-run mean beyond step130.",
    "boundary": "This records launch success and the first-step window only; it is not a HumanEval result (first eval at .step2000) and not a 30B-trained number. NaN status covers steps 1-130 only.",
    "status": "measured"
+  },
+  {
+   "id": "v41.humaneval_gate_step2000_0911",
+   "value": "V4.1 gate run v41_gate_0911 first decision checkpoint HumanEval greedy with the CORRECTED instrument (66-14: the \"\\ndef \" stop no longer truncates the model's own same-name re-declaration): pass@1 = 0/164 at step 2000 (1.573B tokens). Empty 51/164 = 31.1% (eos_first 21, stop_at_0 30); 113/164 completions contain code and are judged. The earlier 164/164-empty reading was an instrument artifact: a raw 64-token probe showed the model fluently re-declares \"\\ndef <entry_point>(...)\" after the closing docstring, which the old stop cut to empty at ~15 tokens. With that false truncation removed, bodies are scored and still 0 pass -- so at the first decision checkpoint this is a GENUINE capability zero (deep warmup), not a truncation zero. Controls: 154/154 body-form canonicals wrapped as a self-redef pass, wrong-body self-redef fails. The 30% gate is decided on the step6000+ trajectory (amendment 8); HumanEval emerging from 113 non-empty but 0-pass is the step2000 baseline.",
+   "measured": "2026-09-11",
+   "source": "runs/he_gate_step2000_fixed_summary.txt (all partial counts + controls) and runs/milestones.jsonl pin he2k_step2000",
+   "config": {
+    "runner": "CUDA_VISIBLE_DEVICES=6 eval/humaneval_gen.py greedy 164 --run v41gate_he2k_step2000_fixed (ckpt = runs/milestones.jsonl pin he2k_step2000, name recorded in the eval log)",
+    "instrument": "66-14 self-redeclaration-aware stop",
+    "n_problems": 164,
+    "pass1": 0,
+    "nonempty": 113,
+    "empty": 51,
+    "eos_first": 21,
+    "stop_at_0": 30,
+    "step": 2000,
+    "tokens_trained": 1572864000,
+    "ckpt_pin_sha256": "0ad1fee5eeff259986de128c02a9cd1be82f45ae0808540e003b465bfc5f2b13",
+    "eval_ckpt_pin": "he2k_step2000 (see runs/milestones.jsonl)"
+   },
+   "uncertainty": "Greedy single sample. The 113 non-empty bodies are model code judged by the same exec+SIGALRM scorer as the 164/164 canonical control; total runtime was longer (~24 min) because completions now decode to eos/max_new rather than truncating at ~15 tokens.",
+   "boundary": "Step-2000 warmup baseline with the corrected instrument; not evidence for or against the 30% gate, decided at step6000. The same-day pre-66-14 164/164-empty reading was an instrument number; that preds file is retained as the buggy artifact.",
+   "status": "measured",
+   "artifact_sha256": {
+    "preds_humaneval_ckpt_v41_gate_0911.milestone_he2k_step2000.pt.v41gate_he2k_step2000_fixed.jsonl": "220ba1bc53ab62720f593ca45f964a8f7afb0b6d35b38c907a7c406ab90d2e59"
+   }
   }
  ]
 }
