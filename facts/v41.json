@@ -421,7 +421,25 @@
    },
    "uncertainty": "A future TileKernels routing-primitive microbenchmark might show a dispatch-chain speedup independent of expert GEMMs; not assessed and not blocking anything. DeepGEMM could add sm90 Mega kernels later; this ruling is of the 2026-09-10 merge.",
    "status": "measured",
-   "boundary": "CPU/API-source conclusion: no runtime timing, peak bytes, or bit-parity numbers exist because neither candidate offers a runnable H20 code path for the benchmark shape. Reopen if upstream ships sm90 Mega kernels."  },
+   "boundary": "CPU/API-source conclusion: no runtime timing, peak bytes, or bit-parity numbers exist because neither candidate offers a runnable H20 code path for the benchmark shape. Reopen if upstream ships sm90 Mega kernels."
+  },
+  {
+   "id": "v41.de108_joint_flash_parity_speed_0911",
+   "value": "CSA2 joint entries+window via two flash calls joined by fp32 LSE (de-108) is numerically exact vs the materialized one-softmax path and removes the B8 materialized OOM, but every flash form tried today is slower than materialized; gate run stays materialized (fits at B4), de-108 is post-gate. PARITY (10 CSA2 layers d=1024 h=8 hd=128 m=8 top_k=64 n_win=128 4 indexer heads/dim64 T=512 B=2 bf16 fixed H20): fwd maxabs 1.953e-3 (rel 5.65e-3); single-layer grads dq/dk 1.22e-4, all param grads 0.3-1.0e-2 rel; CPU float64 fwd+every grad <=1.1e-15. RAGGED (one varlen entries call per indexer group, boolean-compress to true n_sel): B4 20.45 GiB/1612ms/10166 tok/s vs materialized 38.05 GiB/502ms/32670; B8 31.83 GiB/2252ms/14552 vs materialized 76.01 GiB/978ms/33500 -- halves B8 memory, 2.3-3.2x slower. RECTANGULAR collapse (uniform max_e=64 slots per query + seqused_k, one dense call/group) REJECTED: grads diverged (worst 5.1e3 vs 0.125; zero-selection queries make empty-key flash segments corrupting entries dq/dke), B4 52.87 GiB/9823ms/1668, B8 OOM; padding every query to 64 keys dominates. Exact split backward: flash_attn.cute _flash_attn_bwd subtracts within-branch g.o_j internally, so external dlse must be cross-branch c_j*(g.o_j - g.y) (None exact only standalone, c_j*g.y double-subtracts); dkw/dke 1.9e-6 vs materialized on an isolated two-branch kernel test.",
+   "measured": "2026-09-11",
+   "source": "scripts/de108/check_gpu_parity.py; scripts/de108/check_cpu_parity.py; scripts/de108/check_default_identical.py; model.py csa2_joint_attention/_CSA2JointFlash (branch de-joint-flash, ragged at 2af8c1d8)",
+   "config": {
+    "model": "10 of 12 layers CSA2, d=1024 heads=8 hd=128",
+    "csa2": "m=8 top_k=64 n_win=128 indexer_heads=4 indexer_dim=64",
+    "parity": "T=512 B=2 bf16 fixed batch",
+    "bench": "T=4096 B in {4,8} bf16 fwd+backward",
+    "hardware": "H20 SM90",
+    "software": "flash_attn.cute flash-attn 4, torch 2.11.0+cu129"
+   },
+   "uncertainty": "bf16 fwd/grad diffs are the kernel accumulation floor (CPU float64 exact). tok/s is eager varlen (4 entries calls/layer + python gather); the speed win needs ragged density without per-group call overhead (concat-groups or fused varlen kernel), which uniform padding does not and which is unbuilt. Attention-only timings, not full step; B8 materialized 76 GiB is attention-module only (full stack OOMed 94.62 GiB).",
+   "boundary": "Default-path byte identity is per-environment. The check_default_identical hash is a fixed-seed float64 reduction whose bit value follows the BLAS/device reduction order: laptop f84c27ff... and pod 2d9d97cd... are the SAME default path, so the gate compares the candidate model.py against a baseline model.py in one process on the current device (check_default_identical.py --ref), never against a baked constant. de-108 is gated (cfg.csa2_joint default False) and ships post-gate; the gate uses the de-109 csa2_win_flash path instead.",
+   "status": "measured"
+  },
   {
    "id": "v41.de109_win_flash_parity_speed_0911",
    "value": "CSA2 with the ENTRIES branch kept materialized and only the SWA-window branch run on flash (de-109, cfg.csa2_win_flash) matches the single materialized softmax to the bf16 kernel floor and is 3.2-3.3x faster than materialized while fitting B8, removing the materialized path's B8 pressure. Dense selected-entry scores are only B,H,T,NB (NB=T/m=512); the materialized cost is the B,H,T,T window score tensor, so flashing the window alone captures the win with no ragged gather or per-group call. PARITY (10 CSA2 layers d=1024 h=8 hd=128 m=8 top_k=64 n_win=128 4 indexer heads/dim64 T=512 B=2 bf16 fixed H20): fwd maxabs 1.953e-3 (rel 5.65e-3, identical to de-108); worst param-grad abs 7.8e-2 (bf16 floor; CPU float64 forward and every q/k/v/x + parameter gradient <=1e-15); indexer_q and ik_weight STE grads nonzero on both paths. MEMORY/SPEED (T=4096 bf16 fwd+backward): B4 win-flash 13.11 GiB / 152.9 ms / 107,148 tok/s vs materialized 38.05 GiB / 495.0 ms / 33,101 (3.24x faster, 2.9x less memory); B8 win-flash 26.15 GiB / 292.3 ms / 112,114 tok/s vs materialized 76.01 GiB / 976.6 ms / 33,554 (3.34x faster, fits). Mechanism: one flash_attn.cute varlen causal window call (window_size=(n_win-1,0)) per layer over all heads; entries stay eager oe=(pe*ste)@vc (matmul, no B,H,T,NB,D tensor); the two branches combine by fp32 LSE and autograd supplies the window dlse=c_w(g.ow-g.y) cross term. A first form that materialized pe*vc as B,H,T,NB,D fp32 OOMed at B4 (>=17 TiB); the matmul form is the measured one.",
@@ -452,6 +470,27 @@
     "hardware": "H20 SM90"
    },
    "uncertainty": "FLOP split is architecture-exact for the listed linear/score terms; the 'other' bucket (indexer/norms/router/embedding) is approximate and excludes activation, fp8 cast, dispatch/communication and optimizer FLOPs, so MoE's true time share is at least the value shown. f=0.144 is an Amdahl inference from a single noisy step-speedup point, not a CUDA profile; the 1.11x acceptance speedup compares j world4 to i world8 (different tokens/step), so f is an order-of-magnitude bound. A real per-kernel timeline on one fixed shape is the required post-gate confirmation.",
+   "status": "measured"
+  },
+  {
+   "id": "v41.gate_first_steps_0911",
+   "value": "V4.1 HumanEval gate run v41_gate_0911 launched 2026-09-11 15:04Z on world 6 cards 0-5 with --csa2_win_flash (B4/accum8, 786,432 tokens/step, 38,146 planned steps over 30B; prereg v41_gate_0911 amended_7). First-step acceptance (board 66-9): first logged line step 10/38146 loss 7.360 at 6K tok/s/gpu during compile, peak 43.39 GiB; step20 15K (the >=15K threshold met), peak 43.38; step100 loss 4.130 27K peak 43.40; step130 loss 3.112 28-29K steady peak 43.39-43.40; max peak across the window 43.45 GiB; zero NaN to step130; s/step 20.9 at 10 falling to 4.5-4.9 steady; ETA ~70h. Peak 43.45 GiB is 0.60x the unflagged smoke's 72.6 and far under the 80 GiB ceiling, the win-flash adoption basis (amendment 6). Acceptance PASS: first step printed, peak <=80, tok/s/gpu >=15K, no NaN to step100+.",
+   "measured": "2026-09-11",
+   "source": "runs/experiments.jsonl#v41_gate_0911 and runs/prereg.jsonl#v41_gate_0911 (amended_7)",
+   "config": {
+    "runner": "./run_ddp.sh --mix data/mix_v41_gate.json --csa --csa2 --csa2_win_flash --rope_dims 64 --n_swa_only_layers 2 --no-attn_res --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11",
+    "world": 6,
+    "batch": 4,
+    "accum": 8,
+    "seq": 4096,
+    "tokens_per_step": 786432,
+    "planned_steps": 38146,
+    "cards": "0-5",
+    "pod_stamp": "544532a6323f",
+    "window": "steps 10-130"
+   },
+   "uncertainty": "tok/s and s/step are compile-warmed window means; peak is the per-rank torch max_memory tracker printed each log line. Throughput is not yet a steady-run mean beyond step130.",
+   "boundary": "This records launch success and the first-step window only; it is not a HumanEval result (first eval at .step2000) and not a 30B-trained number. NaN status covers steps 1-130 only.",
    "status": "measured"
   }
  ]
