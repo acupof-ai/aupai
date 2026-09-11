@@ -421,6 +421,22 @@
    },
    "uncertainty": "A future TileKernels routing-primitive microbenchmark might show a dispatch-chain speedup independent of expert GEMMs; not assessed and not blocking anything. DeepGEMM could add sm90 Mega kernels later; this ruling is of the 2026-09-10 merge.",
    "status": "measured",
-   "boundary": "CPU/API-source conclusion: no runtime timing, peak bytes, or bit-parity numbers exist because neither candidate offers a runnable H20 code path for the benchmark shape. Reopen if upstream ships sm90 Mega kernels."  }
+   "boundary": "CPU/API-source conclusion: no runtime timing, peak bytes, or bit-parity numbers exist because neither candidate offers a runnable H20 code path for the benchmark shape. Reopen if upstream ships sm90 Mega kernels."  },
+  {
+   "id": "v41.de109_win_flash_parity_speed_0911",
+   "value": "CSA2 with the ENTRIES branch kept materialized and only the SWA-window branch run on flash (de-109, cfg.csa2_win_flash) matches the single materialized softmax to the bf16 kernel floor and is 3.2-3.3x faster than materialized while fitting B8, removing the materialized path's B8 pressure. Dense selected-entry scores are only B,H,T,NB (NB=T/m=512); the materialized cost is the B,H,T,T window score tensor, so flashing the window alone captures the win with no ragged gather or per-group call. PARITY (10 CSA2 layers d=1024 h=8 hd=128 m=8 top_k=64 n_win=128 4 indexer heads/dim64 T=512 B=2 bf16 fixed H20): fwd maxabs 1.953e-3 (rel 5.65e-3, identical to de-108); worst param-grad abs 7.8e-2 (bf16 floor; CPU float64 forward and every q/k/v/x + parameter gradient <=1e-15); indexer_q and ik_weight STE grads nonzero on both paths. MEMORY/SPEED (T=4096 bf16 fwd+backward): B4 win-flash 13.11 GiB / 152.9 ms / 107,148 tok/s vs materialized 38.05 GiB / 495.0 ms / 33,101 (3.24x faster, 2.9x less memory); B8 win-flash 26.15 GiB / 292.3 ms / 112,114 tok/s vs materialized 76.01 GiB / 976.6 ms / 33,554 (3.34x faster, fits). Mechanism: one flash_attn.cute varlen causal window call (window_size=(n_win-1,0)) per layer over all heads; entries stay eager oe=(pe*ste)@vc (matmul, no B,H,T,NB,D tensor); the two branches combine by fp32 LSE and autograd supplies the window dlse=c_w(g.ow-g.y) cross term. A first form that materialized pe*vc as B,H,T,NB,D fp32 OOMed at B4 (>=17 TiB); the matmul form is the measured one.",
+   "measured": "2026-09-11",
+   "source": "scripts/de109/check_gpu_parity.py; scripts/de109/check_cpu_parity.py; scripts/de109/check_default_identical.py; model.py csa2_window_flash/_WindowSWAFlash (branch de-win-flash, measured 2026-09-11)",
+   "config": {
+    "model": "10 of 12 layers CSA2, d=1024 heads=8 hd=128",
+    "csa2": "m=8 top_k=64 n_win=128 indexer_heads=4 indexer_dim=64",
+    "parity": "T=512 B=2 bf16 fixed batch; CPU f64 same layer B=2 T=12 cu=[0,7,12,24]",
+    "bench": "T=4096 B in {4,8} bf16 fwd+backward, 5 timed iters after 2 warmup",
+    "hardware": "H20 SM90",
+    "software": "flash_attn.cute flash-attn 4, torch 2.11.0+cu129"
+   },
+   "uncertainty": "bf16 fwd/grad diffs are the kernel accumulation floor (CPU float64 exact). Tok/s and GiB are the attention-module stack of 10 CSA2 layers, not a full training step; no MoE/optim/activation budget included. Speed is eager with one flash call per layer and the dense entries matmul in eager.",
+   "status": "measured"
+  }
  ]
 }
