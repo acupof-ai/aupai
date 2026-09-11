@@ -68,12 +68,7 @@ def main():
 
 
 def cpu_device_gate():
-    # A checkpoint saved WITH --csa2_win_flash must still run --device cpu. On the pod HAS_FA is
-    # True (the cute kernel imported), so gating use_flash on HAS_FA alone would call the cute
-    # forward on CPU tensors and die in flash_attn.cute.interface's bf16/fp16 assert. The model
-    # must instead test the ACTUAL tensor device and take the materialized branch. Simulate the
-    # pod by forcing HAS_FA True with the cute Function replaced by one that raises if reached.
-    saved = M.HAS_FA
+    saved_flag, saved_fn = M.HAS_FA, M._WindowSWAFlash
     boom_calls = []
 
     class _Boom(torch.autograd.Function):
@@ -102,9 +97,7 @@ def cpu_device_gate():
         assert not boom_calls, "the cute kernel ran on CPU"
         assert torch.isfinite(y).all(), "CPU materialized fallback produced non-finite output"
     finally:
-        M.HAS_FA = saved
-        if hasattr(M, "_WindowSWAFlash"):
-            pass
+        M.HAS_FA, M._WindowSWAFlash = saved_flag, saved_fn
     print("CPU DEVICE GATE OK: csa2_win_flash on a CPU tensor takes the materialized branch")
 
 
