@@ -21,7 +21,7 @@ import hashlib
 import json
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 import pyarrow.parquet as pq
 from tokenizers import Tokenizer
@@ -98,12 +98,15 @@ def main():
                     help="aggregate the group stats_<tag>.json files in out and exit")
     ap.add_argument("--final-out", default="",
                     help="aggregate: emit final decontaminated shards here instead of out")
+    ap.add_argument("--agg-workers", type=int, default=8,
+                    help="aggregate: parallel 13-gram shard workers")
     args = ap.parse_args()
     out = args.out or f"data/corpus/code_ultra_{args.level.lower()}"
     prefix = os.path.basename(out.rstrip("/"))
 
     if args.aggregate:
-        aggregate(out, args.aggregate, prefix, args.tokenizer, args.level, args.final_out)
+        aggregate(out, args.aggregate, prefix, args.tokenizer, args.level,
+                  args.final_out, args.agg_workers)
         return
 
     tag = f"_{args.tag}" if args.tag else ""
@@ -224,7 +227,47 @@ def main():
     print(f"DONE {json.dumps(record, indent=1)}", flush=True)
 
 
-def aggregate(out, pattern, prefix, tokenizer_path, level, final_out=""):
+_AGG_DECON = {}
+
+
+def _agg_worker_init(root):
+    if root not in _AGG_DECON:
+        from filters.decontam_ngram import Decontaminator
+        _AGG_DECON[root] = Decontaminator.load_default(root)
+
+
+def _ngram_classify_shard(args):
+    """Forked per tagged shard: split lines into ngram-clean / ngram-hit temp
+    files. The expensive pass; parallel across shards.
+    """
+    shard, root = args
+    if root not in _AGG_DECON:
+        _agg_worker_init(root)
+    decon = _AGG_DECON[root]
+    clean_p, drop_p = shard + ".clean", shard + ".ngdrop"
+    n = ng = 0
+    parts = {}
+    problems = set()
+    with open(shard, encoding="utf-8") as fi, \
+            open(clean_p, "w", encoding="utf-8") as fc, \
+            open(drop_p, "w", encoding="utf-8") as fd:
+        for line in fi:
+            n += 1
+            rec = json.loads(line)
+            hit = decon.hit(rec["content"])
+            if hit is not None:
+                ng += 1
+                fd.write(line)
+                problems.add(str(hit.get("problem", "?")))
+                part = str(hit.get("part", "unknown"))
+                parts[part] = parts.get(part, 0) + 1
+            else:
+                fc.write(line)
+    return {"rows": n, "ngram_drop": ng, "parts": parts, "problems": sorted(problems),
+            "clean": clean_p, "drop": drop_p}
+
+
+def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_workers=8):
     """Sum group stats, then: (1) ae's 13-gram solution-body decontamination
     against HE+MBPP prompts+solutions+tests, (2) the GLOBAL exact-dedup pass
     groups cannot do. Tagged intermediates are read from `out`; final
@@ -243,16 +286,17 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out=""):
         for k, v in r.get("reasons", {}).items():
             reasons[k] = reasons.get(k, 0) + v
     group_kept = sum(r.get("kept", 0) for r in records)
+    group_kept_tokens = sum(r.get("kept_tokens", 0) for r in records)
+    group_kept_chars = sum(r.get("kept_chars", 0) for r in records)
 
     # this file lives at <root>/datagen/ultradata_shards.py -> root is one up
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
-        from filters.decontam_ngram import Decontaminator, decontam_fp as _ngram_fp
+        from filters.decontam_ngram import decontam_fp as _ngram_fp
     except ImportError as e:
         raise SystemExit(
             "aggregate requires filters/decontam_ngram.py (ae 13-gram decontam, "
             f"fb ruling 2026-09-11) on the import path: {e}")
-    decon = Decontaminator.load_default(root)
 
     # Tagged intermediates carry an underscore tag (g00 groups or s001 per-shard
     # redo); final shards are prefix_NNN with no tag. Read the tag set from the
@@ -263,44 +307,86 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out=""):
         for p in glob.glob(os.path.join(out, f"{prefix}_{tag}_*.jsonl")))
     if not tagged:
         raise SystemExit(f"aggregate: no tagged shards for tags {tags} in {out}")
-    tok = Tokenizer.from_file(tokenizer_path)
+    # Phase 1: 13-gram classification, parallel across tagged shards.
     for stale in glob.glob(os.path.join(fout, f"{prefix}_[0-9][0-9][0-9].jsonl")):
         os.remove(stale)
-    seen = set()
-    kept = 0
-    kept_chars = 0
-    kept_tokens = 0
-    scanned = 0
-    ngram_drop = 0
-    ngram_problems = set()
     ngram_parts = {}
-    cross_dup = 0
-    writer = ShardWriter(fout, prefix, tag="")
-    for shard in tagged:
-        for line in open(shard, encoding="utf-8"):
-            scanned += 1
-            rec = json.loads(line)
-            # L3 full_content already joins task+analysis+solution+test; L2 is
-            # the code doc itself. One assembled string, per the gate key.
-            hit = decon.hit(rec["content"])
-            if hit is not None:
-                ngram_drop += 1
-                ngram_problems.add(str(hit.get("problem", "?")))
-                part = str(hit.get("part", "unknown"))
-                ngram_parts[part] = ngram_parts.get(part, 0) + 1
-                continue
-            sig = hashlib.sha1(_norm(rec["content"]).encode()).hexdigest()
-            if sig in seen:
-                cross_dup += 1
-                continue
-            seen.add(sig)
-            writer.write(rec)
-            kept += 1
-            kept_chars += len(rec["content"])
-            kept_tokens += len(tok.encode(rec["content"]).ids) + 1
-    writer.close()
-    assert scanned == group_kept, (
-        f"tagged shards hold {scanned} rows, group stats say kept {group_kept}")
+    ngram_problems = set()
+    scanned = ngram_drop = 0
+    clean_files, drop_files = [], []
+    try:
+        with ProcessPoolExecutor(max_workers=agg_workers) as ex:
+            for res in ex.map(_ngram_classify_shard,
+                              ((s, root) for s in tagged), chunksize=1):
+                scanned += res["rows"]
+                ngram_drop += res["ngram_drop"]
+                for k, v in res["parts"].items():
+                    ngram_parts[k] = ngram_parts.get(k, 0) + v
+                ngram_problems.update(res["problems"])
+                clean_files.append(res["clean"])
+                drop_files.append(res["drop"])
+        assert scanned == group_kept, (
+            f"tagged shards hold {scanned} rows, group stats say kept {group_kept}")
+
+        # Phase 2: global exact dedup in tagged order; finals to fout.
+        seen = set()
+        kept = 0
+        kept_chars = 0
+        cross_dup = 0
+        xdrop_p = os.path.join(out, f".{prefix}_crossdup.jsonl")
+        if os.path.exists(xdrop_p):
+            os.remove(xdrop_p)
+        writer = ShardWriter(fout, prefix, tag="")
+        with open(xdrop_p, "w", encoding="utf-8") as fxd:
+            for cf in clean_files:
+                for line in open(cf, encoding="utf-8"):
+                    rec = json.loads(line)
+                    sig = hashlib.sha1(_norm(rec["content"]).encode()).hexdigest()
+                    if sig in seen:
+                        cross_dup += 1
+                        fxd.write(line)
+                        continue
+                    seen.add(sig)
+                    writer.write(rec)
+                    kept += 1
+                    kept_chars += len(rec["content"])
+        writer.close()
+        drop_files.append(xdrop_p)
+
+        # Phase 3: exact kept_tokens by subtraction; encode only dropped rows.
+        # Group stats already exact-counted every input row's tokens; eos is
+        # per-doc in both sums, so kept = group_total - encode_batch(dropped).
+        dropped_chars = dropped_docs = dropped_tokens = 0
+        tok = Tokenizer.from_file(tokenizer_path)
+        buf = []
+
+        def flush():
+            nonlocal dropped_tokens
+            if buf:
+                dropped_tokens += sum(len(x.ids) + 1 for x in tok.encode_batch(buf))
+                buf.clear()
+
+        for dp in drop_files:
+            for line in open(dp, encoding="utf-8"):
+                rec = json.loads(line)
+                buf.append(rec["content"])
+                dropped_chars += len(rec["content"])
+                dropped_docs += 1
+                if len(buf) >= 4096:
+                    flush()
+        flush()
+        assert dropped_docs == ngram_drop + cross_dup, (
+            f"dropped docs {dropped_docs} != ngram {ngram_drop} + xdup {cross_dup}")
+        kept_tokens = group_kept_tokens - dropped_tokens
+        assert kept_chars == group_kept_chars - dropped_chars, (
+            f"chars {kept_chars} != {group_kept_chars} - {dropped_chars}")
+        assert kept + ngram_drop + cross_dup == group_kept
+    finally:
+        for p in clean_files + drop_files:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
     for shard in tagged:
         os.remove(shard)
 
@@ -334,10 +420,11 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out=""):
         "kept_tokens": kept_tokens,
         "tokens": kept_tokens,
         "tokens_status": "measured",
-        "tokens_config": f"{tokenizer_path}, exact per-doc ids + one <eos> per doc, "
-                         "recounted after n-gram decontam + global dedup",
+        "tokens_config": f"{tokenizer_path}, exact per-doc ids + one <eos> per doc; "
+                         "kept = sum(group kept_tokens) - encode_batch(dropped rows), "
+                         "arithmetic-identical to a full recount",
         "filters": records[0].get("filters", "") + "+ngram13-decontam+global-exact-dedup",
-        "workers": records[0].get("workers", 1),
+        "workers": agg_workers,
         "n_shards": len(final_shards),
         "filters_fp": records[0].get("filters_fp", ""),
         "decontam_fp": ngram_fp,
