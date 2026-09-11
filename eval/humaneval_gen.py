@@ -39,8 +39,10 @@ import re
 import signal
 import sys
 import time
+from contextlib import nullcontext as _nullctx
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from eval_artifacts import attest, open_artifact  # noqa: E402
 
 import torch  # noqa: E402
@@ -85,14 +87,35 @@ def judge(prob, completion):
         signal.alarm(0)
 
 
-def truncate(s):
-    """Verbatim from _humaneval_run.py."""
+def truncate(s, entry_point=None):
+    """Verbatim from _humaneval_run.py, with one 66-14 exception: a stop that is the
+    model RE-DECLARING THE FUNCTION IT WAS ASKED TO COMPLETE ("\\ndef <entry_point>(")
+    is not a stop. The prompt ends at the closing docstring, so a completion-style model
+    naturally begins "\\ndef <itself>("; cutting there empties a real answer. A second
+    def of the same name is valid Python and the later definition wins in prompt+completion.
+    Every other stop (a genuinely different top-level def/class/etc.) still cuts at the
+    earliest position. entry_point=None preserves the legacy verbatim behaviour."""
     cut = len(s)
     for st in STOPS:
-        i = s.find(st)
-        if i != -1:
+        start = 0
+        while True:
+            i = s.find(st, start)
+            if i == -1:
+                break
+            if (entry_point is not None and st == "\ndef "
+                    and s[i:i + 12 + len(entry_point)].startswith(f"\ndef {entry_point}(")):
+                start = i + 1  # self re-declaration -- skip this occurrence, keep scanning
+                continue
             cut = min(cut, i)
+            break
     return s[:cut]
+
+
+def hits_stop(s, entry_point):
+    """Whether the live (untruncated) decoded continuation contains any STOP that is not
+    the function's own re-declaration. Mirrors truncate's matcher so the gen loop and the
+    final cut decide identically (66-14)."""
+    return truncate(s, entry_point) != s
 
 
 def strip_docstring(prompt):
@@ -137,6 +160,56 @@ def run_control(probs):
                  "be indistinguishable from a harness zero")
     print("CONTROL wrong-answer: constant-False on HumanEval/0 -> FAIL "
           "(must FAIL)", flush=True)
+    # 66-14: a completion that RE-DECLARES the requested function (the model continuing from
+    # the closing docstring by rewriting "\ndef <itself>(") must be judged on its body, not
+    # truncated to empty by the "\ndef " stop. Same-name redefinition is valid Python; the later
+    # def wins. The control wraps each BODY-form canonical under a copy of its own def header
+    # (the exact thing the truncator would otherwise empty). Canonicals that are themselves
+    # nested-helper bodies (indented 'def' inside the entry fn) contain no top-level self-def and
+    # are excluded -- they exercise the normal path, already covered above.
+    def _def_header(prob):
+        for line in prob["prompt"].splitlines():
+            if re.match(r"def\s+" + re.escape(prob["entry_point"]) + r"\b", line) \
+                    and line.rstrip().endswith(":"):
+                return line
+        return None
+
+    def _body_prologue(prob):
+        """Indented import lines the prompt places in the function body before the docstring
+        (e.g. HumanEval/115's '    import math'). A self-redeclaration that rewrites the def
+        must carry these or the synthetic canonical body is missing a name the prompt bound."""
+        out = []
+        seen_def = False
+        for line in prob["prompt"].splitlines():
+            if not seen_def and re.match(r"def\s+" + re.escape(prob["entry_point"]) + r"\b", line):
+                seen_def = True
+                continue
+            if seen_def:
+                if re.match(r"\s+(import|from)\s", line):
+                    out.append(line)
+                elif line.strip().startswith('"""') or line.strip().startswith("'''") or line.strip():
+                    break
+        return ("\n".join(out) + "\n") if out else ""
+
+    def _redeclares(prob):
+        body = prob["canonical_solution"]
+        if body.lstrip().startswith("def "):
+            return None  # full/nested form -- not a same-name top-level self-redeclaration
+        hdr = _def_header(prob)
+        return None if hdr is None else "\n" + hdr + "\n" + _body_prologue(prob) + body + "\n"
+
+    redecl_probs = [(p, c) for p in probs if (c := _redeclares(p)) is not None]
+    rc_redecl = sum(judge(p, c) for p, c in redecl_probs)
+    if redecl_probs and rc_redecl < len(redecl_probs) * 0.95:
+        sys.exit(f"CONTROL FAILED: self-redeclared canonical body passes only "
+                 f"{rc_redecl}/{len(redecl_probs)} -- the 66-14 re-declaration path is broken.")
+    print(f"CONTROL self-redeclare canonical: {rc_redecl}/{len(redecl_probs)} PASS "
+          f"(same-name def, body scored not truncated)", flush=True)
+    wrong_redecl = judge(p0, "\n" + _def_header(p0) + "\n    return False\n")
+    if wrong_redecl:
+        sys.exit("CONTROL FAILED: self-redeclared wrong body (constant-False on "
+                 "HumanEval/0) scored PASS.")
+    print("CONTROL self-redeclare wrong body -> FAIL (must FAIL)", flush=True)
     for label, body in (("empty", ""), ("newline", "\n"), ("pass", "    pass\n")):
         n = sum(judge(p, body) for p in probs)
         if n:
@@ -160,7 +233,10 @@ def main():
     ap.add_argument("--ckpt")
     ap.add_argument("--data", default=DATA_PATH)
     ap.add_argument("--max_new", type=int, default=280)
-    ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--device", default="cuda:0",
+                    help="cuda:0 (default) or cpu -- the CPU path runs fp32 with no autocast")
+    ap.add_argument("--threads", type=int, default=None,
+                    help="torch CPU threads (CPU path only; e.g. 32)")
     ap.add_argument("--strip-docstrings", action="store_true",
                     help="sig-only arm: remove the docstring from each prompt")
     ap.add_argument("--control", action="store_true",
@@ -181,18 +257,28 @@ def main():
         return
     if not args.ckpt:
         ap.error("--ckpt required (unless --control)")
-    if not os.environ.get("CUDA_VISIBLE_DEVICES"):
+    is_cpu = str(args.device).startswith("cpu")
+    if is_cpu:
+        if args.threads:
+            torch.set_num_threads(args.threads)
+        if os.environ.get("CUDA_VISIBLE_DEVICES") is None:
+            # Cardless is the point of --device cpu; the env must be set EMPTY explicitly, so an
+            # unset env can never silently land a "cpu" run on physical GPU 0 on a default change.
+            sys.exit("REFUSING: --device cpu but CUDA_VISIBLE_DEVICES is unset -- set it empty "
+                     "(CUDA_VISIBLE_DEVICES=) to run cardless.")
+    elif not os.environ.get("CUDA_VISIBLE_DEVICES"):
         sys.exit("REFUSING: CUDA_VISIBLE_DEVICES is unset, so cuda:0 is physical "
-                 "GPU 0 -- tileRL's card. Set it to your granted card.")
+                 "GPU 0 -- tileRL's card. Set it to your granted card, or pass --device cpu "
+                 "with CUDA_VISIBLE_DEVICES= to run cardless.")
 
-    # load_checkpoint claims the card (device names cuda) under this file's stem.
+    # load_checkpoint claims the card only when device names cuda; a CPU load claims nothing.
     from scripts.loader import load_checkpoint
     from tokenizers import Tokenizer
     model, cfg = load_checkpoint(args.ckpt, device=args.device)
     model.eval()
     tok = Tokenizer.from_file(TOK_PATH)
 
-    def gen(prompt):
+    def gen(prompt, entry_point):
         """Verbatim from _humaneval_run.py: greedy, cfg.seq window, eos tid 1,
         stop check every 16 tokens, final truncate in the caller. Returns the
         decoded completion and the stop reason -- the reason is the
@@ -203,7 +289,10 @@ def main():
         x = torch.tensor([ids], device=args.device)
         new = []
         stop_reason = "max_new"
-        with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        # GPU autocasts bf16; the CPU path runs fp32 with no autocast (autocast device_type
+        # "cuda" raises on a CPU-only host). Same argmax loop either way.
+        ctx = torch.autocast(device_type="cuda", dtype=torch.bfloat16) if not is_cpu else _nullctx()
+        with torch.no_grad(), ctx:
             for step in range(args.max_new):
                 lg = model(x[:, -cfg.seq:])[0][:, -1]
                 nxt = lg.argmax(-1, keepdim=True)
@@ -215,7 +304,7 @@ def main():
                 x = torch.cat([x, nxt], 1)
                 if step % 16 == 15:
                     s = tok.decode(new)
-                    if any(st in s for st in STOPS):
+                    if hits_stop(s, p["entry_point"]):
                         stop_reason = "stop"
                         break
         return tok.decode(new), stop_reason
@@ -234,14 +323,16 @@ def main():
             "ckpt": os.path.basename(str(args.ckpt).rstrip("/")),
             "data": os.path.basename(args.data),
             "strip_docstrings": args.strip_docstrings,
+            "device": str(args.device),
+            "cpu_threads": (args.threads if is_cpu else None),
             "max_new": args.max_new,
             "stops": STOPS,
             "n_problems": len(probs),
             "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, ensure_ascii=False) + "\n")
         for i, (p, prompt) in enumerate(zip(probs, prompts), 1):
-            raw, stop_reason = gen(prompt)
-            c = truncate(raw)
+            raw, stop_reason = gen(prompt, p["entry_point"])
+            c = truncate(raw, p["entry_point"])
             ok = judge(p, c)
             empty = not c.strip()
             # The two-column split (prereg amendment 1): an empty completion is
