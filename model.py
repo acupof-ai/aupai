@@ -418,9 +418,6 @@ def _gather_group_entries(kc_g, vc_g, sel_g, max_e):
     keep = (torch.arange(max_e, device=kc_g.device)[None, :] < n_sel[:, :, None])
     ke = ke_g.permute(0, 2, 3, 1, 4)[keep]                          # (S,gh,D)
     ve = ve_g.permute(0, 2, 3, 1, 4)[keep]
-    # ACTIVE queries only: every entries-flash segment must have at least one key, so
-    # queries with zero selected entries are removed from both the Q stream and cu. The
-    # Q stream is gathered (not boolean-compressed) so it is differentiable in backward.
     active = n_sel > 0                                              # (B,T)
     af = active.reshape(-1).nonzero(as_tuple=False).squeeze(-1)    # (A,) flat indices
     n_active = n_sel[active]
@@ -496,8 +493,6 @@ class _CSA2JointFlash(torch.autograd.Function):
         cw = torch.where(den > 0, aw / den, torch.zeros_like(aw))
         y = (oe_all.float() * ce.view(BT, H, 1)
              + owt.float() * cw.view(BT, H, 1)).to(q.dtype).view(B, T, H, D)
-        # backward: positional `lse` = FORWARD lse; dlse = c_j*(g.y) (global). Proved in
-        # the isolated two-branch kernel test; active-only Q so every segment is non-empty.
         ctx.save_for_backward(q, kw, vw, ow, lw, ce.to(ow.dtype), cw.to(ow.dtype), y,
                               *[t for g in range(ih) if maxes[g] > 0
                                 for t in (q_a_list[g], oes[g], les[g], kes[g], ves[g])])
@@ -520,10 +515,6 @@ class _CSA2JointFlash(torch.autograd.Function):
         gy = (dyf * yf).sum(-1)                              # (BT,H) g.y
         cwf = cw.float().view(BT, H)
         dow = (dyf * cwf.unsqueeze(-1)).to(ow.dtype)
-        # dlse_j = c_j*(g.o_j - g.y): the kernel already subtracts the within-branch
-        # g.o_j normalization from dout, so dlse carries only the CROSS-branch term
-        # -c_j*g.y offset; standalone it is zero. Proved dkw/dke to 1.9e-6 (bf16 floor)
-        # vs the materialized concatenated softmax in scripts/de108 iso two-branch test.
         dlw = (cwf * ((dyf * ow.float()).sum(-1) - gy)).t().contiguous()
         dqw, dkw, dvw = _fa._flash_attn_bwd(
             q, kw, vw, ow, dow, lw, dlse=dlw, softmax_scale=scale, causal=True,
@@ -621,8 +612,6 @@ def csa2_joint_attention(q, k, v, kc, vc, sel, soft_sel, vis, doc, cu,
     bundles = []
     if use_flash:
         qf = q.reshape(B * T, H, D)
-        # flash layout is (tokens,H,D); k/v arrive here already (B,T,H,D), so use them
-        # directly -- kh/vh are the transposed (B,H,T,D) view and must NOT be reshaped.
         kwf, vwf = k.reshape(B * T, H, D), v.reshape(B * T, H, D)
         kes, ves, cu_eks, afs, maxes = [], [], [], [], []
         per = []
@@ -662,7 +651,6 @@ def csa2_joint_attention(q, k, v, kc, vc, sel, soft_sel, vis, doc, cu,
                                 ce[:, :, g * gh:g * gh + gh]))
         return _STEIndexerBridge.apply(y, soft_sel, bundles)
 
-    # pure-torch reference: rectangular masked entries softmax per group, autograd-tracked
     wd = torch.float64 if q.dtype == torch.float64 else torch.float32
     sw = ((qh @ kh.transpose(-1, -2)) * scale).masked_fill(
         ~m_win[:, None].expand(B, H, T, T), float("-inf")).to(wd)
@@ -818,8 +806,6 @@ class CompressedSparseAttention(nn.Module):
         # engineering choice, flagged in the PR, since the paper does not say how the
         # indexer learns.
         self.csa2 = bool(getattr(cfg, "csa2", False))
-        # de-108: replace the materialized joint softmax with two flash calls joined by
-        # an fp32 LSE combine (memory fix); falls back to materialized when off.
         self.csa2_joint = bool(getattr(cfg, "csa2_joint", False))
         if self.csa2:
             if not getattr(cfg, "csa", False):
@@ -969,9 +955,6 @@ class CompressedSparseAttention(nn.Module):
                     ).repeat_interleave(self.h // self.ih, dim=1)  # B,H,T,NB
 
         if getattr(self, "csa2_joint", False):
-            # de-108: window flash + per-indexer-group entries flash joined by fp32 LSE,
-            # no materialized B,H,T,(NB+T) score tensor; pure-torch ref when flash is
-            # absent. STE indexer gradient injected onto soft_sel inside the helper.
             y = csa2_joint_attention(
                 q, k, v, kc, vc, sel, soft_sel, vis, doc, cu,
                 self.n_win, self.scale, use_flash=HAS_FA, ih=self.ih)
