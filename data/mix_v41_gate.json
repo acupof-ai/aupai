@@ -4,42 +4,66 @@
   "code_ultra_l2_dc": {
    "weight": 0.45,
    "epochs": 1,
-   "anneal": 0.3
+   "anneal": 0.3,
+   "fingerprint": "adf2ff20698dae8a",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_ultra_l2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=15340876449"
   },
   "code_py_starcoder_dc": {
    "weight": 0.07,
    "epochs": 1,
-   "anneal": 0.05
+   "anneal": 0.05,
+   "fingerprint": "390a13a56b6472b3",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_py_starcoder_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=7948925654"
   },
   "math_owm_stage2_dc": {
    "weight": 0.08,
    "epochs": 1,
-   "anneal": 0.1
+   "anneal": 0.1,
+   "fingerprint": "4b1469bfe4667706",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_math_owm_stage2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=5857969755"
   },
   "code_keep_p1_dc": {
    "weight": 0.03,
    "epochs": 1,
-   "anneal": 0.03
+   "anneal": 0.03,
+   "fingerprint": "d7b4f3a09c5707b0",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_keep_p1_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=2626977570"
   },
   "en_c4_stage2_dc": {
    "weight": 0.045,
    "epochs": 1,
-   "anneal": 0.04
+   "anneal": 0.04,
+   "fingerprint": "c59c2e4227d875ec",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_en_c4_stage2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=1985211248"
   },
   "cot_dc": {
    "weight": 0.015,
    "epochs": 3,
-   "anneal": 0.07
+   "anneal": 0.07,
+   "fingerprint": "0d9f495913438657",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_cot_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=399994717"
   },
   "code_py_rp1t_dc": {
    "weight": 0.01,
    "epochs": 1,
-   "anneal": 0.01
+   "anneal": 0.01,
+   "fingerprint": "af4988f92dea1261",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_py_rp1t_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=379600071"
   },
   "code_ultra_l3_noexec_dc": {
    "weight": 0.3,
    "epochs": 1,
-   "anneal": 0.4
+   "anneal": 0.4,
+   "fingerprint": "63a3b0e64b97e589",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_ultra_l3_noexec_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint 63a3b0e64b97e589); measured_pool_tokens=26697332099; 940 shards, 15,419,384 rows in / 111,071 n-gram dropped / 0 cross-group dup"
   }
  },
  "_comment": "L3 SOLUTIONS ARE NOT EXECUTION-FILTERED FOR THE GATE RUN (user order 2026-09-11): the static-only aggregate of all 147 shards is data/corpus/code_ultra_l3_noexec_dc; the execution-filtered partial arm is kept under code_ultra_l3_dc for a later A/B and is NOT in this mix. V4.1 HumanEval gate mix (user pivot 2026-09-10, target DeepSeek-V4.1-Flash, data=openbmb/UltraData-Code). RULING fb 2026-09-11: total_tokens is the BUDGET, not supply -- 30B tokens (measured 18K tok/s/gpu x 6 cards = 3.2 days; ~1.7 with de-108). weights are TARGET composition, not supply shares; anneal is the separate late-training composition. Shape code 86% / math 8% / English 4.5% / CoT 1.5% (DeepSeek-Coder 87/10/3 family), with code_ultra_l3_noexec_dc upweighted vs its raw supply because L3 task/analysis/solution/test is closest to the HumanEval gate. epochs=1 everywhere except cot_dc=3 (0.40B measured supply vs its 0.45B main+anneal share). SIX NON-ULTRA DOMAINS NAME THE 13-GRAM-DECONTAMINATED _dc COPIES (ae-7, PR #252 module + PR #253 facts cont.gate_dc_*, decontam_fp 86e19705b05c4b42): data/corpus/<domain>_dc, n=13 whitespace-word-gram DROP vs HumanEval+MBPP; dropped fractions 0.0002%-0.0750% leave the token-supply ratios below unchanged at this precision. THE TWO ULTRA DOMAINS ALSO CARRY _dc: code_ultra_l2_dc/code_ultra_l3_noexec_dc are 0e's aggregate output (aggregate runs filters/decontam_ngram before global-dedup, emits final shards to data/corpus/code_ultra_l{2,3}_dc with build_corpus_stats carrying decontam_ngram counts + decontam_fp 86e19705b05c4b42; the in-progress group converts are tagged intermediates and removed after). PER-DOMAIN tokens/supply at 30B (main tokens per epoch / supply; all <1.0, cot checked per-epoch so its 3 epochs are deliberate repetition, not an accidental over-read). SIX NON-ULTRA SUPPLIES ARE MEASURED packed _dc tokens (98, facts/corpus_supply.json#cs.gate_domains_decontaminated_tokenized_0911): code_py_starcoder_dc 2.10B/7.9489B=0.264; code_keep_p1_dc 0.90B/2.6270B=0.343; code_py_rp1t_dc 0.30B/0.3796B=0.790; math_owm_stage2_dc 2.40B/5.8580B=0.410; en_c4_stage2_dc 1.35B/1.9852B=0.680; cot_dc 0.15B-per-epoch/0.39999B=0.375 (x3 epochs). ULTRA RATIOS STILL ESTIMATE until 0e's aggregate lands: code_ultra_l2_dc 13.50B/59.86B=0.226; code_ultra_l3_noexec_dc 9.00B/31.76B=0.283. SUPPLY (new vocab fp f1f860970d15d623): MEASURED packed tokens of the six DECONTAMINATED _dc caches (98, facts/corpus_supply.json#cs.gate_domains_decontaminated_tokenized_0911, total 19,198,673,104 = -0.0815% vs pre-dc) starcoder_dc 7,948,925,654 / math_dc 5,857,968,443 / keep_p1_dc 2,626,975,915 / en_c4_dc 1,985,209,544 / cot_dc 399,994,207 / py_rp1t_dc 379,599,341. ESTIMATE (0e sample extrapolation, labelled, exact full totals pending aggregate) code_ultra_l2_dc 59.9B = frozen-unit 3-of-119 sample 1.679B x119/3 (21.5% sample dup assumed stationary) x0.8989 new/frozen; code_ultra_l3_noexec_dc 31.8B = 0.704B x147/3 (zero dups) x0.9206. New/frozen ratios from facts/tokenizer.json#tok.ultra_freeze_tax_0910. The flat code_keep_p1 source and its flat code_keep_p1_dc copy both exist on the pod (685 shards). When 0e lands the exact _dc UltraData aggregate totals, replace the two ESTIMATE ultra figures and re-check their ratios stay <1.0; weights/total do not change (target composition)."
