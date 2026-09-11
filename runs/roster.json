@@ -20,44 +20,8 @@
    "note": "Controller session CONTINUES across resume (same session, label changed aupai-4c -> aupai-96). Socket uds:/tmp/cc-socks/99800.sock, listagents ref 96dfeb, verified 2026-09-10 17:1xZ from the from= address of the controller's own outbound messages and PPID. Earlier sockets 67870 (aupai-4c) and 61638d are dead after the restart. Rulings, card allocation, launch; worktree /Users/bytedance/code/aupai-fb.",
    "listagents_name": "aupai-96",
    "listagents_ref": "96dfeb",
-   "ref": "61638d"
-  },
-  {
-   "name": "tilerl",
-   "socket": "uds:/tmp/cc-socks/39436.sock",
-   "role": "integration",
-   "topics": [
-    "shape_recipe",
-    "supervision"
-   ],
-   "note": "merges into main, pod sync, throughput; supervise_run.sh and the live run's log discipline (tilerl-14); pairs b0-8, de-15, de-17, 44-11 ListAgents name tilerl-0a as of 2026-09-03. EXITED 2026-09-09, reported by the user. Entry kept rather than removed: commits, review rows and task rows across the ledgers name tilerl as author, reviewer and pair, and a roster that drops the name makes those rows unresolvable. What it owned and now has no owner: PR #23 (tilerl-cache-sidecar, changes-requested by 3b), the infra split steps 3-6, and REVIEWER duty for b0 -- b0's open PRs #105 and #102 have no reviewer while this stands. Cards 0 and 6 remain tileRL's by the user's standing order of 2026-09-06; a session exiting does not revoke a user order, so their fate is a user ruling, not a controller one. CORRECTED 03:4xZ, same day: marking tilerl `exited` was WRONG and is retracted here rather than edited away. What exited is the SESSION the roster pointed at; the team is working. Evidence: a new claim runs/claims/tilerl-seed1curve.1.json was written 2026-09-09 03:42:36 for card 1, pid 1332000, cmdline 'python3 -m tilerl.cli train --recipe grpo-gsm8k-27b ... --seed 1', and nvidia-smi shows card 1 at 27,659 MiB / 97%. ListAgents shows tilerl-7b and tilerl-9b started minutes earlier. Card 1 is tileRL's under the current allocation, the claim was taken correctly, and it does not touch aupai's block. THIS IS THE SAME SHAPE AS b0, e1, 3b AND de -- five of the seven roster entries pointed at a dead socket in one morning while the work continued. The difference is only that nobody from tileRL has messaged, so the new session is not yet identified: state is `active-session-unknown`, not `exited`. Its ownerless items stand until someone from tileRL claims them: PR #23 (changes-requested by 3b) and infra split steps 3-6.",
-   "listagents_name": "tilerl-0a",
-   "listagents_ref": "59e76a",
-   "state": "active-session-unknown",
-   "exited": "the roster's session (tilerl-0a / 59e76a) exited 2026-09-09, reported by the user"
-  },
-  {
-   "name": "b0",
-   "socket": "uds:/tmp/cc-socks/56758.sock",
-   "role": "research",
-   "topics": [
-    "mix",
-    "architecture"
-   ],
-   "note": "architecture, LR scaling, the mix generator; model extraction out of train.py (b0-8) for the structure-experiment platform ListAgents name lessons-62 as of 2026-09-03 14:3xZ (reached fb directly for the first time that day; earlier relays went via 3b). REVIEWER REASSIGNED 2026-09-09 by fb: tilerl exited, and the fixed pair tilerl<->b0 left b0 with no second reader and b0's open PRs #105 and #102 with no reviewer. New pair b0<->de. This is a controller reassignment forced by an exit, not a change to the user's 2026-08-31 pairing order; it is the minimum edit that keeps every roster member paired, and the user can overrule it. SOCKET CORRECTED 2026-09-09 after a resume. Identity verified: the roster's 92633.sock pid is dead and the file absent; PR #102 head 98f005d2 on b0-46-score-matrix-trace and #105 head 8a182adc on b0-47-code-decode match exactly; review.jsonl rows 277/278/281/292/293 read reviewer=b0; c4c0a7af exists.",
-   "listagents_name": "lessons-d1",
-   "listagents_ref": "0e4d13"
-  },
-  {
-   "name": "e1",
-   "socket": "uds:/tmp/cc-socks/56034.sock",
-   "role": "research",
-   "topics": [
-    "launch_gate"
-   ],
-   "note": "tokenizer, FoNE, launch-gate; recipe reconciliation gate (e1-9), milestone_profile throughput number (e1-10). Session lessons-03 (13136) died 01:51Z on an API 400 with its branch fully in main; back 02:05Z as lessons-58. The 'departed' ruling rested on the socket ENOENT and the session missing from ListAgents; lessons-e1 answering 不是 was a name collision, not evidence. ListAgents name lessons-58 as of 2026-09-03. SOCKET CORRECTED 2026-09-09 after a resume: was lessons-58 / 92... Identity verified against becd96f7, 18bd3842, f53aed11 and 7c121c37 on main, all present with matching subjects. A resume changes the label and the socket while the work continues -- that is the general case, not an exception, and this file is the one that has to be corrected each time.",
-   "listagents_name": "lessons-eb",
-   "listagents_ref": "75ded7"
+   "ref": "61638d",
+   "label": "aupai-c1"
   },
   {
    "name": "3b",
@@ -69,7 +33,8 @@
    "note": "corpus fetch, filters, token counts; pod-only file classification (3b-4); pair is b0 since e1 left ListAgents name aupai-3b as of 2026-09-03. SOCKET CORRECTED 2026-09-09 after a resume. Identity verified: 984bce9a on main is 'train: --sample_seed, so a seed sweep varies init without reshuffling the corpus (3b)' -- the commit the anneal arms' pin depends on -- and 3c815555 is their review row for PR #113. | 2026-09-10 14:2xZ fb sweep: all six restarted ~13:15Z; socket 90364, label aupai-7b, from the session's own from= address.",
    "listagents_name": "aupai-89",
    "listagents_ref": "92ce31",
-   "listagents": "aupai-7b"
+   "listagents": "aupai-7b",
+   "label": "aupai-7b"
   },
   {
    "name": "de",
@@ -82,18 +47,8 @@
    "note": "eval instruments, harness checks; inherited launch_gate from e1: allocation off the ladder config (de-15), recipe reconciliation (de-17), fact fixes (de-16) ListAgents name aupai-db as of 2026-09-03. Also pairs b0 from 2026-09-09 (tilerl exited); de now second-reads both 44 and b0. SOCKET CORRECTED 2026-09-09 after a resume; the roster's 4e353c is dead. Identity verified against d49bb673 on main. NOTE de's own warning: rows de wrote before this correction carry a PLACEHOLDER socket built from the listagents ref (47baf0), which is not an address -- the same mistake fb made in de-85. A ref is not a socket, and a row carrying one addresses nobody. | 2026-09-10 14:2xZ fb sweep: all six restarted ~13:15Z; socket 87705, label aupai-08, from the session's own from= address.",
    "listagents_name": "aupai-dd",
    "listagents_ref": "47baf0",
-   "listagents": "aupai-08"
-  },
-  {
-   "name": "44",
-   "socket": "uds:/tmp/cc-socks/62780.sock",
-   "role": "research",
-   "topics": [
-    "readout"
-   ],
-   "note": "surveys, review, readout design; resume/plan arithmetic facts (44-11), AUTHORITY into checks (44-10) ListAgents name lessons-44 [c5bf0d] as of 2026-09-03.",
-   "listagents_name": "lessons-44",
-   "listagents_ref": "c5bf0d"
+   "listagents": "aupai-08",
+   "label": "aupai-08"
   },
   {
    "name": "98",
@@ -103,17 +58,19 @@
    "note": "owns ~/aupai-progress.html and every user-facing line ListAgents name aupai-98 as of 2026-09-03. | 2026-09-10 14:2xZ fb sweep: all six restarted ~13:15Z; socket 91900, label aupai-b2, from the session's own from= address.",
    "listagents_name": "aupai-98",
    "listagents_ref": "2d0371",
-   "listagents": "aupai-b2"
+   "listagents": "aupai-b2",
+   "label": "aupai-b2"
   },
   {
    "name": "ae",
-   "socket": "uds:/tmp/cc-socks/83243.sock",
+   "socket": "uds:/tmp/cc-socks/89510.sock",
    "role": "implement",
    "note": "New session 2026-09-10 after the restart; took over b0 slot. Owns V4.1 Step-0 config (ae-2, v41_size.py/facts/v41.json) and reviewed de-103 CSA2. Worktree /Users/bytedance/code/aupai-ae. Verified aupai-ae/7a9482 from its own messages. | 2026-09-10 14:2xZ fb sweep: all six restarted ~13:15Z; socket 83243, label aupai-2b, from the session's own from= address.",
    "listagents_name": "aupai-ae",
    "listagents_ref": "7a9482",
    "ref": "7a9482",
-   "listagents": "aupai-2b"
+   "listagents": "aupai-2b",
+   "label": "aupai-2b"
   },
   {
    "name": "0e",
@@ -123,7 +80,8 @@
    "listagents_name": "aupai-0e",
    "listagents_ref": "2fe82f",
    "ref": "2fe82f",
-   "listagents": "aupai-54"
+   "listagents": "aupai-54",
+   "label": "aupai-54"
   },
   {
    "name": "66",
@@ -133,7 +91,8 @@
    "listagents_name": "aupai-66",
    "listagents_ref": "f7ea6b",
    "ref": "f7ea6b",
-   "listagents": "aupai-74"
+   "listagents": "aupai-74",
+   "label": "aupai-74"
   }
  ],
  "not_on_this_team": [
@@ -158,20 +117,69 @@
    "why": "NOT 3b; 3b is aupai-89 / uds:/tmp/cc-socks/63595.sock, who confirmed 2026-09-09 that lessons-31 is neither them nor a fork. Mis-dispatched the whole p1 topic-seed and decontamination line on 2026-09-09 and did real work on it -- 20K topic seeds, a negative-control adjudication (kappa 0 -> 0.895), three-domain exact overlap, a 685-shard decontamination scan. 3b took the artifacts over and verified them; the destructive half was held the moment the mis-dispatch was found."
   }
  ],
- "departed": [],
+ "departed": [
+  {
+   "name": "tilerl",
+   "socket": "uds:/tmp/cc-socks/39436.sock",
+   "role": "integration",
+   "topics": [
+    "shape_recipe",
+    "supervision"
+   ],
+   "note": "merges into main, pod sync, throughput; supervise_run.sh and the live run's log discipline (tilerl-14); pairs b0-8, de-15, de-17, 44-11 ListAgents name tilerl-0a as of 2026-09-03. EXITED 2026-09-09, reported by the user. Entry kept rather than removed: commits, review rows and task rows across the ledgers name tilerl as author, reviewer and pair, and a roster that drops the name makes those rows unresolvable. What it owned and now has no owner: PR #23 (tilerl-cache-sidecar, changes-requested by 3b), the infra split steps 3-6, and REVIEWER duty for b0 -- b0's open PRs #105 and #102 have no reviewer while this stands. Cards 0 and 6 remain tileRL's by the user's standing order of 2026-09-06; a session exiting does not revoke a user order, so their fate is a user ruling, not a controller one. CORRECTED 03:4xZ, same day: marking tilerl `exited` was WRONG and is retracted here rather than edited away. What exited is the SESSION the roster pointed at; the team is working. Evidence: a new claim runs/claims/tilerl-seed1curve.1.json was written 2026-09-09 03:42:36 for card 1, pid 1332000, cmdline 'python3 -m tilerl.cli train --recipe grpo-gsm8k-27b ... --seed 1', and nvidia-smi shows card 1 at 27,659 MiB / 97%. ListAgents shows tilerl-7b and tilerl-9b started minutes earlier. Card 1 is tileRL's under the current allocation, the claim was taken correctly, and it does not touch aupai's block. THIS IS THE SAME SHAPE AS b0, e1, 3b AND de -- five of the seven roster entries pointed at a dead socket in one morning while the work continued. The difference is only that nobody from tileRL has messaged, so the new session is not yet identified: state is `active-session-unknown`, not `exited`. Its ownerless items stand until someone from tileRL claims them: PR #23 (changes-requested by 3b) and infra split steps 3-6.",
+   "listagents_name": "tilerl-0a",
+   "listagents_ref": "59e76a",
+   "state": "active-session-unknown",
+   "exited": "the roster's session (tilerl-0a / 59e76a) exited 2026-09-09, reported by the user",
+   "departed_note": "moved to departed 2026-09-10 23:5xZ (fb): absent from ListAgents, socket dead"
+  },
+  {
+   "name": "b0",
+   "socket": "uds:/tmp/cc-socks/56758.sock",
+   "role": "research",
+   "topics": [
+    "mix",
+    "architecture"
+   ],
+   "note": "architecture, LR scaling, the mix generator; model extraction out of train.py (b0-8) for the structure-experiment platform ListAgents name lessons-62 as of 2026-09-03 14:3xZ (reached fb directly for the first time that day; earlier relays went via 3b). REVIEWER REASSIGNED 2026-09-09 by fb: tilerl exited, and the fixed pair tilerl<->b0 left b0 with no second reader and b0's open PRs #105 and #102 with no reviewer. New pair b0<->de. This is a controller reassignment forced by an exit, not a change to the user's 2026-08-31 pairing order; it is the minimum edit that keeps every roster member paired, and the user can overrule it. SOCKET CORRECTED 2026-09-09 after a resume. Identity verified: the roster's 92633.sock pid is dead and the file absent; PR #102 head 98f005d2 on b0-46-score-matrix-trace and #105 head 8a182adc on b0-47-code-decode match exactly; review.jsonl rows 277/278/281/292/293 read reviewer=b0; c4c0a7af exists.",
+   "listagents_name": "lessons-d1",
+   "listagents_ref": "0e4d13",
+   "departed_note": "moved to departed 2026-09-10 23:5xZ (fb): absent from ListAgents, socket dead"
+  },
+  {
+   "name": "e1",
+   "socket": "uds:/tmp/cc-socks/56034.sock",
+   "role": "research",
+   "topics": [
+    "launch_gate"
+   ],
+   "note": "tokenizer, FoNE, launch-gate; recipe reconciliation gate (e1-9), milestone_profile throughput number (e1-10). Session lessons-03 (13136) died 01:51Z on an API 400 with its branch fully in main; back 02:05Z as lessons-58. The 'departed' ruling rested on the socket ENOENT and the session missing from ListAgents; lessons-e1 answering 不是 was a name collision, not evidence. ListAgents name lessons-58 as of 2026-09-03. SOCKET CORRECTED 2026-09-09 after a resume: was lessons-58 / 92... Identity verified against becd96f7, 18bd3842, f53aed11 and 7c121c37 on main, all present with matching subjects. A resume changes the label and the socket while the work continues -- that is the general case, not an exception, and this file is the one that has to be corrected each time.",
+   "listagents_name": "lessons-eb",
+   "listagents_ref": "75ded7",
+   "departed_note": "moved to departed 2026-09-10 23:5xZ (fb): absent from ListAgents, socket dead"
+  },
+  {
+   "name": "44",
+   "socket": "uds:/tmp/cc-socks/62780.sock",
+   "role": "research",
+   "topics": [
+    "readout"
+   ],
+   "note": "surveys, review, readout design; resume/plan arithmetic facts (44-11), AUTHORITY into checks (44-10) ListAgents name lessons-44 [c5bf0d] as of 2026-09-03.",
+   "listagents_name": "lessons-44",
+   "listagents_ref": "c5bf0d",
+   "departed_note": "moved to departed 2026-09-10 23:5xZ (fb): absent from ListAgents, socket dead"
+  }
+ ],
  "pairs": {
-  "de": "44",
-  "44": "de",
-  "b0": "de",
-  "3b": "fb",
   "fb": "de",
-  "e1": "3b",
-  "tilerl": "b0",
+  "de": "fb",
+  "3b": "fb",
   "98": "fb",
   "ae": "de",
   "0e": "3b",
   "66": "3b"
  },
- "refreshed": "2026-09-10T14:2xZ by fb: all six peer sessions restarted ~13:15Z with new sockets; each socket read from that session's own from= address. fb->de (44 unreachable), 66->3b (66 asked; de holds de-106).",
- "pairs_note": "2026-09-09 fb: b0's reviewer was `tilerl` and tilerl's session is unreachable, so b0 had NO reachable second reader and its open PRs #105 and #102 had no reviewer at all. b0 -> de. tilerl -> b0 is kept because tileRL is working (a fresh card-1 claim at 03:42) and only its session pointer is dead; the b0 -> tilerl direction is dropped because it names nobody reachable. de now second-reads both 44 and b0. WHY THIS ENTRY EXISTS AT ALL: fb recorded the b0<->de repair in the member NOTES and left `pairs` -- the machine-readable half -- saying `b0: tilerl`. That is the same human-half/machine-half split that made a card grant read `launch_block_granted=false` while its prose announced a grant, which 3b caught on fb two days ago. b0 caught this one. Previous value: {\"de\": \"44\", \"44\": \"de\", \"tilerl\": \"b0\", \"b0\": \"tilerl\", \"3b\": \"b0\", \"fb\": \"44\", \"e1\": \"3b\"} || 2026-09-10 98: 98 was in no pair -- nobody reviewed its PRs. fb takes 98's review (fb is on no generation/annotation/decontamination line). Added `98: fb`. The pair is one-directional: `harness review add` restricts --reviewer to 3b/44/b0/de/e1/fb/tilerl, so 98 has a reviewer but cannot be one. || 2026-09-10 21:5xZ fb: b0 is not live (absent from ListAgents, lessons-d1 unreachable); 3b -> fb for code review until b0 returns. de/44 entries for departed sessions stay for history."
+ "refreshed": "2026-09-10T23:5xZ by fb: roster reconciled against ListAgents; ae socket corrected 83243->89510 (read from ae's from= address); four departed members moved out of members[].",
+ "pairs_note": "2026-09-10 23:5xZ fb: seven live members only. Pairs: fb<->de, 3b->fb, 98->fb, ae->de, 0e->3b, 66->3b. tilerl/b0/e1/44 departed; every pair that named them is re-pointed. A reviewer is the pair above; a second reader for a PR may be any other live member if the pair is busy, named in the review row."
 }
