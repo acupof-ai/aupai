@@ -1020,6 +1020,20 @@ def main():
         # sleeping hang not TIMEOUT, an empty solution kept) would ship rows silently. The
         # selftest is the known-answer PASS/FAIL/TIMEOUT/empty world.
         "datagen/ud_solution_exec.py",
+        # Gate-mix 13-gram contamination audit vs HumanEval/MBPP (ae-6). Registered because a
+        # false-negative detector silently lets the gate test into the training mix: the first
+        # version guarded on len(gram_set) < N and missed a 15-token doc that does span a
+        # 13-gram. The selftest pins planted solution+prompt grams as hits.
+        "scripts/audit_gate_contamination.py",
+        # The production 13-gram DROP module shared by the five non-Ultra filter runs and 0e's
+        # UltraData aggregate (ae-7). Registered because a false negative ships a gate answer
+        # into the mix and a false positive silently drops rows: the selftest pins planted
+        # solution-only, prompt(docstring)-only and test-only rows as hits and unrelated code,
+        # short and empty rows as keeps, and asserts the ONE normaliser is symmetric and the
+        # split is whitespace (a literal " ".split re-introduced an empty token on a whitespace
+        # run and broke the word-token assertion). Runs synthetic-only here; the real
+        # HumanEval/55 control runs where the gitignored benchmark files exist.
+        "filters/decontam_ngram.py",
         "scripts/corpus_snapshot.py",
         # The exact token counter behind cs.code_rp1t_landed and cs.code_dedup08_landed.
         # Registered because it is the instrument that CORRECTS a measurement-basis defect:
