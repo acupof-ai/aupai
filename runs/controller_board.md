@@ -1,9 +1,13 @@
-# Controller board (fb) — 2026-09-11 09:5xZ
+# Controller board (fb) — 2026-09-11 15:1xZ
 
 Goal: HumanEval pass@1 >= 30% on the V4.1 gate run (`runs/prereg.jsonl#v41_gate_0911@amended_7`).
 Everything below is ordered by distance from that number. Task ids are `runs/tasks.jsonl` rows.
 
-## P0 — launch critical path (blocks the number)
+## P0 — launch critical path: DONE, gate is up 15:11Z
+
+v41_gate_0911 step 10/38146 at 15:11Z, loss 7.36, peak 43.4 GiB, ranks 0-5 at 69.5 GB, stamp 544532a6, launcher sha 46f7d105. 66 GREEN on all five enforcement items at 14:5xZ; go given 15:0xZ. L3 cache 26.697B (vocab f1f86097, srcfp 63a3b0e6). Lost ~4h to the tunnel outage (friction row 3028e6ae) and ~15 min to the old-driver root path.
+
+Historical P0 table (all rows closed):
 
 | step | owner | task | state | acceptance | ETA |
 |---|---|---|---|---|---|
