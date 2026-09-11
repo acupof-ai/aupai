@@ -19,6 +19,7 @@ repo or cwd state. Bounded by RLIMIT_CPU and RLIMIT_AS and a wall timeout.
 import os
 import resource
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -101,19 +102,47 @@ def execute(solution, test, _limits=(CPU_SOFT, CPU_HARD, AS_BYTES), _wall=WALL_T
             except (ValueError, OSError):
                 pass
 
+    p = None
     try:
-        r = subprocess.run(
+        # start_new_session: candidate leads its own process group so a timed-out
+        # candidate's grandchild (the 209-orphan incident, 2026-09-11) can be
+        # reaped with one killpg instead of reparenting to init and surviving.
+        p = subprocess.Popen(
             [sys.executable, "-I", "-B", path],
-            cwd=td, capture_output=True, timeout=_wall, preexec_fn=_apply,
+            cwd=td, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            preexec_fn=_apply, start_new_session=True,
             env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
         )
-        if r.returncode == 0:
+        try:
+            out, err = p.communicate(timeout=_wall)
+        except subprocess.TimeoutExpired:
+            _kill_pg(p)
+            out, err = p.communicate()
+            return TIMEOUT, "wall timeout"
+        if p.returncode == 0:
             return PASS, ""
-        return FAIL, (r.stderr or b"")[-ERR_TAIL:].decode("utf-8", "replace")
-    except subprocess.TimeoutExpired:
-        return TIMEOUT, "wall timeout"
+        return FAIL, (err or b"")[-ERR_TAIL:].decode("utf-8", "replace")
     finally:
+        # Defense in depth: if communicate returned without the explicit timeout
+        # path (interpreter shutdown, error after spawn), still reap the group.
+        try:
+            if p.poll() is None:
+                _kill_pg(p)
+        except Exception:
+            pass
         shutil.rmtree(td, ignore_errors=True)
+
+
+def _kill_pg(p):
+    """SIGKILL the candidate's whole process group and wait for the leader."""
+    try:
+        os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        p.kill()
+    try:
+        p.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def _selftest():
@@ -133,6 +162,28 @@ def _selftest():
     # wall timeout path: sleeping child burns no CPU, so only the wall limit ends it
     sleep_sol = "import time\nwhile True:\n    time.sleep(60)"
     assert execute(sleep_sol, "assert True", _limits=(CPU_SOFT, CPU_HARD, AS_BYTES), _wall=3)[0] == TIMEOUT
+
+    # orphan-grandchild path: candidate spawns a sleeping child in its process
+    # group and then idles. Wall timeout must kill BOTH via killpg (209-orphan
+    # incident 2026-09-11: children reparented to init and survived the leader).
+    import tempfile as _tf
+    gpid_file = os.path.join(_tf.mkdtemp(), "gpid")
+    spawn = (
+        "import os, subprocess, sys, time\n"
+        f"g = subprocess.Popen([sys.executable, '-c', "
+        f"'import time; time.sleep(60)'])\n"
+        f"open({gpid_file!r}, 'w').write(str(g.pid))\n"
+        "time.sleep(60)\n"
+    )
+    assert execute(spawn, "assert True", _wall=3)[0] == TIMEOUT
+    import time as _time
+    _time.sleep(1)
+    gpid = int(open(gpid_file).read())
+    try:
+        os.kill(gpid, 0)
+        raise AssertionError("grandchild survived the timeout killpg")
+    except ProcessLookupError:
+        pass
     # CPU bound runaway dies on the CPU rlimit -> nonzero exit -> FAIL
     assert execute("while True:\n    pass", "assert True", _limits=(1, 1, AS_BYTES), _wall=10)[0] == FAIL
 
