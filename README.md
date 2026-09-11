@@ -40,7 +40,8 @@ python scripts/harness.py check                # repo invariants; CI runs the sa
 The checkout ships a 2,000-document sample corpus (`data/corpus/sample/`, `data/mix_sample.json`)
 that exercises the pipeline end to end. The real gate corpus is built by
 `python datagen/build_corpus.py --domain <d> --source <s>` into `data/corpus/<domain>/`,
-decontaminated with `python filters/decontam_ngram.py <dir>` against HumanEval/MBPP, and
+decontaminated with `python scripts/filter_gate_domains.py --domains <list>` (13-gram
+overlap via the filters/decontam_ngram.py library) against HumanEval/MBPP, and
 pretokenized CPU-side with `python scripts/pretokenize_domains.py <domain>` into `/data00`.
 The mix file (`data/mix_v41_gate.json`) is the only data path: per-domain weight, epoch cap,
 anneal weight. A missing mix is an error, not a fallback.

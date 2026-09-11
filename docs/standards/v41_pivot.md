@@ -89,7 +89,7 @@ close before the gate run; each needs a one-line ruling in this table, not a new
   synthesis (textbooks/exercises, de-101) is stopped; the gate corpus is
   openbmb/UltraData-Code L2 (natural code) and L3 (task/analysis/solution/test) python
   subsets, fetched from hf-mirror and kept under 0e's L2/L3 keep rules (#237), 13-gram
-  decontaminated against HumanEval/MBPP (`filters/decontam_ngram.py`; results in
+  decontaminated against HumanEval/MBPP via `scripts/filter_gate_domains.py` (engine: the `filters/decontam_ngram.py` library; results in
   facts/contamination.json), and mixed with the existing math/CoT/en domains and the
   2.8116B classifier keep set (now `code_keep_p1`, assembled flat by
   scripts/assemble_keep_p1.py). The mix is `data/mix_v41_gate.json`: total_tokens 30.0B,
