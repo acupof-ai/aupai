@@ -103,8 +103,11 @@ close before the gate run; each needs a one-line ruling in this table, not a new
   the BUDGET not supply; weights are TARGET composition (code 86% / math 8% / English 4.5%
   / CoT 1.5%), not supply shares; `anneal` is a separate late-training composition and
   differs from the main weight in 6 of 8 domains; all domains run one epoch except cot
-  (3×). The launch mix names eight decontaminated `_dc` dirs (open PR #254):
-  code_ultra_l{2,3}_dc plus code_py_starcoder_dc, math_owm_stage2_dc, code_keep_p1_dc,
+  (3×). The launch mix names eight decontaminated `_dc` dirs (#254 merged; L3 gate name
+  from #261): code_ultra_l2_dc and code_ultra_l3_noexec_dc (the GATE L3 drops the sandbox
+  solution-exec filter — static dedup + nontriviality + decontam only, user order
+  2026-09-11; the exec-filtered code_ultra_l3_dc arm is retained for a later A/B and is not
+  in the mix), plus code_py_starcoder_dc, math_owm_stage2_dc, code_keep_p1_dc,
   en_c4_stage2_dc, cot_dc, code_py_rp1t_dc. The six non-ultra decontaminate via
   scripts/filter_gate_domains.py (facts/contamination.json cont.gate_dc_*; packed _dc
   supplies measured in
