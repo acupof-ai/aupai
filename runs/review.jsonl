@@ -506,3 +506,6 @@
 {"ts": "2026-09-11T17:15Z", "reviewer": "fb", "task": "66-9", "artifact": "runs/v41_gate_0912_w8.sh da458a50: diff vs v41_gate_0911.sh is NGPU 8, --accum 6, name; tokens/step 786,432 recomputed", "verdict": "approved", "pr": 275}
 {"ts": "2026-09-11T18:07Z", "reviewer": "fb", "task": "de-111", "artifact": "scripts/harness.py card_lend_expires selftest derives from the live grant file; property (3) exempts an open lend window; diff read", "verdict": "approved", "pr": 276}
 {"ts": "2026-09-11T18:51Z", "reviewer": "de", "task": "gate-w8-resume", "artifact": "runs/v41_gate_0911_resume_w8.sh @ 72c5a347", "verdict": "approved", "pr": 275}
+{"ts": "2026-09-11T18:43Z", "reviewer": "fb", "task": "de-108", "artifact": "scripts/test_cursor_sum.py world-change re-stripe test; ci.yml entry; diff read", "verdict": "approved", "pr": 277}
+{"ts": "2026-09-11T18:43Z", "reviewer": "fb", "task": "66-9", "artifact": "runs/v41_gate_0911_resume_w8.sh: same name, NGPU 8, accum 6, --resume .step6000 after --, --gate-timeout 300 (args.gate_timeout exists), run_ddp forwards $@ to train.py --resume (train.py:3112)", "verdict": "approved", "pr": 275}
+{"ts": "2026-09-11T18:44Z", "reviewer": "fb", "task": "66-10", "artifact": "eval/humaneval_gen.py truncate(entry_point): self re-declaration is not a stop; controls PASS/FAIL; diff read", "verdict": "approved", "pr": 278}
