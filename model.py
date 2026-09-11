@@ -442,6 +442,72 @@ class HeavilyCompressedAttention(nn.Module):
         return y.transpose(1, 2)                                # B,T,H,D
 
 
+class _WindowSWAFlash(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, q, k, v, cu, T, n_win, scale):
+        from flash_attn.cute import interface as _fa
+        o, lse = _fa._flash_attn_fwd(
+            q, k, v, cu_seqlens_q=cu, cu_seqlens_k=cu,
+            max_seqlen_q=T, max_seqlen_k=T, causal=True,
+            window_size_left=n_win - 1, window_size_right=0,
+            softmax_scale=scale, return_lse=True)
+        ctx.save_for_backward(q, k, v, o, lse)
+        ctx.meta = (cu, T, n_win, scale)
+        return o, lse
+
+    @staticmethod
+    def backward(ctx, go, glse):
+        from flash_attn.cute import interface as _fa
+        q, k, v, o, lse = ctx.saved_tensors
+        cu, T, n_win, scale = ctx.meta
+        dq, dk, dv = _fa._flash_attn_bwd(
+            q, k, v, o, go.to(o.dtype), lse, dlse=glse.contiguous(),
+            softmax_scale=scale, causal=True,
+            window_size_left=n_win - 1, window_size_right=0,
+            cu_seqlens_q=cu, cu_seqlens_k=cu,
+            max_seqlen_q=T, max_seqlen_k=T)
+        return dq, dk, dv, None, None, None, None
+
+
+def csa2_window_flash(q, k, v, qh, kh, vh, kc, vc, sel, ste, vis, doc, cu,
+                      n_win, scale, use_flash):
+    B, T, H, D = q.shape
+    wd = torch.float64 if q.dtype == torch.float64 else torch.float32
+    e_mask = vis[:, None] & sel
+    se = (qh @ kc.transpose(-1, -2) * scale).masked_fill(~e_mask, float("-inf")).to(wd)
+    has_e = e_mask.any(-1, keepdim=True)
+    le0 = torch.logsumexp(se, -1)
+    le = torch.where(has_e[..., 0], le0, torch.full_like(le0, float("-inf")))
+    pe = torch.nan_to_num(torch.softmax(se, -1), nan=0.0)
+    oe = (pe * ste.to(wd)).unsqueeze(-1) * vc.to(wd).unsqueeze(2)
+    oe = oe.sum(-2)                                        # B,H,T,D
+
+    if use_flash:
+        qf = q.reshape(B * T, H, D)
+        ow_t, lw = _WindowSWAFlash.apply(
+            qf, k.reshape(B * T, H, D), v.reshape(B * T, H, D), cu, T, n_win, scale)
+        ow = ow_t.to(wd).view(B, T, H, D).transpose(1, 2)     # B,H,T,D
+        lw = lw.t().reshape(B, T, H).permute(0, 2, 1).float()  # B,H,T
+    else:
+        ar = torch.arange(T, device=q.device)
+        causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
+        same = doc[:, :, None] == doc[:, None, :]
+        m_win = same & causal & ((ar[:, None] - ar[None, :]) < n_win)
+        sw = ((qh @ kh.transpose(-1, -2)) * scale).masked_fill(
+            ~m_win[:, None].expand(B, H, T, T), float("-inf")).to(wd)
+        lw = torch.logsumexp(sw, -1)
+        ow = torch.softmax(sw, -1).to(wd) @ vh.to(wd)
+
+    mm = torch.maximum(le, lw)
+    ae = torch.where(torch.isfinite(le), (le - mm).exp(), torch.zeros_like(le))
+    aw = (lw - mm).exp()
+    den = ae + aw
+    ce = torch.where(den > 0, ae / den, torch.zeros_like(ae))
+    cw = torch.where(den > 0, aw / den, torch.zeros_like(aw))
+    y = (oe * ce.unsqueeze(-1) + ow * cw.unsqueeze(-1)).to(q.dtype)
+    return y.transpose(1, 2)                               # B,T,H,D
+
+
 class CompressedSparseAttention(nn.Module):
     """CSA: coarse attention over compressed KV blocks, top-k selection, plus a sliding window.
 
@@ -499,6 +565,7 @@ class CompressedSparseAttention(nn.Module):
         # engineering choice, flagged in the PR, since the paper does not say how the
         # indexer learns.
         self.csa2 = bool(getattr(cfg, "csa2", False))
+        self.csa2_win_flash = bool(getattr(cfg, "csa2_win_flash", False))
         if self.csa2:
             if not getattr(cfg, "csa", False):
                 raise ValueError(
@@ -646,6 +713,13 @@ class CompressedSparseAttention(nn.Module):
         soft_sel = (torch.softmax(s, dim=-1) * alive.to(isc.dtype)
                     ).repeat_interleave(self.h // self.ih, dim=1)  # B,H,T,NB
         ste = sel.to(soft_sel.dtype) + soft_sel - soft_sel.detach()
+
+        if getattr(self, "csa2_win_flash", False):
+            y = csa2_window_flash(
+                q, k, v, qh, kh, vh, kc, vc, sel, ste, vis, doc, cu,
+                self.n_win, self.scale, use_flash=HAS_FA)
+            self._pkg = CSA2Package(kc=kc, vc=vc, ik=ik, topk_idx=_topk, nb=NB, cu=cu)
+            return y                                        # B,T,H,D
 
         # --- one softmax over [selected entries ; SWA window keys] ------------------
         sc = (qh @ kc.transpose(-1, -2)) * self.scale            # B,H,T,NB
