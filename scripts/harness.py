@@ -87,6 +87,7 @@ from harness_core import (  # noqa: E402
     _gitignored_set,
     _main_touched,
     _mentions_lend,
+    _open_row_started,
     _parse_lend_window,
     _read_tasks,
     _tmp_repo,
@@ -14010,6 +14011,8 @@ def _run_holds_the_block(root):
             return True, str(a.get("note", ""))[:60]
     except (OSError, ValueError):
         pass
+    if not pod_drift.is_pod(root):
+        return False, "no block grant; fresh-log fallback is pod-only, a git tree trusts the grant"
     now = time.time()
     for p in glob.glob(os.path.join(root, "runs", "*.log")):
         try:
@@ -14147,6 +14150,43 @@ def _broken_frozen_paths():
     sp.run(["git", *ident, "commit", "-m", "touch a frozen path"], cwd=d,
            capture_output=True, env=env)
     return d
+
+
+def _selftest_holds_block_log_scope():
+    """A fresh runs/*.log arms _run_holds_the_block ONLY on the pod (no .git).
+
+    Incident: #233's push-event CI failed frozen_paths because a committed run log
+    (v41_smoke_0911{h,i}.log) has checkout-time mtime in a fresh clone, so the mtime
+    fallback armed in a git tree, read the log's `pod code:` banner, and that sha was
+    absent from the shallow push clone. The grant stays the authority in git trees; the
+    log fallback exists only because pod_push skips runs/ (the pod's grant can be stale).
+    """
+    import tempfile
+
+    def world(make_git, grant=None):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        if make_git:
+            os.makedirs(os.path.join(d, ".git"), exist_ok=True)
+        with open(os.path.join(d, "runs", "x.log"), "w") as f:
+            f.write("fresh\n")  # mtime = now, inside the fresh window
+        if grant is not None:
+            with open(os.path.join(d, "runs", "card_assignment.json"), "w") as f:
+                json.dump(grant, f)
+        return d
+
+    # no grant, fresh log: armed on the pod (no .git), disarmed in a git tree
+    gitd = world(make_git=True)
+    podd = world(make_git=False)
+    g_holds, _ = _run_holds_the_block(gitd)
+    p_holds, _ = _run_holds_the_block(podd)
+    assert not g_holds, "a fresh run log must NOT arm the block predicate in a git tree (CI clone flake)"
+    assert p_holds, "a fresh run log must arm the block predicate on the pod, whose grant can be stale"
+    # the grant arms in BOTH views, so scoping the log arm does not disarm real runs
+    grant = {"launch_block_granted": True, "next_grant": {"blocked_on": "the run itself"}}
+    grant_git = world(make_git=True, grant=grant)
+    holds, _ = _run_holds_the_block(grant_git)
+    assert holds, "a current block grant must arm in a git tree independent of the log fallback"
 
 
 def _cfg_known_names(root):
@@ -15212,6 +15252,119 @@ def _selftest_launch_closes_its_orphaned_row():
               "its row while a fast success (rc 0, no device) does not (de-77)")
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+def _selftest_fatal_close_keys_the_opened_row():
+    """Every FATAL exit of a launched job closes the row the launch OPENED, and leaves none open.
+
+    66-5, fb 2026-09-11. The launch reads back its row's `started` stamp and every automated
+    closer keys on (name, started). A bare-name close is REFUSED by exp.py when two rows of one
+    name are open -- the normal relaunch shape (a crashed launch under a name, then a retry while
+    the monitor has not run yet) -- so the pre-fix monitor/supervisor death close silently wrote
+    nothing and the dead run's row stayed running until no_stale_running refused every commit.
+
+    The world is two genuinely-open rows of one name, exactly what exp.py's refusal describes.
+    The closes are the REAL _close_row (which subprocess-drives the REAL exp.py done), so this
+    exercises the refusal and the --started override end to end:
+      1. a bare fatal close is refused and leaves BOTH rows open -- the defect this fixes;
+      2. the started-keyed close of the OLDER row closes exactly it, the newer live row untouched;
+      3. the started-keyed close of the newer row leaves zero open rows -- the acceptance line;
+      4. _open_row_started names the NEWEST open row, the one a FATAL close must actually close.
+    Static anchors assert every production closer passes the stamp: a new fatal path that drops it
+    passes the ledger world and fails the anchor.
+    """
+    import inspect
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="fatalrows_")
+    name = "fataldup"
+    try:
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        ledger = os.path.join(d, "runs", "experiments.jsonl")
+        # Two START events with distinct stamps. exp.py mints UTC minute stamps, so two real
+        # `start` calls in one minute would collapse to one (name, started) key; the older event
+        # is hand-written with the same fields exp.py uses and a stamp fixed in the PAST, and the
+        # newer one is the real subprocess event.
+        st1 = "2026-09-01 00:00"
+        base = {"name": name, "status": "running", "cmd": "run.sh", "notes": "",
+                "hypothesis": "relaunch shape", "result": "", "finding": "", "decision": "",
+                "ended": "", "commit": ""}
+        with open(ledger, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({**base, "started": st1}) + "\n")
+        r = subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, "start",
+             "--name", name, "--cmd", "run.sh", "--hypothesis", "relaunch shape"],
+            capture_output=True, text=True)
+        # The real start stamps NOW; when the clock lands on a minute other than st2 the hand-written
+        # stamp still differs, which is all the world needs.
+        assert r.returncode == 0, (r.stderr or r.stdout)
+        rows = [json.loads(x) for x in open(ledger, encoding="utf-8") if x.strip()]
+        real_stamps = sorted({x["started"] for x in rows if x.get("started") != st1})
+        assert len(real_stamps) == 1, f"the real start wrote an unexpected stamp set: {real_stamps}"
+        st2 = real_stamps[0]
+        assert st2 != st1
+
+        def open_rows():
+            rows = [json.loads(x) for x in open(ledger, encoding="utf-8") if x.strip()]
+            return {(x["name"], x["started"]) for x in _exp_fold(rows)
+                    if x.get("status") == "running"}
+
+        assert open_rows() == {(name, st1), (name, st2)}, "sanity: both rows must be open"
+
+        # 4. the launch's readback names the newest open row.
+        assert _open_row_started(name, root=d) == st2, (
+            "_open_row_started must name the newest OPEN row via the fold, not a raw running scan")
+
+        # 1. THE DEFECT: a bare fatal close is refused and both rows stay open.
+        assert not _close_row(name, "fail", "exit 137", "monitor: process died",
+                              "check the log", root=d, writer="monitor"), (
+            "a bare close with two open rows MUST be refused (exp.py returns nonzero); a True here "
+            "means the launcher cannot distinguish the rows anymore")
+        assert open_rows() == {(name, st1), (name, st2)}, (
+            "a refused fatal close must write nothing -- both rows must remain open")
+
+        # 2. KEYED CLOSE OF THE OLDER (dead) ROW: the FATAL exit that belongs to st1.
+        assert _close_row(name, "fail", "exit 137 (signal 9)", "monitor: process died",
+                          "check the log", root=d, writer="monitor", started=st1), \
+            "the started-keyed fatal close must succeed"
+        assert open_rows() == {(name, st2)}, (
+            "the fatal close must close ONLY its own row; the newer row is a different run and must "
+            "stay open")
+
+        # 3. THE FATAL EXIT LEAVES NO RUNNING ROW: close the newer one the same way.
+        assert _close_row(name, "fail", "exit 1, startup gate", "gate failed",
+                          "fix the startup issue", root=d, started=st2), \
+            "the second started-keyed fatal close must succeed"
+        assert not open_rows(), (
+            "THE ACCEPTANCE LINE: after every FATAL exit closes the row it opened, zero running "
+            "rows of this name may remain")
+
+        # STATIC ANCHORS. The ledger world proves exp.py's half; these prove every production
+        # closer actually threads the stamp, since a new fatal path that drops it would leave a
+        # refused close while this test stayed green.
+        mon = inspect.getsource(_arm_monitor)
+        assert '"--started", started' in mon, (
+            "the monitor's death close must pass its run's --started, or a relaunch leaves the "
+            "dead row running")
+        sup = inspect.getsource(_supervise)
+        assert sup.count("started=started") >= 5, (
+            "every one of the supervisor's five terminal _close_row calls must key on started: "
+            f"clean exit, kill criterion, resume exhausted, no resume ckpt, env-fp refusal "
+            f"(found {sup.count('started=started')})")
+        launch_after = inspect.getsource(_launch_after_row)
+        assert launch_after.count("started=launch_started") >= 4, (
+            "the drift refusal, startup-gate kill and command-refused closers must all key on the "
+            "read-back stamp (found %d)" % launch_after.count("started=launch_started"))
+        outer = inspect.getsource(cmd_launch)
+        assert "_open_row_started(args.name)" in outer, (
+            "the pre-Popen exception guard must key its close on the row just opened")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    return ("two open rows of one name: a bare fatal close is refused and closes nothing, the "
+            "started-keyed close of each FATAL exits its own row and leaves zero running; "
+            "monitor, all five supervisor paths and the three launch paths thread the stamp")
 
 
 def _selftest_cite_blob_anchor():
@@ -24123,6 +24276,7 @@ def _demo(only=None):
         _selftest_cite_blob_anchor,
         _selftest_cite_multi_target_lists,
         _selftest_launch_closes_its_orphaned_row,
+        _selftest_fatal_close_keys_the_opened_row,
         _selftest_monitor_close_loses_to_a_human,
         _selftest_shard_contract_worlds,
         _selftest_cold_cache_refuses,
@@ -24144,6 +24298,7 @@ def _demo(only=None):
         _selftest_auto_resume,
         _selftest_devs_map,
         _selftest_gpu_descendants,
+        _selftest_holds_block_log_scope,
         _selftest_exp_fold,
         _selftest_exp_reclassify_monitor_close,
         _selftest_main_in_no_worktree_discriminates,
@@ -25487,6 +25642,7 @@ while True:
             status, result = "fail", "exit %d%s" % (rc, sig)
             finding = "monitor: process exited %d%s" % (rc, sig)
         subprocess.run([sys.executable, exp_py, "done", "--name", name,
+            *(["--started", started] if started else []),
             "--result", result, "--finding", finding, "--writer", "monitor",
             "--decision", "check the log", "--status", status], capture_output=True)
         # RELEASE THE CARDS HERE, beside the row that records the death. cmd_launch cannot:
@@ -26052,7 +26208,8 @@ def cmd_launch(rest):
                    f"launch died before the process existed: {type(_e).__name__}: {_e}"[:400],
                    "the row was opened by exp.py start and no process was ever created, so there "
                    "is no log, pid or rc to close it from -- closed by harness launch itself",
-                   "re-run the launch after fixing the cause named above")
+                   "re-run the launch after fixing the cause named above",
+                   started=_open_row_started(args.name))
         raise
 
 
@@ -26067,21 +26224,7 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
     # normal case, and (name, started) is the row identity everywhere else in this file
     # (_exp_fold, exp.py's own fold). The stamp is exp.py's to mint, so it is read back rather
     # than guessed -- a clock read here can differ from the one in the row by a second.
-    launch_started = ""
-    _p = os.path.join(ROOT, "runs", "experiments.jsonl")
-    try:
-        with open(_p, encoding="utf-8") as _f:
-            for _ln in _f:
-                if not _ln.strip():
-                    continue
-                try:
-                    _r = json.loads(_ln)
-                except ValueError:
-                    continue
-                if _r.get("name") == args.name and _r.get("status") == "running":
-                    launch_started = str(_r.get("started") or "")
-    except OSError:
-        pass
+    launch_started = _open_row_started(args.name)
     if not launch_started:
         # No stamp means the monitor cannot distinguish this run from an older one of the same
         # name. Said out loud rather than silently falling back to name-only matching, which is
@@ -26101,15 +26244,9 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
             )
             if r.returncode != 0:
                 detail = (r.stdout or r.stderr).strip().split("\n")[0][:150]
-                subprocess.run(
-                    [sys.executable, os.path.join(HERE, "exp.py"),
-                     "done", "--name", args.name,
-                     "--result", "refused: training-scope drift",
-                     "--finding", detail,
-                     "--decision", "push the drifted training file or wait for the push to finish",
-                     "--status", "fail"],
-                    capture_output=True,
-                )
+                _close_row(args.name, "fail", "refused: training-scope drift", detail,
+                           "push the drifted training file or wait for the push to finish",
+                           started=launch_started)
                 print(f"REFUSED: {args.name} — training-scope drift: {detail}", file=sys.stderr)
                 return 1
 
@@ -26337,15 +26474,11 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
                 os.kill(proc.pid, signal.SIGTERM)
-            subprocess.run(
-                [sys.executable, os.path.join(HERE, "exp.py"),
-                 "done", "--name", args.name,
-                 "--result", f"killed: startup gate {reason}",
-                 "--finding", f"gate failed: {reason}",
-                 "--decision", "fix the startup issue",
-                 "--status", "fail"],
-                capture_output=True,
-            )
+            _close_row(args.name, "fail",
+                       f"killed: startup gate {reason}",
+                       f"gate failed: {reason}",
+                       "fix the startup issue",
+                       started=launch_started)
             print(f"FAILED: {args.name} killed — {reason}", file=sys.stderr)
             _release_cards(claim_name)
             return 1
@@ -26377,16 +26510,12 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
         except OSError:
             _refused_rc = None
     if _refused_rc not in (None, "", "0"):
-        subprocess.run(
-            [sys.executable, os.path.join(HERE, "exp.py"),
-             "done", "--name", args.name,
-             "--result", f"refused: wrapped command exited {_refused_rc} without holding a device",
-             "--finding", f"{os.path.basename(log_path)}: the command exited {_refused_rc} before "
-                          f"any descendant opened a GPU device, so nothing ran under this row",
-             "--decision", "read the log and fix what the command refused on, then relaunch",
-             "--status", "fail"],
-            capture_output=True,
-        )
+        _close_row(args.name, "fail",
+                   f"refused: wrapped command exited {_refused_rc} without holding a device",
+                   f"{os.path.basename(log_path)}: the command exited {_refused_rc} before "
+                   f"any descendant opened a GPU device, so nothing ran under this row",
+                   "read the log and fix what the command refused on, then relaunch",
+                   started=launch_started)
         print(f"REFUSED: {args.name} exited {_refused_rc} without holding a device; the row is "
               f"closed as fail and no monitor was armed. Log: {log_path}", file=sys.stderr)
         _release_cards(claim_name)
@@ -26496,24 +26625,25 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""
         rc = proc.wait()
         if rc == 0:
             _close_row(args.name, "ok", f"exited 0 after {len(resumes)} resume(s)",
-                       "clean exit", "none", root, writer="monitor")
+                       "clean exit", "none", root, writer="monitor", started=started)
             return 0
         if rc == _KILL_CRITERION_EXIT:
             _close_row(args.name, "fail", f"kill criterion (exit {rc}) after {len(resumes)} resume(s)",
                        "deliberate stop: NaN or kill criterion, not a crash",
                        "diagnose the stop; auto-resume does not relaunch it", root,
-                       writer="monitor")
+                       writer="monitor", started=started)
             return rc
         if attempt == args.auto_resume:
             _close_row(args.name, "fail", f"exit {rc}, auto-resume exhausted ({args.auto_resume})",
                        f"crashed {len(resumes) + 1} times; resumed at steps {resumes}",
-                       "investigate the crash before relaunching", root, writer="monitor")
+                       "investigate the crash before relaunching", root, writer="monitor",
+                       started=started)
             return rc
         ckpt, step = _latest_step_ckpt(args.name)
         if ckpt is None:
             _close_row(args.name, "fail", f"exit {rc}, no step checkpoint to resume from",
                        "crashed before the first --save_every save",
-                       "relaunch from scratch", root, writer="monitor")
+                       "relaunch from scratch", root, writer="monitor", started=started)
             return rc
         # The env fingerprint is part of what the checkpoint was trained under. A
         # changed environment makes a resume a different run wearing the same name.
@@ -26522,7 +26652,8 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""
         if fp_now and fp_ckpt and fp_now != fp_ckpt:
             _close_row(args.name, "fail", f"exit {rc}, REFUSING resume: env fingerprint changed",
                        f"checkpoint {fp_ckpt} vs current {fp_now}",
-                       "resume by hand after deciding the environment change is safe", root)
+                       "resume by hand after deciding the environment change is safe", root,
+                       started=started)
             print(f"REFUSING resume: env fingerprint {fp_ckpt} -> {fp_now}", file=sys.stderr)
             return rc
         print(f"auto-resume {attempt + 1}/{args.auto_resume}: exit {rc}, resuming from step {step} in 60s",

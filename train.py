@@ -263,28 +263,17 @@ class Cfg:
     # moe_experts is set, for the reason mem_arm is: it is the only field recording which arm
     # wrote a row, the ledger is append-only, and readout 3 compares E1b against E1.
     moe_arm = ""
-    vocab = 32784  # multiple of 16: 8 for the cuBLAS aligned kernel (32773 fell back to the
-    # SM75 align-1 GEMM on Hopper, 41% vs 92% of bf16 peak, +13.9% end-to-end, measured
-    # 2026-08-30), 16 so _fp8_ok passes and the fp8-head option stays open (same cost: the
-    # extra columns are never targets). 32776 was 8-aligned only; the A/B at 32784 is
-    # eff.vocab_align_parity.
-    # The 11 columns above vocab_real are alignment padding: never targets, set to
-    # finfo(dtype).min in lm_logits (finite, so the all-finite E2E assert holds).
-    # padded_vocab (32832) is unchanged, so head/embedding shapes and old checkpoints
-    # are unaffected -- this is not a tokenizer change and does not touch vocab_id.
-    vocab_real = 32773  # the frozen tokenizer's size (2026-08-29): 32768 BPE merges + 4 chat
-    # specials + [NUM], with <unk>/<eos> inside the merges; vocab - vocab_real is padding
+    vocab = 32768  # V4.1 gate tokenizer (rebuilt 2026-09-10, ae-5): a multiple of 64,
+    # so the aligned cuBLAS head kernel is picked with zero padding columns. The 2026-08-29
+    # frozen vocabulary needed 32784 (vocab_real 32773 padded up); its 11-column padding
+    # story is retired with it. See facts/tokenizer.json#tok.gate_tokenizer_choice_0910.
+    vocab_real = 32768  # gate-mix BPE size: 32768 merges incl <unk>/<eos> + 5 specials,
+    # chosen over 20000 on held-out tokens/byte (-9.9% vs frozen at 32K, wins every domain)
     fone = False
-    # DERIVED, not asserted. [NUM] is the last id in today's tokenizer, so this default is
-    # correct -- and it stays correct only while the vocabulary is frozen. resolve_num_id()
-    # below reads it from the tokenizer and raises if absent; nothing should read this
-    # constant directly. WHY IT IS A HARD FAILURE RATHER THAN A WARNING: num_id is read at
-    # three sites (fone masking :808, digit CE :999, value write-back :1229) and every one
-    # of them fails SILENTLY into plausible training -- a stale id masks an ordinary BPE
-    # token as numeric, computes digit cross-entropy on the wrong positions, and writes
-    # values into the wrong slots, with no shape error and no crash. The danger is that
-    # property, not the probability of a rebuild.
-    num_id = 32772
+    # DERIVED, not asserted. resolve_num_id() below reads this from the tokenizer and raises
+    # if absent; nothing should read the constant directly. Stale-id danger (the three fone
+    # read sites failing silently into plausible training) is why resolve_num_id exists.
+    num_id = 32767  # [NUM] is the last id in the rebuilt vocabulary
     fone_loss_w = 1.0
     seq = 4096  # the recurrent arch handles arbitrary length at inference
     batch = (
