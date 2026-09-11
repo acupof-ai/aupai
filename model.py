@@ -474,13 +474,12 @@ def csa2_window_flash(q, k, v, qh, kh, vh, kc, vc, sel, ste, vis, doc, cu,
     B, T, H, D = q.shape
     wd = torch.float64 if q.dtype == torch.float64 else torch.float32
     e_mask = vis[:, None] & sel
-    se = (qh @ kc.transpose(-1, -2) * scale).masked_fill(~e_mask, float("-inf")).to(wd)
-    has_e = e_mask.any(-1, keepdim=True)
-    le0 = torch.logsumexp(se, -1)
-    le = torch.where(has_e[..., 0], le0, torch.full_like(le0, float("-inf")))
-    pe = torch.nan_to_num(torch.softmax(se, -1), nan=0.0)
-    oe = (pe * ste.to(wd)).unsqueeze(-1) * vc.to(wd).unsqueeze(2)
-    oe = oe.sum(-2)                                        # B,H,T,D
+    has_e = e_mask.any(-1)
+    se = (qh @ kc.transpose(-1, -2) * scale).masked_fill(~e_mask, float("-inf"))
+    le = torch.logsumexp(se.to(wd), -1)
+    le = torch.where(has_e, le, torch.full_like(le, float("-inf")))
+    pe = torch.nan_to_num(torch.softmax(se, -1), nan=0.0) * has_e.unsqueeze(-1)
+    oe = (pe * ste) @ vc                                   # B,H,T,D, input dtype
 
     if use_flash:
         qf = q.reshape(B * T, H, D)
@@ -504,7 +503,7 @@ def csa2_window_flash(q, k, v, qh, kh, vh, kc, vc, sel, ste, vis, doc, cu,
     den = ae + aw
     ce = torch.where(den > 0, ae / den, torch.zeros_like(ae))
     cw = torch.where(den > 0, aw / den, torch.zeros_like(aw))
-    y = (oe * ce.unsqueeze(-1) + ow * cw.unsqueeze(-1)).to(q.dtype)
+    y = (oe.to(wd) * ce.unsqueeze(-1) + ow * cw.unsqueeze(-1)).to(q.dtype)
     return y.transpose(1, 2)                               # B,T,H,D
 
 

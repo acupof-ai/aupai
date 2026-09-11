@@ -44,7 +44,8 @@ def build(win, L=10, h=8, hd=128, dtype=torch.bfloat16, device="cuda"):
 
 
 def inputs(B, T, h, hd, d, dtype, device):
-    return (torch.randn(B, T, h, hd, dtype=dtype, device=device) * 0.1 for _ in range(4))
+    mk = lambda *shape: torch.randn(*shape, dtype=dtype, device=device) * 0.1
+    return mk(B, T, h, hd), mk(B, T, h, hd), mk(B, T, h, hd), mk(B, T, d)
 
 
 def parity(T, h, hd, d, device):
@@ -72,8 +73,8 @@ def parity(T, h, hd, d, device):
         dd = (gm[n] - gw[n]).abs().max().item()
         worst = max(worst, dd)
     print(f"worst param-grad abs max {worst:.4e}", flush=True)
-    for tag, g in (("indexer_q", gw), ("ik_weight", gw)):
-        names = [n for n in g if n.endswith(tag + ".weight")]
+    for tag, names in (("indexer_q", [n for n in gw if n.endswith("indexer_q.weight")]),
+                       ("ik_weight", [n for n in gw if n.endswith("ik_weight")])):
         print(f"{tag} grad nonzero mat={any(gm[n].abs().max()>0 for n in names)} "
               f"win={any(gw[n].abs().max()>0 for n in names)}", flush=True)
     return fwd, worst
