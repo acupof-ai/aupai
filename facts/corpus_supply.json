@@ -1523,6 +1523,62 @@
    "tokens_status": "measured",
    "guard_phrases": [],
    "retracted_value": []
+  },
+  {
+   "id": "cs.gate_cache_ultra_l2_dc_0911",
+   "value": 15340877471,
+   "unit": "cache-side packed pool in /data00/tokens_<domain>.pt (torch stream after row-aligned truncation, with the three identity stamps) -- joins the corpus-side exact document token fact cs.ultra_l2_dc_landed_0911 (PR #270); the two VALUES are numerically equal here (zero/near-zero trailing partial row) but measure different stages",
+   "measured": "2026-09-11",
+   "source": "scripts/pretokenize_domains.py (5 workers x RAYON 5 = 25 cores, CPU, alongside 0e static L3) writing pod /data00/tokens_code_ultra_l2_dc.pt; decontam by scripts/filter_gate_domains.py; REPORT line + stamps read back",
+   "config": {
+    "value_basis": "torch.load full tensor 15,340,877,471 is the epochs_pool count given to ae-6; REPORT rows 3,744,417 x 4097 = 15,340,876,449 differs by the 1,022-token trailing partial row",
+    "rows": 3744417,
+    "shards": 554,
+    "docs": 16359418,
+    "sha256_16": "ba340e5d69f6b13b",
+    "bytes": 61363511693,
+    "seconds": 1938,
+    "corpus_fp": "adf2ff20698dae8a (== live _corpus_fp and the cache .srcfp)",
+    "decontam_fp": "86e19705b05c4b42",
+    "vocab_id": "f1f860970d15d623",
+    ".seed": 42,
+    "mix_supply_basis": "27/3 draw 13.05B / 15.34B = 0.85 (0e)"
+   },
+   "uncertainty": "none; exact counts, driver-measured seconds",
+   "boundary": "covers only UltraData L2 decontaminated; not L3 Join key: cs.ultra_l2_dc_landed_0911 (PR #270) holds the corpus-side kept_tokens/dedup provenance; this row adds only cache identity (sha256, .vocab/.srcfp/.seed, encode seconds, bytes).",
+   "status": "measured",
+   "tokens_status": "measured",
+   "guard_phrases": [],
+   "retracted_value": []
+  },
+  {
+   "id": "cs.gate_cache_ultra_l3_noexec_dc_0911",
+   "value": 26697332099,
+   "unit": "cache-side packed pool in /data00/tokens_<domain>.pt (torch stream after row-aligned truncation, with the three identity stamps) -- joins the corpus-side exact document token fact cs.ultra_l3_noexec_dc_landed_0911 (PR #270); the two VALUES are numerically equal here (zero/near-zero trailing partial row) but measure different stages",
+   "measured": "2026-09-11",
+   "source": "scripts/pretokenize_domains.py (24 workers x RAYON 5 = 120 cores, CPU) writing pod /data00/tokens_code_ultra_l3_noexec_dc.pt; conversion datagen/ultradata_shards.py, decontam scripts/filter_gate_domains.py; full-load len() and stamps read back",
+   "config": {
+    "value_basis": "torch.load full tensor 26,697,332,099 == 0e kept_tokens (trailing partial row present, no row-aligned loss); REPORT rows 6,516,312 x 4097 = 26,697,330,264 (1,835-token tail)",
+    "rows": 6516312,
+    "shards": 940,
+    "docs": 15308313,
+    "sha256_16": "7f4b74dcdc91c488",
+    "bytes": 106789330238,
+    "seconds": 1293,
+    "corpus_fp": "63a3b0e64b97e589 (== live and .srcfp)",
+    "decontam_fp": "86e19705b05c4b42",
+    "vocab_id": "f1f860970d15d623",
+    ".seed": 42,
+    "gate_floor": "26.70B vs the ~26.8B basis = -0.39%, above the 24.1B (-10%) no-reweight floor; ae held all-GO PR on this count",
+    "build_note": "0e's first aggregate lost 517k rows in a kill+release interaction; a partition conservation assert caught it and all 147 raw parquets were reconverted (intermediates retained), hence the _noexec path and the 940-jsonl final dir",
+    "completion_sentinel": "pod runs/ultra_groups/l3_noexec_done.sentinel (carries kept_tokens, fp_dir, decontam_fp, L3_NOEXEC_AGG_DONE)"
+   },
+   "uncertainty": "none; exact full-load count matching 0e's kept_tokens, driver-measured seconds",
+   "boundary": "static-only UltraData L3 (exec-filtered parts dropped); not L2 or the six non-ultra domains Join key: cs.ultra_l3_noexec_dc_landed_0911 (PR #270) holds the corpus-side kept_tokens/dedup provenance; this row adds only cache identity (sha256, .vocab/.srcfp/.seed, encode seconds, bytes).",
+   "status": "measured",
+   "tokens_status": "measured",
+   "guard_phrases": [],
+   "retracted_value": []
   }
  ]
 }
