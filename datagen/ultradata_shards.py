@@ -340,7 +340,7 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out=""):
         "workers": records[0].get("workers", 1),
         "n_shards": len(final_shards),
         "filters_fp": records[0].get("filters_fp", ""),
-        "decontam_ngram_fp": ngram_fp,
+        "decontam_fp": ngram_fp,
         "decontam_ngram": {
             "rows_in": scanned,
             "rows_dropped": ngram_drop,
