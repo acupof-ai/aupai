@@ -29,9 +29,12 @@ rows = []
 moe = 3 * 2 * d * expert_ffn * moe_experts_active * L
 rows.append(("MoE FFN (4 active experts/layer, SwiGLU gate+up+down)", moe))
 
-# attention Q/K/V/O projections: 4 d^2 per layer (unchanged by the flag)
-qkvo = 4 * d * d * L
-rows.append(("attention Q/K/V/O projections (4 d^2/layer)", qkvo))
+# MLA Q/K/V/gate/O projections per GatedMLA (model.py GatedMLA.__init__): latent KV
+# compression, not four d->d matmuls. kv_down d->d/4; kv_up d/4->2d (fused k|v);
+# qg d->2d (fused q|gate); o d->d. Sum weights = 0.25 + 0.5 + 2 + 1 = 3.75 d^2/layer.
+latent = d // 4
+proj = 2 * (d * latent + latent * 2 * d + d * 2 * d + d * d) * L
+rows.append(("MLA projections kv_down+kv_up+qg+o (3.75 d^2/layer, latent KV)", proj))
 
 # CSA2 dense selected-entries scores: 2*NB*d per CSA2 layer (QK + AV), unchanged dense
 entries = 2 * NB * d * n_csa2
