@@ -1031,7 +1031,7 @@ class CompressedSparseAttention(nn.Module):
         if getattr(self, "csa2_win_flash", False):
             y = csa2_window_flash(
                 q, k, v, qh, kh, vh, kc, vc, sel, ste, vis, doc, cu,
-                self.n_win, self.scale, use_flash=HAS_FA)
+                self.n_win, self.scale, use_flash=HAS_FA and q.is_cuda)
             self._pkg = CSA2Package(kc=kc, vc=vc, ik=ik, topk_idx=_topk, nb=NB, cu=cu)
             return y                                        # B,T,H,D
 
