@@ -436,6 +436,7 @@
     "software": "flash_attn.cute flash-attn 4, torch 2.11.0+cu129"
    },
    "uncertainty": "bf16 fwd/grad diffs are the kernel accumulation floor (CPU float64 exact). tok/s is eager varlen (4 entries calls/layer + python gather); the speed win needs ragged density without per-group call overhead (concat-groups or fused varlen kernel), which uniform padding does not and which is unbuilt. Attention-only timings, not full step; B8 materialized 76 GiB is attention-module only (full stack OOMed 94.62 GiB).",
+   "boundary": "Default-path byte identity is per-environment. The check_default_identical hash is a fixed-seed float64 reduction whose bit value follows the BLAS/device reduction order: laptop f84c27ff... and pod 2d9d97cd... are the SAME default path, so the gate compares the candidate model.py against a baseline model.py in one process on the current device (check_default_identical.py --ref), never against a baked constant. de-108 is gated (cfg.csa2_joint default False) and ships post-gate; the gate uses the de-109 csa2_win_flash path instead.",
    "status": "measured"
   }
  ]
