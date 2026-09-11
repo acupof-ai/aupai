@@ -1469,6 +1469,90 @@
    "tokens_status": "measured",
    "guard_phrases": [],
    "retracted_value": []
+  },
+  {
+   "id": "cs.gate_domains_decontaminated_tokenized_0911",
+   "value": {
+    "cot_dc": 399994207,
+    "code_py_rp1t_dc": 379599341,
+    "en_c4_stage2_dc": 1985209544,
+    "math_owm_stage2_dc": 5857968443,
+    "code_keep_p1_dc": 2626975915,
+    "code_py_starcoder_dc": 7948925654
+   },
+   "unit": "packed pool tokens (rows x 4097), post 13-gram decontamination (ae-7)",
+   "measured": "2026-09-11",
+   "source": "scripts/pretokenize_domains.py (5 workers x RAYON_NUM_THREADS=5 = 25 cores, CPU, alongside 0e L3 conversion) writing pod /data00/tokens_<domain>_dc.pt; decontamination by scripts/filter_gate_domains.py (facts/contamination.json cont.gate_dc_*, PR #253); cache .srcfp re-verified equal to live train._corpus_fp after ae restamped",
+   "config": {
+    "vocab_id": "f1f860970d15d623 (32,768), .seed 42; every cache .vocab/.srcfp/.seed present",
+    "decontam_fp": "86e19705b05c4b42 (ae, in each build_corpus_stats.json); producer now writes corpus fingerprint itself (PR #255, 614e18d6) -- the first ae-7 stats lacked the fingerprint field and 98 stamped train._corpus_fp before that fix landed",
+    "per_domain": {
+     "cot_dc": {
+      "rows": 97631,
+      "pool_tokens": 399994207,
+      "sha256_16": "61137fa68e7e3761",
+      "bytes": 1599980435,
+      "seconds": 39,
+      "corpus_fp": "0d9f495913438657",
+      "delta_vs_pre_dc_pct": -0.0317
+     },
+     "code_py_rp1t_dc": {
+      "rows": 92653,
+      "pool_tokens": 379599341,
+      "sha256_16": "ee915b5b2bdb4db8",
+      "bytes": 1518402002,
+      "seconds": 46,
+      "corpus_fp": "af4988f92dea1261",
+      "delta_vs_pre_dc_pct": -0.0065
+     },
+     "en_c4_stage2_dc": {
+      "rows": 484552,
+      "pool_tokens": 1985209544,
+      "sha256_16": "afa5a3ff4a667270",
+      "bytes": 7940846790,
+      "seconds": 268,
+      "corpus_fp": "c59c2e4227d875ec",
+      "delta_vs_pre_dc_pct": -0.001
+     },
+     "math_owm_stage2_dc": {
+      "rows": 1429819,
+      "pool_tokens": 5857968443,
+      "sha256_16": "b9d325dacf764859",
+      "bytes": 23431880859,
+      "seconds": 742,
+      "corpus_fp": "4b1469bfe4667706",
+      "delta_vs_pre_dc_pct": -0.1888
+     },
+     "code_keep_p1_dc": {
+      "rows": 641195,
+      "pool_tokens": 2626975915,
+      "sha256_16": "b3d75e8c955511db",
+      "bytes": 10507912070,
+      "seconds": 376,
+      "corpus_fp": "d7b4f3a09c5707b0",
+      "delta_vs_pre_dc_pct": -0.0519
+     },
+     "code_py_starcoder_dc": {
+      "rows": 1940182,
+      "pool_tokens": 7948925654,
+      "sha256_16": "80bb5ba57fa69294",
+      "bytes": 31795712297,
+      "seconds": 1201,
+      "corpus_fp": "390a13a56b6472b3",
+      "delta_vs_pre_dc_pct": -0.0384
+     }
+    },
+    "total_packed_tokens": 19198673104,
+    "total_vs_pre_dc_pct": -0.0815,
+    "pre_dc_caches": "retained on /data00 until a named deletion order; disk 82% after the build",
+    "delta_note": "math_owm -0.189% is the largest and exceeds the -0.1% prior band because dropped rows are long: row drop was only 0.075% but matched rows carry full worked solutions; ae ruled 30B-mix supply ratios unchanged at this precision"
+   },
+   "uncertainty": "none; exact packed counts, driver-measured seconds; srcfp==live verified for all six after the final stamp",
+   "boundary": "packed stream after tail truncation; covers the six HumanEval/MBPP-decontaminated gate domains, not code_ultra_l2_dc/l3_dc (0e)",
+   "status": "measured",
+   "tokens_status": "measured",
+   "guard_phrases": [],
+   "retracted_value": []
   }
  ]
 }
