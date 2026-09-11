@@ -21,7 +21,7 @@ D = 1024  # residual width
 HEADS = 8  # core attention heads, hd=128 (KDA is gone, so hd=128 is no
 # longer kernel-pinned; 8x128 still divides d and keeps every width fact valid)
 LAYERS = 12  # gap map suggestion (fb, 2026-09-10)
-VOCAB = 32784  # frozen tokenizer, tied lm_head (model.py:1988)
+VOCAB = 32768  # V4.1 gate tokenizer rebuilt 2026-09-10 (32768, zero pad), tied lm_head (model.py:1988)
 SEQ = 4096  # gate-run sequence length
 
 MOE_EXPERTS = 48  # pivot: reuse MoEFFN as-is, 48/top-3/1-shared
