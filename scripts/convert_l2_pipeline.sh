@@ -98,7 +98,11 @@ rc=0
 for p in $pids; do wait "$p" || rc=1; done
 [ $rc -ne 0 ] && { echo "GROUP_FAILURE rc=$rc -- no aggregate"; exit 1; }
 
-env PYTHONPATH=/work/aupai python3 datagen/ultradata_shards.py \
-  --level L2 --aggregate "stats_g*.json" --out "$OUT" \
-  2>&1 | tee runs/ultra_groups/l2_aggregate.log
+if [ "${RUN_AGGREGATE:-0}" = "1" ]; then
+  env PYTHONPATH=/work/aupai python3 datagen/ultradata_shards.py \
+    --level L2 --aggregate "stats_g*.json" --out "$OUT" \
+    2>&1 | tee runs/ultra_groups/l2_aggregate.log
+else
+  echo "GROUPS_DONE_AGGREGATE_HELD (set RUN_AGGREGATE=1 once n-gram decontam is wired)"
+fi
 echo L2_PIPELINE_DONE
