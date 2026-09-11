@@ -22257,7 +22257,6 @@ def _selftest_card_lend_expires():
             "card 0 must be theirs: it is baseline-theirs and no window was ever written for it")
 
     # THE PIN. Both directions, because a baseline is as wrong widened as shrunk.
-    # THE PIN. Both directions, because a baseline is as wrong widened as shrunk.
     assert verdict(lambda d: d.__setitem__("theirs_baseline", [0])) is not None, (
         "dropping card 6 from theirs_baseline PASSED. That world classifies card 6 by the ordinary "
         "rule, which returns theirs on a tileRL-subject note, so the partition still looks right "
