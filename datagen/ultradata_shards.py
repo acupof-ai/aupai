@@ -96,12 +96,14 @@ def main():
     ap.add_argument("--stats-name", default="build_corpus_stats.json")
     ap.add_argument("--aggregate", default="",
                     help="aggregate the group stats_<tag>.json files in out and exit")
+    ap.add_argument("--final-out", default="",
+                    help="aggregate: emit final decontaminated shards here instead of out")
     args = ap.parse_args()
     out = args.out or f"data/corpus/code_ultra_{args.level.lower()}"
     prefix = os.path.basename(out.rstrip("/"))
 
     if args.aggregate:
-        aggregate(out, args.aggregate, prefix, args.tokenizer, args.level)
+        aggregate(out, args.aggregate, prefix, args.tokenizer, args.level, args.final_out)
         return
 
     tag = f"_{args.tag}" if args.tag else ""
@@ -222,13 +224,16 @@ def main():
     print(f"DONE {json.dumps(record, indent=1)}", flush=True)
 
 
-def aggregate(out, pattern, prefix, tokenizer_path, level):
+def aggregate(out, pattern, prefix, tokenizer_path, level, final_out=""):
     """Sum group stats, then: (1) ae's 13-gram solution-body decontamination
     against HE+MBPP prompts+solutions+tests, (2) the GLOBAL exact-dedup pass
-    groups cannot do. Survivors are re-emitted as final prefix_NNN shards with
-    exact token recount; tagged intermediates removed only after. Bytes are not
-    mix-legal until this runs (fb ruling 2026-09-11).
+    groups cannot do. Tagged intermediates are read from `out`; final
+    decontaminated shards are emitted to final_out (or out), conventionally the
+    _dc domain dir. Tagged intermediates are removed only after finals are
+    written. Bytes are not mix-legal until this runs (fb ruling 2026-09-11).
     """
+    fout = final_out or out
+    os.makedirs(fout, exist_ok=True)
     paths = sorted(glob.glob(os.path.join(out, pattern)))
     if not paths:
         raise SystemExit(f"aggregate: no stats match {pattern} in {out}")
@@ -259,7 +264,7 @@ def aggregate(out, pattern, prefix, tokenizer_path, level):
     if not tagged:
         raise SystemExit(f"aggregate: no tagged shards for tags {tags} in {out}")
     tok = Tokenizer.from_file(tokenizer_path)
-    for stale in glob.glob(os.path.join(out, f"{prefix}_[0-9][0-9][0-9].jsonl")):
+    for stale in glob.glob(os.path.join(fout, f"{prefix}_[0-9][0-9][0-9].jsonl")):
         os.remove(stale)
     seen = set()
     kept = 0
@@ -270,7 +275,7 @@ def aggregate(out, pattern, prefix, tokenizer_path, level):
     ngram_problems = set()
     ngram_parts = {}
     cross_dup = 0
-    writer = ShardWriter(out, prefix, tag="")
+    writer = ShardWriter(fout, prefix, tag="")
     for shard in tagged:
         for line in open(shard, encoding="utf-8"):
             scanned += 1
@@ -310,9 +315,11 @@ def aggregate(out, pattern, prefix, tokenizer_path, level):
             os.path.join(root, "data", "eval", "mbpp_holdouts.jsonl"))
     except (AttributeError, NameError):
         ngram_fp = None
-    final_shards = sorted(glob.glob(os.path.join(out, f"{prefix}_[0-9]*.jsonl")))
+    fprefix = os.path.basename(fout.rstrip("/"))
+    final_shards = sorted(glob.glob(os.path.join(fout, f"{fprefix}_[0-9]*.jsonl")))
     canonical = {
-        "domain": os.path.basename(out.rstrip("/")),
+        "domain": os.path.basename(fout.rstrip("/")),
+        "intermediate_domain": os.path.basename(out.rstrip("/")),
         "level": level,
         "source": records[0].get("source", "").split(" shards ")[0]
                   + f" shards, {len(records)} parallel groups",
@@ -342,9 +349,10 @@ def aggregate(out, pattern, prefix, tokenizer_path, level):
         "reasons": reasons,
         "groups": [os.path.basename(p) for p in paths],
     }
-    with open(os.path.join(out, "build_corpus_stats.json"), "w", encoding="utf-8") as fh:
+    with open(os.path.join(fout, "build_corpus_stats.json"), "w", encoding="utf-8") as fh:
         json.dump(canonical, fh, indent=1)
-    print(f"AGGREGATED {len(records)} groups: {json.dumps(canonical, indent=1)}", flush=True)
+    print(f"AGGREGATED {len(records)} groups -> {fout}: {json.dumps(canonical, indent=1)}",
+          flush=True)
 
 
 if __name__ == "__main__":
