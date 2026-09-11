@@ -47,8 +47,39 @@ GATES = {
     # Qwen3/GLM-4.5 1.130) buys 1.13 with 128K-200K slots, and the fitted scaling law puts our
     # optimum at 12-20K. A ceiling that must not DRIFT, not a defect to fix.
     "ref fertility": (1.55, False, "regression guard: English must not get worse than it is"),
+    # hanzi whole-char is a veto ONLY for a corpus that contains Chinese: see
+    # corpus_has_hanzi() and the 2026-09-10 V4.1 pivot (zero Chinese domains). On an
+    # English/math/code mix the measured ratio is undefined-as-a-veto (incidental CJK in
+    # comments is too sparse to be a real distribution) and the gate prints N/A rather than
+    # failing -- scoped, not deleted: a corpus that actually carries hanzi still FAILs here.
     "hanzi whole-char": (0.95, True, "byte-fragmented hanzi is worse than one token per character"),
 }
+
+#: A corpus is "Chinese-bearing" only when a meaningful FRACTION of its documents carry
+#: hanzi. An absolute count cannot discriminate: a 7-domain x 600-row English/code sample
+#: finds ~20 docs with incidental CJK in comments/identifiers (measured on the gate mix:
+#: per-domain hanzi-doc share 0.2%-3.8%, code highest), while real Chinese prose is ~100%.
+#: The gate arms at a share well above incidental CJK and far below a real Chinese
+#: distribution. Measured gate-mix max 0.038; threshold 0.10 gives 2.6x headroom.
+HANZI_DOC_FRACTION = 0.10
+_HANZI_SAMPLE_PER_DOMAIN = 600
+
+
+def corpus_has_hanzi(corpus):
+    """True iff >= HANZI_DOC_FRACTION of the evenly-sampled docs carry hanzi.
+
+    Scopes the hanzi veto (3b, PR #233): on the V4.1 English/math/code mix the share is
+    <=0.038 so this returns False and the hanzi gate is N/A
+    (facts/tokenizer.json#tok.gate_tokenizer_choice_0910). On a corpus with real Chinese
+    (share ~1.0) it returns True and byte-fragmented hanzi still FAILs. The discriminator
+    is the fraction, not the count -- incidental CJK identifiers exist in code comments."""
+    import tokenizer_report as R
+
+    sample = R._even_rows(corpus, _HANZI_SAMPLE_PER_DOMAIN * max(1, len(corpus)))
+    if not sample:
+        return False
+    with_hanzi = sum(1 for s in sample if R.HAN.search(s))
+    return with_hanzi / len(sample) >= HANZI_DOC_FRACTION
 
 #: REPORTED, NOT GATED, and the reason is a measurement rather than a preference.
 #:
@@ -107,14 +138,19 @@ def gates(tok, corpus):
     return out
 
 
-def threshold_gates(metrics):
+def threshold_gates(metrics, hanzi_applies=True):
     """(name, value, threshold, ok) for each GATES entry present in `metrics`.
 
     A name in REPORTED_NOT_GATED is NOT here by construction, whatever its value: it is
-    printed from the RAW table and never reaches `failed`."""
+    printed from the RAW table and never reaches `failed`. The hanzi veto is skipped
+    (returned as None-ok via the caller's N/A path) when the corpus has no Chinese --
+    hanzi_applies=False from corpus_has_hanzi(); the bilingual guard stays armed on any
+    corpus that does."""
     rows = []
     for k, (thr, higher, _why) in GATES.items():
         if k not in metrics:
+            continue
+        if k == "hanzi whole-char" and not hanzi_applies:
             continue
         val = metrics[k]
         rows.append((k, val, thr, (val >= thr) if higher else (val <= thr)))
@@ -285,6 +321,13 @@ def main():
 
     sizes = [Tokenizer.from_file(p).get_vocab_size() for p in paths]
     score_bits = (max(sizes) - min(sizes)) / max(sizes) < 0.05
+    hanzi_applies = corpus_has_hanzi(corpus)
+    if not hanzi_applies:
+        print("! hanzi whole-char gate is N/A: the sampled corpus is not Chinese-bearing "
+              f"(hanzi-doc share < {HANZI_DOC_FRACTION:.0%}). V4.1 pivot 2026-09-10 trains "
+              "English/math/code with zero Chinese domains; incidental CJK in code comments "
+              "(measured <=3.8% of docs) does not arm the bilingual guard. A corpus WITH Chinese "
+              "still FAILs on byte-fragmented hanzi -- the gate is scoped, not removed.")
     if not score_bits:
         print(f"! vocabulary sizes span {min(sizes)}..{max(sizes)} -- bits/char REPORTED, NOT SCORED")
         print("  (it is strictly monotone in size; see tokenizer_sweep.py)")
@@ -313,12 +356,15 @@ def main():
     print(f"\n{'=' * 78}\nTHRESHOLDS  (what a rebuild is the only remedy for)")
     print(f"  {'vocabulary':<24}{'metric':<20}{'value':>10}{'needs':>10}{'':>8}")
     for name, m in ok:
-        for k, val, thr, good in threshold_gates(m):
+        for k, val, thr, good in threshold_gates(m, hanzi_applies=hanzi_applies):
             arrow = "<=" if not GATES[k][1] else ">="
             print(f"  {name:<24}{k:<20}{val:>10.4f}{arrow + f'{thr:g}':>10}{'ok' if good else '  FAIL':>8}")
             if not good:
                 failed.append(f"{name}:{k}")
                 print(f"  {'':<24}  -> {GATES[k][2]}")
+        if not hanzi_applies and "hanzi whole-char" in m:
+            print(f"  {name:<24}{'hanzi whole-char':<20}{m['hanzi whole-char']:>10.4f}{'N/A':>10}"
+                  f"{'no-zh':>8}  (no Chinese in corpus; reported, not vetoed)")
     for k, why in REPORTED_NOT_GATED.items():
         if any(k in m for _, m in ok):
             vals = " ".join(f"{m[k]:.4f}" for _, m in ok if k in m)
@@ -404,7 +450,29 @@ def _demo():
     assert "never used frac" in REPORTED_NOT_GATED and "never used frac" in METRICS
     assert not (set(GATES) & set(REPORTED_NOT_GATED)), "a metric is gated or reported, not both"
 
-    print("tokenizer_eval self-test OK (tie threshold, direction, weights, byte table, never-used ungated)")
+    # hanzi veto is SCOPED (3b, PR #233): it fails a Chinese corpus and is N/A on English.
+    # A byte-fragmenting vocab (whole-char 0.3) ...
+    bad_hanzi = {"hanzi whole-char": 0.30, "ref fertility": 1.0}
+    # ... FAILs when the corpus carries Chinese ...
+    zh = threshold_gates(bad_hanzi, hanzi_applies=True)
+    assert [(k, good) for k, _, _, good in zh if k == "hanzi whole-char"] == [
+        ("hanzi whole-char", False)], zh
+    # ... and is absent (N/A, not a pass, not a fail) when it does not.
+    en = threshold_gates(bad_hanzi, hanzi_applies=False)
+    assert not any(k == "hanzi whole-char" for k, *_ in en), en
+    # the detector itself: real Chinese across the corpus arms; pure English does not;
+    # incidental CJK in a few percent of code comments does not arm a prose guard.
+    zhdoc = "函数返回值"
+    zh_corpus = {"d": [zhdoc + str(i) for i in range(60)]}
+    en_corpus = {"d": ["def f(x): return x + %d" % i for i in range(200)]}
+    # 5% hanzi docs, below the 10% arm threshold but far above zero
+    sparse_cjk = {"d": [zhdoc + str(i) for i in range(10)] + ["return x = %d" % i for i in range(190)]}
+    assert corpus_has_hanzi(zh_corpus), "a Chinese corpus must arm the hanzi gate"
+    assert not corpus_has_hanzi(en_corpus), "English must not arm it"
+    assert not corpus_has_hanzi(sparse_cjk), "5% incidental CJK docs must not arm it"
+
+    print("tokenizer_eval self-test OK (tie threshold, direction, weights, byte table, "
+          "never-used ungated, hanzi veto scoped: FAIL on Chinese, N/A on English)")
 
 
 if __name__ == "__main__":
