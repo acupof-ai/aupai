@@ -15815,14 +15815,33 @@ def _assert_card_ownership(root):
     #     partition's shape: a note whose subject is another team must not classify as ours. Stated
     #     over the file's own text, so it needs no card number and cannot be satisfied by a
     #     predicate that has stopped discriminating.
+    #
+    #     THE ONE LEGITIMATE EXCEPTION (2026-09-11 gate shape): a baseline-theirs card the other
+    #     team LENT back, INSIDE the lend window. The classifier's own rule returns ours for a
+    #     baseline card with a parseable, currently-open window even though the prose opens with
+    #     the other team's name -- card 6 is exactly that while fb re-extends its daily HumanEval
+    #     window. Treating that as the 09-07 defect made `harness check` red on the real tree for
+    #     the whole gate run. Allow it only when the ours verdict actually came through the expiry
+    #     branch: the card is in the baseline AND a window parses AND is open at the same wall
+    #     clock _aupai_cards used. A tileRL subject that reads ours any other way is still the bug.
     for c, note in sorted(cmap.items()):
         subject = str(note or "").strip()[:24].lower()
         if ("tilerl" in subject or "rl team" in subject) and c in ours:
+            _lent_back = False
+            if c in _theirs_baseline(root) and not isinstance(note, dict):
+                _wopen = _parse_lend_window(str(note))
+                if _wopen is not None:
+                    _now = datetime.datetime.now(datetime.timezone.utc)
+                    _lent_back = _wopen[0] <= _now <= _wopen[1]
+            if _lent_back:
+                continue
             return (f"cards[{c}] opens with {str(note)[:40]!r} -- another team's name is the "
-                    f"SUBJECT of that note -- and the classifier still put card {c} in ours. This "
-                    f"is the 2026-09-07 defect exactly: `\\bRL[ _-]?TEAM\\b` matched neither "
+                    f"SUBJECT of that note -- and the classifier still put card {c} in ours. "
+                    f"This is the 2026-09-07 defect exactly: `\\bRL[ _-]?TEAM\\b` matched neither "
                     f"'tileRL (...)' (no TEAM token) nor even 'tileRL TEAM' (no word boundary "
-                    f"between 'e' and 'R'), so theirs came back empty and every card read as ours")
+                    f"between 'e' and 'R'), so theirs came back empty and every card read as ours. "
+                    f"The sole allowed case is a baseline card inside its open parseable lend "
+                    f"window, which is not this")
     # (4) A CARD THE CONTROLLER PUT IN block_cards CANNOT BE ANOTHER TEAM'S. The block grant and
     #     cards[] are written by the same controller in the same file, so they cannot disagree
     #     about who owns a card; if they do, one of the two reads is wrong and a launcher will act
@@ -22081,24 +22100,32 @@ def _selftest_card_lend_expires():
     every property below would stay unexercised behind a green selftest, which is the trap the
     registered world's own docstring records one guard over.
 
-    THE WORLDS 4c SPECIFIED, and the two that would silently disable the mechanism:
+    THE WORLDS, AGAINST THE LIVE 2026-09-11 SHAPE (cards 6 and 7 tileRL's for the gate run;
+    card 6 is a prose note carrying a parseable lend window, card 7 is an {owner: tilerl}
+    object; the standing theirs_baseline stays [0,6] through the gate split):
 
-      baseline [0, 6]                      -> PASS   (the live shape)
-      baseline [0]                         -> FAIL   a lend can shrink the baseline instead of
-                                                     expiring; every other property still passes,
-                                                     so only the pin sees it
-      baseline [0, 6, 7]                   -> FAIL   card 7's standing GRANTED note is not a lend
+      live file, baseline [0,6]           -> PASS   the live shape: 6 ours only inside its
+                                                    window, 7 theirs on ANY baseline
+      baseline [0]                        -> FAIL   a lend can shrink the baseline instead of
+                                                    expiring; every other property still passes,
+                                                    so only the pin sees it
+      baseline [0,6,7]                    -> FAIL   widening past the [0,6] property (6) pins
+      windowless aupai note + baseline    -> FAIL-CLOSED on a SYNTHETIC pre-09-11 fixture: the
+      widened to take it                            card reads unclassified and --cards refuses,
+                                                    never theirs
       lend with no readable window         -> FAIL   nothing to expire = a permanent grant
       unreadable note on a block card      -> PASS   4c's ruling: per-card refusal, never repo-wide
       block card handed to another team    -> FAIL   the permissive drift (4) exists for
 
-    THE CARD-7 WORLD IS UNREACHABLE TODAY, AND THAT IS A PROPERTY OF PROPERTY (6), NOT OF THE
-    CODE (tilerl-0a's follow-up to PR #58). "card 7 becomes unclassified" cannot happen while
-    (6) pins the baseline to exactly [0, 6]: the pin is what keeps card 7 out of the baseline,
-    so the branch that would misread its standing GRANTED note as a lend is never entered.
-    Recorded because the cost is deferred, not absent -- the day (6) is relaxed to accept a
-    baseline read from the file, this world stops being hypothetical and card 7 starts failing
-    for real. It is kept as a FAIL case so that relaxation has to confront it.
+    OURS/THEIRS ARE READ FROM THE LIVE FILE, NOT TYPED. Until the 2026-09-11 ruling this test
+    hard-coded "card 7 is aupai's by a standing grant"; the ruling made card 7 tileRL's as an
+    {owner: tilerl} entry, which is theirs independent of the baseline, and the widened-base-
+    line world saw 7 in theirs and called a correct partition a defect -- that took main's CI
+    red (bd7620b1 passed, the card-7 edit failed). The live PASS case therefore asserts only
+    what the file itself classifies. The only card numbers named below are in (a) the clocks
+    derived from card 6's OWN window and (b) the synthetic pre-09-11 fixture that keeps the
+    legacy-string fail-closed rule exercised. theirs_baseline stays LITERALLY [0,6]: that
+    standing order outlives the gate-run owner split and is what property (6) pins.
 
     THE CLOCK IS DERIVED FROM THE NOTE, NOT PINNED (PR #61, and the docstring above said
     "pinned in every world" until it broke main's CI for four merges -- §274). A verdict
@@ -22175,6 +22202,67 @@ def _selftest_card_lend_expires():
     assert verdict(lambda d: None) is None, (
         f"the unmutated live file must PASS or every FAIL below proves nothing: "
         f"{str(verdict(lambda d: None))[:200]}")
+
+    # THE LIVE PARTITION IS READ, NOT TYPED. The 2026-09-11 ruling puts cards 6 AND 7 on tileRL
+    # for the gate run; card 7 as an {owner: tilerl} object is theirs on every baseline, card 6
+    # only ours while its own lend window is open. Derive the expected sets from the file. Hard-
+    # coding "7 is ours" is exactly what failed after bd7620b1.
+    _live_root = world(lambda d: None)
+    try:
+        _live_o, _live_t, _live_map = _aupai_cards(_live_root)
+        _base = set(_theirs_baseline(_live_root))
+        _win6 = _parse_lend_window(str(_live_map.get(6, "")))
+        assert sorted(_base) == [0, 6], (
+            f"the standing baseline moved from [0,6] to {sorted(_base)} -- property (6) pins it; "
+            f"this selftest derives clocks from card 6's window and expects it baseline-theirs")
+        if _win6 is not None:
+            _mid6 = _win6[0] + (_win6[1] - _win6[0]) / 2
+            assert _classify_card_note(str(_live_map[6]), baseline_theirs=True, now=_mid6) == "ours"
+            assert _classify_card_note(str(_live_map[6]), baseline_theirs=True,
+                                       now=_win6[1] + datetime.timedelta(days=1)) == "theirs"
+            # No assertion on the REAL wall-clock partition for card 6: fb re-extends its window
+            # daily while the gate run lasts, so at any instant 6 may be ours (window open) or
+            # theirs (closed). The injected clocks above pin expiry; the live partition must not.
+        assert 7 in _live_t and 7 not in _live_o, (
+            f"card 7 is tileRL's for the gate run (object note), expected theirs, got "
+            f"ours={_live_o} theirs={_live_t}")
+    finally:
+        _sh.rmtree(_live_root, ignore_errors=True)
+
+    # PROPERTY (3)'s ONE EXCEPTION, LOCKED BOTH WAYS. A tileRL-subject card may read ours only as
+    # a BASELINE card inside its open parseable lend window -- card 6's live shape. Two worlds
+    # prove the exception cannot widen: the same window on a NON-baseline card must still FAIL,
+    # and a window in the past leaves the baseline card theirs.
+    _now0 = datetime.datetime.now(utc)
+    _open_note = (f"tileRL's for the gate run. Lent to aupai {_now0 - datetime.timedelta(minutes=1):%Y-%m-%d %H:%M}"
+                  f"-{_now0 + datetime.timedelta(hours=2):%H:%M}Z for a 2-hour window.")
+    _past_note = (f"tileRL's. Lent to aupai {_now0 - datetime.timedelta(days=2):%Y-%m-%d %H:%M}"
+                  f"-{_now0 - datetime.timedelta(days=2, hours=-2):%H:%M}Z, closed.")
+    assert _parse_lend_window(_open_note) is not None, "the open-lend fixture must parse a window"
+    _w_open = world(lambda d: d["cards"].__setitem__("6", _open_note))
+    try:
+        assert _assert_card_ownership(_w_open) is None, (
+            "a BASELINE card whose tileRL-subject note carries a CURRENTLY OPEN lend window "
+            "FAILED -- the classifier correctly returns ours for a card lent back; property (3) "
+            "must exempt this or harness check is red for the whole 09-11 gate run")
+    finally:
+        _sh.rmtree(_w_open, ignore_errors=True)
+    _w_nonbase = world(lambda d: d["cards"].__setitem__("5", _open_note))
+    try:
+        assert _assert_card_ownership(_w_nonbase) is not None, (
+            "the open-lend exemption fired on a NON-baseline card (5). A tileRL-subject card may "
+            "read ours only when it is in theirs_baseline AND inside its window; widening the "
+            "exemption to any card hands aupai block cards away")
+    finally:
+        _sh.rmtree(_w_nonbase, ignore_errors=True)
+    _w_past = world(lambda d: d["cards"].__setitem__("6", _past_note))
+    try:
+        _po, _pt, _ = _aupai_cards(_w_past)
+        assert 6 in _pt and 6 not in _po, (
+            f"a tileRL-subject baseline card with a PAST window read ours={_po} -- a closed lend "
+            f"must fall back to theirs, and property (3) must then be satisfied, not trigger")
+    finally:
+        _sh.rmtree(_w_past, ignore_errors=True)
 
     # THE EXPIRY ITSELF, on the controller's own sentence rather than one I wrote.
     note6 = str(live["cards"]["6"])
@@ -22268,25 +22356,37 @@ def _selftest_card_lend_expires():
         "while the card has silently stopped being expiry-checked -- the mechanism cannot detect "
         "its own removal and property (6) is the only thing that can")
     assert verdict(lambda d: d.__setitem__("theirs_baseline", [0, 6, 7])) is not None, (
-        "widening theirs_baseline to include card 7 PASSED -- card 7 carries a standing aupai "
-        "grant, and a baseline naming it would expire a grant that has no window")
-    # AND THE WRONG BASELINE MUST BE FAIL-CLOSED, not merely caught. Since the baseline now decides
-    # before the note's opening token (tilerl-0a's fix), card 7's windowless GRANTED note reads
-    # `unclassified` under that bad baseline rather than staying `ours`. That is the safe direction
-    # and is asserted rather than assumed: the card must NOT land in theirs, and --cards 7 must
-    # refuse. Before the fix a wrong baseline could not move card 7 at all, which sounds safer and
-    # was not -- it meant property (6)'s pin was the only thing standing between a bad baseline and
-    # a launch.
-    _t7 = world(lambda d: d.__setitem__("theirs_baseline", [0, 6, 7]))
+        "widening theirs_baseline past [0,6] PASSED -- property (6) pins the standing list, and a "
+        "baseline a lend can widen is a baseline the mechanism stops guarding")
+    # AND THE WRONG BASELINE MUST BE FAIL-CLOSED, not merely caught. Since the baseline decides
+    # before the note's opening token (tilerl-0a's fix), a windowless aupai GRANTED note on a card
+    # the bad baseline claims reads `unclassified`, not `theirs` -- the card must not be handed to
+    # the other team, and --cards must refuse. The REAL card 7 cannot be this world any more: the
+    # 2026-09-11 ruling made it {owner: tilerl}, theirs on every baseline. So the legacy STRING
+    # form is a synthetic pre-09-11 fixture: overwrite card 7 with windowless GRANTED prose and
+    # widen the baseline to claim it.
+    _legacy7 = ("GRANTED 2026-09-09 04:40Z -> de: V4.1 work. Card 7 is aupai's own; no end time, "
+                "no lend window.")
+    assert _parse_lend_window(_legacy7) is None and _mentions_lend(_legacy7), (
+        "the fixture must be a windowless GRANTED note: no window, but claiming a grant")
+
+    def _widen7_fixture(d):
+        d["theirs_baseline"] = [0, 6, 7]
+        d["cards"]["7"] = _legacy7
+
+    _t7 = world(_widen7_fixture)
     try:
         _o7, _th7, _ = _aupai_cards(_t7)
         assert 7 not in _th7, (
-            f"a wrong baseline handed card 7 to the other team (theirs={_th7}) -- card 7 is aupai's "
-            f"by a standing grant and no baseline edit may transfer it")
+            f"a wrong baseline handed the fixture card to the other team (theirs={_th7}) -- a "
+            f"windowless grant must read unclassified, never theirs")
+        assert 7 not in _o7, (
+            f"the fixture card landed ours={_o7} under a baseline claiming it with no window -- an "
+            f"unreadable ownership state must refuse, not grant")
         _g7, _r7 = _validate_explicit_cards("7", root=_t7)
         assert _r7, (
-            f"--cards 7 was ACCEPTED ({_g7!r}) under a baseline that wrongly claims it. An "
-            f"unreadable ownership state must refuse the card, not grant it")
+            f"--cards 7 was ACCEPTED ({_g7!r}) under a baseline that wrongly claims it with no "
+            f"window. An unreadable ownership state must refuse the card, not grant it")
     finally:
         _sh.rmtree(_t7, ignore_errors=True)
     assert verdict(lambda d: d.pop("theirs_baseline")) is not None, (
@@ -22296,18 +22396,19 @@ def _selftest_card_lend_expires():
         "theirs_baseline [6, 0] FAILED -- the pin compares a SET of cards, not a written order")
 
     # THE PIN'S CITATION MUST STILL HOLD. Three worlds, because the interesting one is the middle.
-    # AGENTS.md asserted "All 8 cards belong to this repo" for a week after the 2026-09-06 order
-    # superseded it, so a pin citing a document that has drifted under it is this repo's measured
-    # state, not a hypothetical. The third world matters for a different reason: a fixture tree
-    # legitimately has no AGENTS.md, and a citation check that FAILs on its absence would refuse
-    # every such tree.
+    # The anchor is the literal property (6) actually pins -- "theirs_baseline [0,6]" -- not the
+    # 2026-09-06 split sentence ("cards 0 and 6 are tileRL's"), which the 09-11 gate ruling rewrote
+    # while deliberately leaving the standing baseline at [0,6]. Anchoring to a sentence the
+    # controller is expected to update on every order is the drift this block exists to catch.
+    _PIN_LITERAL = "theirs_baseline [0,6]"
     _ag_src = os.path.join(ROOT, "AGENTS.md")
     if os.path.isfile(_ag_src):
         with open(_ag_src, encoding="utf-8") as _fh:
             _ag_txt = _fh.read()
-        assert "cards 0 and 6 are tileRL's" in _ag_txt, (
-            "AGENTS.md does not carry the 09-06 split, so the pin cites nothing in main. Either "
-            "the user changed the split or the line was lost; both need a person")
+        assert _PIN_LITERAL in _ag_txt, (
+            "AGENTS.md no longer names theirs_baseline [0,6], so property (6) pins a standing "
+            "order the document does not state. Either the user changed the standing split or the "
+            "line was lost; both need a person")
 
         _t_ag = world(lambda d: None)
         try:
@@ -22317,13 +22418,11 @@ def _selftest_card_lend_expires():
                 "the world with AGENTS.md's real text FAILED -- the citation assertion must pass "
                 "on the file it cites, or the FAIL below proves nothing")
             with open(os.path.join(_t_ag, "AGENTS.md"), "w") as _fh:
-                _fh.write(_ag_txt.replace("cards 0 and 6 are tileRL's",
-                                          "All 8 cards belong to this repo"))
+                _fh.write(_ag_txt.replace(_PIN_LITERAL, "theirs_baseline [REDACTED]"))
             assert _assert_card_ownership(_t_ag) is not None, (
-                "replacing AGENTS.md's split line with the SUPERSEDED 08-30 wording PASSED. That "
-                "is the exact drift that stood for a week: the pin keeps citing an order the "
-                "document no longer states, and the citation reads as authority while the "
-                "authority has moved")
+                "removing every AGENTS.md theirs_baseline [0,6] mention PASSED. That is the exact "
+                "drift shape: property (6) keeps pinning a standing order the document no longer "
+                "states, and the citation reads as authority while the authority has moved")
             os.remove(os.path.join(_t_ag, "AGENTS.md"))
             assert _assert_card_ownership(_t_ag) is None, (
                 "a tree with NO AGENTS.md FAILED -- a fixture tree has none, and a citation check "
@@ -22398,11 +22497,13 @@ def _selftest_card_lend_expires():
             "('2026-09-08 21:30Z-21:45Z', Z on both times) parses, reads ours inside and theirs 3 "
             "days later, and --cards 6 REFUSES on it through the launch path; card 0's 'only by "
             "explicit grant' is not read as a claimed handover; baseline [0] / [0,6,7] / absent all "
-            "FAIL and [6,0] passes; a lend with no window, 25:99Z or a backwards window all "
-            "refuse; an unreadable note on block card 3 refuses THAT card and passes the invariant "
-            "while a card handed to another team still FAILs; and the pin's citation is verified "
-            "against AGENTS.md's own text -- present PASSes, replaced with the superseded 08-30 "
-            "wording FAILs, absent PASSes")
+            "FAIL and [6,0] passes; the live card 7 is tileRL's (object owner), and a windowless "
+            "GRANTED string on a card the widened baseline claims reads unclassified and refuses "
+            "rather than theirs, kept as a synthetic pre-09-11 fixture; a lend with no window, "
+            "25:99Z or a backwards window all refuse; an unreadable note on block card 3 refuses "
+            "THAT card and passes the invariant while a card handed to another team still FAILs; "
+            "and the pin's citation is verified against AGENTS.md's own text -- the theirs_baseline "
+            "[0,6] line present PASSes, deleted FAILs, absent PASSes")
 
 
 def _selftest_card_observed_blocks():
