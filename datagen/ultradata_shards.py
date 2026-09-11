@@ -100,6 +100,9 @@ def main():
                     help="aggregate: emit final decontaminated shards here instead of out")
     ap.add_argument("--agg-workers", type=int, default=8,
                     help="aggregate: parallel 13-gram shard workers")
+    ap.add_argument("--no-exec", action="store_true",
+                    help="L3 static-only: keep on nontrivial() floor + decontam + "
+                         "exact dedup, no solution sandbox exec (user order 2026-09-11)")
     args = ap.parse_args()
     out = args.out or f"data/corpus/code_ultra_{args.level.lower()}"
     prefix = os.path.basename(out.rstrip("/"))
@@ -128,7 +131,8 @@ def main():
     kept_tokens = 0
     total = 0
     writer = ShardWriter(out, prefix, tag=tag)
-    exec_pool = ThreadPoolExecutor(max_workers=args.exec_workers) if args.level == "L3" else None
+    exec_pool = ThreadPoolExecutor(max_workers=args.exec_workers) \
+        if args.level == "L3" and not args.no_exec else None
 
     for i in range(args.first, args.last + 1):
         path = os.path.join(args.raw, shard_name(args.level, i))
@@ -163,6 +167,10 @@ def main():
             if exec_pool is not None and survivors:
                 pairs = [(cols["solution"][r], cols["test"][r]) for r in survivors]
                 verdicts = list(exec_pool.map(_exec_pair, pairs))
+            elif args.level == "L3" and args.no_exec:
+                # Static-only arm (user order 2026-09-11): the AST floor alone,
+                # no solution sandbox. nt from the SOLUTION column, same floor.
+                verdicts = [(PASS, nontrivial(cols["solution"][r])) for r in survivors]
             else:
                 verdicts = [(PASS, True)] * len(survivors)
             for r, (verdict, nt) in zip(survivors, verdicts, strict=True):
@@ -209,10 +217,12 @@ def main():
         "tokens_status": "measured",
         "tokens_config": f"{args.tokenizer}, exact per-doc ids + one <eos> per doc "
                          "(code_rp1t convention)",
-        "filters": ("decontam(humaneval,mbpp)+exact-dedup+exec-pass+non-triviality"
+        "filters": ("decontam(humaneval,mbpp)+exact-dedup+non-triviality(NO EXEC)"
+                    if (args.level == "L3" and args.no_exec)
+                    else "decontam(humaneval,mbpp)+exact-dedup+exec-pass+non-triviality"
                     if args.level == "L3"
                     else "decontam(humaneval,mbpp)+exact-dedup+drop-CONFIG,TEST"),
-        "workers": args.exec_workers if args.level == "L3" else 1,
+        "workers": (args.exec_workers if args.level == "L3" and not args.no_exec else 1),
         "n_shards": writer.n,
         "filters_fp": fp_of(__file__, sys.modules["datagen.gen_exercises"].__file__,
                             sys.modules["datagen.ud_solution_exec"].__file__),
@@ -401,8 +411,9 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_wor
             os.path.join(root, "data", "eval", "mbpp_holdouts.jsonl"))
     except (AttributeError, NameError):
         ngram_fp = None
-    fprefix = os.path.basename(fout.rstrip("/"))
-    final_shards = sorted(glob.glob(os.path.join(fout, f"{fprefix}_[0-9]*.jsonl")))
+    # Final shards carry the INTERMEDIATE prefix (code_ultra_l2_NNN), matching the
+    # six existing _dc dirs' <base>_NNN naming; fout has the _dc suffix.
+    final_shards = sorted(glob.glob(os.path.join(fout, f"{prefix}_[0-9]*.jsonl")))
     # train.py's corpus_fp_matches guard recomputes corpus_fingerprint.fp_dir
     # (sorted shard-lines: name,size,head/tail sha256, sha1) and compares it to
     # stats["fingerprint"]. Stamping our own full-byte hash here would fail that
