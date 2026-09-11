@@ -10628,10 +10628,15 @@ def _selftest_inline_citations_are_scanned():
                     f"{ev}")
             else:
                 # THE COUNT IS THE POINT of this change: a PASS that scanned 2 citations reads the
-                # same as one that scanned 64 unless the number is there.
-                assert re.search(r"\b6[0-9] script citation", ev), (
-                    f"{label}: the PASS must state how many citations it resolved, or a collapse "
-                    f"like 3fd80424's is invisible again: {ev}")
+                # same as one that scanned 64 unless the number is there. Assert against the count
+                # the REAL AGENTS.md resolves, not a hard-coded band: the count moves when a
+                # tracked citation is added (it rose to 70 in the V4.1 rewrite), and a band like
+                # 60-69 would silently go stale.
+                _live_n = len(cited_script_paths(
+                    open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read()))
+                assert re.search(rf"\b{_live_n} script citation", ev), (
+                    f"{label}: the PASS must state how many citations it resolved "
+                    f"({_live_n}), or a collapse like 3fd80424's is invisible again: {ev}")
         finally:
             shutil.rmtree(d, ignore_errors=True)
     n = len(cited_script_paths(open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read()))
