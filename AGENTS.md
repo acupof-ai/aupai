@@ -191,8 +191,7 @@ Any `--flag` in `train.py`'s parser overrides `Cfg.<flag>` — a fixed whitelist
 not a reflection over `Cfg`; a `Cfg` field without a parser entry cannot be set from the
 CLI. The gate recipe (controller ruling, prereg amendment 1): 30B tokens, B4/accum8 on
 world 6 = 786,432 tokens/step, 38.1K steps; warmup 500 absolute steps, warmdown 0.65,
-anneal_frac 0.10; B4×accum8 fixed — when de-108 lands its speed gain goes to wall-clock,
-never to batch. The retired
+anneal_frac 0.10; B4×accum8 fixed — de-109 `csa2_win_flash` (adopted, `facts/v41.json#v41.de109_win_flash_parity_speed_0911`) takes attention peak 72.6→43.5 GiB and that headroom goes to wall-clock, never to batch; de-108 joint flash is post-gate (2.3-3.2x slower eager, `facts/v41.json#v41.de108_joint_flash_parity_speed_0911`). The retired
 0830v1 budget points were six geometric mixes, `mix_scale_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.json`.
 Checkpoints save as `ckpt_{name}.pt`; naming convention `ckpt_{arch}_{tokens}_{date}.pt`.
 
