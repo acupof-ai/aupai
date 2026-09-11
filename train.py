@@ -362,6 +362,7 @@ class Cfg:
     # gate-run wiring; until then these are code-only fields.
     # csa2_n_win is shared with PureSWA (0e-2): one field, both readers.
     csa2 = False
+    csa2_win_flash = False
     csa2_m = 8                # tokens per learned entry
     csa2_top_k = 64           # entries selected per query
     csa2_n_win = 128          # SWA window width in tokens; CSA2 and PureSWA (0e) share this one width
@@ -3051,6 +3052,7 @@ def main():
         "mem_sparse": "sparse memory: nn.Embedding(sparse=True) COO grads (--no-mem_sparse forces a dense grad on the whole table)",
         "csa": "CSA attention arm in GatedMLA (required by --csa2)",
         "csa2": "V4.1 CSA2: learned entries + indexer + one softmax over entries and SWA",
+        "csa2_win_flash": "CSA2: flash SWA window with dense entries, fp32 LSE split combine (default materialized)",
     }.items():
         parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
                             default=None, required=name in RECIPE_REQUIRED, help=help_)
