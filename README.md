@@ -19,9 +19,9 @@ file is the short version.
 | optimizer | Muon for 2D weights, AdamW for embeddings and 1D |
 
 Measured smoke ceiling (compiled + flash, facts/v41.json): B8 OOMs at 94.6 GiB pre-step;
-B4/accum4 ran 381 steps at 72.64 GiB/rank with no NaN. The gate recipe is B4 micro-batch on
-the world-5 block (0-4); the committed launcher predates the 2026-09-11 world reduction and
-is re-sized on the controller's ruling before launch. Peak per rank is the measured 72.6 GiB.
+B4/accum4 ran 381 steps at 72.64 GiB/rank with no NaN. The gate recipe is B4/accum8 on
+world 6 (block 0-5) = 786,432 tokens/step, 38.1K steps over the 30B gate mix; per-rank
+peak is the measured 72.6 GiB.
 
 Correctness never depends on which attention package is installed: without flash-attn the
 SDPA fallback builds the document mask from `cu_seqlens`.
@@ -48,8 +48,9 @@ anneal weight. A missing mix is an error, not a fallback.
 ## Run
 
 Every GPU or corpus job starts through one launcher — it writes the experiment row first,
-takes its cards from the controller's allocation (world-5 block 0-4 for gate training, lane
-card 5 for everything else, cards 6-7 on loan to tileRL through the gate run), detaches with `setsid`, verifies the startup
+takes its cards from the controller's allocation (world-6 block 0-5 for gate training with
+no lane at launch; card 5 is the temporary pre-launch lane; cards 6-7 stay tileRL through
+the run), detaches with `setsid`, verifies the startup
 gate in the worker log before the job counts as started, and arms a monitor:
 
 ```bash
