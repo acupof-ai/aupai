@@ -47,7 +47,9 @@ ragged-gather backward are not yet landed; report at gather-backward parity.
   stream), so no per-entry mask is needed inside the branch softmax. The STE gradient
   to the indexer lives on `isc`/`soft_sel` upstream and is outside this combine.
 - Indexer heads (4) share one selection across each attention-head group (8 heads), so
-  `n_sel` is per (batch, query) and uniform over heads: one varlen call.
+  `n_sel` is per (batch, query) and uniform over heads: one varlen call per group.
+- Flash token layout is `(B*T,H,D)`; feed the untransposed `k,v` (`B,T,H,D`) reshaped
+  directly. The transposed `kh,vh` (`B,H,T,D`) reshaped to `(B*T,H,D)` scrambles K/V.
 
 ## PR acceptance (fb, 2026-09-11)
 
