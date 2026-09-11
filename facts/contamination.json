@@ -1735,6 +1735,54 @@
     "humaneval_164.jsonl": "b2adeeae8b383b6f0c615746a397f25c8abe44da4afb29cd10e6c4bbf0463fd3",
     "mbpp_holdouts.jsonl": "1d19fb22ccab0dddde5570bdde05a7903e2e6f0c9f9fce58e7ddda5df3595338"
    }
+  },
+  {
+   "id": "cont.gate_dc_residual_0911",
+   "value": {
+    "shards_total_rescanned": 1287,
+    "residual_hits_total": 0,
+    "per_domain": {
+     "code_py_rp1t_dc": [
+      16,
+      0
+     ],
+     "cot_dc": [
+      13,
+      0
+     ],
+     "en_c4_stage2_dc": [
+      83,
+      0
+     ],
+     "code_py_starcoder_dc": [
+      284,
+      0
+     ],
+     "math_owm_stage2_dc": [
+      206,
+      0
+     ],
+     "code_keep_p1_dc": [
+      685,
+      0
+     ]
+    }
+   },
+   "measured": "2026-09-11",
+   "source": "independent post-filter rescan on the pod; evidence committed in runs/dc_residual_verify_0911.json (per-domain shard counts and zero residual hits)",
+   "config": {
+    "what": "every KEPT row in every shard of the six non-ultra _dc domains re-hashed against the gate after scripts/filter_gate_domains.py wrote them; an output-side check, separate from the writer's own drop tally (cont.gate_dc_*)",
+    "method": "filters/decontam_ngram.py Decontaminator.load_default, hit() on each kept content row; 16-worker ProcessPoolExecutor",
+    "gate": "HumanEval(164)+MBPP(974), 13-word-token grams, same one-normaliser as the filter",
+    "decontam_fp": "86e19705b05c4b42",
+    "gate_sha": {
+     "humaneval_164.jsonl": "b2adeeae8b383b6f0c615746a397f25c8abe44da4afb29cd10e6c4bbf0463fd3",
+     "mbpp_holdouts.jsonl": "1d19fb22ccab0dddde5570bdde05a7903e2e6f0c9f9fce58e7ddda5df3595338"
+    }
+   },
+   "uncertainty": "zero residual is a statement about the _dc bytes at scan time; a later rewrite of a _dc dir would need a rescan (its build_corpus_stats fingerprint would also change and the launch guard would refuse).",
+   "boundary": "six non-ultra domains only; the two ultra _dc aggregates carry their own decontam_ngram counts from 0e's pipeline, not this rescan.",
+   "status": "measured"
   }
  ]
 }
