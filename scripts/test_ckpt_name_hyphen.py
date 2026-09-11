@@ -345,6 +345,129 @@ def test_first_dot_after_a_hyphen_does_not_crash():
              f"old match {old.group(0) if old else None!r}")
 
 
+def test_gate_rolling_save_is_seen_and_claimable():
+    """de-111: the FIRST GATE CHECKPOINT is a rolling save, ckpt_v41_gate_0911.pt.step2000.
+
+    train.py saves numbered checkpoints as `<core>.pt.step<N>`; the gate's first checkpoint
+    (~step 2000) has that shape, and the HumanEval facts 66 writes cite it. The provenance
+    chain must extract the FULL rolling name from the fact text, see it as a listing
+    candidate, let a `core, .pt.step2000` KEEP shorthand protect it, and make
+    ckpt_facts_sources_present resolve it. This name has an UNDOTTED core
+    (`v41_gate_0911`) plus a `.pt.step<N>` tail, so it is orthogonal to the b0-30 hyphen
+    cases and earns its own pin.
+    """
+    import json
+    import tempfile
+    h = _harness()
+    GATE = "ckpt_v41_gate_0911.pt.step2000"
+
+    got = h._ckpt_names(f"eval/humaneval_sample.py --ckpt {GATE}")
+    case(GATE in got, "the gate rolling-save name extracts with its full .step2000 tail",
+         f"got {sorted(got)}")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        keep = ["# KEEP (gate 2026-09-12): ckpt_v41_gate_0911.pt, .pt.step2000 -- HumanEval fact"]
+        rows = ["2026-09-12_17:29 2080.0 " + GATE]
+        _d, kept, cands = h._parse_ckpt_listing(_listing(tmp, keep, rows))
+        case(GATE in cands, "the gate rolling save is parsed as a deletion candidate")
+        case(GATE in kept, "a `core, .pt.step2000` KEEP shorthand protects the gate save",
+             f"kept {sorted(kept)}")
+
+    # END TO END through the actual check: a fact citing the gate save resolves KEEP-green
+    # when the listing claims it, and goes [absent] (still naming the FULL name) when it does
+    # not -- proving the extraction feeds the check and a regression cannot mute it.
+    with tempfile.TemporaryDirectory() as root:
+        os.makedirs(os.path.join(root, "runs"))
+        os.makedirs(os.path.join(root, "facts"))
+        fact = {"facts": [{
+            "id": "x.gate_humaneval_0912", "value": "n/a", "measured": "2026-09-12",
+            "source": f"eval/humaneval_sample.py on {GATE}",
+            "config": {"ckpt": GATE}, "uncertainty": "u", "status": "measured"}]}
+
+        def listing_text(claim):
+            head = "# checkpoint listing listed 2026-09-12 17:30Z\n"
+            row = f"2026-09-12_17:29 2080.0 {GATE}\n"
+            return head + row + (claim + "\n" if claim else "")
+
+        lp = os.path.join(root, "runs", "pod_ckpt_candidates_20260912.txt")
+        with open(os.path.join(root, "facts", "g.json"), "w") as fh:
+            json.dump(fact, fh)
+        with open(lp, "w") as fh:
+            fh.write(listing_text(
+                "# KEEP (gate): ckpt_v41_gate_0911.pt, .pt.step2000 -- HumanEval fact"))
+        st_kept, _ = h.check_ckpt_facts_sources_present(root)
+        case(st_kept == h.PASS, "the fact resolves KEEP-green for the claimed gate save",
+             f"state {st_kept}")
+        with open(lp, "w") as fh:
+            fh.write(listing_text(""))
+        st_absent, msg_absent = h.check_ckpt_facts_sources_present(root)
+        case(st_absent == h.FAIL and GATE in msg_absent,
+             "without a claim the check FAILs [absent] naming the full gate save",
+             f"state {st_absent} msg {msg_absent[:120]}")
+
+
+def test_gate_milestone_pin_is_run_anchored_and_resolves():
+    """de-111: the gate HumanEval retention pin uses the EXISTING milestone convention.
+
+    66 hardlinks ckpt_v41_gate_0911.pt.step2000 to
+    ckpt_v41_gate_0911.milestone_he2k_step2000.pt (same dir/inode) and writes a
+    runs/milestones.jsonl row {ckpt: rolling name, milestone: he2k_step2000}. The fact
+    cites the ROLLING name; check_milestone_ckpt_pinned must treat it as present when the
+    rolling file has rotated out but the run-anchored milestone pin exists, and FAIL only
+    when both are gone. The run anchor is ckpt_v41_gate_0911 (strip .pt[.stepN]); a
+    SIBLING run's pin (different anchor) must not vouch for it.
+    """
+    import json
+    import tempfile
+    h = _harness()
+    RUN = "ckpt_v41_gate_0911"
+    ROLLING = RUN + ".pt.step2000"
+    PIN = f"{RUN}.milestone_he2k_step2000.pt"
+    row = {"ckpt": ROLLING, "milestone": "he2k_step2000"}
+
+    def world(pin_name=None, with_ckpt_glob=True):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runs"))
+        with open(os.path.join(d, "runs", "milestones.jsonl"), "w") as fh:
+            fh.write(json.dumps(row) + "\n")
+        if with_ckpt_glob:
+            # any ckpt_*.pt satisfies the pod-only gate; create the pin or a decoy.
+            open(os.path.join(d, pin_name or "ckpt_marker.pt"), "w").close()
+        return d
+
+    import shutil
+    # 1) rolling file gone, run-anchored pin present -> PASS (the retention contract).
+    d = world()
+    open(os.path.join(d, PIN), "w").close()
+    st, _ = h.check_milestone_ckpt_pinned(d)
+    case(st == h.PASS, "the gate rolling save resolves via its run-anchored milestone pin",
+         f"state {st}")
+    shutil.rmtree(d)
+
+    # 2) only a SIBLING run's pin exists -> FAIL (the pin is anchored to the run).
+    d = world()
+    open(os.path.join(d, "ckpt_other_run.milestone_he2k_step2000.pt"), "w").close()
+    st, msg = h.check_milestone_ckpt_pinned(d)
+    case(st == h.FAIL and RUN in msg,
+         "a sibling run's milestone pin does not vouch for the gate save",
+         f"state {st} msg {msg[:120]}")
+    shutil.rmtree(d)
+
+    # 3) no pin at all -> FAIL, naming the rolling ckpt and milestone.
+    d = world()
+    st, msg = h.check_milestone_ckpt_pinned(d)
+    case(st == h.FAIL and ROLLING in msg, "with no pin the gate milestone is reported lost",
+         f"state {st} msg {msg[:120]}")
+    shutil.rmtree(d)
+
+    # 4) the rolling file itself present -> PASS even with no pin.
+    d = world()
+    open(os.path.join(d, ROLLING), "w").close()
+    st, _ = h.check_milestone_ckpt_pinned(d)
+    case(st == h.PASS, "the rolling file present satisfies the row directly", f"state {st}")
+    shutil.rmtree(d)
+
+
 def main():
     for fn in (test_names_finds_hyphenated, test_names_still_finds_plain,
                test_embedded_name_still_not_minted, test_prose_dashes_not_swallowed,
@@ -355,6 +478,8 @@ def main():
                test_short_reading_still_protects_the_real_sibling,
                test_first_dot_after_a_hyphen_does_not_crash,
                test_hyphen_core_without_dot_does_not_crash,
+               test_gate_rolling_save_is_seen_and_claimable,
+               test_gate_milestone_pin_is_run_anchored_and_resolves,
                test_real_repo_gains_the_moe_names_and_loses_nothing):
         fn()
     bad = [r for r in RESULTS if not r[0]]
