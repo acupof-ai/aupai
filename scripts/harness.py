@@ -299,10 +299,54 @@ def _is_mount(path):
         return False
 
 
-#: The eight sessions in this round and each one's reviewer. A delivery gets a second
-#: reader who is not its author: the controller review with 44 caught four evidenced
-#: errors in one day and nobody else's work had one (user order, 2026-08-31 22:00).
-REVIEW_PAIRS = {'de': '44', '44': 'de', 'b0': 'de', '3b': 'b0', 'fb': '44', 'e1': '3b', 'tilerl': 'b0', '98': 'fb', 'ae': 'de', '0e': '3b', '66': 'de'}  # keep in sync with runs/roster.json pairs; ae/0e/66 added 2026-09-10 post-restart; de-102 replaces this literal with a roster.json read
+#: Reviewer pairs are NOT a code literal (de-102). They are read from runs/roster.json's
+#: `pairs`, the one human-edited source, and validated against `members` on every load. A
+#: delivery gets a second reader who is not its author; the controller review with 44 caught
+#: four evidenced errors in one day and nobody else's work had one (user order, 2026-08-31).
+#: A literal here disagreed with roster.json for 19 hours and refused live members, which is
+#: the human-half/machine-half split the file's pairs_note documents.
+_REVIEW_PAIRS_CACHE = {}
+
+
+def review_pairs(root=None):
+    """{member: reviewer} from runs/roster.json `pairs`, validated against `members`.
+
+    One fact, read at use, so adding a member+pairs entry to roster.json makes the name usable
+    as --reviewer/--pair with no code edit. Raises loudly when the file disagrees with itself:
+    a `pairs` key whose name is not a member, a member with no pair, or a pair whose reviewer is
+    not a member. Pairs are DIRECTIONAL (a reviewer is not reviewed back by its member), so no
+    symmetry is required. Departed members appear in neither set, so they are refused as
+    reviewers -- correct, their rows are history. A missing roster.json raises too: review/task
+    commands must not silently accept any name because the file that names the team is absent.
+    """
+    root = root or ROOT
+    if root in _REVIEW_PAIRS_CACHE:
+        return _REVIEW_PAIRS_CACHE[root]
+    p = os.path.join(root, "runs", "roster.json")
+    if not os.path.exists(p):
+        raise RuntimeError(f"no runs/roster.json under {root}; cannot validate a reviewer "
+                           f"without the team file")
+    d = json.load(open(p, encoding="utf-8"))
+    members = {m["name"] for m in d.get("members", [])}
+    pairs = dict(d.get("pairs") or {})
+    if not members:
+        raise RuntimeError("runs/roster.json has no members; a review pair cannot be validated")
+    bad_ref = sorted(set(pairs) - members)
+    if bad_ref:
+        raise RuntimeError(f"runs/roster.json pairs name non-members {bad_ref}; every pairing "
+                           f"must be of a live member")
+    bad_target = sorted({v for v in pairs.values() if v not in members})
+    if bad_target:
+        raise RuntimeError(f"runs/roster.json pairs assign reviewers that are not members "
+                           f"{bad_target}")
+    unpaired = sorted(members - set(pairs))
+    if unpaired:
+        raise RuntimeError(f"runs/roster.json members {unpaired} have no pair entry; every live "
+                           f"member needs a reviewer")
+    _REVIEW_PAIRS_CACHE[root] = pairs
+    return pairs
+
+
 #: How long a dirty or untracked file may sit before the check names it. ONE constant
 #: for both: they measure the same thing (work parked in a tree others share) and split
 #: values -- 30 min for dirty, 24 h for untracked -- meant the noisier half fired on
@@ -8616,6 +8660,43 @@ QUEUE_EXEMPT = {"fb", "98"}
 QUEUE_UNREACHABLE_STATES = {"exited", "active-session-unknown"}
 
 
+def check_review_pairs_match_roster(root):
+    """The reviewer pairs the CLI enforces are the roster.json pairs, and they are consistent.
+
+    de-102: review_pairs() reads runs/roster.json rather than a code literal, and raises on
+    drift (a pairs key/target that is not a member, an unpaired member). This check runs that
+    validation on the real file every commit, so the two halves cannot disagree: the pre-de-102
+    literal omitted 98/0e/66/ae and still mapped b0<->tilerl while roster.json said otherwise,
+    and review/task commands silently refused live members.
+    """
+    if not os.path.exists(os.path.join(root, "runs", "roster.json")):
+        return SKIP, "no runs/roster.json"
+    try:
+        pairs = review_pairs(root)
+    except RuntimeError as e:
+        return FAIL, str(e)
+    return PASS, (f"review pairs read from roster.json: {len(pairs)} members paired "
+                  f"({', '.join(sorted(pairs))})")
+
+
+def _broken_review_pairs_match_roster():
+    """The real roster with one pairs entry pointed at a non-member. review_pairs must raise.
+
+    Mutates a copy of the committed roster.json, so it exercises the loader's validation rather
+    than a reimplementation. A non-member reviewer is the exact pre-de-102 defect (the literal
+    admitted b0/tilerl after they departed and omitted live members), expressed as file drift.
+    """
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    src = os.path.join(ROOT, "runs", "roster.json")
+    dst = os.path.join(d, "runs", "roster.json")
+    r = json.load(open(src, encoding="utf-8"))
+    first = next(iter(r["pairs"]))
+    r["pairs"][first] = "not-a-member"
+    json.dump(r, open(dst, "w", encoding="utf-8"))
+    return d
+
+
 def check_owner_queue_depth(root):
     """Every roster member has at least QUEUE_MIN_OPEN open, unblocked tasks.
 
@@ -12622,7 +12703,7 @@ def cmd_review(argv):
     sub = ap.add_subparsers(dest="op", required=True)
     a = sub.add_parser("add")
     a.add_argument("--reviewer", required=True,
-                   help=f"who reviewed; a roster member {sorted(set(REVIEW_PAIRS))}")
+                   help="who reviewed; a roster member with a pair in runs/roster.json")
     a.add_argument("--pr", type=int, default=None, help="the PR number, for a PR review")
     a.add_argument("--task", default=None,
                    help="task id for a task review; for a PR review, what was reviewed")
@@ -12635,8 +12716,9 @@ def cmd_review(argv):
     a.add_argument("--finding", default=None,
                    help="what the review found; absent means no review finding is recorded")
     args = ap.parse_args(argv)
-    if args.reviewer not in REVIEW_PAIRS:
-        print(f"refusing: {args.reviewer} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
+    pairs = review_pairs()
+    if args.reviewer not in pairs:
+        print(f"refusing: {args.reviewer} is not on the roster {sorted(set(pairs))}", file=sys.stderr)
         return 1
     if not args.pr and not args.task:
         print("refusing: a review row names --pr or --task so review_present can match it", file=sys.stderr)
@@ -12738,7 +12820,7 @@ def cmd_task(argv):
     d = sub.add_parser("done")
     d.add_argument("id")
     d.add_argument("--reviewer", required=True,
-                   help=f"who reads this delivery; a roster member other than the owner {sorted(set(REVIEW_PAIRS))}")
+                   help="who reads this delivery; a roster member with a pair in runs/roster.json, other than the owner")
     d.add_argument("--evidence", required=True, help="artifact path, command, or fact id -- not a claim")
     d.add_argument("--commit", required=True,
                    help="the commit that delivers it: must reach main and must touch --evidence")
@@ -12790,8 +12872,9 @@ def cmd_task(argv):
         if args.pair == args.owner:
             print(f"refusing: {args.owner} cannot pair with itself", file=sys.stderr)
             return 1
-        if args.pair not in REVIEW_PAIRS:
-            print(f"refusing: {args.pair} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
+        _pairs = review_pairs()
+        if args.pair not in _pairs:
+            print(f"refusing: {args.pair} is not on the roster {sorted(set(_pairs))}", file=sys.stderr)
             return 1
         # The same cache task went to two people nine minutes apart and both stayed open
         # all night; --pair cannot see it, because each row had one. Nothing compared the
@@ -12849,8 +12932,9 @@ def cmd_task(argv):
         if args.reviewer == owner:
             print(f"refusing: {args.reviewer} owns {args.id}; a delivery needs a second reader", file=sys.stderr)
             return 1
-        if args.reviewer not in REVIEW_PAIRS:
-            print(f"refusing: {args.reviewer} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
+        _pairs = review_pairs()
+        if args.reviewer not in _pairs:
+            print(f"refusing: {args.reviewer} is not on the roster {sorted(set(_pairs))}", file=sys.stderr)
             return 1
         bad = _commit_delivers(args.commit, args.evidence, None, args.id)
         if bad:
@@ -17823,6 +17907,13 @@ CHECKS = [
         _broken_tasks_closed_by_commit,
     ),
     (
+        "review_pairs_match_roster",
+        "the reviewer pairs the CLI enforces are read from runs/roster.json and are symmetric over live members",
+        "a code literal held the pairs and disagreed with roster.json for 19h: it omitted 98/0e/66/ae and kept departed b0/tilerl, so review/task commands refused live members (de-102)",
+        check_review_pairs_match_roster,
+        _broken_review_pairs_match_roster,
+    ),
+    (
         "owner_queue_depth",
         "every roster member has at least two open, unblocked tasks (WARN at every tier)",
         "six sessions sat idle under 16 open rows, nine of them frozen with the training path; the register recorded the freeze and nobody read it as idleness (user, 2026-09-02). WARN-only since 2026-09-06: the FAIL tier landed on the owner rather than the controller it addresses, refusing the commit that proved an owner had finished -- four close rows parked in one session",
@@ -18395,6 +18486,7 @@ EVIDENCE = {
     "merge_keeps_parent_paths": "repo",
     "no_stale_running": "repo", "no_future_started": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
     "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
+    "review_pairs_match_roster": "repo",
     "peer_stalled": "repo",
     "one_deliverable_per_owner": "repo",
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
