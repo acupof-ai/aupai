@@ -27,6 +27,7 @@ jobs:
       - run: python scripts/test_score_exit.py
       - run: python scripts/launch_tests.py --selftest
       - run: python scripts/test_artifact_path_ckpt.py
+      - run: python scripts/test_cursor_sum.py
       - run: python eval/cache_guard.py --selftest
       - run: python algorithms/test_rlvr_reward_suite.py
       # A shell test, so the hook cannot gate it: the hook runs every gated file through
