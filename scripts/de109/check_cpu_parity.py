@@ -6,9 +6,12 @@ single concatenated softmax to float64 precision on forward AND every gradient,
 including the STE indexer grad. The GPU swaps only the window half for flash.
 """
 from types import SimpleNamespace
+import os
+import sys
 
 import torch
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 import model as M
 
 
@@ -64,5 +67,47 @@ def main():
     print("CPU PARITY OK")
 
 
+def cpu_device_gate():
+    # A checkpoint saved WITH --csa2_win_flash must still run --device cpu. On the pod HAS_FA is
+    # True (the cute kernel imported), so gating use_flash on HAS_FA alone would call the cute
+    # forward on CPU tensors and die in flash_attn.cute.interface's bf16/fp16 assert. The model
+    # must instead test the ACTUAL tensor device and take the materialized branch. Simulate the
+    # pod by forcing HAS_FA True with the cute Function replaced by one that raises if reached.
+    saved = M.HAS_FA
+    boom_calls = []
+
+    class _Boom(torch.autograd.Function):
+        @staticmethod
+        def forward(ctx, *a, **k):
+            boom_calls.append(1)
+            raise AssertionError("cute flash kernel reached on CPU -- device gate failed")
+
+        @staticmethod
+        def backward(ctx, *a):
+            raise AssertionError("cute flash kernel reached on CPU backward")
+
+    try:
+        M.HAS_FA = True
+        M._WindowSWAFlash = _Boom
+        mdl = build(True, 123).cpu()
+        assert next(mdl.parameters()).device.type == "cpu"
+        B, T, H, hd, d = 1, 12, 4, 8, 16
+        q = torch.randn(B, T, H, hd, dtype=torch.float64)
+        k = torch.randn(B, T, H, hd, dtype=torch.float64)
+        v = torch.randn(B, T, H, hd, dtype=torch.float64)
+        x = torch.randn(B, T, d, dtype=torch.float64)
+        cu = torch.tensor([0, T], dtype=torch.int32)
+        y = mdl(q, k, v, cu=cu, x=x)
+        y.sum().backward()
+        assert not boom_calls, "the cute kernel ran on CPU"
+        assert torch.isfinite(y).all(), "CPU materialized fallback produced non-finite output"
+    finally:
+        M.HAS_FA = saved
+        if hasattr(M, "_WindowSWAFlash"):
+            pass
+    print("CPU DEVICE GATE OK: csa2_win_flash on a CPU tensor takes the materialized branch")
+
+
 if __name__ == "__main__":
     main()
+    cpu_device_gate()
