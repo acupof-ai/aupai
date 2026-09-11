@@ -54,8 +54,8 @@ close before the gate run; each needs a one-line ruling in this table, not a new
 | engram_layer_ids | [1, 14] | none | struck |
 | num_nextn_predict_layers (MTP) | 3 | none | struck for the gate run |
 | rope_scaling | yarn x16 from 64K | none | irrelevant at seq 4096 |
-| tie_word_embeddings | false | untie_head flag exists, default tied | open: ae counts the parameter cost at vocab 32784 and rules |
-| vocab_size | 129280 | 32784 frozen; re-measured on UltraData by ae | ae ruling pending |
+| tie_word_embeddings | false | tied by default (`Cfg.untie_head` False); untying costs +33.55M (+9.5% active, +1.04% total at 32,768×1024) | open: de/controller tie-vs-untie decision for the gate run; ae counted the cost |
+| vocab_size | 129280 | 32,768 rebuilt 2026-09-10 (PR #233), live fp f1f860970d15d623; 32,773 frozen kept as data/tokenizer_frozen_0829.json | ruled: rebuild under unfreeze condition 2, ~8.5% freeze tax (tok.ultra_freeze_tax_0910) |
 
 ## Build order
 
