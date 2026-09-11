@@ -1,0 +1,17 @@
+{
+ "check": "independent post-filter residual scan of every decontaminated _dc shard against the SAME gate gram set",
+ "measured": "2026-09-11",
+ "method": "filters/decontam_ngram.py Decontaminator.load_default('/work/aupai'), hit() over every kept row in data/corpus/<domain>/_dc/*.jsonl; 16-worker ProcessPoolExecutor; gate decontam_fp 86e19705b05c4b42 (module f176d700 + HumanEval b2adeeae + MBPP 1d19fb22)",
+ "results": {
+  "code_py_rp1t_dc": {"shards_rescanned": 16, "residual_hits": 0},
+  "cot_dc": {"shards_rescanned": 13, "residual_hits": 0},
+  "en_c4_stage2_dc": {"shards_rescanned": 83, "residual_hits": 0},
+  "code_py_starcoder_dc": {"shards_rescanned": 284, "residual_hits": 0},
+  "math_owm_stage2_dc": {"shards_rescanned": 206, "residual_hits": 0},
+  "code_keep_p1_dc": {"shards_rescanned": 685, "residual_hits": 0}
+ },
+ "shards_total_rescanned": 1287,
+ "residual_hits_total": 0,
+ "scripts": ["runs/verify_dc_residual.py (rp1t/cot/c4 single-process)", "runs/verify_starcoder_par.py", "runs/verify_dc_par.py <domain>"],
+ "note": "every kept shard in all six _dc domains re-hashed against the gate after filtering; zero surviving HumanEval/MBPP 13-gram. This is a separate pass over the output, not the writer's own drop tally (that is runs/gate_decontam_summary.json / cont.gate_dc_*)."
+}
