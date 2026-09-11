@@ -242,7 +242,7 @@ def aggregate(out, pattern, prefix, tokenizer_path, level):
     # this file lives at <root>/datagen/ultradata_shards.py -> root is one up
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
-        from filters.decontam_ngram import Decontaminator
+        from filters.decontam_ngram import Decontaminator, decontam_fp as _ngram_fp
     except ImportError as e:
         raise SystemExit(
             "aggregate requires filters/decontam_ngram.py (ae 13-gram decontam, "
@@ -299,10 +299,10 @@ def aggregate(out, pattern, prefix, tokenizer_path, level):
     reasons["cross_group_dup"] = cross_dup
     reasons["decontam_ngram"] = ngram_drop
     try:
-        ngram_fp = decon.decontam_fp(
+        ngram_fp = _ngram_fp(
             os.path.join(root, "data", "eval", "humaneval", "humaneval_164.jsonl"),
             os.path.join(root, "data", "eval", "mbpp_holdouts.jsonl"))
-    except AttributeError:
+    except (AttributeError, NameError):
         ngram_fp = None
     final_shards = sorted(glob.glob(os.path.join(out, f"{prefix}_[0-9]*.jsonl")))
     canonical = {
