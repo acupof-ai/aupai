@@ -18,11 +18,14 @@
 # warmdown 0.65, anneal_frac 0.10 (last 10% uses the gate mix's per-domain anneal=weight).
 # B4xaccum8 is the fixed recipe: when de-108 lands its gain goes to wall-clock, batch does not
 # move, so the prereg measures one shape.
+# --csa2_win_flash added per fb 2026-09-11 (prereg amendment 6): smoke j peak 43.5 vs
+# 72.6 GiB (i); adopted on memory -- the 1.4x speed criterion FAILED (measured 1.11x).
+# Recipe otherwise unchanged (B4/accum8, world 6); no B8 test before the go.
 cd /work/aupai || exit 1
 export NGPU=6
 exec python3 scripts/harness.py launch v41_gate_0911 --training --class incremental --hypothesis "V4.1 flat CSA2 MoE on the UltraData gate mix clears HumanEval pass@1 >= 30% (prereg v41_gate_0911)" \
   -- ./run_ddp.sh --mix data/mix_v41_gate.json --name v41_gate_0911 \
   --dim 1024 --layers 12 --heads 8 --ffn_hidden 6912 --batch 4 --accum 8 \
   --lr_scale 1.0 --warmdown 0.65 --anneal_frac 0.10 --warmup 500 --save_every 2000 --no-grad_ckpt \
-  --attn_every 1 --csa --csa2 --rope_dims 64 --n_swa_only_layers 2 --no-attn_res \
+  --attn_every 1 --csa --csa2 --csa2_win_flash --rope_dims 64 --n_swa_only_layers 2 --no-attn_res \
   --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11 --moe_arm v41gate
