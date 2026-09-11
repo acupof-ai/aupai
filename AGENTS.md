@@ -5,10 +5,7 @@
 at ~350M-active on the UltraData gate mix (`data/mix_v41_gate.json`, 30B tokens). The
 acceptance gate is unchanged from the p1 recipe (`docs/standards/p1_data_recipe.md:256`).
 V2/KDA work is stopped. The gate runs single-node at seq 4096; the launch line is
-`runs/v41_gate_0911.sh` and the stop rules are `runs/prereg.jsonl#v41_gate_0911`. (The
-script/prereg were written for world 6 and are being re-sized to the 2026-09-11 world-5
-block on a controller ruling — do not launch until NGPU/block and the step count there
-match `runs/card_assignment.json`.)
+`runs/v41_gate_0911.sh` and the stop rules are `runs/prereg.jsonl#v41_gate_0911`.
 
 Architecture, in the terms the code uses. The gate stack is a flat 12-layer model at
 d=1024/H=8; every fact below is read from `docs/standards/v41_pivot.md`, `facts/v41.json`
@@ -30,10 +27,9 @@ and `model.py`.
 
 The smoke ladder that sized the gate launch: compiled+flash B8 OOMs at 94.6 GiB pre-step,
 B4/accum4 measured 72.64 GiB/rank across 381 steps with no NaN
-(`facts/v41.json#v41.smoke_compiled_flash_h_i_0911`). The per-rank recipe is B4/accum8; the
-effective-batch/step count depends on the world size and is being re-stated for the
-2026-09-11 world-5 block (the committed launcher still shows the earlier world-6 numbers).
-Peak stays at the measured 72.6 GiB regardless of world or accum.
+(`facts/v41.json#v41.smoke_compiled_flash_h_i_0911`). The gate recipe is B4/accum8 on
+world 6: 786,432 tokens/step, 38.1K steps over 30B; peak stays at the measured 72.6 GiB
+(accum and world do not move per-rank peak).
 
 **Retired 2026-09-10: the 0830v1 KDA + gated-MLA hybrid.** That line stacked Kimi Delta
 linear attention (`fla.ops.kda.chunk_kda`, recurrent state carries position, NoPE) with
@@ -85,28 +81,28 @@ rebuild is allowed only under the three unfreeze conditions and invalidates ever
 trained on the old vocabulary.
 - **Vocabulary identity.** Score every checkpoint with the vocabulary it was trained on; checkpoints and packs carry `vocab_id`, and a mismatch refuses. For an older checkpoint pass `--tokenizer`.
 - **GPUs. Gate-run allocation, user ruling 2026-09-11 (latest; `runs/card_assignment.json`
-is the record).** The V4.1 gate trains on **world 5, block 0-4** — all five are aupai's,
-though tileRL may use card 0 until aupai's **one-hour notice**, at which point it must be
-clear for launch. **Card 5 is the lane** until the gate launch: one eval/probe at a time;
-de-108's single-card steps run there by controller assignment and the lane returns to the
-ordinary queue after. **Cards 6 and 7 are tileRL's for the whole gate run (2-3 days)**;
-aupai jobs there only by asking tilerl-58, and they revert to aupai when the gate run ends.
-The standing-order list the grant pins for lend expiry remains **theirs_baseline [0,6]** —
-it is the expiry mechanism, distinct from the per-card owner decisions above. `harness
-launch` reads the grant and refuses a card outside the current allocation. The controller
-allocates; ask before starting a GPU process. Kill by exact PID, never `pkill -f`. A
-process the controller cannot account for gets killed.
+is the record).** At launch the V4.1 gate trains on **world 6, block 0-5, with no lane**;
+**cards 6 and 7 are tileRL's for the whole gate run (2-3 days)** — aupai jobs there only by
+asking tilerl-58, and they revert when the gate run ends. **Before launch only**, card 5 is
+a temporary lane for single-card jobs (de-108 steps run there); cards 0-4 are aupai's,
+though tileRL may use card 0 until aupai's **one-hour launch notice**, at which point the
+block returns to 0-5 and the temporary lane ends. The standing-order list the grant pins
+for lend expiry remains **theirs_baseline [0,6]** — the expiry mechanism, distinct from the
+per-card owner decisions above. `harness launch` reads the grant and refuses a card outside
+the current allocation. The controller allocates; ask before starting a GPU process. Kill by
+exact PID, never `pkill -f`. A process the controller cannot account for gets killed.
 (History: the 2026-09-06 "0,6 tileRL" order and the 2026-09-10 "all eight to V4.1" order
 are both superseded by this 2026-09-11 gate-run split.)
 - **A kill is not finished until `nvidia-smi` says the card is free.** Killing what you launched does not kill what it launched. 2026-09-01: after the milestone watcher's chain was killed by exact PID, `eval/run_eval.py` (pid 313429) still held GPU7 at 5.7 GB / 95% — a grandchild reparented to init whose pgid still named the dead leader, so `ps` by pgid could not see it as an orphan and only the card showed it. It would have contended with the next job on the lane. After any kill of a GPU job: read `nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader`, and kill by exact PID whatever still holds memory. A killed process can stay in the process table as a zombie: `kill -0 <pid>` returns 0 and `ps -p <pid>` prints a row for it, so neither says whether the kill worked. Read `ps -o stat= -p <pid>`: `Z` is dead (e1, 2026-09-03: three scan pids read as surviving `kill` and `kill -9` for ten minutes while the card had been free since the first signal). Killing the local wrapper (a `~/bin/pod` call, a timed-out foreground command) does not kill the process it started in the container: read the container's `ps` after every local kill and kill by exact PID there (e1, 2026-09-03: a CPU scoring run of 10,421 items kept running on the pod after its local wrapper was killed).
-- **Lanes: a 5-card gate block, one lane card, and two cards on loan to tileRL.** The gate
-block is 0-4 (`world` 5); the run needs all five *at once*, so one probe on a block card
-stops occupancy, not just speed. Two rules follow, and the second is the one that cost
-time:
-  - **Small jobs queue on lane card 5. They never spill into the block, not even onto a card
-that is idle at that instant.** The lane holds one job at a time; concurrent probes
-serialize rather than each taking a card. Until the gate launch, de-108's single-card steps
-run on 5 by controller assignment; the queue resumes after.
+- **Lanes: a world-6 gate block 0-5 with no lane at launch, and a temporary pre-launch
+lane.** At launch the run needs all six cards 0-5 *at once*, so there is no lane and one
+probe on a block card stops occupancy, not just speed. **Before launch, card 5 is the
+temporary lane** for one single-card job at a time (de-108 steps run there by controller
+assignment); on the one-hour launch notice the block returns to 0-5 and the lane ends.
+Two rules follow:
+  - **Small jobs queue on the temporary lane card 5; they never spill into the block, not
+even onto a card that is idle at that instant.** Concurrent probes serialize rather than
+each taking a card.
   - Card 0 is tileRL-usable only until aupai's one-hour launch notice; cards 6,7 are
 tileRL's for the gate run. Idle is not free: a card's owner is the script still running or
 the job the controller has queued, never the instantaneous `nvidia-smi` row.
@@ -152,7 +148,7 @@ every dip in the measured 30B window: 10.3 min of 6.04 h, 2.8%
 | Is it safe to overwrite a RUNNING .sh | `python3 scripts/pod_sh_offset.py --check <rel>` — reads each live shell's script offset from `/proc/<pid>/fdinfo` on the pod and exits 2 unless every differing byte is at or after the earliest of them. `pod_push.sh` calls it, so `POD_PUSH_ALLOW_RUNNING_SH=1` is now checked rather than trusted: the safety is a property of the diff, not of the flag |
 | Measure everything unscored | `python scripts/harness.py measure` |
 | pass@k gate for RL | `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` — needs pass@8 − pass@1 ≥ 15pt |
-| Launch the V4.1 gate run | `bash runs/v41_gate_0911.sh` (pod) — block 0-4/world 5, lane 5, B4 micro-batch, `data/mix_v41_gate.json`; committed DRAFT pending the world-5 re-size ruling, it runs only on the controller's explicit go and the `runs/prereg.jsonl#v41_gate_0911` checklist (mix caches present, de-108 merged or waived, cards 0-4 cleared on the one-hour notice). The script is also the pod-side launch file: place it on the pod (pod_push skips `runs/`) before the go |
+| Launch the V4.1 gate run | `bash runs/v41_gate_0911.sh` (pod) — world 6, block 0-5 at launch (no lane; temporary pre-launch lane is card 5), B4/accum8, `data/mix_v41_gate.json`; committed DRAFT, it runs only on the controller's explicit go and the `runs/prereg.jsonl#v41_gate_0911` checklist (mix caches present, de-108 merged or waived, cards 0-5 cleared on the one-hour notice). The script is also the pod-side launch file: place it on the pod (pod_push skips `runs/`) before the go |
 | V4.1 smoke launch shape | the gate line is proven at smoke scale (B4/accum4, 381 steps, 72.6 GiB/rank): see `facts/v41.json#v41.smoke_compiled_flash_h_i_0911`; the smoke launcher lived only on the pod and the tracked gate launcher `runs/v41_gate_0911.sh` carries the same architecture flags — `--csa2 --rope_dims 64 --n_swa_only_layers 2 --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11` |
 | Decontaminate a corpus against the code evals | `python filters/decontam_ngram.py <corpus_dir>` — 13-gram overlap removal against HumanEval/MBPP; a gate prerequisite for every UltraData code domain (ae, facts in `facts/contamination.json`) |
 | Corpus | `python datagen/build_corpus.py --domain X --source Y --target_tokens 6e9`; `--dry --limit N` prints the rejects histogram. Math generators: `mathbank/vet_programs.py` is the registry root that reaches `math_programs_l*`. UltraData L2/L3 keep rules: 0e's filters (`#237`) |
@@ -185,11 +181,10 @@ The committed gate line is `runs/v41_gate_0911.sh`; the direct shape is:
 Any `--flag` in `train.py`'s parser overrides `Cfg.<flag>` — a fixed whitelist
 (seq/batch/accum/vocab/seed/attn_every/attn_res_blocks/val_*/warmup + the boolean flags),
 not a reflection over `Cfg`; a `Cfg` field without a parser entry cannot be set from the
-CLI. The per-rank recipe is controller-pinned: B4/accum8, warmup 500 absolute steps,
-warmdown 0.65, anneal_frac 0.10. The committed launcher currently carries the earlier
-world-6 effective-batch/step counts (786,432 tokens/step, 38.1K steps over 30B); those are
-re-stated for world 5 on the controller's ruling before launch — per-rank peak and B4 never
-move. The retired
+CLI. The gate recipe (controller ruling, prereg amendment 1): 30B tokens, B4/accum8 on
+world 6 = 786,432 tokens/step, 38.1K steps; warmup 500 absolute steps, warmdown 0.65,
+anneal_frac 0.10; B4×accum8 fixed — when de-108 lands its speed gain goes to wall-clock,
+never to batch. The retired
 0830v1 budget points were six geometric mixes, `mix_scale_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.json`.
 Checkpoints save as `ckpt_{name}.pt`; naming convention `ckpt_{arch}_{tokens}_{date}.pt`.
 
@@ -440,7 +435,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Vocabulary identity | `vocab_id_on_load_path` |
 | GPUs (9) | manual: card ownership is a controller decision, not a file state |
 | A kill is not finished until `nvidia-smi` says the card is free (4) | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
-| Lanes: a 5-card gate block, one lane card, and two cards on loan to tileRL | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy; allocation_reads_the_grant pins the standing-order list theirs_baseline [0,6] |
+| Lanes: world-6 block 0-5 no lane at launch, temporary pre-launch lane | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy; allocation_reads_the_grant pins theirs_baseline [0,6] |
 | Small jobs queue on the lane card. They never spill into the block, not even o (3) | manual: queueing is operator behaviour over time; lane_respected catches the instantaneous violation |
 | When there is no lane card at all — `NGPU=8`, as p500m_ | `coresident_cache_refusal` |
 | Judge the cost in seconds against what the run already (2) | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |
