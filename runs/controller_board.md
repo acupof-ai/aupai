@@ -19,14 +19,15 @@ Historical P0 table (all rows closed):
 
 Waived (amendment 7): launch_gate.py's two inline-mix advisories. Retired by user order: L3 sandbox exec.
 
-## Run state 18:3xZ and the switch plan
+## Run state 19:0xZ and the switch plan
 
-- v41_gate_0911 step ~2600, val 2.444/2.208/2.108 at 500/1000/2000, 28K tok/s/gpu, 4.65 s/step, peak 43.4 GiB, 0 NaN. Saves at 2000 (pinned ckpt_v41_gate_0911.milestone_he2k_step2000.pt, sha 0ad1fee5).
-- HumanEval .step2000 = 0/164 is an INSTRUMENT number: the model re-declares the function ("\ndef <entry_point>") and the "\ndef " stop truncated 143/164 to empty; 21 EOS-first are real. 66-14 fixes the stop (self re-declaration is not a stop) with PASS/FAIL controls; corrected .step2000 + .step4000 numbers due ~20:40Z on card 6.
-- USER RULING: formal run on 8 cards. Decided path C (de, train.py resume is world-agnostic): at the .step6000 save (~23:00Z) stop the w6 job by PID and resume the same run at world 8, accum 6 (786,432 tok/step, schedule unchanged): 31.3 h to 30B vs 41.5 h continuing on 6. #275 reworked into the resume line; rehearse_cursor assertion 3 before the go; prereg amendment 9 at the go.
-- OPEN USER DECISION: the win_flash checkpoints have no CPU path (flash kernel asserts fp16/bf16), so no CPU HumanEval. A = world 7 + card 6 lane, GPU eval every 2000 steps, +4.5 h (fb recommends). B = world 8 + a CPU fallback in model.py (de), eval every 6000 steps. Default A at 23:00Z if unanswered.
-- Cards: 6 handed to aupai for eval windows (tilerl-a3), 7 after tileRL's MMLU run (~21:00Z); both to aupai outright thereafter (user ruling via tilerl-a3).
-- Merged today: #260 #266 #268 #269 #271 #273 #274 #276; pod stamp 1f6a8021 restored after a cleared stamp. Open: #270 (0e pipeline), #272 (98 cache facts), #275 (w8 resume launcher), 66-14 eval fix PR.
+- v41_gate_0911 step 2710/38146 at 18:5xZ, loss 1.403, val 2.444/2.208/2.108 at 500/1000/2000, 28K tok/s/gpu, peak 43.4 GiB, 0 NaN. .step4000 save ~20:32Z, .step6000 ~23:00Z. Disk 73%.
+- HumanEval .step2000 with the corrected instrument (#278, controls 154/154 self-redeclare PASS, wrong body FAIL): pass@1 0/164, empty 51/164 (eos_first 21, stop_at_0 30), 113 bodies scored and all fail. This is the real number at 1.57B tokens; the earlier 0/164 with 143 empty was the instrument. Runtime 1578 s on card 6 (24 min, full-function decode). Next: .step4000 at its save on card 6 (66), decision at .step6000 per amended_8.
+- USER RULING: formal run on 8 cards. Path C: at the .step6000 save stop the w6 job by PID, resume the same run at world 8 accum 6 (786,432 tok/step, LR schedule unchanged, total_steps 38146 kept). #275 launcher merged a8d367d3 (de second read: six points hold at 72c5a34; #277 locks the W6->W8 cursor re-stripe in CI). Launch only after ckpt_v41_gate_0911.pt.step6000 exists. Prereg amendment 9 records the switch.
+- Eval card after the switch: world 8 leaves no card, and world 7 cannot keep 786,432 tok/step (192 seqs/step is not divisible by 7; accum 7 gives 917,504 tok/step and a recomputed schedule), so option A as stated is not schedule-neutral. Options: B = world 8 + CPU HumanEval fallback in model.py for win_flash checkpoints (de; 3.4 h per eval at 6000-step spacing); D = world 8 and no in-run HumanEval after step 6000 until the final checkpoint on a card handed back at run end. fb recommends B. User decision pending; default at 23:00Z is B with de owning the CPU path.
+- Cards: 6 lent to aupai for eval windows through 23:59Z (grant string note); tilerl-a3 gives 7 outright at 22:45Z (fidelity + two sparse points + MMLU pair run until then); 6 outright after 66's evals. Grant file rewrite to block 0-7 at the switch.
+- Pod stamp: cleared twice today by partial pushes with drift (pod_push.sh:133 by design); restored with --all at 208e0f56 then a8d367d3. run_ddp.sh:15 refuses a launch without it, so the stamp is a launch precondition at 23:00Z.
+- Merged today: #260 #266 #268 #269 #270 #271 #273 #274 #275 #276 #277 #278. Open: #272 (98 cache facts, 3b merges).
 
 ## P1 — during the run (2-3 days, 38.1K steps)
 
@@ -58,4 +59,4 @@ all owned by live roster members.
 
 ## Open user decisions
 
-None pending. Standing: tileRL keeps 6,7 through the run; L3 exec dropped; 390G reference weights kept.
+Eval card after the world-8 switch: B (CPU fallback, fb recommends, default at 23:00Z) or D (no in-run HumanEval after step 6000). Standing: Standing: tileRL keeps 6,7 through the run; L3 exec dropped; 390G reference weights kept.
