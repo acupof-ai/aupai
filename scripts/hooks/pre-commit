@@ -662,11 +662,20 @@ def main():
     # cheap early-out -- an up-to-date tree needs no diff at all.
     _clash = _main_touched_staged(_staged_all) if behind and not _ledger_only and not merging else []
     if _clash and os.environ.get("AUPAI_BEHIND_MAIN_OK") != "1":
+        # THE STAGED-OVERLAP CASE CANNOT USE A BARE `git merge`: it refuses with "your local
+        # changes would be overwritten", git stash is forbidden (shared stack), and the only move
+        # the old message printed was that bare merge -- the exact loop de-113 measured. Point at
+        # the flag-free escape for code: merge_main.sh's staged carry commits the index to
+        # refs/wip/<branch>, clears it, merges (exempt here), and three-way restores the work.
         print(
             f"REFUSING: main has changed {len(_clash)} file(s) this commit stages, and this "
             f"tree is {behind} commit(s) behind it: {', '.join(_clash[:4])}\n"
-            f"Merge first:\n"
-            f"  git merge --no-edit main\n"
+            f"Get current first:\n"
+            f"  - nothing staged:      git merge --no-edit main\n"
+            f"  - staged code here:    scripts/merge_main.sh <branch>   # carries the staged\n"
+            f"                         index through the merge with no flag (refs/wip carry),\n"
+            f"                         then restores it; a bare 'git merge' here refuses with\n"
+            f"                         'local changes would be overwritten' and stash is banned\n"
             f"Committing here writes on top of code main has already moved past, and "
             f"any check you ran said nothing about which version it tested.\n"
             f"Being behind main is NOT itself a refusal: main moving on files you do not "
