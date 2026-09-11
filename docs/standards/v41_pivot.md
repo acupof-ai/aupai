@@ -54,8 +54,8 @@ close before the gate run; each needs a one-line ruling in this table, not a new
 | engram_layer_ids | [1, 14] | none | struck |
 | num_nextn_predict_layers (MTP) | 3 | none | struck for the gate run |
 | rope_scaling | yarn x16 from 64K | none | irrelevant at seq 4096 |
-| tie_word_embeddings | false | untie_head flag exists, default tied | open: ae counts the parameter cost at vocab 32784 and rules |
-| vocab_size | 129280 | 32784 frozen; re-measured on UltraData by ae | ae ruling pending |
+| tie_word_embeddings | false | tied by default (`Cfg.untie_head` False); untying costs +33.55M (+9.5% active, +1.04% total at 32,768×1024) | open: de/controller tie-vs-untie decision for the gate run; ae counted the cost |
+| vocab_size | 129280 | 32,768 rebuilt 2026-09-10 (PR #233), live fp f1f860970d15d623; 32,773 frozen kept as data/tokenizer_frozen_0829.json | ruled: rebuild under unfreeze condition 2, ~8.5% freeze tax (tok.ultra_freeze_tax_0910) |
 
 ## Build order
 
@@ -85,9 +85,39 @@ close before the gate run; each needs a one-line ruling in this table, not a new
 - **AttnRes**: do not carry across the CED boundary; evaluate within-half only if CED is built.
 - MoE: reuse MoEFFN as-is, all blocks, 48/top-3/1-shared — the 384-expert / top-6 / expert-2304
   numbers are 552B-only. Keep SiTU-GLU; do not add SwiGLU clamp without an A/B.
-- **The data recipe CHANGED 2026-09-10 (user order).** Teacher synthesis (textbooks, exercises;
-  de-101 / 0e-1) is stopped and dropped. The p1 code+exercise corpus is openbmb/UltraData-Code L2
-  (natural code) and L3 (exercises with tests), python subsets, fetched from hf-mirror,
-  decontaminated against HumanEval/MBPP, mixed with the existing math/CoT/en domains (task 0e-3,
-  PR #221). Only the highest-quality tier is kept; the 2.8116B keep set stays as a domain. The
-  tokenizer is re-measured on an UltraData sample before the gate run (ae).
+- **The data recipe CHANGED 2026-09-10 (user order); state as of 2026-09-11.** Teacher
+  synthesis (textbooks/exercises, de-101) is stopped; the gate corpus is
+  openbmb/UltraData-Code L2 (natural code) and L3 (task/analysis/solution/test) python
+  subsets, fetched from hf-mirror and kept under 0e's L2/L3 keep rules (#237,
+  `datagen/ultradata_shards.py`): L2 drops category CONFIG/TEST and runs per-group
+  HumanEval/MBPP decontam + exact dedup; L3 keeps a row only when its solution passes its
+  own bundled exec test AND clears the nontriviality floor (AST nodes ≥90, or control-flow
+  ≥3 with ≥2 loops; `datagen/ud_solution_exec.py` — exec-only was 43% precision in 3b's
+  audit). The two ultra domains are then decontaminated inside the aggregate
+  (`ultradata_shards.py --aggregate`, which runs the same 13-gram engine from
+  `filters/decontam_ngram.py` and global cross-group dedup before emitting
+  `code_ultra_l{2,3}_dc`) — NOT through `scripts/filter_gate_domains.py`, whose scope is
+  the six non-ultra domains. Results land in facts/contamination.json, and they are mixed
+  with the existing math/CoT/en domains and the 2.8116B classifier keep set (now
+  `code_keep_p1`, assembled flat by scripts/assemble_keep_p1.py). The mix is `data/mix_v41_gate.json`: total_tokens 30.0B is
+  the BUDGET not supply; weights are TARGET composition (code 86% / math 8% / English 4.5%
+  / CoT 1.5%), not supply shares; `anneal` is a separate late-training composition and
+  differs from the main weight in 6 of 8 domains; all domains run one epoch except cot
+  (3×). The launch mix names eight decontaminated `_dc` dirs (#254 merged; L3 gate name
+  from #261): code_ultra_l2_dc and code_ultra_l3_noexec_dc (the GATE L3 drops the sandbox
+  solution-exec filter — static dedup + nontriviality + decontam only, user order
+  2026-09-11; the exec-filtered code_ultra_l3_dc arm is retained for a later A/B and is not
+  in the mix), plus code_py_starcoder_dc, math_owm_stage2_dc, code_keep_p1_dc,
+  en_c4_stage2_dc, cot_dc, code_py_rp1t_dc. The six non-ultra decontaminate via
+  scripts/filter_gate_domains.py (facts/contamination.json cont.gate_dc_*; packed _dc
+  supplies measured in
+  facts/corpus_supply.json#cs.gate_domains_decontaminated_tokenized_0911); the two ultra
+  domains decontaminate inside 0e's aggregate and their exact totals remain estimates
+  until that lands.
+  **Tokeniser: rebuilt 2026-09-10 to 32,768 slots under unfreeze condition 2** — the
+  measured freeze tax on UltraData was ~8.5% (PR #233,
+  facts/tokenizer.json#tok.ultra_freeze_tax_0910); the 32,773-slot vocab is preserved on
+  the pod as `data/tokenizer_frozen_0829.json`, and every gate cache is stamped at the new
+  vocab f1f860970d15d623. Gate-run recipe (fb 2026-09-11, prereg v41_gate_0911 amendment 1):
+  world 6, B4/accum8, 786,432 tokens/step, 38.1K steps; warmup 500, warmdown 0.65,
+  anneal_frac 0.10.
