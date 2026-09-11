@@ -396,6 +396,300 @@ def entries_per_doc(q, kh, vh, cu, m, compress_k, compress_v):
     return kc, vc, vis, doc
 
 
+def _gather_group_entries(kc_g, vc_g, sel_g, max_e):
+    """Ragged gather for ONE indexer-head group's selection (de-108).
+
+    kc_g/vc_g (B,gh,NB,D) are the entry K/V sliced to the group's attention heads;
+    sel_g (B,T,NB) is the group's hard selection shared by those heads. Valid entries
+    pack first (stable argsort) and boolean-compress to a ragged K/V stream (S,gh,D),
+    one varlen segment per query of length n_sel, so no OOB entry is attended. The
+    gather+compress is differentiable (backward is scatter-add, proved in
+    scripts/de108). Returns (ke,ve,n_sel,cu_e,fb,ft,fnb): ragged K/V, per-query counts,
+    ragged offsets, and per-row batch/time/entry-id triples for the STE scatter.
+    """
+    B, gh, NB, D = kc_g.shape
+    T = sel_g.shape[1]
+    n_sel = sel_g.sum(-1)                                            # (B,T)
+    order = sel_g.float().argsort(dim=-1, descending=True, stable=True)
+    idx = order[..., :max_e]                                        # (B,T,e)
+    exp_idx = idx[:, None, :, :, None].expand(B, gh, T, max_e, D)
+    ke_g = torch.gather(kc_g.unsqueeze(2).expand(B, gh, T, NB, D), 3, exp_idx)
+    ve_g = torch.gather(vc_g.unsqueeze(2).expand(B, gh, T, NB, D), 3, exp_idx)
+    keep = (torch.arange(max_e, device=kc_g.device)[None, :] < n_sel[:, :, None])
+    ke = ke_g.permute(0, 2, 3, 1, 4)[keep]                          # (S,gh,D)
+    ve = ve_g.permute(0, 2, 3, 1, 4)[keep]
+    cu_e = torch.cat([torch.zeros(1, dtype=torch.int32, device=kc_g.device),
+                      n_sel.reshape(-1).to(torch.int32).cumsum(0)])
+    tri = keep.nonzero(as_tuple=False)
+    return ke, ve, n_sel, cu_e, tri[:, 0].long(), tri[:, 1].long(), idx[keep].long()
+
+
+def _window_mask(doc, T, n_win, device):
+    ar = torch.arange(T, device=device)
+    causal = torch.ones(T, T, dtype=torch.bool, device=device).tril()
+    same = doc[:, :, None] == doc[:, None, :]
+    return same & causal & ((ar[:, None] - ar[None, :]) < n_win)     # B,T,T
+
+
+class _CSA2JointFlash(torch.autograd.Function):
+    """Window flash call over all H heads plus, per indexer-head group, a ragged
+    non-causal entries flash call over its gh heads, joined by an fp32 LSE combine
+    (de-108; proof scripts/de108/check_split_softmax_combine.py). Groups select
+    different entries, so one dense call cannot mask keys per head -- hence a call per
+    group. Differentiable args: q,kw,vw (B*T,H,D), then ke_g,ve_g per group (a
+    non-empty group passes (S_g,gh,D); an empty group passes a (1,gh,D) dummy and is
+    skipped per maxes[g]==0). Non-tensor metadata is supplied in _META immediately
+    before apply. Outputs y (B,T,H,D), ce (B,T,H), and pes (list, (S_g,gh) or None);
+    ce/pes are detached values for the STE bridge.
+    """
+
+    @staticmethod
+    def forward(ctx, q, kw, vw, *args):
+        from flash_attn.cute import interface as _fa
+        # trailing metadata: cu_w, cu_eks(list), then python ints T,n_win,scale,ih,gh,maxes
+        cu_w = args[-8]
+        cu_eks = args[-7]
+        T, n_win, scale, ih, gh, maxes = args[-6:]
+        kv = args[:-8]
+        kes, ves = list(kv[0::2]), list(kv[1::2])
+        BT, H, D = q.shape
+        B = cu_w.numel() - 1
+        cu_eq = torch.arange(0, BT + 1, dtype=torch.int32, device=q.device)
+        ow, lw = _fa._flash_attn_fwd(
+            q, kw, vw, cu_seqlens_q=cu_w, cu_seqlens_k=cu_w,
+            max_seqlen_q=T, max_seqlen_k=T, causal=True,
+            window_size_left=n_win - 1, window_size_right=0,
+            softmax_scale=scale, return_lse=True)
+        lw3 = lw.t().reshape(B, T, H).float()
+        le_all = torch.full_like(lw3, float("-inf"))
+        oe_all = ow.new_zeros(B, T, H, D)
+        oes, pes = [None] * ih, [None] * ih
+        for g in range(ih):
+            if maxes[g] == 0:
+                continue
+            h0 = g * gh
+            oe, le = _fa._flash_attn_fwd(
+                q[:, h0:h0 + gh], kes[g], ves[g], cu_seqlens_q=cu_eq,
+                cu_seqlens_k=cu_eks[g], max_seqlen_q=1, max_seqlen_k=maxes[g],
+                causal=False, softmax_scale=scale, return_lse=True)
+            oe_all[:, :, h0:h0 + gh] = oe.reshape(B, T, gh)
+            le_all[:, :, h0:h0 + gh] = le.t().reshape(B, T, gh).float()
+            oes[g] = oe
+            lens = (cu_eks[g][1:] - cu_eks[g][:-1]).long()
+            seg = torch.repeat_interleave(torch.arange(BT, device=q.device), lens)
+            qk = (q[seg, h0:h0 + gh] * kes[g]).sum(-1) * scale
+            pes[g] = (qk - le.t()[seg]).exp()
+        mm = torch.maximum(le_all, lw3)
+        ae = torch.where(torch.isfinite(le_all), (le_all - mm).exp(),
+                         torch.zeros_like(le_all))
+        aw = (lw3 - mm).exp()
+        den = ae + aw
+        ce = torch.where(den > 0, ae / den, torch.zeros_like(ae))
+        cw = torch.where(den > 0, aw / den, torch.zeros_like(aw))
+        y = (oe_all.float() * ce.unsqueeze(-1)
+             + ow.reshape(B, T, H, D).float() * cw.unsqueeze(-1)).to(q.dtype)
+        ctx.save_for_backward(q, kw, vw, ow, ce.to(ow.dtype), cw.to(ow.dtype),
+                              *[t for g in range(ih) if maxes[g] > 0
+                                for t in (oes[g], kes[g], ves[g])])
+        ctx.spec = (cu_w, cu_eks, T, n_win, scale, ih, gh, maxes)
+        return y, ce.detach(), pes
+
+    @staticmethod
+    def backward(ctx, dy, _dce, _dpes):
+        from flash_attn.cute import interface as _fa
+        cu_w, cu_eks, T, n_win, scale, ih, gh, maxes = ctx.spec
+        q, kw, vw, ow, ce, cw = ctx.saved_tensors[:6]
+        saved = ctx.saved_tensors[6:]
+        active = [g for g in range(ih) if maxes[g] > 0]
+        oe_s, ke_s, ve_s = {}, {}, {}
+        for i, g in enumerate(active):
+            oe_s[g], ke_s[g], ve_s[g] = saved[3 * i:3 * i + 3]
+        BT, H, D = q.shape
+        dyf = dy.float()
+        dow = (dyf * cw.float().unsqueeze(-1)).reshape(BT, H, D).to(ow.dtype)
+        dlw = (dow.float() * ow.float()).sum(-1).t().contiguous()
+        dqw, dkw, dvw = _fa._flash_attn_bwd(
+            q, kw, vw, ow, dow, dlw, softmax_scale=scale, causal=True,
+            window_size_left=n_win - 1, window_size_right=0,
+            cu_seqlens_q=cu_w, cu_seqlens_k=cu_w, max_seqlen_q=T, max_seqlen_k=T)
+        dq = dqw
+        dkes, dves = [None] * ih, [None] * ih
+        cu_eq = torch.arange(0, BT + 1, dtype=torch.int32, device=q.device)
+        for g in active:
+            h0 = g * gh
+            oe, ke, ve = oe_s[g], ke_s[g], ve_s[g]
+            doe = (dyf[:, :, h0:h0 + gh] * ce.float()[:, :, h0:h0 + gh].unsqueeze(-1)
+                   ).reshape(BT, gh, D).to(oe.dtype)
+            dle = (doe.float() * oe.float()).sum(-1).t().contiguous()
+            dqe, dke, dve = _fa._flash_attn_bwd(
+                q[:, h0:h0 + gh], ke, ve, oe, doe, dle, softmax_scale=scale,
+                causal=False, cu_seqlens_q=cu_eq, cu_seqlens_k=cu_eks[g],
+                max_seqlen_q=1, max_seqlen_k=maxes[g])
+            dq[:, h0:h0 + gh] = dq[:, h0:h0 + gh] + dqe
+            dkes[g], dves[g] = dke, dve
+        return (dq, dkw, dvw,
+                *[x for g in range(ih) for x in (dkes[g], dves[g])],
+                *[None] * 8)
+
+
+class _STEIndexerBridge(torch.autograd.Function):
+    """Zero-forward bridge injecting the CSA2 indexer STE gradient (de-108).
+
+    The attention calls attend over the detached hard selection, so they give the
+    indexer scores no gradient. In the materialized path the entry weight is
+    w_entry*ste with ste = hard + soft_sel - soft_sel.detach(); soft_sel is the small
+    indexer softmax softmax(isc) (B,H,T,NB), a differentiable node. The loss gradient
+    w.r.t the entry weight is G_n = w_global_n*(dO . ve_n); it is nonzero only on
+    selected entries where w_global = ce*pe. Because soft_sel is the OUTPUT of the
+    indexer softmax, the gradient returned to THIS tensor is G itself (zero for
+    non-selected entries); autograd then applies the softmax Jacobian
+    soft*(G - sum soft*G) on the way to isc/indexer_q/ik_weight. Proved analytically
+    (scripts/de108/check_ste_indexer_analytic.py, maxdiff 0.0). bundles[g] =
+    (fb,ft,fnb,pe,ve,ce_g). Forward returns y unchanged.
+    """
+
+    @staticmethod
+    def forward(ctx, y, soft_sel, bundles):
+        ctx.save_for_backward(y, soft_sel,
+                              *[t for b in bundles for t in b[:5]],
+                              *[b[5] for b in bundles])
+        ctx.bmeta = (len(bundles), )
+        return y
+
+    @staticmethod
+    def backward(ctx, dy):
+        soft_sel = ctx.saved_tensors[1]
+        ng = ctx.bmeta[0]
+        rest = ctx.saved_tensors[2:]
+        B, H, T, NB = soft_sel.shape
+        gh = H // ng
+        wd = soft_sel.dtype if soft_sel.dtype == torch.float64 else torch.float32
+        do = dy.to(wd)
+        G = torch.zeros(B, H, T, NB, dtype=wd, device=soft_sel.device)
+        at = 0
+        ces = rest[5 * ng:]
+        for g in range(ng):
+            fb, ft, fnb, pe, ve = rest[at:at + 5]
+            at += 5
+            ce_g = ces[g]
+            if fb.numel():
+                dot = (do[fb, ft, g * gh:g * gh + gh] * ve.to(wd)).sum(-1)
+                w = pe.to(wd) * ce_g[fb, ft].to(wd) * dot   # G on selected entries
+                hh = torch.arange(gh, device=G.device)
+                G.index_put_((fb[:, None], (g * gh + hh)[None], ft[:, None],
+                              fnb[:, None]), w, accumulate=True)
+        return dy, G.to(soft_sel.dtype), None
+
+
+def csa2_joint_attention(q, k, v, kc, vc, sel, soft_sel, vis, doc, cu,
+                         n_win, scale, use_flash):
+    """de-108 shared entry point. One window branch + per-indexer-group entries
+    branches joined by fp32 LSE; STE indexer gradient injected onto soft_sel.
+    use_flash=True uses ragged flash_attn.cute (GPU); False is the pure-torch
+    rectangular reference (CPU CI / no-flash fallback). q,k,v (B,T,H,D); kc,vc
+    (B,H,NB,D); sel (B,H,T,NB); soft_sel (B,H,T,NB) differentiable.
+    """
+    B, T, H, D = q.shape
+    ih = sel.shape[1]
+    gh = H // ih
+    device = q.device
+    qh = q.transpose(1, 2)                                   # B,H,T,D
+    kh, vh = k.transpose(1, 2), v.transpose(1, 2)
+    m_win = _window_mask(doc, T, n_win, device)             # B,T,T
+
+    bundles = []
+    if use_flash:
+        qf = q.reshape(B * T, H, D)
+        kwf, vwf = kh.reshape(B * T, H, D), vh.reshape(B * T, H, D)
+        kes, ves, cu_eks, maxes = [], [], [], []
+        per = []
+        for g in range(ih):
+            sel_g = sel[:, g * gh]                          # B,T,NB
+            n_sel = sel_g.sum(-1)
+            max_e = int(n_sel.max().item())
+            maxes.append(max_e)
+            if max_e == 0:
+                kes.append(qf.new_zeros(1, gh, D))
+                ves.append(qf.new_zeros(1, gh, D))
+                cu_eks.append(torch.zeros(1, dtype=torch.int32, device=device))
+                per.append(None)
+                continue
+            ke, ve, _, cu_e, fb, ft, fnb = _gather_group_entries(
+                kc[:, g * gh:g * gh + gh], vc[:, g * gh:g * gh + gh], sel_g, max_e)
+            kes.append(ke)
+            ves.append(ve)
+            cu_eks.append(cu_e)
+            per.append((fb, ft, fnb, ve))
+        y, ce, pes = _CSA2JointFlash.apply(
+            qf, kwf, vwf,
+            *[x for g in range(ih) for x in (kes[g], ves[g])],
+            cu, cu_eks, T, n_win, scale, ih, gh, maxes)
+        for g in range(ih):
+            if per[g] is None:
+                bundles.append((torch.zeros(0, dtype=torch.long, device=device),
+                                torch.zeros(0, dtype=torch.long, device=device),
+                                torch.zeros(0, dtype=torch.long, device=device),
+                                q.new_zeros(0, gh), q.new_zeros(0, gh, D),
+                                ce[:, :, g * gh:g * gh + gh]))
+            else:
+                fb, ft, fnb, ve = per[g]
+                bundles.append((fb, ft, fnb, pes[g], ve,
+                                ce[:, :, g * gh:g * gh + gh]))
+        return _STEIndexerBridge.apply(y, soft_sel, bundles)
+
+    # pure-torch reference: rectangular masked entries softmax per group, autograd-tracked
+    wd = torch.float64 if q.dtype == torch.float64 else torch.float32
+    sw = ((qh @ kh.transpose(-1, -2)) * scale).masked_fill(
+        ~m_win[:, None].expand(B, H, T, T), float("-inf")).to(wd)
+    lw = torch.logsumexp(sw, -1)                       # B,H,T
+    ow = torch.softmax(sw, -1) @ vh.to(wd)            # B,H,T,D
+    y = torch.zeros(B, T, H, D, dtype=wd, device=device)
+    for g in range(ih):
+        h0 = g * gh
+        sel_g = sel[:, h0]                                  # B,T,NB
+        n_sel = sel_g.sum(-1)
+        max_e = int(n_sel.max().item())
+        ce_g = torch.zeros(B, T, gh, dtype=wd, device=device)
+        if max_e > 0:
+            order = sel_g.float().argsort(dim=-1, descending=True, stable=True)[..., :max_e]
+            exp_idx = order[:, None, :, :, None].expand(B, gh, T, max_e, D)
+            ke_g = torch.gather(kc[:, h0:h0 + gh].unsqueeze(2).expand(B, gh, T, kc.shape[2], D),
+                                3, exp_idx)
+            ve_g = torch.gather(vc[:, h0:h0 + gh].unsqueeze(2).expand(B, gh, T, vc.shape[2], D),
+                                3, exp_idx)
+            keep = (torch.arange(max_e, device=device)[None, :] < n_sel[:, :, None])
+            se = ((qh[:, h0:h0 + gh].unsqueeze(3) * ke_g).sum(-1) * scale).masked_fill(
+                ~keep[:, None], float("-inf")).to(wd)     # B,gh,T,e
+            hasq = n_sel > 0                                # B,T
+            le0 = torch.logsumexp(se, -1)
+            le = torch.where(hasq[:, None], le0, torch.zeros_like(le0))
+            pe_r = (torch.nan_to_num(torch.softmax(se, -1), nan=0.0)
+                    * hasq[:, None].unsqueeze(-1))          # B,gh,T,e
+            oe = (pe_r.unsqueeze(-1) * ve_g.to(wd)).sum(-2)  # B,gh,T,D
+            lwg = lw[:, h0:h0 + gh]
+            mm = torch.maximum(le, lwg)
+            ae = torch.where(hasq[:, None], (le - mm).exp(), torch.zeros((), dtype=wd))
+            aw = (lwg - mm).exp()
+            ce_g = (ae / (ae + aw)).transpose(1, 2)        # B,T,gh
+            cw_g = (aw / (ae + aw)).transpose(1, 2)
+            y[:, :, h0:h0 + gh] = (
+                oe.transpose(1, 2) * ce_g.unsqueeze(-1)
+                + ow[:, h0:h0 + gh].transpose(1, 2) * cw_g.unsqueeze(-1))
+            pe_flat = pe_r.permute(0, 2, 3, 1)[keep]       # S,gh
+            _, ve_flat, _, _, fb, ft, fnb = _gather_group_entries(
+                kc[:, h0:h0 + gh], vc[:, h0:h0 + gh], sel_g, max_e)
+            bundles.append((fb, ft, fnb, pe_flat, ve_flat, ce_g))
+        else:
+            y[:, :, h0:h0 + gh] = ow[:, h0:h0 + gh].transpose(1, 2)
+            bundles.append((torch.zeros(0, dtype=torch.long, device=device),
+                            torch.zeros(0, dtype=torch.long, device=device),
+                            torch.zeros(0, dtype=torch.long, device=device),
+                            q.new_zeros(0, gh, dtype=wd), q.new_zeros(0, gh, D, dtype=wd), ce_g))
+    y = y.to(q.dtype)
+    return _STEIndexerBridge.apply(y, soft_sel, bundles)
+
+
+
 class HeavilyCompressedAttention(nn.Module):
     """HCA: dense attention over aggressively compressed KV, no sparse selection.
 
@@ -499,6 +793,9 @@ class CompressedSparseAttention(nn.Module):
         # engineering choice, flagged in the PR, since the paper does not say how the
         # indexer learns.
         self.csa2 = bool(getattr(cfg, "csa2", False))
+        # de-108: replace the materialized joint softmax with two flash calls joined by
+        # an fp32 LSE combine (memory fix); falls back to materialized when off.
+        self.csa2_joint = bool(getattr(cfg, "csa2_joint", False))
         if self.csa2:
             if not getattr(cfg, "csa", False):
                 raise ValueError(
@@ -645,9 +942,19 @@ class CompressedSparseAttention(nn.Module):
         s = torch.where(alive, isc, torch.zeros_like(isc))
         soft_sel = (torch.softmax(s, dim=-1) * alive.to(isc.dtype)
                     ).repeat_interleave(self.h // self.ih, dim=1)  # B,H,T,NB
-        ste = sel.to(soft_sel.dtype) + soft_sel - soft_sel.detach()
+
+        if getattr(self, "csa2_joint", False):
+            # de-108: window flash + per-indexer-group entries flash joined by fp32 LSE,
+            # no materialized B,H,T,(NB+T) score tensor; pure-torch ref when flash is
+            # absent. STE indexer gradient injected onto soft_sel inside the helper.
+            y = csa2_joint_attention(
+                q, k, v, kc, vc, sel, soft_sel, vis, doc, cu,
+                self.n_win, self.scale, use_flash=HAS_FA)
+            self._pkg = CSA2Package(kc=kc, vc=vc, ik=ik, topk_idx=_topk, nb=NB, cu=cu)
+            return y                                        # B,T,H,D
 
         # --- one softmax over [selected entries ; SWA window keys] ------------------
+        ste = sel.to(soft_sel.dtype) + soft_sel - soft_sel.detach()
         sc = (qh @ kc.transpose(-1, -2)) * self.scale            # B,H,T,NB
         ar = torch.arange(T, device=q.device)
         causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
