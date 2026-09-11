@@ -1029,9 +1029,15 @@ class CompressedSparseAttention(nn.Module):
             return y                                        # B,T,H,D
 
         if getattr(self, "csa2_win_flash", False):
+            # HAS_FA means the cute kernel imported, not that these tensors are on the device it
+            # runs on. A checkpoint saved with --csa2_win_flash is evaled --device cpu (the
+            # step-6000/12000 HumanEval cardless path): gating on HAS_FA alone then calls the
+            # cute forward on CPU tensors and dies in flash_attn.cute.interface's bf16/fp16
+            # assert. Gate on the ACTUAL device: CPU takes the materialized split-softmax branch
+            # in csa2_window_flash, which is the same math and is under check_cpu_parity.
             y = csa2_window_flash(
                 q, k, v, qh, kh, vh, kc, vc, sel, ste, vis, doc, cu,
-                self.n_win, self.scale, use_flash=HAS_FA)
+                self.n_win, self.scale, use_flash=HAS_FA and q.is_cuda)
             self._pkg = CSA2Package(kc=kc, vc=vc, ik=ik, topk_idx=_topk, nb=NB, cu=cu)
             return y                                        # B,T,H,D
 
