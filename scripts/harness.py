@@ -339,7 +339,8 @@ _RULE_CHECKS = {
         "selftests_are_gated",
     # pinned_ids + tokenizer_roundtrip catch a REBUILD after the fact (moved specials,
     # a dropped byte). Neither can see the unfreeze decision itself.
-    "Tokenizer frozen 2026-08-29": "pinned_ids",
+    "Tokenizer rebuilt 2026-09-10 under unfreeze condition 2": "pinned_ids",
+    "Vocabulary rebuilt 2026-09-10 (condition 2)": "pinned_ids",
     "Vocabulary identity": "vocab_id_on_load_path",
     "When there is no lane card at all": "coresident_cache_refusal",
     "Long jobs detach": "no_foreground_pod_training",
@@ -355,7 +356,7 @@ _RULE_CHECKS = {
     "runs/.jsonl ledgers merge by union": "no_ghost_running",
     "scripts/pod_push.sh pushes only content reachable from main": "pod_drift",
     "A commit that touches a file in the manifest's scope is pushed by its committer": "pod_drift",
-    "Corpus directories named by any ladder mix": "ladder_config_frozen",
+    "Mix-named corpus directories are frozen": "ladder_config_frozen",
     "Code goes through a GitHub PR; ledger-only commits keep": "merge_main.sh --selftest",
     "The shared corpus, checkpoints, and GPUs on the pod are unchanged": "pod_drift",
     "8×H20, all usable": "pod_drift",
@@ -411,7 +412,10 @@ _MANUAL_RULES = {
         "the surviving process lives in the container and the only record of the dropped tunnel "
         "is a terminal the repo never sees; no_foreground_pod_training catches the launch shape "
         "that produces these orphans, which is the cause, not the post-drop verification",
-    "GPUs": "card ownership is a controller decision, not a file state",
+    "GPUs": "card ownership is a controller decision, not a file state; allocation_reads_the_grant pins the standing-order list theirs_baseline [0,6], while per-card owner notes carry the current gate-run allocation",
+    "The 2026-09-10 disk deletion is recorded in runs/deletion_0911.txt":
+        "the deletion is an operator sequence on the pod; the committed manifest records WHAT was "
+        "deleted, and nothing can verify the operator followed the broadcast/approval sequence",
     "A PID is only meaningful in the namespace that read it.":
         "no artifact records which namespace a pid was read in -- the host and the "
         "container both print bare integers and both are correct. A check would need "
@@ -421,8 +425,9 @@ _MANUAL_RULES = {
         "the rule is an operator sequence -- kill, then read the card, then kill what remains. "
         "lane_respected sees the instant, so it catches an orphan that is holding a card NOW, "
         "but nothing in the repo records whether the reader looked after their own kill",
-    "Lanes: a 7-card training block, and one lane card for everything else":
-        "the lane/block split is allocation policy; lane_respected checks the instant, not the policy",
+    "Lanes: world-6 block 0-5 no lane at launch, temporary pre-launch lane":
+        "the lane/block split is allocation policy; lane_respected checks the instant, not the "
+        "policy; allocation_reads_the_grant pins theirs_baseline [0,6]",
     "Small jobs queue on the lane card":
         "queueing is operator behaviour over time; lane_respected catches the instantaneous violation",
     "The lane holds one job at a time": "same: lane_respected sees now, not the queue discipline",
@@ -565,7 +570,7 @@ _MANUAL_RULES = {
 #: and AGENTS.md named only `merge_main.sh <name>`, so a hand-rolled mkdir was the reachable
 #: path and de's waiter cleared the controller's lock mid-commit. Manual by nature: the lock
 #: does not record which command created it.
-_MANUAL_BASELINE = 33
+_MANUAL_BASELINE = 34
 
 
 def _norm_rule(text):
@@ -10561,6 +10566,14 @@ def _selftest_inline_citations_are_scanned():
         shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
         # The real code directories, so the world FAILs only on the inserted citation and not on
         # every path AGENTS.md legitimately names (the trap _broken_readme_current records).
+        # RUNS/ TOO: AGENTS.md now cites tracked runnable artifacts there (the V4.1 gate
+        # launcher runs/v41_gate_0911.sh); _tmp_repo pre-makes an empty runs/, so remove it and
+        # symlink the real one or every runs/ citation FAILs the real-citation case.
+        if os.path.islink(os.path.join(d, "runs")) or os.path.isfile(os.path.join(d, "runs")):
+            os.remove(os.path.join(d, "runs"))
+        elif os.path.isdir(os.path.join(d, "runs")):
+            shutil.rmtree(os.path.join(d, "runs"))
+        os.symlink(os.path.join(ROOT, "runs"), os.path.join(d, "runs"))
         for name in CMD_PATH_DIRS:
             if name and os.path.isdir(os.path.join(ROOT, name)):
                 os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
@@ -10615,10 +10628,15 @@ def _selftest_inline_citations_are_scanned():
                     f"{ev}")
             else:
                 # THE COUNT IS THE POINT of this change: a PASS that scanned 2 citations reads the
-                # same as one that scanned 64 unless the number is there.
-                assert re.search(r"\b6[0-9] script citation", ev), (
-                    f"{label}: the PASS must state how many citations it resolved, or a collapse "
-                    f"like 3fd80424's is invisible again: {ev}")
+                # same as one that scanned 64 unless the number is there. Assert against the count
+                # the REAL AGENTS.md resolves, not a hard-coded band: the count moves when a
+                # tracked citation is added (it rose to 70 in the V4.1 rewrite), and a band like
+                # 60-69 would silently go stale.
+                _live_n = len(cited_script_paths(
+                    open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read()))
+                assert re.search(rf"\b{_live_n} script citation", ev), (
+                    f"{label}: the PASS must state how many citations it resolved "
+                    f"({_live_n}), or a collapse like 3fd80424's is invisible again: {ev}")
         finally:
             shutil.rmtree(d, ignore_errors=True)
     n = len(cited_script_paths(open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read()))
@@ -10637,10 +10655,10 @@ def _broken_doc_commands():
     shutil.copy(os.path.join(ROOT, "README.md"), os.path.join(d, "README.md"))
     p = os.path.join(d, "README.md")
     s = open(p, encoding="utf-8").read()
-    assert "data/mix_scale_0.2b.json" in s, "real README no longer cites mix_scale_0.2b; update _broken_doc_commands"
-    open(p, "w", encoding="utf-8").write(s.replace("data/mix_scale_0.2b.json", "data/mix_scale_nonexistent.json"))
+    assert "data/mix_v41_gate.json" in s, "real README no longer cites data/mix_v41_gate.json; update _broken_doc_commands"
+    open(p, "w", encoding="utf-8").write(s.replace("data/mix_v41_gate.json", "data/mix_scale_nonexistent.json"))
     os.makedirs(os.path.join(d, "data", "corpus", "sample"), exist_ok=True)
-    for f in ("data/mix_sample.json", "data/mix_30b.json", "data/mix_scale_0.2b.json",
+    for f in ("data/mix_sample.json", "data/mix_v41_gate.json",
               "data/tokenizer.json"):
         open(os.path.join(d, f), "w").write("{}")
     with open(os.path.join(d, "README.md"), "a", encoding="utf-8") as f:
@@ -15904,18 +15922,18 @@ def _assert_card_ownership(root):
     #     line number in a citation rots on the next unrelated commit (§271's third half).
     _base = _theirs_baseline(root)
     if sorted(_base) != [0, 6]:
-        return (f"runs/card_assignment.json theirs_baseline is {sorted(_base)}, not [0, 6]. Cards "
-                f"0 and 6 are tileRL's by USER ORDER 2026-09-06 ('0,6 tileRL'), recorded in "
-                f"AGENTS.md's GPUs bullet; this list is what makes a lend on them EXPIRE, so "
-                f"removing a card from it silently stops the expiry check while every other "
-                f"property still passes -- the mechanism cannot see its own removal. Changing this "
-                f"needs a user order, not an edit")
+        return (f"runs/card_assignment.json theirs_baseline is {sorted(_base)}, not [0, 6]. "
+                f"theirs_baseline is the standing-order list a LEND on another team's card "
+                f"expires against; removing or widening it silently changes expiry while every "
+                f"other property still passes. The 2026-09-11 gate ruling keeps it [0,6] even "
+                f"while cards[] owner decisions move (card 0 is lent to tileRL until aupai's "
+                f"one-hour launch notice; cards 6,7 are tileRL's for the gate run). Changing "
+                f"this list needs a user order, not an edit")
     #     AND THE CITED LINE MUST STILL SAY IT. A pin citing a document that has changed under it is
     #     the §271 shape: the citation reads as authority while the authority has moved. AGENTS.md
-    #     said "All 8 cards belong to this repo" for a week after the 09-06 order superseded it, so
-    #     this is not hypothetical -- it is the state this repo was actually in. Asserted against
-    #     the bullet's own text rather than a line number, and SKIPPED rather than failed when the
-    #     file is absent, because a fixture tree legitimately has no AGENTS.md.
+    #     carried the prior split after two orders superseded it (all-eight 09-10, then the
+    #     09-11 gate-run split), so this is not hypothetical. Asserted against the bullet's own
+    #     text rather than a line number, and SKIPPED rather than failed when the file is absent.
     _ag = os.path.join(root, "AGENTS.md")
     if os.path.isfile(_ag):
         try:
@@ -15923,13 +15941,12 @@ def _assert_card_ownership(root):
                 _agtxt = _fh.read()
         except OSError:
             _agtxt = ""
-        if _agtxt and "cards 0 and 6 are tileRL's" not in _agtxt:
-            return ("AGENTS.md no longer states that cards 0 and 6 are tileRL's, but "
-                    "theirs_baseline still pins [0, 6] and this check still cites that order. One "
-                    "of the two moved: either the user changed the split and the pin is stale, or "
-                    "AGENTS.md lost the line. AGENTS.md asserted 'All 8 cards belong to this repo' "
-                    "for a week after the 2026-09-06 order superseded it, so a pin citing a "
-                    "document that has drifted is the measured failure here, not a hypothetical")
+        if _agtxt and "theirs_baseline [0,6]" not in _agtxt:
+            return ("AGENTS.md no longer names theirs_baseline [0,6], but the check still pins "
+                    "that standing order. One of the two moved: either the user changed the "
+                    "standing split and the pin is stale, or AGENTS.md lost the line. AGENTS.md "
+                    "stale after two prior card orders is the measured failure here, not a "
+                    "hypothetical")
     # (7) A LEND IS A WINDOW, AND A NOTE CLAIMING ONE WITHOUT A READABLE WINDOW REFUSES. The
     #     natural shortcut is to accept the word "lent" as the grant and read the dates as
     #     decoration; measured on card 6's real note, that shortcut makes a 13-minute loan

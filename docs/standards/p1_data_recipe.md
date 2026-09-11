@@ -184,6 +184,15 @@ not converted. The stats-file ratios are not used.
 
 ## The tokenizer is rebuilt at V=20,000
 
+> **SUPERSEDED 2026-09-10.** The gate tokenizer shipped at **V=32,768** (not 20,000), PR
+> #233, rebuilt under unfreeze condition 2 after the measured ~8.5% UltraData freeze tax
+> (`facts/tokenizer.json#tok.ultra_freeze_tax_0910`). The 09-09 V=20,000 ruling below
+> measured the proxy candidate on the OLD keep-set+textbooks composition, which the pivot
+> dropped; it is kept as the measurement record. The live vocabulary is
+> `data/tokenizer.json` on the pod, `[NUM]=32767`; the pre-rebuild vocab is
+> `data/tokenizer_frozen_0829.json`.
+
+
 Ruling 2026-09-09 (fb, reviewed by 44 without challenge). The vocabulary frozen 2026-08-29 is
 unfrozen for p1. **This invalidates nothing, because p1 has no checkpoints and that is the whole
 reason the decision is cheap today and monotonically more expensive from p1's first step.**
