@@ -1490,6 +1490,251 @@
    "uncertainty": "The 4 truncated spans' full questions were guarded before packing, so they are not an escape path. The census covers prompt spans; an answer string could in principle contain a holdout question -- unmeasured, same as every prior pack.",
    "boundary": "THE 21 OLDER PACKS, WHY EACH IS UNUSABLE (inventory 2026-09-08, pod /work/aupai/data/sft/): (a) 17 unstamped, and sft_math.py refuses unstamped packs since 2026-09-03: arith_tr_{bpe,fone,se_fone,tag_fone} and arith_v1_fone (6.9-8.6M tok, pre-vocab: no vocab_id), proc_v1, proc_v1_replay, sft_all (192.3M, the former main pack -- its sources carry 500/500 math-500 questions verbatim), sft_all_contaminated (217.6M, the pre-carve original), sft_mix_{fone,k5vocab,plain}, sft_real_fone, sft_v8_fone, sft_v9_k5vocab, sft_v10_k5vocab, sft_v11_k5vocab (the last nine also pre-vocab: no vocab_id); (b) 4 stamped against SUPERSEDED sets, refused on stamp mismatch: control_sft_ours + control_sft_ours_heldout (fp 23427f4e7087a8b7; control_sft_ours is ALSO control-arm data by role), sft_all_family_clean + sft_all_v5 (fp 0fa8026b334b5909). Disposition of the 21 waits for the user to name the target (fb's no-delete ruling). NOT FOR THE 2026-09-08 anneal arms: those test quality-domain reweighting (N1/N2 noise floor, R reweight); adding SFT data moves two variables before the noise floor exists -- this pack is the fourth arm, designed after N1/N2/R have numbers. The 6.45% anneal-window share is single-exposure; MiniCPM's ablation mixed SFT data as a fraction of the anneal, not the whole.",
    "status": "measured"
+  },
+  {
+   "id": "cont.gate_dc_code_py_starcoder",
+   "value": {
+    "domain": "code_py_starcoder_dc",
+    "rows_scanned": 6180175,
+    "rows_dropped": 1554,
+    "drop_fraction": 0.0002514,
+    "distinct_gate_problems_hit": 188,
+    "shards_total": 284,
+    "shards_rewritten": 281,
+    "shards_hardlinked_or_copied": 3,
+    "decontam_fp": "86e19705b05c4b42",
+    "corpus_fp_source": "6a52d92cd28c6094",
+    "top_problems_by_drop_rows": {
+     "humaneval:HumanEval/96": 283,
+     "mbpp:mbpp-train-326": 225,
+     "humaneval:HumanEval/129": 147,
+     "mbpp:mbpp-train-360": 84,
+     "humaneval:HumanEval/19": 55
+    }
+   },
+   "measured": "2026-09-11",
+   "source": "scripts/filter_gate_domains.py run on the pod (16 workers), producing data/corpus/code_py_starcoder_dc/; per-domain totals committed in runs/gate_decontam_summary.json, full per-problem counts in the pod stamp build_corpus_stats.json",
+   "config": {
+    "method": "13-word-token n-gram containment vs HumanEval(164)+MBPP holdouts(974); DROP a row on ANY overlapping 13-gram; no allow-list",
+    "gate_parts": "HumanEval prompt + canonical_solution + test; MBPP text + code, keyed separately per problem part",
+    "normalisation": "filters/decontam_ngram.py normalise(): strip full-line # and // comments, collapse whitespace runs, strip; applied identically to both sides",
+    "tokens": "whitespace word split, vocabulary-independent (not the BPE tokenizer), so decontam_fp survives the 32K vocab rebuild",
+    "n": 13,
+    "output": "data/corpus/code_py_starcoder_dc: zero-hit shards hard-linked, hit shards rewritten dropping contaminated rows; restartable",
+    "benchmark_files": "data/eval/humaneval/humaneval_164.jsonl and data/eval/mbpp_holdouts.jsonl (pod-only, gitignored)",
+    "tokenizer_choice_comparison": "whitespace word tokens chosen over the regex punctuation split [A-Za-z0-9_]+|[^A-Za-z0-9_\\s]; punctuation tokens made 13 tokens span only 4-9 whitespace tokens of code and over-fired: code_py_rp1t dropped 3709 rows over 184 generic-idiom problems under punct-split vs 10 rows over 8 real gate problems under whitespace (fb ruling 2026-09-11: whitespace stands)",
+    "vs_ae6_audit": "the ae-6 read-only audit (scripts/audit_gate_contamination.py) keyed prompt+canonical_solution only and stripped no comments; this production run also keys the test/assert part, so counts are higher where assert bodies recur (starcoder 1554 vs 1094, cot 304 vs 2, math 3100 vs 1208) and the problem sets differ; en_c4 matches (7)"
+   },
+   "uncertainty": "per-problem counts count drop ROWS, not distinct problems per row: a row matching several gate grams increments each problem's total, so the top_problem rows sum to more than rows_dropped. Hits dominated by a few recurring reference bodies (HumanEval/96, /78, /55 and mbpp-train-326); no hand review re-admits a drop (no allow-list).",
+   "boundary": "covers the starcoder python gate domain only; the two UltraData domains (code_ultra_l2/l3) are decontaminated inside 0e's aggregate with the same module before global-dedup and carry their own counts, not these",
+   "status": "measured",
+   "artifact_sha256": {
+    "humaneval_164.jsonl": "b2adeeae8b383b6f0c615746a397f25c8abe44da4afb29cd10e6c4bbf0463fd3",
+    "mbpp_holdouts.jsonl": "1d19fb22ccab0dddde5570bdde05a7903e2e6f0c9f9fce58e7ddda5df3595338"
+   }
+  },
+  {
+   "id": "cont.gate_dc_code_py_rp1t",
+   "value": {
+    "domain": "code_py_rp1t_dc",
+    "rows_scanned": 209669,
+    "rows_dropped": 10,
+    "drop_fraction": 4.77e-05,
+    "distinct_gate_problems_hit": 8,
+    "shards_total": 16,
+    "shards_rewritten": 9,
+    "shards_hardlinked_or_copied": 7,
+    "decontam_fp": "86e19705b05c4b42",
+    "corpus_fp_source": "d0fd766cfcfe24d9",
+    "top_problems_by_drop_rows": {
+     "mbpp:mbpp-train-326": 2,
+     "humaneval:HumanEval/19": 2,
+     "mbpp:mbpp-train-360": 1,
+     "mbpp:mbpp-train-192": 1,
+     "humaneval:HumanEval/56": 1
+    }
+   },
+   "measured": "2026-09-11",
+   "source": "scripts/filter_gate_domains.py run on the pod (16 workers), producing data/corpus/code_py_rp1t_dc/; per-domain totals committed in runs/gate_decontam_summary.json, full per-problem counts in the pod stamp build_corpus_stats.json",
+   "config": {
+    "method": "13-word-token n-gram containment vs HumanEval(164)+MBPP holdouts(974); DROP a row on ANY overlapping 13-gram; no allow-list",
+    "gate_parts": "HumanEval prompt + canonical_solution + test; MBPP text + code, keyed separately per problem part",
+    "normalisation": "filters/decontam_ngram.py normalise(): strip full-line # and // comments, collapse whitespace runs, strip; applied identically to both sides",
+    "tokens": "whitespace word split, vocabulary-independent (not the BPE tokenizer), so decontam_fp survives the 32K vocab rebuild",
+    "n": 13,
+    "output": "data/corpus/code_py_rp1t_dc: zero-hit shards hard-linked, hit shards rewritten dropping contaminated rows; restartable",
+    "benchmark_files": "data/eval/humaneval/humaneval_164.jsonl and data/eval/mbpp_holdouts.jsonl (pod-only, gitignored)",
+    "tokenizer_choice_comparison": "whitespace word tokens chosen over the regex punctuation split [A-Za-z0-9_]+|[^A-Za-z0-9_\\s]; punctuation tokens made 13 tokens span only 4-9 whitespace tokens of code and over-fired: code_py_rp1t dropped 3709 rows over 184 generic-idiom problems under punct-split vs 10 rows over 8 real gate problems under whitespace (fb ruling 2026-09-11: whitespace stands)",
+    "vs_ae6_audit": "the ae-6 read-only audit (scripts/audit_gate_contamination.py) keyed prompt+canonical_solution only and stripped no comments; this production run also keys the test/assert part, so counts are higher where assert bodies recur (starcoder 1554 vs 1094, cot 304 vs 2, math 3100 vs 1208) and the problem sets differ; en_c4 matches (7)"
+   },
+   "uncertainty": "per-problem counts count drop ROWS, not distinct problems per row: a row matching several gate grams increments each problem's total, so the top_problem rows sum to more than rows_dropped. Hits dominated by a few recurring reference bodies (HumanEval/96, /78, /55 and mbpp-train-326); no hand review re-admits a drop (no allow-list).",
+   "boundary": "covers the redpajama python gate domain only; the two UltraData domains (code_ultra_l2/l3) are decontaminated inside 0e's aggregate with the same module before global-dedup and carry their own counts, not these",
+   "status": "measured",
+   "artifact_sha256": {
+    "humaneval_164.jsonl": "b2adeeae8b383b6f0c615746a397f25c8abe44da4afb29cd10e6c4bbf0463fd3",
+    "mbpp_holdouts.jsonl": "1d19fb22ccab0dddde5570bdde05a7903e2e6f0c9f9fce58e7ddda5df3595338"
+   }
+  },
+  {
+   "id": "cont.gate_dc_cot",
+   "value": {
+    "domain": "cot_dc",
+    "rows_scanned": 851965,
+    "rows_dropped": 304,
+    "drop_fraction": 0.0003568,
+    "distinct_gate_problems_hit": 2,
+    "shards_total": 13,
+    "shards_rewritten": 13,
+    "shards_hardlinked_or_copied": 0,
+    "decontam_fp": "86e19705b05c4b42",
+    "corpus_fp_source": "20c4afcff1b9ac89",
+    "top_problems_by_drop_rows": {
+     "humaneval:HumanEval/96": 302,
+     "humaneval:HumanEval/78": 2
+    }
+   },
+   "measured": "2026-09-11",
+   "source": "scripts/filter_gate_domains.py run on the pod (16 workers), producing data/corpus/cot_dc/; per-domain totals committed in runs/gate_decontam_summary.json, full per-problem counts in the pod stamp build_corpus_stats.json",
+   "config": {
+    "method": "13-word-token n-gram containment vs HumanEval(164)+MBPP holdouts(974); DROP a row on ANY overlapping 13-gram; no allow-list",
+    "gate_parts": "HumanEval prompt + canonical_solution + test; MBPP text + code, keyed separately per problem part",
+    "normalisation": "filters/decontam_ngram.py normalise(): strip full-line # and // comments, collapse whitespace runs, strip; applied identically to both sides",
+    "tokens": "whitespace word split, vocabulary-independent (not the BPE tokenizer), so decontam_fp survives the 32K vocab rebuild",
+    "n": 13,
+    "output": "data/corpus/cot_dc: zero-hit shards hard-linked, hit shards rewritten dropping contaminated rows; restartable",
+    "benchmark_files": "data/eval/humaneval/humaneval_164.jsonl and data/eval/mbpp_holdouts.jsonl (pod-only, gitignored)",
+    "tokenizer_choice_comparison": "whitespace word tokens chosen over the regex punctuation split [A-Za-z0-9_]+|[^A-Za-z0-9_\\s]; punctuation tokens made 13 tokens span only 4-9 whitespace tokens of code and over-fired: code_py_rp1t dropped 3709 rows over 184 generic-idiom problems under punct-split vs 10 rows over 8 real gate problems under whitespace (fb ruling 2026-09-11: whitespace stands)",
+    "vs_ae6_audit": "the ae-6 read-only audit (scripts/audit_gate_contamination.py) keyed prompt+canonical_solution only and stripped no comments; this production run also keys the test/assert part, so counts are higher where assert bodies recur (starcoder 1554 vs 1094, cot 304 vs 2, math 3100 vs 1208) and the problem sets differ; en_c4 matches (7)"
+   },
+   "uncertainty": "per-problem counts count drop ROWS, not distinct problems per row: a row matching several gate grams increments each problem's total, so the top_problem rows sum to more than rows_dropped. Hits dominated by a few recurring reference bodies (HumanEval/96, /78, /55 and mbpp-train-326); no hand review re-admits a drop (no allow-list).",
+   "boundary": "covers the chain-of-thought gate domain only; the two UltraData domains (code_ultra_l2/l3) are decontaminated inside 0e's aggregate with the same module before global-dedup and carry their own counts, not these",
+   "status": "measured",
+   "artifact_sha256": {
+    "humaneval_164.jsonl": "b2adeeae8b383b6f0c615746a397f25c8abe44da4afb29cd10e6c4bbf0463fd3",
+    "mbpp_holdouts.jsonl": "1d19fb22ccab0dddde5570bdde05a7903e2e6f0c9f9fce58e7ddda5df3595338"
+   }
+  },
+  {
+   "id": "cont.gate_dc_math_owm_stage2",
+   "value": {
+    "domain": "math_owm_stage2_dc",
+    "rows_scanned": 4135793,
+    "rows_dropped": 3100,
+    "drop_fraction": 0.0007496,
+    "distinct_gate_problems_hit": 134,
+    "shards_total": 206,
+    "shards_rewritten": 206,
+    "shards_hardlinked_or_copied": 0,
+    "decontam_fp": "86e19705b05c4b42",
+    "corpus_fp_source": "c0e4026e1a8fc27f",
+    "top_problems_by_drop_rows": {
+     "humaneval:HumanEval/96": 1889,
+     "humaneval:HumanEval/78": 732,
+     "mbpp:mbpp-test-470": 38,
+     "mbpp:mbpp-train-326": 33,
+     "humaneval:HumanEval/55": 32
+    }
+   },
+   "measured": "2026-09-11",
+   "source": "scripts/filter_gate_domains.py run on the pod (16 workers), producing data/corpus/math_owm_stage2_dc/; per-domain totals committed in runs/gate_decontam_summary.json, full per-problem counts in the pod stamp build_corpus_stats.json",
+   "config": {
+    "method": "13-word-token n-gram containment vs HumanEval(164)+MBPP holdouts(974); DROP a row on ANY overlapping 13-gram; no allow-list",
+    "gate_parts": "HumanEval prompt + canonical_solution + test; MBPP text + code, keyed separately per problem part",
+    "normalisation": "filters/decontam_ngram.py normalise(): strip full-line # and // comments, collapse whitespace runs, strip; applied identically to both sides",
+    "tokens": "whitespace word split, vocabulary-independent (not the BPE tokenizer), so decontam_fp survives the 32K vocab rebuild",
+    "n": 13,
+    "output": "data/corpus/math_owm_stage2_dc: zero-hit shards hard-linked, hit shards rewritten dropping contaminated rows; restartable",
+    "benchmark_files": "data/eval/humaneval/humaneval_164.jsonl and data/eval/mbpp_holdouts.jsonl (pod-only, gitignored)",
+    "tokenizer_choice_comparison": "whitespace word tokens chosen over the regex punctuation split [A-Za-z0-9_]+|[^A-Za-z0-9_\\s]; punctuation tokens made 13 tokens span only 4-9 whitespace tokens of code and over-fired: code_py_rp1t dropped 3709 rows over 184 generic-idiom problems under punct-split vs 10 rows over 8 real gate problems under whitespace (fb ruling 2026-09-11: whitespace stands)",
+    "vs_ae6_audit": "the ae-6 read-only audit (scripts/audit_gate_contamination.py) keyed prompt+canonical_solution only and stripped no comments; this production run also keys the test/assert part, so counts are higher where assert bodies recur (starcoder 1554 vs 1094, cot 304 vs 2, math 3100 vs 1208) and the problem sets differ; en_c4 matches (7)"
+   },
+   "uncertainty": "per-problem counts count drop ROWS, not distinct problems per row: a row matching several gate grams increments each problem's total, so the top_problem rows sum to more than rows_dropped. Hits dominated by a few recurring reference bodies (HumanEval/96, /78, /55 and mbpp-train-326); no hand review re-admits a drop (no allow-list).",
+   "boundary": "covers the open-web-math stage2 gate domain only; the two UltraData domains (code_ultra_l2/l3) are decontaminated inside 0e's aggregate with the same module before global-dedup and carry their own counts, not these",
+   "status": "measured",
+   "artifact_sha256": {
+    "humaneval_164.jsonl": "b2adeeae8b383b6f0c615746a397f25c8abe44da4afb29cd10e6c4bbf0463fd3",
+    "mbpp_holdouts.jsonl": "1d19fb22ccab0dddde5570bdde05a7903e2e6f0c9f9fce58e7ddda5df3595338"
+   }
+  },
+  {
+   "id": "cont.gate_dc_en_c4_stage2",
+   "value": {
+    "domain": "en_c4_stage2_dc",
+    "rows_scanned": 3887759,
+    "rows_dropped": 7,
+    "drop_fraction": 1.8e-06,
+    "distinct_gate_problems_hit": 1,
+    "shards_total": 83,
+    "shards_rewritten": 7,
+    "shards_hardlinked_or_copied": 76,
+    "decontam_fp": "86e19705b05c4b42",
+    "corpus_fp_source": "2380352c6327cefa",
+    "top_problems_by_drop_rows": {
+     "humaneval:HumanEval/78": 7
+    }
+   },
+   "measured": "2026-09-11",
+   "source": "scripts/filter_gate_domains.py run on the pod (16 workers), producing data/corpus/en_c4_stage2_dc/; per-domain totals committed in runs/gate_decontam_summary.json, full per-problem counts in the pod stamp build_corpus_stats.json",
+   "config": {
+    "method": "13-word-token n-gram containment vs HumanEval(164)+MBPP holdouts(974); DROP a row on ANY overlapping 13-gram; no allow-list",
+    "gate_parts": "HumanEval prompt + canonical_solution + test; MBPP text + code, keyed separately per problem part",
+    "normalisation": "filters/decontam_ngram.py normalise(): strip full-line # and // comments, collapse whitespace runs, strip; applied identically to both sides",
+    "tokens": "whitespace word split, vocabulary-independent (not the BPE tokenizer), so decontam_fp survives the 32K vocab rebuild",
+    "n": 13,
+    "output": "data/corpus/en_c4_stage2_dc: zero-hit shards hard-linked, hit shards rewritten dropping contaminated rows; restartable",
+    "benchmark_files": "data/eval/humaneval/humaneval_164.jsonl and data/eval/mbpp_holdouts.jsonl (pod-only, gitignored)",
+    "tokenizer_choice_comparison": "whitespace word tokens chosen over the regex punctuation split [A-Za-z0-9_]+|[^A-Za-z0-9_\\s]; punctuation tokens made 13 tokens span only 4-9 whitespace tokens of code and over-fired: code_py_rp1t dropped 3709 rows over 184 generic-idiom problems under punct-split vs 10 rows over 8 real gate problems under whitespace (fb ruling 2026-09-11: whitespace stands)",
+    "vs_ae6_audit": "the ae-6 read-only audit (scripts/audit_gate_contamination.py) keyed prompt+canonical_solution only and stripped no comments; this production run also keys the test/assert part, so counts are higher where assert bodies recur (starcoder 1554 vs 1094, cot 304 vs 2, math 3100 vs 1208) and the problem sets differ; en_c4 matches (7)"
+   },
+   "uncertainty": "per-problem counts count drop ROWS, not distinct problems per row: a row matching several gate grams increments each problem's total, so the top_problem rows sum to more than rows_dropped. Hits dominated by a few recurring reference bodies (HumanEval/96, /78, /55 and mbpp-train-326); no hand review re-admits a drop (no allow-list).",
+   "boundary": "covers the english c4 stage2 gate domain only; the two UltraData domains (code_ultra_l2/l3) are decontaminated inside 0e's aggregate with the same module before global-dedup and carry their own counts, not these",
+   "status": "measured",
+   "artifact_sha256": {
+    "humaneval_164.jsonl": "b2adeeae8b383b6f0c615746a397f25c8abe44da4afb29cd10e6c4bbf0463fd3",
+    "mbpp_holdouts.jsonl": "1d19fb22ccab0dddde5570bdde05a7903e2e6f0c9f9fce58e7ddda5df3595338"
+   }
+  },
+  {
+   "id": "cont.gate_dc_code_keep_p1",
+   "value": {
+    "domain": "code_keep_p1_dc",
+    "rows_scanned": 3060432,
+    "rows_dropped": 1297,
+    "drop_fraction": 0.0004238,
+    "distinct_gate_problems_hit": 184,
+    "shards_total": 685,
+    "shards_rewritten": 317,
+    "shards_hardlinked_or_copied": 368,
+    "decontam_fp": "86e19705b05c4b42",
+    "corpus_fp_source": "c8aa8bd4ee0185e3",
+    "top_problems_by_drop_rows": {
+     "mbpp:mbpp-train-326": 221,
+     "humaneval:HumanEval/96": 203,
+     "mbpp:mbpp-train-360": 83,
+     "humaneval:HumanEval/129": 76,
+     "humaneval:HumanEval/55": 43
+    }
+   },
+   "measured": "2026-09-11",
+   "source": "scripts/filter_gate_domains.py run on the pod (16 workers), producing data/corpus/code_keep_p1_dc/; per-domain totals committed in runs/gate_decontam_summary.json, full per-problem counts in the pod stamp build_corpus_stats.json",
+   "config": {
+    "method": "13-word-token n-gram containment vs HumanEval(164)+MBPP holdouts(974); DROP a row on ANY overlapping 13-gram; no allow-list",
+    "gate_parts": "HumanEval prompt + canonical_solution + test; MBPP text + code, keyed separately per problem part",
+    "normalisation": "filters/decontam_ngram.py normalise(): strip full-line # and // comments, collapse whitespace runs, strip; applied identically to both sides",
+    "tokens": "whitespace word split, vocabulary-independent (not the BPE tokenizer), so decontam_fp survives the 32K vocab rebuild",
+    "n": 13,
+    "output": "data/corpus/code_keep_p1_dc: zero-hit shards hard-linked, hit shards rewritten dropping contaminated rows; restartable",
+    "benchmark_files": "data/eval/humaneval/humaneval_164.jsonl and data/eval/mbpp_holdouts.jsonl (pod-only, gitignored)",
+    "tokenizer_choice_comparison": "whitespace word tokens chosen over the regex punctuation split [A-Za-z0-9_]+|[^A-Za-z0-9_\\s]; punctuation tokens made 13 tokens span only 4-9 whitespace tokens of code and over-fired: code_py_rp1t dropped 3709 rows over 184 generic-idiom problems under punct-split vs 10 rows over 8 real gate problems under whitespace (fb ruling 2026-09-11: whitespace stands)",
+    "vs_ae6_audit": "the ae-6 read-only audit (scripts/audit_gate_contamination.py) keyed prompt+canonical_solution only and stripped no comments; this production run also keys the test/assert part, so counts are higher where assert bodies recur (starcoder 1554 vs 1094, cot 304 vs 2, math 3100 vs 1208) and the problem sets differ; en_c4 matches (7)"
+   },
+   "uncertainty": "per-problem counts count drop ROWS, not distinct problems per row: a row matching several gate grams increments each problem's total, so the top_problem rows sum to more than rows_dropped. Hits dominated by a few recurring reference bodies (HumanEval/96, /78, /55 and mbpp-train-326); no hand review re-admits a drop (no allow-list).",
+   "boundary": "covers the p1 keep-set (rp1t dd09+b2v2_dd+dedup08 union) gate domain only; the two UltraData domains (code_ultra_l2/l3) are decontaminated inside 0e's aggregate with the same module before global-dedup and carry their own counts, not these",
+   "status": "measured",
+   "artifact_sha256": {
+    "humaneval_164.jsonl": "b2adeeae8b383b6f0c615746a397f25c8abe44da4afb29cd10e6c4bbf0463fd3",
+    "mbpp_holdouts.jsonl": "1d19fb22ccab0dddde5570bdde05a7903e2e6f0c9f9fce58e7ddda5df3595338"
+   }
   }
  ]
 }
