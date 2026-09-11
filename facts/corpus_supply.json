@@ -1471,9 +1471,9 @@
    "retracted_value": []
   },
   {
-   "id": "cs.ultra_l2_dc_tokenized_0911",
+   "id": "cs.gate_cache_ultra_l2_dc_0911",
    "value": 15340877471,
-   "unit": "packed pool tokens, post 13-gram decontamination (ae-7), vocab f1f860970d15d623",
+   "unit": "cache-side packed pool in /data00/tokens_<domain>.pt (torch stream after row-aligned truncation, with the three identity stamps) -- joins the corpus-side exact document token fact cs.ultra_l2_dc_landed_0911 (PR #270); the two VALUES are numerically equal here (zero/near-zero trailing partial row) but measure different stages",
    "measured": "2026-09-11",
    "source": "scripts/pretokenize_domains.py (5 workers x RAYON 5 = 25 cores, CPU, alongside 0e static L3) writing pod /data00/tokens_code_ultra_l2_dc.pt; decontam by scripts/filter_gate_domains.py; REPORT line + stamps read back",
    "config": {
@@ -1491,16 +1491,16 @@
     "mix_supply_basis": "27/3 draw 13.05B / 15.34B = 0.85 (0e)"
    },
    "uncertainty": "none; exact counts, driver-measured seconds",
-   "boundary": "covers only UltraData L2 decontaminated; not L3",
+   "boundary": "covers only UltraData L2 decontaminated; not L3 Join key: cs.ultra_l2_dc_landed_0911 (PR #270) holds the corpus-side kept_tokens/dedup provenance; this row adds only cache identity (sha256, .vocab/.srcfp/.seed, encode seconds, bytes).",
    "status": "measured",
    "tokens_status": "measured",
    "guard_phrases": [],
    "retracted_value": []
   },
   {
-   "id": "cs.ultra_l3_noexec_dc_tokenized_0911",
+   "id": "cs.gate_cache_ultra_l3_noexec_dc_0911",
    "value": 26697332099,
-   "unit": "packed pool tokens, post 13-gram decontamination (ae-7), exec filter dropped per user order (static-only), vocab f1f860970d15d623",
+   "unit": "cache-side packed pool in /data00/tokens_<domain>.pt (torch stream after row-aligned truncation, with the three identity stamps) -- joins the corpus-side exact document token fact cs.ultra_l3_noexec_dc_landed_0911 (PR #270); the two VALUES are numerically equal here (zero/near-zero trailing partial row) but measure different stages",
    "measured": "2026-09-11",
    "source": "scripts/pretokenize_domains.py (24 workers x RAYON 5 = 120 cores, CPU) writing pod /data00/tokens_code_ultra_l3_noexec_dc.pt; conversion datagen/ultradata_shards.py, decontam scripts/filter_gate_domains.py; full-load len() and stamps read back",
    "config": {
@@ -1520,7 +1520,7 @@
     "completion_sentinel": "pod runs/ultra_groups/l3_noexec_done.sentinel (carries kept_tokens, fp_dir, decontam_fp, L3_NOEXEC_AGG_DONE)"
    },
    "uncertainty": "none; exact full-load count matching 0e's kept_tokens, driver-measured seconds",
-   "boundary": "static-only UltraData L3 (exec-filtered parts dropped); not L2 or the six non-ultra domains",
+   "boundary": "static-only UltraData L3 (exec-filtered parts dropped); not L2 or the six non-ultra domains Join key: cs.ultra_l3_noexec_dc_landed_0911 (PR #270) holds the corpus-side kept_tokens/dedup provenance; this row adds only cache identity (sha256, .vocab/.srcfp/.seed, encode seconds, bytes).",
    "status": "measured",
    "tokens_status": "measured",
    "guard_phrases": [],
