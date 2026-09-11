@@ -1,46 +1,46 @@
 {
  "total_tokens": 30000000000,
  "domains": {
-  "code_ultra_l2": {
+  "code_ultra_l2_dc": {
    "weight": 0.45,
    "epochs": 1,
    "anneal": 0.3
   },
-  "code_ultra_l3": {
-   "weight": 0.3,
-   "epochs": 1,
-   "anneal": 0.4
-  },
-  "code_py_starcoder": {
+  "code_py_starcoder_dc": {
    "weight": 0.07,
    "epochs": 1,
    "anneal": 0.05
   },
-  "math_owm_stage2": {
+  "math_owm_stage2_dc": {
    "weight": 0.08,
    "epochs": 1,
    "anneal": 0.1
   },
-  "code_keep_p1": {
+  "code_keep_p1_dc": {
    "weight": 0.03,
    "epochs": 1,
    "anneal": 0.03
   },
-  "en_c4_stage2": {
+  "en_c4_stage2_dc": {
    "weight": 0.045,
    "epochs": 1,
    "anneal": 0.04
   },
-  "cot": {
+  "cot_dc": {
    "weight": 0.015,
    "epochs": 3,
    "anneal": 0.07
   },
-  "code_py_rp1t": {
+  "code_py_rp1t_dc": {
    "weight": 0.01,
    "epochs": 1,
    "anneal": 0.01
+  },
+  "code_ultra_l3_noexec_dc": {
+   "weight": 0.3,
+   "epochs": 1,
+   "anneal": 0.4
   }
  },
- "_comment": "V4.1 HumanEval gate mix (user pivot 2026-09-10, target DeepSeek-V4.1-Flash, data=openbmb/UltraData-Code). RULING fb 2026-09-11: total_tokens is the BUDGET, not supply -- 30B tokens (measured 18K tok/s/gpu x 6 cards = 3.2 days; ~1.7 with de-108). weights are TARGET composition, not supply shares; anneal is the separate late-training composition. Shape code 86% / math 8% / English 4.5% / CoT 1.5% (DeepSeek-Coder 87/10/3 family), with code_ultra_l3 upweighted vs its raw supply because L3 task/analysis/solution/test is closest to the HumanEval gate. epochs=1 everywhere except cot=3 (0.40B measured supply vs its 0.45B main+anneal share). PER-DOMAIN tokens/supply at 30B (main tokens per epoch / estimated new-vocab supply; all <1.0, cot checked per-epoch so its 3 epochs are deliberate repetition, not an accidental over-read): code_ultra_l2 13.50B/59.86B=0.226; code_ultra_l3 9.00B/31.76B=0.283; code_py_starcoder 2.10B/7.95B=0.264; code_keep_p1 0.90B/2.53B=0.356; code_py_rp1t 0.30B/0.38B=0.789; math_owm_stage2 2.40B/5.87B=0.409; en_c4_stage2 1.35B/1.99B=0.680; cot 0.15B-per-epoch/0.40B=0.375 (x3 epochs). SUPPLY (new vocab fp f1f860970d15d623, which packs code to ~0.90 of frozen): MEASURED (98, PR #243, facts/corpus_supply.json#cs.v41_gate_token_caches_rebuilt_f1f86097_0911) starcoder 7,951,977,919 / math 5,869,046,731 / en_c4 1,985,230,029 / cot 400,121,214 / py_rp1t 379,623,923; ESTIMATE (0e sample extrapolation, labelled, exact full totals ~12h out) code_ultra_l2 59.9B = frozen-unit 3-of-119 sample 1.679B x119/3 (21.5% sample dup assumed stationary) x0.8989 new/frozen; code_ultra_l3 31.8B = 0.704B x147/3 (zero dups) x0.9206; code_keep_p1 2.53B = frozen census 2,811,615,700 (data/p1/keep_set manifest) x0.90. New/frozen ratios from facts/tokenizer.json#tok.ultra_freeze_tax_0910. Domain NAMES ARE FINAL for the launch line. Launch prereq: code_keep_p1 is nested at data/p1/keep_set/{code_rp1t_dd09,code_rp1t_b2v2_dd,code_dedup08} (685 jsonl) and the loader globs flat data/corpus/<domain>/*.jsonl -- assemble a flat code_keep_p1 domain dir before launch. When 0e lands exact full UltraData totals, update the ESTIMATE supply figures and re-check each ratio stays <1.0; weights/total do not change (target composition)."
+ "_comment": "L3 SOLUTIONS ARE NOT EXECUTION-FILTERED FOR THE GATE RUN (user order 2026-09-11): the static-only aggregate of all 147 shards is data/corpus/code_ultra_l3_noexec_dc; the execution-filtered partial arm is kept under code_ultra_l3_dc for a later A/B and is NOT in this mix. V4.1 HumanEval gate mix (user pivot 2026-09-10, target DeepSeek-V4.1-Flash, data=openbmb/UltraData-Code). RULING fb 2026-09-11: total_tokens is the BUDGET, not supply -- 30B tokens (measured 18K tok/s/gpu x 6 cards = 3.2 days; ~1.7 with de-108). weights are TARGET composition, not supply shares; anneal is the separate late-training composition. Shape code 86% / math 8% / English 4.5% / CoT 1.5% (DeepSeek-Coder 87/10/3 family), with code_ultra_l3_noexec_dc upweighted vs its raw supply because L3 task/analysis/solution/test is closest to the HumanEval gate. epochs=1 everywhere except cot_dc=3 (0.40B measured supply vs its 0.45B main+anneal share). SIX NON-ULTRA DOMAINS NAME THE 13-GRAM-DECONTAMINATED _dc COPIES (ae-7, PR #252 module + PR #253 facts cont.gate_dc_*, decontam_fp 86e19705b05c4b42): data/corpus/<domain>_dc, n=13 whitespace-word-gram DROP vs HumanEval+MBPP; dropped fractions 0.0002%-0.0750% leave the token-supply ratios below unchanged at this precision. THE TWO ULTRA DOMAINS ALSO CARRY _dc: code_ultra_l2_dc/code_ultra_l3_noexec_dc are 0e's aggregate output (aggregate runs filters/decontam_ngram before global-dedup, emits final shards to data/corpus/code_ultra_l{2,3}_dc with build_corpus_stats carrying decontam_ngram counts + decontam_fp 86e19705b05c4b42; the in-progress group converts are tagged intermediates and removed after). PER-DOMAIN tokens/supply at 30B (main tokens per epoch / supply; all <1.0, cot checked per-epoch so its 3 epochs are deliberate repetition, not an accidental over-read). SIX NON-ULTRA SUPPLIES ARE MEASURED packed _dc tokens (98, facts/corpus_supply.json#cs.gate_domains_decontaminated_tokenized_0911): code_py_starcoder_dc 2.10B/7.9489B=0.264; code_keep_p1_dc 0.90B/2.6270B=0.343; code_py_rp1t_dc 0.30B/0.3796B=0.790; math_owm_stage2_dc 2.40B/5.8580B=0.410; en_c4_stage2_dc 1.35B/1.9852B=0.680; cot_dc 0.15B-per-epoch/0.39999B=0.375 (x3 epochs). ULTRA RATIOS STILL ESTIMATE until 0e's aggregate lands: code_ultra_l2_dc 13.50B/59.86B=0.226; code_ultra_l3_noexec_dc 9.00B/31.76B=0.283. SUPPLY (new vocab fp f1f860970d15d623): MEASURED packed tokens of the six DECONTAMINATED _dc caches (98, facts/corpus_supply.json#cs.gate_domains_decontaminated_tokenized_0911, total 19,198,673,104 = -0.0815% vs pre-dc) starcoder_dc 7,948,925,654 / math_dc 5,857,968,443 / keep_p1_dc 2,626,975,915 / en_c4_dc 1,985,209,544 / cot_dc 399,994,207 / py_rp1t_dc 379,599,341. ESTIMATE (0e sample extrapolation, labelled, exact full totals pending aggregate) code_ultra_l2_dc 59.9B = frozen-unit 3-of-119 sample 1.679B x119/3 (21.5% sample dup assumed stationary) x0.8989 new/frozen; code_ultra_l3_noexec_dc 31.8B = 0.704B x147/3 (zero dups) x0.9206. New/frozen ratios from facts/tokenizer.json#tok.ultra_freeze_tax_0910. The flat code_keep_p1 source and its flat code_keep_p1_dc copy both exist on the pod (685 shards). When 0e lands the exact _dc UltraData aggregate totals, replace the two ESTIMATE ultra figures and re-check their ratios stay <1.0; weights/total do not change (target composition)."
 }
