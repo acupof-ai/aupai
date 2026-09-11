@@ -485,3 +485,4 @@
 {"ts": "2026-09-11T07:19Z", "reviewer": "3b", "task": "L3 --no-exec static arm + _dc final-shard glob n_shards=0 fix", "artifact": "datagen/ultradata_shards.py:170,348,414 (956d1d9); finals prefix_NNN inside _dc fout", "verdict": "approved", "pr": 262}
 {"ts": "2026-09-11T07:47Z", "reviewer": "3b", "task": "V4.1 docs rewrite final; stale 32784 + post-254/261 L3 name synced; harness baseline/live_n", "artifact": "AGENTS.md:298-312,346; v41_pivot.md:58,106-118; harness.py baseline34/live_n @4a949786", "verdict": "approved", "pr": 256}
 {"ts": "2026-09-11T08:28Z", "reviewer": "fb", "task": "66-9", "artifact": "runs/v41_smoke_0911j.sh a71105dd; prereg v41_gate_0911 amendment 5", "verdict": "approved", "pr": 264}
+{"ts": "2026-09-11T09:13Z", "reviewer": "fb", "task": "66-6", "artifact": "runs/v41_gate_0911.sh +--csa2_win_flash; prereg amendment 6", "verdict": "approved", "pr": 267}
