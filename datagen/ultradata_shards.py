@@ -317,6 +317,12 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out=""):
         ngram_fp = None
     fprefix = os.path.basename(fout.rstrip("/"))
     final_shards = sorted(glob.glob(os.path.join(fout, f"{fprefix}_[0-9]*.jsonl")))
+    # train.py's corpus_fp_matches guard recomputes corpus_fingerprint.fp_dir
+    # (sorted shard-lines: name,size,head/tail sha256, sha1) and compares it to
+    # stats["fingerprint"]. Stamping our own full-byte hash here would fail that
+    # guard, so stamp the canonical fp_dir. fp_dir skips build_corpus_stats.json.
+    from datagen.corpus_fingerprint import fp_dir
+    canonical_fp = fp_dir(fout)
     canonical = {
         "domain": os.path.basename(fout.rstrip("/")),
         "intermediate_domain": os.path.basename(out.rstrip("/")),
@@ -342,7 +348,7 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out=""):
             "by_part": ngram_parts,
             "problems": sorted(ngram_problems),
         },
-        "fingerprint": fp_of(*final_shards),
+        "fingerprint": canonical_fp,
         "near_dedup": False,
         "near_dedup_note": "exact dedup global across all groups; near-dedup not run",
         "total_rows": sum(r.get("total_rows", 0) for r in records),
