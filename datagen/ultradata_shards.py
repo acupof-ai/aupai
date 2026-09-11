@@ -100,6 +100,10 @@ def main():
                     help="aggregate: emit final decontaminated shards here instead of out")
     ap.add_argument("--agg-workers", type=int, default=8,
                     help="aggregate: parallel 13-gram shard workers")
+    ap.add_argument("--release-intermediates", action="store_true",
+                    help="aggregate: delete each tagged shard after 13-gram "
+                         "classification and each .clean after dedup (disk-bound; "
+                         "raw parquets must be retained)")
     ap.add_argument("--no-exec", action="store_true",
                     help="L3 static-only: keep on nontrivial() floor + decontam + "
                          "exact dedup, no solution sandbox exec (user order 2026-09-11)")
@@ -109,7 +113,7 @@ def main():
 
     if args.aggregate:
         aggregate(out, args.aggregate, prefix, args.tokenizer, args.level,
-                  args.final_out, args.agg_workers)
+                  args.final_out, args.agg_workers, args.release_intermediates)
         return
 
     tag = f"_{args.tag}" if args.tag else ""
@@ -277,7 +281,8 @@ def _ngram_classify_shard(args):
             "clean": clean_p, "drop": drop_p}
 
 
-def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_workers=8):
+def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_workers=8,
+              release_intermediates=False):
     """Sum group stats, then: (1) ae's 13-gram solution-body decontamination
     against HE+MBPP prompts+solutions+tests, (2) the GLOBAL exact-dedup pass
     groups cannot do. Tagged intermediates are read from `out`; final
@@ -326,8 +331,8 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_wor
     clean_files, drop_files = [], []
     try:
         with ProcessPoolExecutor(max_workers=agg_workers) as ex:
-            for res in ex.map(_ngram_classify_shard,
-                              ((s, root) for s in tagged), chunksize=1):
+            for tagged_p, res in zip(tagged, ex.map(
+                    _ngram_classify_shard, ((s, root) for s in tagged), chunksize=1)):
                 scanned += res["rows"]
                 ngram_drop += res["ngram_drop"]
                 for k, v in res["parts"].items():
@@ -335,6 +340,10 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_wor
                 ngram_problems.update(res["problems"])
                 clean_files.append(res["clean"])
                 drop_files.append(res["drop"])
+                # Disk-saving (L3 static, raw parquets retained): the classified
+                # .clean/.ngdrop now hold every row, so release the tagged source.
+                if release_intermediates:
+                    os.remove(tagged_p)
         assert scanned == group_kept, (
             f"tagged shards hold {scanned} rows, group stats say kept {group_kept}")
 
@@ -360,6 +369,10 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_wor
                     writer.write(rec)
                     kept += 1
                     kept_chars += len(rec["content"])
+                # .clean fully consumed by phase 2; phase 3 reads only .ngdrop +
+                # crossdup. Release it to bound disk.
+                if release_intermediates:
+                    os.remove(cf)
         writer.close()
         drop_files.append(xdrop_p)
 
@@ -398,7 +411,10 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_wor
             except OSError:
                 pass
     for shard in tagged:
-        os.remove(shard)
+        try:
+            os.remove(shard)
+        except OSError:
+            pass  # already released when release_intermediates is set
 
     # Partition invariant: final kept + rejects + cross-group dup + ngram drop
     # == total input rows.
