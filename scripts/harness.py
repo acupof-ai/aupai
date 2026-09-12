@@ -15073,6 +15073,67 @@ def _selftest_monitor_close_loses_to_a_human():
             "and a human close carries none")
 
 
+def _selftest_rotate_launch_log():
+    """A fresh launch moves the prior non-empty log aside instead of truncating it.
+
+    Incident 2026-09-11: cmd_launch opened runs/<name>.log with "w", so the world-8 relaunch
+    erased the world-6 run's steps 0-6000 (val history, step lines) the instant it started.
+    The rotation is the property being pinned: old bytes survive under a stamped name and the
+    new log starts empty. Asserted by actually rotating a real file, including the same-second
+    collision suffix.
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="logrotate_")
+    try:
+        runsd = os.path.join(d, "runs")
+        os.makedirs(runsd, exist_ok=True)
+        lp = os.path.join(runsd, "x.log")
+
+        # Absent or empty -> no rotation.
+        assert _rotate_launch_log(lp) is None, "an absent log must not be rotated"
+        open(lp, "w").close()
+        assert _rotate_launch_log(lp) is None, "an empty log must not be rotated"
+        assert os.path.exists(lp), "the empty log must be left in place"
+
+        # Non-empty -> old bytes survive under the stamped name, path freed for a fresh log.
+        old = b"step 0/38146 through step 6000: the world-6 history\n"
+        with open(lp, "wb") as f:
+            f.write(old)
+        dest = _rotate_launch_log(lp)
+        assert dest and dest != lp and dest.startswith(lp + "."), (
+            f"the rotation must return a distinct stamped path, got {dest!r}")
+        assert not os.path.exists(lp), "the live log path must be free for the new launch"
+        assert open(dest, "rb").read() == old, (
+            "the prior run's bytes must survive byte-for-byte under the rotated name")
+
+        # Same-stamp collision: pin the clock (a real second boundary here makes the pre-created
+        # name miss), pre-create the name the rotation will pick, and assert it takes the integer
+        # suffix instead of overwriting the file already sitting there.
+        lp2 = os.path.join(runsd, "y.log")
+        with open(lp2, "wb") as f:
+            f.write(b"new run\n")
+        fixed_stamp = "20000101T000000Z"
+        first_target = f"{lp2}.{fixed_stamp}"
+        with open(first_target, "w") as f:
+            f.write("already here")
+        _real_strftime = time.strftime
+        time.strftime = lambda fmt, *a, **k: fixed_stamp
+        try:
+            dest2 = _rotate_launch_log(lp2)
+        finally:
+            time.strftime = _real_strftime
+        assert dest2 == f"{lp2}.{fixed_stamp}.2", f"expected integer-suffix path, got {dest2!r}"
+        assert open(first_target).read() == "already here", "the earlier rotation was overwritten"
+        assert open(dest2).read() == "new run\n", "the new log's bytes must land at the suffix path"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return ("a non-empty runs/<name>.log is renamed to .log.<UTC stamp> with its bytes intact and "
+            "the live path freed; absent/empty logs are left alone; a same-stamp collision takes "
+            "an integer suffix and overwrites nothing")
+
+
 def _selftest_launch_closes_its_orphaned_row():
     """A launch that dies BEFORE the process exists closes its own row.
 
@@ -24295,6 +24356,7 @@ def _demo(only=None):
         _selftest_cite_blob_anchor,
         _selftest_cite_multi_target_lists,
         _selftest_launch_closes_its_orphaned_row,
+        _selftest_rotate_launch_log,
         _selftest_fatal_close_keys_the_opened_row,
         _selftest_monitor_close_loses_to_a_human,
         _selftest_shard_contract_worlds,
@@ -25988,6 +26050,28 @@ def _release_cards(name):
 RUN_CLASSES = ("incremental", "confirmatory", "infra-verification")
 
 
+def _rotate_launch_log(log_path):
+    """Rename a non-empty prior runs/<name>.log to runs/<name>.log.<UTC stamp>; return the new path.
+
+    Returns None for an absent or empty log (nothing to preserve). The stamp is second-granular
+    UTC; if a same-second rotation already exists, an integer suffix keeps both instead of
+    overwriting one -- a rotation must never destroy bytes, that is the truncation it replaces.
+    """
+    try:
+        if not os.path.isfile(log_path) or os.path.getsize(log_path) == 0:
+            return None
+    except OSError:
+        return None
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    dest = f"{log_path}.{stamp}"
+    n = 2
+    while os.path.exists(dest):
+        dest = f"{log_path}.{stamp}.{n}"
+        n += 1
+    os.rename(log_path, dest)
+    return dest
+
+
 def cmd_launch(rest):
     """`harness launch <name> [--training] [--hypothesis "..."] -- <cmd>`
 
@@ -26317,6 +26401,13 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
     # A stale .rc from a previous run of this name would be read as this run's verdict.
     if os.path.exists(rc_path):
         os.unlink(rc_path)
+    # A FRESH LAUNCH MUST NOT TRUNCATE THE PRIOR RUN'S LOG. open(log_path, "w") did, and on
+    # 2026-09-11 the world-8 relaunch erased the world-6 run's steps 0-6000 (val history, step
+    # lines) the instant it started. Move a non-empty prior log aside first; auto-resume below
+    # deliberately appends to the same path, so this runs once, at the fresh launch, not there.
+    rotated = _rotate_launch_log(log_path)
+    if rotated:
+        print(f"  rotated prior log to: {rotated}")
     # The exit code must outlive the process, because the only thing that can read it
     # otherwise is whoever reaped the child. The monitor cannot: it polls a pid, sees it
     # vanish, and has no way to distinguish "finished" from "killed". It wrote status=ok
