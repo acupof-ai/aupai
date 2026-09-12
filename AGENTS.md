@@ -89,18 +89,17 @@ rebuild is allowed only under the three unfreeze conditions and invalidates ever
 trained on the old vocabulary.
 - **Vocabulary identity.** Score every checkpoint with the vocabulary it was trained on; checkpoints and packs carry `vocab_id`, and a mismatch refuses. For an older checkpoint pass `--tokenizer`.
 - **GPUs. Gate-run allocation, user ruling 2026-09-11 (latest; `runs/card_assignment.json`
-is the record).** At launch the V4.1 gate trains on **world 6, block 0-5, with no lane**;
-**cards 6 and 7 are tileRL's for the whole gate run (2-3 days)** — aupai jobs there only by
-asking tilerl-58, and they revert when the gate run ends. **Before launch only**, card 5 is
-a temporary lane for single-card jobs (de-108 steps run there); cards 0-4 are aupai's,
-though tileRL may use card 0 until aupai's **one-hour launch notice**, at which point the
-block returns to 0-5 and the temporary lane ends. The standing-order list the grant pins
-for lend expiry remains **theirs_baseline [0,6]** — the expiry mechanism, distinct from the
-per-card owner decisions above. `harness launch` reads the grant and refuses a card outside
+is the record).** The evening 2026-09-11 order (formal run on 8 cards) supersedes the morning
+gate-run split: the v41_gate_0911 **world-8 resume trains on block 0-7 with no lane**, and
+**cards 6 and 7 are aupai's outright for the run** — tilerl-a3 handed both back (0 MiB, no
+claim) and is off all H20s. The standing-order list for lend expiry is **theirs_baseline []**,
+empty under that order; the expiry mechanism stays in place for a card a future order adds
+back. Before the evening order: world 6 block 0-5, cards 6,7 tileRL's, card 5 a temporary
+pre-launch lane — all history. `harness launch` reads the grant and refuses a card outside
 the current allocation. The controller allocates; ask before starting a GPU process. Kill by
 exact PID, never `pkill -f`. A process the controller cannot account for gets killed.
-(History: the 2026-09-06 "0,6 tileRL" order and the 2026-09-10 "all eight to V4.1" order
-are both superseded by this 2026-09-11 gate-run split.)
+(History: the 2026-09-06 "0,6 tileRL" order, the 2026-09-10 "all eight to V4.1" order, and
+the morning 2026-09-11 world-6 split are all superseded by the evening 2026-09-11 order.)
 - **A kill is not finished until `nvidia-smi` says the card is free.** Killing what you launched does not kill what it launched. 2026-09-01: after the milestone watcher's chain was killed by exact PID, `eval/run_eval.py` (pid 313429) still held GPU7 at 5.7 GB / 95% — a grandchild reparented to init whose pgid still named the dead leader, so `ps` by pgid could not see it as an orphan and only the card showed it. It would have contended with the next job on the lane. After any kill of a GPU job: read `nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader`, and kill by exact PID whatever still holds memory. A killed process can stay in the process table as a zombie: `kill -0 <pid>` returns 0 and `ps -p <pid>` prints a row for it, so neither says whether the kill worked. Read `ps -o stat= -p <pid>`: `Z` is dead (e1, 2026-09-03: three scan pids read as surviving `kill` and `kill -9` for ten minutes while the card had been free since the first signal). Killing the local wrapper (a `~/bin/pod` call, a timed-out foreground command) does not kill the process it started in the container: read the container's `ps` after every local kill and kill by exact PID there (e1, 2026-09-03: a CPU scoring run of 10,421 items kept running on the pod after its local wrapper was killed).
 - **Lanes: a world-6 gate block 0-5 with no lane at launch, and a temporary pre-launch
 lane.** At launch the run needs all six cards 0-5 *at once*, so there is no lane and one
@@ -465,7 +464,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Vocabulary identity | `vocab_id_on_load_path` |
 | GPUs (9) | manual: card ownership is a controller decision, not a file state |
 | A kill is not finished until `nvidia-smi` says the card is free (4) | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
-| Lanes: world-6 block 0-5 no lane at launch, temporary pre-launch lane | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy; allocation_reads_the_grant pins theirs_baseline [0,6] |
+| Lanes: world-6 block 0-5 no lane at launch, temporary pre-launch lane | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy; allocation_reads_the_grant pins theirs_baseline [] |
 | Small jobs queue on the lane card. They never spill into the block, not even o (3) | manual: queueing is operator behaviour over time; lane_respected catches the instantaneous violation |
 | When there is no lane card at all — `NGPU=8`, as p500m_ | `coresident_cache_refusal` |
 | Judge the cost in seconds against what the run already (2) | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |

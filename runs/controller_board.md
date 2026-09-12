@@ -59,3 +59,12 @@ all owned by live roster members.
 ## Open user decisions
 
 Eval card: closed, B in effect (#280 CPU path on the pod). None pending. Standing: Standing: tileRL keeps 6,7 through the run; L3 exec dropped; 390G reference weights kept.
+
+## Run state 2026-09-12 05:5xZ: step 9200, val 1.892@9000
+
+- Run: step 9200/38146, 26K tok/s/gpu steady, peak 43.4 GiB, ETA 31.3 h; val 1.911@8000 1.897@8500 1.892@9000; .step8000 saved 04:27Z. Next save .step10000; next HumanEval (both columns, CPU) at .step12000 ~08:5xZ.
+- HumanEval no-doctest arm, full 164 on he6k: 2/164 (HumanEval/23, /60) vs standard 0/164; empty 62/164; Fisher ~0.25. Ruling: second column from step12000, gate number stays the standard column (66 writes the fact after #290).
+- Merged by fb this tick: #285 (theirs_baseline [], card 6 aupai outright; daily lend re-extension ENDS), #289 (harness launch rotates runs/<name>.log), #282 (review pairs from roster.json). Pod stamp dbf721e2.
+- Chinese block: zh_wiki_dc 0.271B + zh_c4_dc 0.501B = 0.771B (2.57%), 0 HE/MBPP hits, held for a post-gate phase; gate mix frozen (ruling to ae/0e). PR #291 to 3b.
+- 3b-22 SFT pack built: 39.37M tokens, 9610 rows, 72/18/10 code/en/zh; PR #293 blocked on the no-comment rule, approve on resubmit.
+- Open: user's named deletion go (runs/deletion_0912_candidates.txt); 3b merges #290 #291 #292 #293.
