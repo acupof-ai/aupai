@@ -387,7 +387,7 @@
   },
   {
    "id": "v41.external_moe_kernel_bench_0911",
-   "value": "ADOPT/SKIP ruling for external MoE kernels on the p1 V4.1 stack (H20 = SM90, torch 2.11.0+cu129, d=1024, 48 experts, top-3 + 1 shared, expert_ffn=1728, seq 4096, batch 4-8). SKIP both on H20 as of 2026-09-11, decided by CPU/API reading before any card time: (1) DeepGEMM 'Mega MoE' and 'Mega Gate' (PR #432, merged 2026-09-10, v2.6.1->2.80) ship ONLY sm100_* kernel implementations (csrc/jit_kernels/impls/sm100_bf16_mega_gate.hpp, sm100_bf16_mega_moe.hpp, sm100_fp8_fp4_mega_moe.hpp; deep_gemm/include/deep_gemm/impls/sm100_*.cuh), gated __CUDA_ARCH__ >= 1000 with Blackwell UMMA/TMA descriptors; no sm90 variant exists. Their Hopper coverage stops at the older m_grouped_* GEMMs, the same op class as our torch._grouped_mm. Mega MoE additionally mandates multi-process symmetric memory (PyTorch >= 2.9; single-rank size==1 path exists but is a rendezvous no-op). The claimed ~20% faster MoE backward and 30-75% Mega Gate gains do not transfer to SM90. (2) deepseek-ai/tilekernels (TileLang 0.1.14 present on the pod) DOES support SM90, but tile_kernels/moe/ is routing/dispatch/combine primitives only (topk_gate, get_fused_mapping, expand_to_fused, reduce_fused, aux_fi, group_count, inplace_unique_group_indices, normalize_weight): there is no expert grouped GEMM (that is DeepGEMM's layer), and the only autograd gate wrapper, modeling/engram/engram_gate.py (EngramGateFn), computes sigmoid(signed_sqrt(dot(RMSNorm(x),RMSNorm(k)))) — a different routing function from our fp32 softmax + selection-only expert_bias MoEFFN gate, so no drop-in and no direct bit-parity. The routing primitives remain a candidate for a future microbenchmark of the dispatch chain alone; neither package can replace model.MoEFFN end-to-end on H20, so no wrapper work is justified. The pod already carries sgl-deep-gemm 0.1.0+cu129 with the mega Python bindings, consistent with the source reading (kernels absent at runtime for SM90).",
+   "value": "ADOPT/SKIP ruling for external MoE kernels on the p1 V4.1 stack (H20 = SM90, torch 2.11.0+cu129, d=1024, 48 experts, top-3 + 1 shared, expert_ffn=1728, seq 4096, batch 4-8). SKIP both on H20 as of 2026-09-11, decided by CPU/API reading before any card time: (1) DeepGEMM 'Mega MoE' and 'Mega Gate' (PR #432, merged 2026-09-10, v2.6.1->2.80) ship ONLY sm100_* kernel implementations (csrc/jit_kernels/impls/sm100_bf16_mega_gate.hpp, sm100_bf16_mega_moe.hpp, sm100_fp8_fp4_mega_moe.hpp; deep_gemm/include/deep_gemm/impls/sm100_*.cuh), gated __CUDA_ARCH__ >= 1000 with Blackwell UMMA/TMA descriptors; no sm90 variant exists. Their Hopper coverage stops at the older m_grouped_* GEMMs, the same op class as our torch._grouped_mm. Mega MoE additionally mandates multi-process symmetric memory (PyTorch >= 2.9; single-rank size==1 path exists but is a rendezvous no-op). The claimed ~20% faster MoE backward and 30-75% Mega Gate gains do not transfer to SM90. (2) deepseek-ai/tilekernels (TileLang 0.1.14 present on the pod) DOES support SM90, but tile_kernels/moe/ is routing/dispatch/combine primitives only (topk_gate, get_fused_mapping, expand_to_fused, reduce_fused, aux_fi, group_count, inplace_unique_group_indices, normalize_weight): there is no expert grouped GEMM (that is DeepGEMM's layer), and the only autograd gate wrapper, modeling/engram/engram_gate.py (EngramGateFn), computes sigmoid(signed_sqrt(dot(RMSNorm(x),RMSNorm(k)))) \u2014 a different routing function from our fp32 softmax + selection-only expert_bias MoEFFN gate, so no drop-in and no direct bit-parity. The routing primitives remain a candidate for a future microbenchmark of the dispatch chain alone; neither package can replace model.MoEFFN end-to-end on H20, so no wrapper work is justified. The pod already carries sgl-deep-gemm 0.1.0+cu129 with the mega Python bindings, consistent with the source reading (kernels absent at runtime for SM90).",
    "measured": "2026-09-11",
    "source": "https://github.com/deepseek-ai/DeepGEMM/pull/432 (merged 2026-09-10); https://github.com/deepseek-ai/DeepGEMM tree deep_gemm/mega/__init__.py and csrc/jit_kernels/impls (all sm100_*); https://github.com/deepseek-ai/tilekernels tree tile_kernels/moe and tile_kernels/modeling/engram/engram_gate.py; pod: nvidia-smi compute_cap 9.0, sgl-deep-gemm 0.1.0+cu129 installed, tilelang 0.1.14, tile-kernels not installed; model.py:1476 MoEFFN uses torch._grouped_mm, fp32 softmax router with selection-only bias",
    "config": {
@@ -517,6 +517,33 @@
    "status": "measured",
    "artifact_sha256": {
     "preds_humaneval_ckpt_v41_gate_0911.milestone_he2k_step2000.pt.v41gate_he2k_step2000_fixed.jsonl": "220ba1bc53ab62720f593ca45f964a8f7afb0b6d35b38c907a7c406ab90d2e59"
+   }
+  },
+  {
+   "id": "v41.humaneval_gate_step6000_0912",
+   "value": "V4.1 gate run v41_gate_0911 5B decision checkpoint (step 6000, 4.719B tokens), HumanEval greedy on the corrected 66-14 instrument, CPU path (#280 materialized branch, 32 threads): pass@1 = 0/164. Empty 46/164 = 28.0% (eos_first 20, stop_at_0 26); 118/164 completions contain code and were executed by the exec+SIGALRM scorer. Second consecutive genuine capability zero (step 2000: 0/164, 113 judged). Per prereg amendment 8 the stop rule needs BOTH 0/164 AND train val not below the smoke-g 2.829 at equal tokens; controller reported val 1.950 at step 6000, so the run continues toward 30B. Trajectory: non-empty judged 113 -> 118, still zero pass.",
+   "measured": "2026-09-12",
+   "source": "runs/he_gate_step6000_cpu_summary.txt (controls + every partial count, run ended 01:09Z) and runs/milestones.jsonl pin he6k_step6000",
+   "config": {
+    "runner": "CUDA_VISIBLE_DEVICES= eval/humaneval_gen.py --device cpu --threads 32 --run v41gate_he6k_step6000_cpu --force (ckpt = milestones pin he6k_step6000)",
+    "instrument": "66-14 self-redeclaration-aware stop; #280 CPU materialized attention branch",
+    "n_problems": 164,
+    "pass1": 0,
+    "nonempty": 118,
+    "empty": 46,
+    "eos_first": 20,
+    "stop_at_0": 26,
+    "step": 6000,
+    "tokens_trained": 4718592000,
+    "wallclock_s": 6602,
+    "ckpt_pin_sha256": "84d1f0fcb1db5f8d198502d778e9a56c26c3c1bc9842bb31972245b67dcab488",
+    "eval_ckpt_pin": "he6k_step6000 (see runs/milestones.jsonl)"
+   },
+   "uncertainty": "Greedy single sample. CPU and GPU greedy paths share the materialized softmax (#280); no GPU replicate was run for this checkpoint. Wallclock 6602 s is CPU-only cost, not a model measure. val 1.950 is controller-reported from the w6 run before its log was overwritten by the w8 relaunch redirect; not independently re-derived by this fact.",
+   "boundary": "Step-6000 5B checkpoint. HumanEval alone is 0/164 at both decision checkpoints; amendment 8 keeps training because the joint stop rule (zero AND val >= 2.829) is not met. Not evidence about the 30% gate at 30B.",
+   "status": "measured",
+   "artifact_sha256": {
+    "preds_humaneval_ckpt_v41_gate_0911.milestone_he6k_step6000.pt.v41gate_he6k_step6000_cpu.jsonl": "7fb11599492d51ce71da1d758362c5454eb7b3d648b69dc010ab73ef9ff1f3b9"
    }
   },
   {
