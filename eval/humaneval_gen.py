@@ -118,6 +118,32 @@ def hits_stop(s, entry_point):
     return truncate(s, entry_point) != s
 
 
+def repetitive(s, tail_chars=200):
+    """True if the last `tail_chars` chars contain a line or word token repeated at least
+    3 times consecutively. The degeneration shape seen at step6000: doctest lines and
+    '10 10 10 ...'. Lines are compared stripped and blank lines ignored; tokens are
+    [A-Za-z_0-9]+ runs so commas/brackets in '[1, 1, 1]' do not create their own run of
+    punctuation."""
+    tail = s[-tail_chars:]
+    lines = [ln.strip() for ln in tail.splitlines() if ln.strip()]
+    run = 0
+    prev = None
+    for ln in lines:
+        run = run + 1 if ln == prev else 1
+        if run >= 3:
+            return True
+        prev = ln
+    toks = re.findall(r"[A-Za-z_0-9]+", tail)
+    run = 0
+    prev = None
+    for t in toks:
+        run = run + 1 if t == prev else 1
+        if run >= 3:
+            return True
+        prev = t
+    return False
+
+
 def strip_docstring(prompt):
     """The sig-only arm: drop the first triple-quoted block, keep the def header.
 
@@ -132,6 +158,46 @@ def strip_docstring(prompt):
     if end == -1:
         return prompt  # unterminated -- leave unchanged rather than guess
     return prompt[:m.start()] + prompt[end + 3:]
+
+
+def _docstring_span(prompt):
+    """(content_start, quote_end_index) of the first triple-quoted block, or None."""
+    m = re.search(r'("""|\'\'\')', prompt)
+    if not m:
+        return None
+    end = prompt.find(m.group(1), m.end())
+    if end == -1:
+        return None
+    return m.end(), end
+
+
+def strip_doctests(prompt):
+    """Diagnostic arm (fb 2026-09-12): inside the first docstring remove doctest examples
+    and their expected output, keep the prose. An example is a '>>>' line, its '...'
+    continuation lines, and the following non-blank lines (the expected output) up to the
+    next blank line. Text outside the docstring and prose lines inside it are untouched.
+    """
+    span = _docstring_span(prompt)
+    if span is None:
+        return prompt
+    cstart, cend = span
+    lines = prompt[cstart:cend].splitlines(keepends=True)
+    out = []
+    i = 0
+    while i < len(lines):
+        body = lines[i].lstrip()
+        if body.startswith(">>>"):
+            i += 1
+            while i < len(lines) and lines[i].lstrip().startswith("..."):
+                i += 1
+            # Expected output: non-blank lines until the next blank OR the next prompt.
+            while (i < len(lines) and lines[i].strip()
+                   and not lines[i].lstrip().startswith(">>>")):
+                i += 1
+            continue
+        out.append(lines[i])
+        i += 1
+    return prompt[:cstart] + "".join(out) + prompt[cend:]
 
 
 def run_control(probs):
@@ -239,22 +305,54 @@ def main():
                     help="torch CPU threads (CPU path only; e.g. 32)")
     ap.add_argument("--strip-docstrings", action="store_true",
                     help="sig-only arm: remove the docstring from each prompt")
+    ap.add_argument("--strip-doctests", action="store_true",
+                    help="diagnostic arm: remove >>> examples + expected output from each "
+                         "docstring, keep the prose")
+    ap.add_argument("--first", type=int, default=None,
+                    help="score only the first N task_ids (diagnostic arm)")
     ap.add_argument("--control", action="store_true",
                     help="run the known-answer controls only, no model (CPU)")
     ap.add_argument("--force", action="store_true",
                     help="overwrite an existing predictions file (default: refuse)")
     ap.add_argument("--run", default=None,
                     help="name this run so predictions version instead of colliding")
+    ap.add_argument("--preds", default=None,
+                    help="score an existing preds jsonl (pass/empty/repetition) and exit; "
+                         "no model, cardless")
     args = ap.parse_args()
 
+    if args.preds:
+        with open(args.preds, encoding="utf-8") as fh:
+            rows = [json.loads(l) for l in fh if l.strip() and "_header" not in l]
+        nonempty = [r for r in rows if not r.get("empty")]
+        nrep = sum(bool(repetitive(r["gen"])) for r in nonempty)
+        npass = sum(bool(r.get("ok")) for r in rows)
+        nempty = len(rows) - len(nonempty)
+        print(f"{os.path.basename(args.preds)}: n={len(rows)} pass@1={npass}/{len(rows)} "
+              f"= {100 * npass / len(rows):.2f}%  nonempty={len(nonempty)} "
+              f"repetitive={nrep}/{len(nonempty)} = "
+              f"{100 * nrep / len(nonempty):.1f}% of non-empty "
+              f"(empty {nempty}/{len(rows)} = {100 * nempty / len(rows):.1f}%)", flush=True)
+        return
+
     probs = [json.loads(l) for l in open(args.data, encoding="utf-8") if l.strip()]
-    print(f"HumanEval: {len(probs)} problems"
-          f"{' (sig-only arm)' if args.strip_docstrings else ''}", flush=True)
-    prompts = [strip_docstring(p["prompt"]) if args.strip_docstrings else p["prompt"]
-               for p in probs]
+    arm = ("sig-only" if args.strip_docstrings else
+           "no-doctest" if args.strip_doctests else "standard")
+    print(f"HumanEval: {len(probs)} problems ({arm} arm)"
+          f"{f' scoring first {args.first}' if args.first else ''}", flush=True)
+    def _prompt(p):
+        if args.strip_docstrings:
+            return strip_docstring(p["prompt"])
+        if args.strip_doctests:
+            return strip_doctests(p["prompt"])
+        return p["prompt"]
+    prompts = [_prompt(p) for p in probs]
     run_control(probs)
     if args.control:
         return
+    if args.first:
+        probs = probs[:args.first]
+        prompts = prompts[:args.first]
     if not args.ckpt:
         ap.error("--ckpt required (unless --control)")
     is_cpu = str(args.device).startswith("cpu")
@@ -315,7 +413,7 @@ def main():
         + (".nodoc" if args.strip_docstrings else "")
         + ".jsonl")
     t0 = time.time()
-    npass = nempty = neos = nstop = 0
+    npass = nempty = neos = nstop = nrep = 0
     with open_artifact(preds_path, force=args.force, run=args.run) as fout:
         out_path = fout.name
         fout.write(json.dumps({
@@ -323,6 +421,8 @@ def main():
             "ckpt": os.path.basename(str(args.ckpt).rstrip("/")),
             "data": os.path.basename(args.data),
             "strip_docstrings": args.strip_docstrings,
+            "strip_doctests": args.strip_doctests,
+            "first_n": args.first,
             "device": str(args.device),
             "cpu_threads": (args.threads if is_cpu else None),
             "max_new": args.max_new,
@@ -353,6 +453,7 @@ def main():
                 empty_kind = "empty_max_new"
             npass += int(ok)
             nempty += int(empty)
+            nrep += int(not empty and repetitive(c))
             fout.write(json.dumps(
                 {"task_id": p["task_id"], "gen": c, "ok": ok, "empty": empty,
                  "empty_kind": empty_kind},
@@ -363,11 +464,15 @@ def main():
                       f"{100 * npass / i:.2f}%   ({time.time() - t0:.0f}s)", flush=True)
 
     attest(out_path)
+    n_nonempty = len(probs) - nempty
     print(f"\nHUMANEVAL pass@1 (greedy) = {npass}/{len(probs)} = "
           f"{100 * npass / len(probs):.2f}%", flush=True)
     print(f"empty-completion split: eos_first {neos}/{len(probs)}, "
           f"stop_at_0 {nstop}/{len(probs)} (total empty {nempty}/{len(probs)} = "
           f"{100 * nempty / len(probs):.1f}%)", flush=True)
+    print(f"repetitive non-empty (last 200 chars, >=3 consecutive equal lines or tokens): "
+          f"{nrep}/{n_nonempty} = "
+          f"{100 * nrep / n_nonempty:.1f}% of non-empty", flush=True)
     print(f"preds saved: {out_path}", flush=True)
 
 
