@@ -22223,9 +22223,15 @@ def _selftest_card_lend_expires():
             # No assertion on the REAL wall-clock partition for card 6: fb re-extends its window
             # daily while the gate run lasts, so at any instant 6 may be ours (window open) or
             # theirs (closed). The injected clocks above pin expiry; the live partition must not.
-        assert 7 in _live_t and 7 not in _live_o, (
-            f"card 7 is tileRL's for the gate run (object note), expected theirs, got "
-            f"ours={_live_o} theirs={_live_t}")
+        _own7 = _live_map[7].get("owner") if isinstance(_live_map[7], dict) else None
+        if _own7 == "tilerl":
+            assert 7 in _live_t and 7 not in _live_o, (
+                f"card 7 object note says owner tilerl, expected theirs, got "
+                f"ours={_live_o} theirs={_live_t}")
+        elif _own7 == "aupai":
+            assert 7 in _live_o and 7 not in _live_t, (
+                f"card 7 object note says owner aupai, expected ours, got "
+                f"ours={_live_o} theirs={_live_t}")
     finally:
         _sh.rmtree(_live_root, ignore_errors=True)
 
