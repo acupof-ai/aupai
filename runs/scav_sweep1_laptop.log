@@ -1,0 +1,17 @@
+LAPTOP_SWEEP 2026-09-12T15:04:09Z
+DELETED 2026-09-12T15:04:09Z /tmp/aupai_de_verify 0MB LAPTOP
+DELETED 2026-09-12T15:04:09Z /tmp/aupai-pod-push 60MB LAPTOP
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/a7c74a4c-f9bd-4a6d-a3e6-c6f3d7289ee2 1MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/7fb18ad1-e33c-487b-a660-81e2f1b4744c 0MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/10a7a8d8-e4d3-4e28-901c-51ac12a4084b 1MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/7e6bd80b-1282-4dda-aef1-7e42e2850e03 625MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/7d05576f-acd1-483f-86ae-7e2265e3780b 0MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/12a3d335-b612-409c-8ea3-f5f450dda250 2MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/8be8d19b-b363-473c-91ec-e1a3b3fff0d6 3MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/76e7b316-366a-467a-9427-847e52c62943 1MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/5da86c6b-d28e-4e9e-91d8-c8baed6f55ad 1MB LAPTOP_SESSION
+KEPT_SELF /private/tmp/claude-501/-Users-bytedance-code-aupai/221492bb-5db1-49f4-8bdd-6f14cd35c8a5
+HELD_FOR_CONFIRM fb prose docs:
+  /tmp/fb_agentic-coding-throughput-stack-kimi-k2-5.mdx
+  /tmp/fb_kv-router-a-b-testing.md
+  /tmp/fb_qwen3-6-35b-feature-stack.mdx
