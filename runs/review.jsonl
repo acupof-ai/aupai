@@ -537,3 +537,4 @@
 {"ts": "2026-09-12T18:03Z", "reviewer": "fb", "task": "3b-23", "artifact": "runs/v41_sft_0913.sh: SAVE_EVERY default 1000 passed to sft_math --save_every and the exp cmd; incident 14 x 13G rolling saves at 200 steps", "verdict": "approved", "pr": 306}
 {"ts": "2026-09-12T18:19Z", "reviewer": "3b", "task": "66 he step12000 fact rows (std+nodoctest)", "artifact": "facts/v41.json", "verdict": "approved", "pr": 298}
 {"ts": "2026-09-12T18:19Z", "reviewer": "3b", "task": "66 v41 gate run summary fact + excerpt", "artifact": "facts/v41.json", "verdict": "approved", "pr": 299}
+{"ts": "2026-09-12T19:08Z", "reviewer": "3b", "task": "0e-8 L3 HumanEval-stub domain builder+validator", "artifact": "datagen/build_l3_stub.py", "verdict": "approved", "pr": 307}
