@@ -1,0 +1,21 @@
+HumanEval: 164 problems (no-doctest arm)
+CONTROL canonical_solution pass = 164/164 = 100.0%  (must be ~100)
+CONTROL wrong-answer: constant-False on HumanEval/0 -> FAIL (must FAIL)
+CONTROL self-redeclare canonical: 154/154 PASS (same-name def, body scored not truncated)
+CONTROL self-redeclare wrong body -> FAIL (must FAIL)
+CONTROL empty-completion: empty/newline/pass score 0/164 each (must be 0)
+CONTROL strip: 164/164 prompts carry a docstring the sig-only arm removes
+  20/164  pass@1 = 0/20 = 0.00%   (334s)
+  40/164  pass@1 = 1/40 = 2.50%   (709s)
+  60/164  pass@1 = 1/60 = 1.67%   (1103s)
+  80/164  pass@1 = 2/80 = 2.50%   (1941s)
+  100/164  pass@1 = 2/100 = 2.00%   (2598s)
+  120/164  pass@1 = 2/120 = 1.67%   (3360s)
+  140/164  pass@1 = 2/140 = 1.43%   (3978s)
+  160/164  pass@1 = 2/160 = 1.25%   (4642s)
+  164/164  pass@1 = 2/164 = 1.22%   (4730s)
+
+HUMANEVAL pass@1 (greedy) = 2/164 = 1.22%
+empty-completion split: eos_first 15/164, stop_at_0 47/164 (total empty 62/164 = 37.8%)
+repetitive non-empty (last 200 chars, >=3 consecutive equal lines or tokens): 4/102 = 3.9% of non-empty
+preds saved: /work/aupai/data/eval/preds_humaneval_ckpt_v41_gate_0911.milestone_he6k_step6000.pt.v41gate_he6k_nodoctest164_cpu.jsonl
