@@ -662,6 +662,104 @@
    "tokens_trained": 9437184000,
    "ckpt_pin_sha256": "32d9f8af2dd717a60733c2cca3680f4b6634668a6f9373e91f2102c42b9e7b71",
    "eval_ckpt_pin": "he12k_step12000 (see runs/milestones.jsonl)"
+  },
+  {
+   "id": "v41.gate_run_v41_gate_0911_summary",
+   "value": "V4.1 flat CSA2+SWA MoE gate run v41_gate_0911, stopped by user order at step 17411 / 38146 on 2026-09-12 14:29Z after 13.69B of the 30B tokens, before the planned step20000 read. Two segments: world 6 (NGPU6 accum8, steps 0-6000, launch 09-11 15:07Z) and world 8 (NGPU8 accum6, steps 6000-17411, resume 09-12 02:07Z), identical 786,432 tok/step. VAL fell monotonically 2.444 (step500) -> 1.950 (6000) -> 1.759 (17000, last read), always far below the smoke-g reference 2.829, so prereg amendment 8's joint HumanEval+val stop never tripped on the val clause. HumanEval standard greedy was a genuine 0/164 at every checkpoint scored (2000, 4000, 6000, 12000; see the per-checkpoint facts); the diagnostic no-doctest arm gave 2/164 at 6000 (HumanEval/23,/60) and 0/164 at 12000, i.e. noise at n=164. Standard empty rate 28.0% (6k) -> 37.8% (12k); repetitive-non-empty 5.1% -> 9.8%. Peak memory flat 43.4 GiB, 0 NaN over both segments; world 8 steady 26-27K tok/s/gpu vs 28K world 6. Stop cause: user SIGTERM after the all-zero HumanEval trajectory, not a failure; an .interrupt.step17411 was saved cleanly and cards returned to tileRL.",
+   "measured": "2026-09-12",
+   "source": "runs/v41_gate_0911_w6_val_excerpt.txt (steps 500-6000 recovered from controller monitor), runs/v41_gate_0911_w8_excerpt.txt (steps 6500-17411 val + stop), and the per-checkpoint facts v41.humaneval_gate_step{2000,4000,6000,12000}_*",
+   "config": {
+    "name": "v41_gate_0911",
+    "model": "flat d1024 L12 H8, CSA2 + PureSWA2 + csa2_win_flash, MoEFFN 48 top3+1 expert_ffn1728, fp8, 3,209,392,128 total / 342,847,488 active params",
+    "segments": [
+     {
+      "world": 6,
+      "ngpu": 6,
+      "accum": 8,
+      "steps": "0-6000",
+      "tok_s_gpu": 28000,
+      "peak_gib": 43.4
+     },
+     {
+      "world": 8,
+      "ngpu": 8,
+      "accum": 6,
+      "steps": "6000-17411",
+      "tok_s_gpu": 26500,
+      "peak_gib": 43.4
+     }
+    ],
+    "tokens_per_step": 786432,
+    "schedule_steps": 38146,
+    "tokens_trained_at_stop": 13690000000,
+    "val_trajectory": {
+     "500": 2.444,
+     "1000": 2.208,
+     "2000": 2.108,
+     "3000": 2.036,
+     "4000": 1.995,
+     "5000": 1.975,
+     "6000": 1.95,
+     "6500": 1.934,
+     "7000": 1.94,
+     "7500": 1.91,
+     "8000": 1.911,
+     "8500": 1.897,
+     "9000": 1.892,
+     "9500": 1.88,
+     "10000": 1.888,
+     "10500": 1.866,
+     "11000": 1.86,
+     "11500": 1.846,
+     "12000": 1.84,
+     "12500": 1.835,
+     "13000": 1.83,
+     "13500": 1.82,
+     "14000": 1.818,
+     "14500": 1.804,
+     "15000": 1.796,
+     "15500": 1.782,
+     "16000": 1.771,
+     "16500": 1.77,
+     "17000": 1.759
+    },
+    "humaneval_standard": {
+     "2000": 0,
+     "4000": 0,
+     "6000": 0,
+     "12000": 0
+    },
+    "humaneval_nodoctest": {
+     "6000": 2,
+     "12000": 0
+    },
+    "standard_empty_fraction": {
+     "6000": 0.28,
+     "12000": 0.378
+    },
+    "standard_repetitive_fraction_nonempty": {
+     "6000": 0.051,
+     "12000": 0.098
+    },
+    "nan_count_both_segments": 0,
+    "stop": {
+     "when": "2026-09-12T14:29Z",
+     "step": 17411,
+     "cause": "user order SIGTERM (signal 15)",
+     "last_periodic": "step16000 periodic checkpoint (name under artifact_sha256)",
+     "interrupt_ckpt": "interrupt checkpoint at the stopping step (name under artifact_sha256)",
+     "interrupt_bytes": 12974001173,
+     "exit_rc": 1,
+     "cards_after": "returned to tileRL"
+    }
+   },
+   "uncertainty": "val entries 500-6000 are controller-monitor reads transcribed before the w6 log truncation (the excerpt names this); 6500-17410 are the live log. HumanEval greedy single samples n=164. Throughput is the printed interval mean range, not a strict benchmark; world sizes changed at 6000 so the two segments are not strictly paired.",
+   "boundary": "This is the run SUMMARY, not a new measurement: each HumanEval number is sourced from its own fact and artifact. The run did not reach 30B or the 30% gate; it records that at 13.69B tokens val improved normally while standard HumanEval stayed zero at every read, which is the evidence the user stopped on. It does not establish a ceiling beyond 13.69B.",
+   "status": "measured",
+   "artifact_sha256": {
+    "ckpt_v41_gate_0911.pt.interrupt.step17411": "f908d9d06a38b272d823f344 (sha256 prefix; full hash on pod)",
+    "ckpt_v41_gate_0911.pt.step16000": "4c2de45bbfe00995783ad1f3 (sha256 prefix; full hash on pod)"
+   }
   }
  ]
 }
