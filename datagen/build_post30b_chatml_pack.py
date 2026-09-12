@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """3b-22: build the post-30B V4.1 ChatML SFT pack.
-# restartable: one-shot CPU pack from already-on-disk shards; deterministic (seed 42)
-# and idempotent, full rerun ~3 min, so an interrupt is cheap -- no per-shard resume needed.
+# restartable: one-shot CPU pack from on-disk shards; deterministic, idempotent, ~3 min rerun.
 
 Three slices, single-turn ChatML rendered with scripts/loader.format_example and
 packed by datagen/prepare_sft.pack_and_save (default concat-then-encode path --
@@ -40,8 +39,8 @@ import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(_HERE)
-sys.path.insert(0, _HERE)            # datagen/: holdout, prepare_sft
-sys.path.insert(0, os.path.join(ROOT, "scripts"))  # loader
+sys.path.insert(0, _HERE)
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 from holdout import is_holdout  # noqa: E402
 from loader import IM_END, IM_START, format_example  # noqa: E402
@@ -86,9 +85,6 @@ def doctest_passes(complete, name, timeout_s=10):
     try:
         signal.signal(signal.SIGALRM, _handler)
         signal.alarm(timeout_s)
-        # swallow SystemExit too: a CLI function's doctest calls parser.error()
-        # which raises SystemExit(BaseException, not Exception) -- executing such
-        # an example must not tear down the whole pack builder.
         try:
             with contextlib.redirect_stdout(io.StringIO()), \
                     contextlib.redirect_stderr(io.StringIO()):
@@ -114,7 +110,6 @@ def doctest_passes(complete, name, timeout_s=10):
 
     for ex in examples:
         src = ex.source.strip()
-        # require a single self-contained statement with concrete expected output
         if src.startswith("...") or "\n" in ex.source.strip():
             continue
         want = ex.want
@@ -127,16 +122,12 @@ def doctest_passes(complete, name, timeout_s=10):
             signal.alarm(0)
             got = sink.getvalue()
         except AssertionError:
-            # a self-contained assertion that fails = a concrete claim the
-            # target does not satisfy -> the loop-on-false-example shape
             signal.alarm(0)
             if is_assert:
                 failed += 1
                 ran += 1
             continue
         except (NameError, AttributeError):
-            # references a helper/name the function alone does not define:
-            # not self-contained, cannot judge -> keep, do not drop
             signal.alarm(0)
             continue
         except BaseException:  # noqa: BLE001 -- SystemExit/parse artefacts -> untestable
@@ -189,7 +180,6 @@ def build_code(decon, limit=0):
                     st["doctest_pass"] += 1
                 else:
                     st["doctest_untest_kept"] += 1
-            # user posts the def stub; assistant re-declares the COMPLETE function
             pairs.append(format_example(stub, complete))
     return pairs, st
 
@@ -281,7 +271,6 @@ def mean_pair_tokens(tok, pairs, sample=4000):
 
 
 def solve_counts(means, caps, target_tokens):
-    # n_slice = N * ratio ; total_tokens = N * sum(ratio*mean)
     w = sum(RATIO[s] * means[s] for s in RATIO)
     n_total = int(target_tokens / w)
     raw = {s: int(n_total * RATIO[s]) for s in RATIO}
@@ -382,7 +371,6 @@ def main():
     rows = mask_invariants(args.out, tok, eos)
     print(f"packed {len(examples)} examples -> {rows} rows at {args.out}", flush=True)
 
-    # 30-row hand-read: 10 per slice, decoded, in a stable readable order.
     hr = []
     for s in ("code", "en", "zh"):
         sel = [p for tag, p in tagged if tag == s][:10]
