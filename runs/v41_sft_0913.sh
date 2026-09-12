@@ -54,19 +54,21 @@ python3 scripts/exp.py start --name "$NAME" \
   --cmd "sft_math.py --resume $RESUME --sft_path $PACK --epochs $EPOCHS --batch $BATCH --lr_scale $LR_SCALE (card $CARD); eval/humaneval_gen.py --chatml" \
   --hypothesis "$HYPOTHESIS" --notes "$NOTES" >/dev/null
 
-python3 scripts/card_claim.py acquire --name "$NAME" --cards "$DEV" \
-  --note "post-gate ChatML SFT $PACK" --wait 0 || {
-  echo "REFUSING to launch: card_claim acquire refused on device $DEV"
-  python3 scripts/exp.py done --name "$NAME" --status fail --result "card claim refused"
-  exit 1
-}
-trap 'python3 scripts/card_claim.py release --name "$NAME" >/dev/null 2>&1 || true' EXIT
-
 set +e
 torchrun --nproc_per_node=1 \
   --master_port="${PORT:-29530}" \
   sft_math.py --resume "$RESUME" --sft_path "$PACK" --out "$OUT" \
-  --epochs "$EPOCHS" --batch "$BATCH" --lr_scale "$LR_SCALE"
+  --epochs "$EPOCHS" --batch "$BATCH" --lr_scale "$LR_SCALE" &
+TORCH_PID=$!
+python3 scripts/card_claim.py acquire --name "$NAME" --cards "$DEV" \
+  --note "post-gate ChatML SFT $PACK" --wait 0 --wait-for-device 300 || {
+  echo "REFUSING to launch: card_claim acquire refused on device $DEV"
+  kill "$TORCH_PID" 2>/dev/null || true
+  python3 scripts/exp.py done --name "$NAME" --status fail --result "card claim refused"
+  exit 1
+}
+trap 'python3 scripts/card_claim.py release --name "$NAME" >/dev/null 2>&1 || true' EXIT
+wait "$TORCH_PID"
 TRAIN_RC=$?
 set -e
 if [ $TRAIN_RC -ne 0 ]; then
