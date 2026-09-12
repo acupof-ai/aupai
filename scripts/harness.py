@@ -5193,30 +5193,46 @@ def _broken_score_matrix_ckpts():
 def _selftest_score_matrix_alias_resolves():
     """An absent ckpt name whose alias_of names a KEPT file is not a gone row; an absent
     name whose alias names a deletion-CANDIDATE is FAIL-named through the alias. 4c's trap
-    1 (2026-09-09): a name scan that ignores alias_of false-FAILs the 30b row."""
+    1 (2026-09-09): a name scan that ignores alias_of false-FAILs the 30b row.
+
+    SELF-CONTAINED WORLD, NOT A MUTATION OF THE LIVE LISTING. The first version copied all of
+    runs/, took the newest REAL pod_ckpt_candidates_*.txt, pinned its date and then relied on
+    that listing still containing both a kept name and an unkept candidate. It pinned the date
+    but not the listing's CONTENT, which a pod pull is free to change: when the gate run stopped
+    (2026-09-12) its milestone moved kept -> deletion-candidate, the copied listing no longer
+    held the expected partition, and CI went red on main with no code change. This world writes
+    its own listing with exactly one KEEP and one candidate, so it proves the alias resolution
+    regardless of what the live listing says."""
     import shutil
     d = _tmp_repo_shaped()
     runs = os.path.join(d, "runs")
     if os.path.isdir(runs) and not os.path.islink(runs):
         shutil.rmtree(runs)
-    shutil.copytree(os.path.join(ROOT, "runs"), runs)
-    listings = sorted(glob.glob(os.path.join(runs, "pod_ckpt_candidates_*.txt")))
-    lp = listings[-1]
-    # Same FAIL-band pin as _broken_score_matrix_ckpts (6h-24h old): the candidate alias
-    # must be FAIL-named, not WARN-named as grace or stale-window.
-    txt = open(lp, encoding="utf-8").read()
+    os.makedirs(runs, exist_ok=True)
+    # FAIL band (6h-24h old), the same pin _broken_score_matrix_ckpts uses: the candidate
+    # alias must be FAIL-named, not WARN-named as grace or stale-window.
     pinned = (datetime.datetime.now(datetime.timezone.utc)
               - datetime.timedelta(hours=12)).strftime("%Y-%m-%d %H:%MZ")
-    open(lp, "w", encoding="utf-8").write(
-        re.sub(r"listed \d{4}-\d{2}-\d{2} \d{2}:\d{2}Z", f"listed {pinned}", txt, count=1))
+    cand_mtime = (datetime.datetime.now(datetime.timezone.utc)
+                  - datetime.timedelta(hours=12)).strftime("%Y-%m-%d_%H:%M")
+    keep_name = "ckpt_alias_selftest_kept.pt"
+    cand_name = "ckpt_alias_selftest_cand.pt"
+    with open(os.path.join(runs, "pod_ckpt_candidates_selftest.txt"), "w",
+              encoding="utf-8") as fh:
+        fh.write(f"# selftest-only listing, listed {pinned}: one KEEP and one candidate\n")
+        fh.write(f"# KEEP: {keep_name}\n")
+        fh.write(f"{cand_mtime} 1.00 {cand_name}\n")
+    lp = os.path.join(runs, "pod_ckpt_candidates_selftest.txt")
     _date, keep, cands = _parse_ckpt_listing(lp)
-    kept = next(iter(keep))
-    cand = next(n for n in cands if n not in keep)
-    with open(os.path.join(runs, "score_matrix.jsonl"), "a", encoding="utf-8") as fh:
+    assert keep == {keep_name}, f"self-contained KEEP parse wrong: {keep}"
+    assert set(cands) == {cand_name}, f"self-contained candidate parse wrong: {cands}"
+    with open(os.path.join(runs, "score_matrix.jsonl"), "w", encoding="utf-8") as fh:
         fh.write(json.dumps({"ckpt": "ckpt_alias_selftest_kept_alias.pt",
-                             "alias_of": kept, "measured": "2026-09-09", "metrics": {}}) + "\n")
+                             "alias_of": keep_name, "measured": "2026-09-09",
+                             "metrics": {}}) + "\n")
         fh.write(json.dumps({"ckpt": "ckpt_alias_selftest_cand_alias.pt",
-                             "alias_of": cand, "measured": "2026-09-09", "metrics": {}}) + "\n")
+                             "alias_of": cand_name, "measured": "2026-09-09",
+                             "metrics": {}}) + "\n")
     _s, ev = check_score_matrix_ckpts_present(d)
     assert "ckpt_alias_selftest_kept_alias.pt" not in ev, \
         f"an absent name with a KEPT alias was named as gone: {ev}"
@@ -5224,7 +5240,7 @@ def _selftest_score_matrix_alias_resolves():
         f"an absent name with a deletion-candidate alias was not FAIL-named: {ev}"
     shutil.rmtree(d, ignore_errors=True)
     print("  score_matrix_ckpts: absent name with kept alias stays silent; "
-          "candidate alias FAIL-named through the alias")
+          "candidate alias FAIL-named through the alias (self-contained listing)")
 
 
 def check_keep_claim_reasons_live(root):
