@@ -760,6 +760,53 @@
     "ckpt_v41_gate_0911.pt.interrupt.step17411": "f908d9d06a38b272d823f344 (sha256 prefix; full hash on pod)",
     "ckpt_v41_gate_0911.pt.step16000": "4c2de45bbfe00995783ad1f3 (sha256 prefix; full hash on pod)"
    }
+  },
+  {
+   "id": "v41.humaneval_chatml_sft_step16000_0913",
+   "value": "Post-gate ChatML SFT on the V4.1 3.2b-a352m-e48 base (resumed from v41_gate_0911 step16000, v1 code/EN/zh ChatML pack sft_v41_chatml_post30b_0912, 2 epochs, B4 fallback microbatch x 4804 optimizer steps, lr_scale 0.1, final train loss ~1.05): HumanEval greedy ChatML by-name pass@1 = 11/164 = 6.71%. PAIRED base --chatml control on the same resume checkpoint before SFT = 0/164 with 103 empty (93 empty_max_new + 10 im_end_no_func); so SFT moves by-name ChatML 0 -> 11 under one arm and clears the prereg >=5/164 Fisher floor (p=0.030 one-sided vs 0/164). SFT empty 28/164 (17.1%, all empty_max_new: 0 eos_first, 0 stop_at_0, 0 im_end_no_func), 136 non-empty, repetitive 13/136 = 9.6%. pass_ids HumanEval/14 /23 /30 /31 /34 /35 /45 /48 /53 /55 /60. Measured partial success, not a 30% gate pass: the product is a checkpoint with an RL-amplifiable signal (runs/prereg.jsonl#v41_sft_0913 amendment 1).",
+   "source": "runs/he_chatml_v41_sft_0913.log (ChatML by-name SFT arm, controls + partial counts, 1724s); paired base --chatml control run v41gate_step16000_chatml_control (preds sha 20ba884a8ed6b9ec); exp run v41_sft_0913",
+   "config": {
+    "runner": "eval/humaneval_gen.py --chatml --run v41_sft_0913 (single H20, greedy); paired control --run v41gate_step16000_chatml_control",
+    "arm": "chatml_by_name",
+    "n_problems": 164,
+    "sft_pass1": 11,
+    "sft_nonempty": 136,
+    "sft_empty": 28,
+    "sft_empty_max_new": 28,
+    "sft_eos_first": 0,
+    "sft_stop_at_0": 0,
+    "sft_im_end_no_func": 0,
+    "sft_repetitive_nonempty": 13,
+    "sft_train_microbatch": 4,
+    "sft_optimizer_steps": 4804,
+    "base_chatml_control_pass1": 0,
+    "base_chatml_control_empty": 103,
+    "base_empty_max_new": 93,
+    "base_im_end_no_func": 10,
+    "base_nonempty": 61,
+    "passing_task_ids": [
+     "HumanEval/14",
+     "HumanEval/23",
+     "HumanEval/30",
+     "HumanEval/31",
+     "HumanEval/34",
+     "HumanEval/35",
+     "HumanEval/45",
+     "HumanEval/48",
+     "HumanEval/53",
+     "HumanEval/55",
+     "HumanEval/60"
+    ],
+    "wallclock_s": 1724
+   },
+   "uncertainty": "Greedy single sample, one seed. B8 OOMed so the arm ran the pre-declared B4 fallback (4804 steps vs the 2402 the B8 prereg arm specified); tokens/update differ but the supervised mass is the same 2 epochs. Controls: by-name canonical 164/164, wrong/missing -> FAIL/None, im_end_no_func 0.",
+   "boundary": "This is the SFT stage's own 5/164 floor, not the 30B pretrain's 30% gate; 6.71% is an RL-amplifiable-signal result, not a gate pass. Base and SFT are scored under the same ChatML by-name arm, so 11 vs 0 is one-arm delta; the continuation-prompt 0/164 base is a different question.",
+   "artifact_sha256": {
+    "preds_humaneval_ckpt_v41_sft_0913.pt.chatml.v41_sft_0913.jsonl": "ed15d2b8a0a1f0c03fa3821cc2be724b7944234f0adf866e915c298271e03129",
+    "preds_humaneval_ckpt_v41_gate_0911.pt.step16000.chatml.v41gate_step16000_chatml_control.jsonl": "20ba884a8ed6b9ec73df3713a22aefd78183e4027262534684de80d468c7c60d"
+   },
+   "measured": "2026-09-12",
+   "status": "measured"
   }
  ]
 }
