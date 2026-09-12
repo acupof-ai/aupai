@@ -222,7 +222,7 @@
    "owner": "aupai",
    "note": "LANE card until the gate launch (fb 2026-09-11 04:3xZ): de-108 step 4 (de, aupai-08, ~15 card-minutes, single process) runs here first; at the one-hour notice block_cards becomes 0-5 again and the lane disappears (tileRL holds 6,7 by user ruling)."
   },
-  "6": "Lent to aupai (v41_gate_0911 world-8 block card, fb) 2026-09-11 22:30-23:59Z; tilerl-a3 handed the card 21:2xZ (sparsepin32k6 reaped) and is off all H20s. Baseline pin [0,6] still names it tileRL's until the pin PR lands, so the lend is re-extended daily until then.",
+  "6": "Lent to aupai (v41_gate_0911 world-8 block card, fb) 2026-09-12 00:00-23:59Z; re-extended daily by fb until de's theirs_baseline pin PR lands (user ruling 2026-09-11 formal run on 8 cards; tilerl-a3 off all H20s since 2026-09-11 22:3xZ).",
   "7": {
    "owner": "aupai",
    "note": "USER RULING 2026-09-11 (formal run on 8 cards): handed over by tilerl-a3 2026-09-11 22:3xZ at 0 MiB, no tileRL process; block card for the world-8 resume of v41_gate_0911."
