@@ -22493,9 +22493,19 @@ def _selftest_card_lend_expires():
         "a block card whose note hands it to another team PASSED -- this is the permissive drift "
         "property (4) exists for, and the ruling above narrowed that property, so it is asserted "
         "here to prove the narrowing did not disable it")
-    assert verdict(lambda d: d.__setitem__("block_cards", "1,2,3,4,5,6,7")) is not None, (
-        "block_cards taking baseline-theirs card 6 PASSED -- the same controller writes both "
-        "fields, so they cannot disagree about the owner")
+    _closed6 = note6.replace(
+        _live_win, f"{_w6[0] - datetime.timedelta(days=2):%H:%M}Z-{_w6[1] - datetime.timedelta(days=2):%H:%M}Z")
+    _closed6 = _closed6.replace(f"{_w6[0]:%Y-%m-%d}", f"{_w6[0] - datetime.timedelta(days=2):%Y-%m-%d}")
+    assert _parse_lend_window(_closed6)[1] < datetime.datetime.now(datetime.timezone.utc), (
+        "the closed-window mutation of card 6 did not produce a window in the past")
+
+    def block6_closed(d):
+        d["cards"]["6"] = _closed6
+        d["block_cards"] = "1,2,3,4,5,6,7"
+
+    assert verdict(block6_closed) is not None, (
+        "block_cards taking baseline-theirs card 6 with its lend CLOSED PASSED -- the same "
+        "controller writes both fields, so they cannot disagree about the owner")
     return (f"card lends expire: card 6 ours only inside its OWN window "
             f"({_w6[0]:%Y-%m-%d %H:%M}-{_w6[1]:%H:%M}Z, read from the live note and not typed here), "
             f"theirs a day either side, and with baseline_theirs off the verdict does not change "
