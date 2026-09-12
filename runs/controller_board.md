@@ -19,16 +19,14 @@ Historical P0 table (all rows closed):
 
 Waived (amendment 7): launch_gate.py's two inline-mix advisories. Retired by user order: L3 sandbox exec.
 
-## Run state 19:0xZ and the switch plan
+## Run state 2026-09-12 02:2xZ: world-8 continuation up
 
-- v41_gate_0911 step 2710/38146 at 18:5xZ, loss 1.403, val 2.444/2.208/2.108 at 500/1000/2000, 28K tok/s/gpu, peak 43.4 GiB, 0 NaN. .step4000 save ~20:32Z, .step6000 ~23:00Z. Disk 73%.
-- HumanEval .step2000 with the corrected instrument (#278, controls 154/154 self-redeclare PASS, wrong body FAIL): pass@1 0/164, empty 51/164 (eos_first 21, stop_at_0 30), 113 bodies scored and all fail. This is the real number at 1.57B tokens; the earlier 0/164 with 143 empty was the instrument. Runtime 1578 s on card 6 (24 min, full-function decode). Next: .step4000 at its save on card 6 (66), decision at .step6000 per amended_8.
-- HumanEval .step4000 (pin he4k sha 67680def, 3.15B tokens, card 6, 21:0xZ): pass@1 0/164, empty 46/164 (eos_first 24, stop_at_0 22), 118 judged. Trajectory 2000->4000: empty 51->46, pass 0->0. Decision checkpoint .step6000 (~23:08Z save) evals on CPU off the pin (#280 path, ~3.4 h) while the world-8 switch proceeds; eval card question closed by #280 (option B in effect).
-- USER RULING: formal run on 8 cards. Path C: at the .step6000 save stop the w6 job by PID, resume the same run at world 8 accum 6 (786,432 tok/step, LR schedule unchanged, total_steps 38146 kept). #275 launcher merged a8d367d3 (de second read: six points hold at 72c5a34; #277 locks the W6->W8 cursor re-stripe in CI). Launch only after ckpt_v41_gate_0911.pt.step6000 exists. Prereg amendment 9 records the switch.
-- Eval card after the switch: world 8 leaves no card, and world 7 cannot keep 786,432 tok/step (192 seqs/step is not divisible by 7; accum 7 gives 917,504 tok/step and a recomputed schedule), so option A as stated is not schedule-neutral. Options: B = world 8 + CPU HumanEval fallback in model.py for win_flash checkpoints (de; 3.4 h per eval at 6000-step spacing); D = world 8 and no in-run HumanEval after step 6000 until the final checkpoint on a card handed back at run end. fb recommends B. User decision pending; default at 23:00Z is B with de owning the CPU path.
-- Cards: 6 lent to aupai for eval windows through 23:59Z (grant string note); tilerl-a3 gives 7 outright at 22:45Z (fidelity + two sparse points + MMLU pair run until then); 6 outright after 66's evals. Grant file rewrite to block 0-7 at the switch.
-- Pod stamp: cleared twice today by partial pushes with drift (pod_push.sh:133 by design); restored with --all at 208e0f56 then a8d367d3. run_ddp.sh:15 refuses a launch without it, so the stamp is a launch precondition at 23:00Z.
-- Merged today: #260 #266 #268 #269 #270 #271 #273 #274 #275 #276 #277 #278. Open: #272 (98 cache facts, 3b merges).
+- v41_gate_0911 resumed at step 6000 on world 8 accum 6 at 02:1xZ (torchrun pid 3078695 in the container, claim 0-1-2-3-4-5-6-7): step 6060 loss 1.315, 24K tok/s/gpu and climbing, peak 43.40 GiB, 0 NaN, lr 1e-2, warmdown starts at step 13352. Launcher runs/v41_gate_0911_resume_w8.sh at f5e9851f (#275 + #284), pod stamp d5643fd3/a44bed84 == main.
+- HumanEval trajectory (corrected instrument #278): step2000 0/164 (113 judged), step4000 0/164 (118), step6000 0/164 (118 judged, CPU path #280, 6602 s). Facts #279 #283 #287. Val 2.444 (500) -> 1.950 (6000); amended_8 stop rule needs 0/164 AND val not below smoke-g 2.829, so the run continues on the val arm alone. Next HumanEval on CPU at step 12000, then every 6000; 66-10 plateau rule (<10% by 20000) stands.
+- Switch cost: the first world-8 launch (23:27Z) was killed by the explicit --gate-timeout 300 in the launcher (cold load of the 228 GiB cache takes ~5 min); the fix #284 needed two CI reds cleared first (card 6 lend expired 23:59Z -> re-extended to 09-12; harness selftest pinned card 7 to tileRL -> #286). Cards idle 23:24Z-02:1xZ, ~2.8 h lost. Friction rows: gate-timeout (66), controller override (fb).
+- Log truncation: harness launch opens runs/<name>.log for writing, so the 23:27Z launch erased the world-6 log (steps 0-6000). Recovered val lines are runs/v41_gate_0911_w6_val_excerpt.txt (#288); the failed-attempt log is runs/v41_gate_0911.log.w8attempt1_2327Z on the pod. de owns the rotation fix (PR pending).
+- Cards: block 0-7, no lane; tileRL off all H20s (tilerl-a3 22:3xZ). Card 6 is a string lend re-extended daily (theirs_baseline pin [0,6]) until de's pin PR lands; card 7 {owner: aupai}.
+- Merged since 19:0xZ: #279 #280 #281 #283 #284 #286 #287 #288. Open: de pin PR, de log-rotation PR, de-102.
 
 ## P1 — during the run (2-3 days, 38.1K steps)
 
