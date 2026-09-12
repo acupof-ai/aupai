@@ -190,6 +190,10 @@ def main():
              "same pack, seed and step count, so neither baseline is retrained. Run "
              "scripts/n7c_gates.py on the pod first; it certifies both arms' layer sets.",
     )
+    parser.add_argument("--check_pack", action="store_true",
+                        help="cardless dry gate: load resume ckpt and pack on CPU, run the "
+                             "vocab_id/holdout/fone checks, print row counts, and exit 0 before "
+                             "model build, card claim or any GPU use")
     args = parser.parse_args()
     if args.stop_after and args.max_steps:
         parser.error("--stop_after and --max_steps together are ambiguous: --max_steps also "
@@ -292,6 +296,13 @@ def main():
         f"checkpoint fone={Cfg.fone} but {args.sft_path} "
         f"{'has' if 'values' in d else 'has no'} values; repack with datagen/prepare_sft_math.py --fone"
     )
+    if args.check_pack:
+        if is_main:
+            sup = int((Y != -100).sum())
+            print(f"CHECK_PACK ok: {args.sft_path} rows={Y.shape[0]} seq={Y.shape[1]} "
+                  f"supervised={sup / 1e6:.2f}M vocab_id={pack_vocab} "
+                  f"holdout_fp={d.get('holdout_fp')} -- accepted by {args.resume}", flush=True)
+        return
     # V feeds the embedding, W is the digit target one position later (train.py's split)
     V = d["values"][:, :-1].contiguous() if Cfg.fone else None
     W = d["values"][:, 1:].contiguous() if Cfg.fone else None

@@ -31,6 +31,7 @@ Usage:
 """
 
 import argparse
+import ast
 import contextlib
 import io
 import json
@@ -109,6 +110,83 @@ def truncate(s, entry_point=None):
             cut = min(cut, i)
             break
     return s[:cut]
+
+
+def extract_by_name(s, entry_point):
+    """Pull the full `def <entry_point>(...)` block out of free-form assistant text.
+
+    The post-30B SFT pack (3b-22) trains complete functions with the signature repeated, so
+    the scored object is the function BY NAME wherever it sits in the message, not a
+    continuation of the prompt. Scan from the first `def <entry_point>` column-0 line through
+    the last line before the next column-0 statement (or <|im_end|>, EOF); nested defs and
+    indented lines belong to the block. Returns the source or None when no well-formed block
+    parses. A name defined inside an indented region is not a top-level answer."""
+    s = s.split("<|im_end|>", 1)[0]
+    lines = s.splitlines()
+    start = None
+    for i, ln in enumerate(lines):
+        if not ln[:1].isspace() and re.match(r"def\s+" + re.escape(entry_point) + r"\b", ln):
+            start = i
+            break
+    if start is None:
+        return None
+    out = [lines[start]]
+    for ln in lines[start + 1:]:
+        if ln.strip() and not ln[0].isspace() and not ln.startswith((")", "]")):
+            break
+        out.append(ln)
+    src = "\n".join(out).rstrip() + "\n"
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return None
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == entry_point:
+            return src
+    return None
+
+
+def judge_by_name(prob, fn_src):
+    """Judge an extracted by-name function against prompt module prefix + tests."""
+    m = re.search(r"(?m)^def\s+" + re.escape(prob["entry_point"]) + r"\b", prob["prompt"])
+    prefix = prob["prompt"][:m.start()] if m else ""
+    return judge_with_src(prefix + fn_src + "\n" + prob["test"]
+                          + f"\ncheck({prob['entry_point']})\n")
+
+
+def judge_with_src(src):
+    g = {"__name__": "__main__"}
+    signal.alarm(6)
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            exec(src, g)
+        return True
+    except BaseException:
+        return False
+    finally:
+        signal.alarm(0)
+
+
+def run_control_chatml(probs):
+    """Known-answer pair for the by-name extractor: a complete same-name function buried in
+    assistant text with trailing junk must be recovered and pass; a wrong body must fail."""
+    npass = 0
+    for p in probs:
+        msg = ("Here is the function:\n```python\n"
+               + p["prompt"] + p["canonical_solution"] + "\n```\nsome trailing note\n")
+        fn = extract_by_name(msg, p["entry_point"])
+        if fn is not None and judge_by_name(p, fn):
+            npass += 1
+    print(f"CONTROL chatml by-name canonical = {npass}/{len(probs)} (must be ~164)", flush=True)
+    if npass < len(probs) * 0.9:
+        sys.exit("CONTROL FAILED: by-name extraction loses canonical functions.")
+    p0 = probs[0]
+    bad = extract_by_name("def " + p0["entry_point"] + "():\n    return False\n", p0["entry_point"])
+    if bad is not None and judge_by_name(p0, bad):
+        sys.exit("CONTROL FAILED: wrong by-name body on HumanEval/0 scored correct.")
+    if extract_by_name("no function here\n", p0["entry_point"]) is not None:
+        sys.exit("CONTROL FAILED: extractor hallucinated a function from prose.")
+    print("CONTROL chatml by-name wrong/missing -> FAIL/None (must)", flush=True)
 
 
 def hits_stop(s, entry_point):
@@ -316,10 +394,17 @@ def main():
                     help="overwrite an existing predictions file (default: refuse)")
     ap.add_argument("--run", default=None,
                     help="name this run so predictions version instead of colliding")
+    ap.add_argument("--chatml", action="store_true",
+                    help="post-SFT arm: wrap the prompt with loader.format_prompt, stop on "
+                         "<|im_end|>, and score the complete function extracted BY NAME "
+                         "(3b-22 pack trains signature-repeated complete functions)")
     ap.add_argument("--preds", default=None,
                     help="score an existing preds jsonl (pass/empty/repetition) and exit; "
                          "no model, cardless")
     args = ap.parse_args()
+
+    if args.chatml and (args.strip_docstrings or args.strip_doctests):
+        ap.error("--chatml is a prompt/scoring arm and cannot combine with the strip arms")
 
     if args.preds:
         with open(args.preds, encoding="utf-8") as fh:
@@ -338,18 +423,25 @@ def main():
         return
 
     probs = [json.loads(l) for l in open(args.data, encoding="utf-8") if l.strip()]
-    arm = ("sig-only" if args.strip_docstrings else
+    arm = ("chatml" if args.chatml else
+           "sig-only" if args.strip_docstrings else
            "no-doctest" if args.strip_doctests else "standard")
     print(f"HumanEval: {len(probs)} problems ({arm} arm)"
           f"{f' scoring first {args.first}' if args.first else ''}", flush=True)
     def _prompt(p):
+        if args.chatml:
+            from scripts.loader import format_prompt  # noqa: PLC0415
+            return format_prompt(p["prompt"])
         if args.strip_docstrings:
             return strip_docstring(p["prompt"])
         if args.strip_doctests:
             return strip_doctests(p["prompt"])
         return p["prompt"]
     prompts = [_prompt(p) for p in probs]
-    run_control(probs)
+    if args.chatml:
+        run_control_chatml(probs)
+    else:
+        run_control(probs)
     if args.control:
         return
     if args.first:
@@ -384,13 +476,16 @@ def main():
         decoded completion and the stop reason -- the reason is the
         eos_first/stop_at_0 split (prereg format_sft_humaneval_0909 amendment 1:
         77.4% of baseline empties are a STOPS string at position 0, the model
-        writing the next top-level def, not eos)."""
+        writing the next top-level def, not eos).
+
+        ChatML arm: also stop at <|im_end|> (tid from the tokenizer); the continuation
+        STOPS list does not apply, because the answer is a complete function in message
+        text scored by name, not a docstring continuation."""
         ids = tok.encode(prompt).ids
         x = torch.tensor([ids], device=args.device)
         new = []
         stop_reason = "max_new"
-        # GPU autocasts bf16; the CPU path runs fp32 with no autocast (autocast device_type
-        # "cuda" raises on a CPU-only host). Same argmax loop either way.
+        im_end_tid = tok.token_to_id("<|im_end|>") if args.chatml else None
         ctx = torch.autocast(device_type="cuda", dtype=torch.bfloat16) if not is_cpu else _nullctx()
         with torch.no_grad(), ctx:
             for step in range(args.max_new):
@@ -400,9 +495,12 @@ def main():
                 if tid == 1:
                     stop_reason = "eos"
                     break
+                if args.chatml and tid == im_end_tid:
+                    stop_reason = "im_end"
+                    break
                 new.append(tid)
                 x = torch.cat([x, nxt], 1)
-                if step % 16 == 15:
+                if not args.chatml and step % 16 == 15:
                     s = tok.decode(new)
                     if hits_stop(s, p["entry_point"]):
                         stop_reason = "stop"
@@ -412,10 +510,11 @@ def main():
     preds_path = os.path.join(
         ROOT, "data", "eval",
         f"preds_humaneval_{os.path.basename(str(args.ckpt).rstrip('/'))}"
+        + (".chatml" if args.chatml else "")
         + (".nodoc" if args.strip_docstrings else "")
         + ".jsonl")
     t0 = time.time()
-    npass = nempty = neos = nstop = nrep = 0
+    npass = nempty = neos = nstop = nrep = nimend = 0
     with open_artifact(preds_path, force=args.force, run=args.run) as fout:
         out_path = fout.name
         fout.write(json.dumps({
@@ -424,6 +523,7 @@ def main():
             "data": os.path.basename(args.data),
             "strip_docstrings": args.strip_docstrings,
             "strip_doctests": args.strip_doctests,
+            "chatml": args.chatml,
             "first_n": args.first,
             "device": str(args.device),
             "cpu_threads": (args.threads if is_cpu else None),
@@ -434,8 +534,14 @@ def main():
         }, ensure_ascii=False) + "\n")
         for i, (p, prompt) in enumerate(zip(probs, prompts), 1):
             raw, stop_reason = gen(prompt, p["entry_point"])
-            c = truncate(raw, p["entry_point"])
-            ok = judge(p, c)
+            if args.chatml:
+                fn = extract_by_name(raw, p["entry_point"])
+                c = fn if fn is not None else ""
+                ok = judge_by_name(p, fn) if fn is not None else False
+            else:
+                fn = None
+                c = truncate(raw, p["entry_point"])
+                ok = judge(p, c)
             empty = not c.strip()
             # The two-column split (prereg amendment 1): an empty completion is
             # eos_first (model ended the turn) or stop_at_0 (a STOPS string at
@@ -443,6 +549,8 @@ def main():
             # two columns, never the aggregate: the total dropping could be the
             # two swapping. empty_max_new (280 tokens decoding to blank) has
             # never been seen and gets its own bucket rather than a wrong label.
+            # ChatML arm: empty = no extractable same-name function; the im_end
+            # column records cleanly terminated messages that carried no answer.
             if not empty:
                 empty_kind = "nonempty"
             elif stop_reason == "eos":
@@ -451,15 +559,19 @@ def main():
             elif stop_reason == "stop":
                 empty_kind = "stop_at_0"
                 nstop += 1
+            elif stop_reason == "im_end":
+                empty_kind = "im_end_no_func"
+                nimend += 1
             else:
                 empty_kind = "empty_max_new"
             npass += int(ok)
             nempty += int(empty)
-            nrep += int(not empty and repetitive(c))
-            fout.write(json.dumps(
-                {"task_id": p["task_id"], "gen": c, "ok": ok, "empty": empty,
-                 "empty_kind": empty_kind},
-                ensure_ascii=False) + "\n")
+            nrep += int(not empty and repetitive(raw if args.chatml else c))
+            row = {"task_id": p["task_id"], "gen": c, "ok": ok, "empty": empty,
+                   "empty_kind": empty_kind, "stop_reason": stop_reason}
+            if args.chatml:
+                row["raw"] = raw
+            fout.write(json.dumps(row, ensure_ascii=False) + "\n")
             fout.flush()
             if i % 20 == 0 or i == len(probs):
                 print(f"  {i}/{len(probs)}  pass@1 = {npass}/{i} = "
@@ -471,7 +583,8 @@ def main():
           f"{100 * npass / len(probs):.2f}%", flush=True)
     print(f"empty-completion split: eos_first {neos}/{len(probs)}, "
           f"stop_at_0 {nstop}/{len(probs)} (total empty {nempty}/{len(probs)} = "
-          f"{100 * nempty / len(probs):.1f}%)", flush=True)
+          f"{100 * nempty / len(probs):.1f}%)"
+          + (f", im_end_no_func {nimend}" if args.chatml else ""), flush=True)
     rep_frac = f"{100 * nrep / n_nonempty:.1f}%" if n_nonempty else "n/a (0 non-empty)"
     print(f"repetitive non-empty (last 200 chars, >=3 consecutive equal lines or tokens): "
           f"{nrep}/{n_nonempty} = {rep_frac} of non-empty", flush=True)
