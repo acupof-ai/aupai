@@ -1,0 +1,74 @@
+{
+ "n_sample_per_domain": 20000,
+ "seed": 7,
+ "domains": {
+  "code_ultra_l2_dc": {
+   "docs_sampled": 20000,
+   "docs_parsed_full_python_pct": 95.745,
+   "functions_total": 75712,
+   "functions_with_docstring_pct": 23.719,
+   "docstrings_with_doctest_pct": 1.581,
+   "functions_with_doctest_pct": 0.375,
+   "docs_problem_solution_shape_pct": 0.1,
+   "docs_raw_source_pct": 99.9,
+   "_counts": {
+    "funcs_docstring": 17958,
+    "docstrings_doctest": 284,
+    "ps_solution_docs": 20,
+    "raw_source_docs": 19980,
+    "full_parse_docs": 19149
+   }
+  },
+  "code_ultra_l3_noexec_dc": {
+   "docs_sampled": 20000,
+   "docs_parsed_full_python_pct": 47.595,
+   "functions_total": 51698,
+   "functions_with_docstring_pct": 53.393,
+   "docstrings_with_doctest_pct": 2.344,
+   "functions_with_doctest_pct": 1.251,
+   "docs_problem_solution_shape_pct": 96.335,
+   "docs_raw_source_pct": 3.665,
+   "_counts": {
+    "funcs_docstring": 27603,
+    "docstrings_doctest": 647,
+    "ps_solution_docs": 19267,
+    "raw_source_docs": 733,
+    "full_parse_docs": 9519
+   }
+  },
+  "code_py_starcoder_dc": {
+   "docs_sampled": 20000,
+   "docs_parsed_full_python_pct": 100.0,
+   "functions_total": 117005,
+   "functions_with_docstring_pct": 24.87,
+   "docstrings_with_doctest_pct": 1.574,
+   "functions_with_doctest_pct": 0.391,
+   "docs_problem_solution_shape_pct": 0.095,
+   "docs_raw_source_pct": 99.905,
+   "_counts": {
+    "funcs_docstring": 29099,
+    "docstrings_doctest": 458,
+    "ps_solution_docs": 19,
+    "raw_source_docs": 19981,
+    "full_parse_docs": 20000
+   }
+  },
+  "code_keep_p1_dc": {
+   "docs_sampled": 20000,
+   "docs_parsed_full_python_pct": 77.13,
+   "functions_total": 68427,
+   "functions_with_docstring_pct": 20.109,
+   "docstrings_with_doctest_pct": 2.551,
+   "functions_with_doctest_pct": 0.513,
+   "docs_problem_solution_shape_pct": 0.05,
+   "docs_raw_source_pct": 99.95,
+   "_counts": {
+    "funcs_docstring": 13760,
+    "docstrings_doctest": 351,
+    "ps_solution_docs": 10,
+    "raw_source_docs": 19990,
+    "full_parse_docs": 15426
+   }
+  }
+ }
+}
