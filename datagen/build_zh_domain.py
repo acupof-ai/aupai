@@ -20,6 +20,8 @@ import json
 import os
 import sys
 
+import zstandard
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from tokenizers import Tokenizer  # noqa: E402
 
@@ -54,46 +56,74 @@ class Writer:
             self.fh.close()
 
 
+def iter_docs(src, content_key):
+    if src.endswith(".zst"):
+        import io as _io
+
+        d = zstandard.ZstdDecompressor()
+        with d.stream_reader(open(src, "rb")) as r, _io.TextIOWrapper(r, encoding="utf-8") as t:
+            for line in t:
+                yield json.loads(line)
+    elif src.endswith(".jsonl"):
+        with open(src, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    yield json.loads(line)
+    else:
+        yield from json.load(open(src))
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", required=True)
+    ap.add_argument("--src", required=True, action="append",
+                    help="input file; repeatable, or a glob (.zst/.jsonl streamed, else JSON array)")
     ap.add_argument("--out", required=True)
+    ap.add_argument("--content-key", default="completion")
     ap.add_argument("--tokenizer", default="data/tokenizer.json")
     ap.add_argument("--target-tokens", type=int, default=800_000_000)
     ap.add_argument("--source", default="pleisto/wikipedia-cn-20230720-filtered")
     args = ap.parse_args()
 
+    srcs = []
+    for s in args.src:
+        srcs.extend(sorted(glob.glob(s)) if "*" in s or "?" in s else [s])
     tok = Tokenizer.from_file(args.tokenizer)
     decon = Decontaminator.load_default(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    docs = json.load(open(args.src))
     domain = os.path.basename(args.out.rstrip("/"))
     w = Writer(args.out, domain)
     seen = set()
-    kept = kept_chars = kept_tokens = 0
+    kept = kept_chars = kept_tokens = scanned = 0
     reasons = {"empty_short": 0, "secret_redacted": 0, "decontam": 0, "dup": 0}
+    stop = False
 
-    for _i, d in enumerate(docs):
-        c = (d.get("completion") or "").strip()
-        if len(c) < MIN_CHARS:
-            reasons["empty_short"] += 1
-            continue
-        c, nsec = redact_text(c)
-        reasons["secret_redacted"] += 1 if nsec else 0
-        if decon.hit(c) is not None:
-            reasons["decontam"] += 1
-            continue
-        sig = hashlib.sha1(_norm(c).encode()).hexdigest()
-        if sig in seen:
-            reasons["dup"] += 1
-            continue
-        seen.add(sig)
-        nt = len(tok.encode(c).ids) + 1
-        if kept_tokens + nt > args.target_tokens and kept:
+    for src in srcs:
+        if stop:
             break
-        w.write({"content": c, "source": args.source, "url": ""})
-        kept += 1
-        kept_chars += len(c)
-        kept_tokens += nt
+        for d in iter_docs(src, args.content_key):
+            scanned += 1
+            c = (d.get(args.content_key) or "").strip()
+            if len(c) < MIN_CHARS:
+                reasons["empty_short"] += 1
+                continue
+            c, nsec = redact_text(c)
+            reasons["secret_redacted"] += 1 if nsec else 0
+            if decon.hit(c) is not None:
+                reasons["decontam"] += 1
+                continue
+            sig = hashlib.sha1(_norm(c).encode()).hexdigest()
+            if sig in seen:
+                reasons["dup"] += 1
+                continue
+            seen.add(sig)
+            nt = len(tok.encode(c).ids) + 1
+            if kept_tokens + nt > args.target_tokens and kept:
+                stop = True
+                break
+            w.write({"content": c, "source": args.source, "url": d.get("url") or ""})
+            kept += 1
+            kept_chars += len(c)
+            kept_tokens += nt
     w.close()
 
     n_shards = len(glob.glob(os.path.join(args.out, f"{domain}_[0-9]*.jsonl")))
@@ -105,9 +135,9 @@ def main():
     canonical = fp_dir(args.out)
     record = {
         "domain": domain,
-        "source": args.src,
-        "input_docs": len(docs),
-        "docs_scanned": _i + 1,
+        "source": args.source,
+        "input_files": srcs,
+        "docs_scanned": scanned,
         "kept": kept,
         "kept_chars": kept_chars,
         "kept_tokens": kept_tokens,
@@ -118,7 +148,7 @@ def main():
         "n_shards": n_shards,
         "decontam_fp": ngram_fp,
         "fingerprint": canonical,
-        "total_rows": _i + 1,
+        "total_rows": scanned,
         "reasons": reasons,
         "target_tokens": args.target_tokens,
         "target_reached": kept_tokens >= args.target_tokens,
