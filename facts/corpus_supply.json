@@ -1684,6 +1684,57 @@
    "tokens_status": "measured",
    "guard_phrases": [],
    "retracted_value": []
+  },
+  {
+   "id": "cs.code_ultra_l3_stub_dc_landed_0913",
+   "value": 4993975636,
+   "unit": "exact gate-vocab document tokens (per-doc len(encode(content).ids)+1) in the HumanEval-stub L3 domain, NOT in data/mix_v41_gate.json",
+   "measured": "2026-09-13",
+   "source": "data/corpus/code_ultra_l3_stub_dc/build_corpus_stats.json on the pod (datagen/build_l3_stub.py, 0e-8); fingerprint=fp_dir 12ec3cd220b8fe13 verified == live recompute, decontam_fp 86e19705b05c4b42",
+   "config": {
+    "domain": "code_ultra_l3_stub_dc",
+    "source_dataset": "openbmb/UltraData-Code-L3 raw solution column, joined to the 15,308,313 uuid survivors of code_ultra_l3_noexec_dc",
+    "form": "one doc = the solution's LAST top-level def line + docstring (task text folded into a new docstring when the def has none) followed directly by the body; ast.unparse; no repeated signature, no problem:/solution: scaffolding",
+    "kept_docs": 13682629,
+    "final_shards": 200,
+    "survivor_uuids": 15308313,
+    "folded_task_docstring": 53013,
+    "rejected_survivors": {"no_last_top_func": 1543984, "docstring_no_body": 6, "body_only_pass_or_ellipsis": 465, "unparse_fail": 2, "ngram13_decontam": 17501, "candidate_pre_global_dedup": 13746355},
+    "corpus_fingerprint": "12ec3cd220b8fe13",
+    "decontam_fp": "86e19705b05c4b42",
+    "vocab": "f1f860970d15d623",
+    "sample_gate": "200 deterministic rows (seed 20260912), 0 failures: every shown row ast-parses and its first def has a non-empty real body; validator datagen/validate_l3_stub_sample.py",
+    "l3_source_frozen": "code_ultra_l3_noexec_dc left byte-untouched"
+   },
+   "uncertainty": "none; exact full-population recount; the raw 20,750,202-row L3 parquet (pre noexec filters) has 10 docstring-no-body functions, and the 16,359,418-row L2 _dc natural-code corpus has 5,753 (parse_fail 137,952 L3 / 723,975 L2 excluded before the def check)",
+   "boundary": "docstring-with-no-body is rare (L3 10 / L2 5,753), so the hypothesized EOS-first/stop-first empties are not that class; among the noexec survivors only 6 rows hit it. The last-top-func rule also drops 1.54M solutions whose final top-level statement is not a function (scripts/imports/classes). Not in the gate mix; candidate for a post-gate stage.",
+   "status": "measured",
+   "tokens_status": "measured",
+   "guard_phrases": [],
+   "retracted_value": []
+  },
+  {
+   "id": "cs.gate_cache_code_ultra_l3_stub_dc_0913",
+   "value": 4993972598,
+   "unit": "cache-side packed pool in /data00/tokens_code_ultra_l3_stub_dc.pt (torch stream after row-aligned truncation, three identity stamps); joins cs.code_ultra_l3_stub_dc_landed_0913 (4,993,975,636 document tokens; 3,038-token trailing partial row)",
+   "measured": "2026-09-13",
+   "source": "scripts/pretokenize_domains.py code_ultra_l3_stub_dc (32 workers x RAYON 4 = 128 cores, CPU); REPORT line + .vocab/.srcfp read back",
+   "config": {
+    "rows": 1218934,
+    "docs": 13682629,
+    "sha256_16": "71520dd38a4b3d65",
+    "bytes": 19975904368,
+    "seconds": 250,
+    "corpus_fp": "12ec3cd220b8fe13 (== .srcfp)",
+    "vocab_id": "f1f860970d15d623",
+    ".seed": 42
+   },
+   "uncertainty": "none; exact REPORT count and stamps",
+   "boundary": "cache for a domain not in the running gate mix; enters a mix only on a later controller decision.",
+   "status": "measured",
+   "tokens_status": "measured",
+   "guard_phrases": [],
+   "retracted_value": []
   }
  ]
 }
