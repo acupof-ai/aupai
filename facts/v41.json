@@ -604,6 +604,64 @@
    "artifact_sha256": {
     "preds_humaneval_ckpt_v41_gate_0911.milestone_he6k_step6000.pt.v41gate_he6k_nodoctest164_cpu.jsonl": "a552056fd5ae5a2998eb6b03f18fe57c23a6d5af0748bbf58a931f1c3dd2bce0"
    }
+  },
+  {
+   "id": "v41.humaneval_gate_step12000_0912",
+   "value": "V4.1 gate v41_gate_0911 step 12000 (9.437B tokens), standard-prompt HumanEval greedy CPU: pass@1 = 0/164. Fourth consecutive genuine zero (steps 2000/4000/6000/12000). Empty 62/164 = 37.8% (eos_first 23, stop_at_0 39), 102/164 non-empty, repetitive 10/102 = 9.8%. Standard-pass trajectory 0,0,0,0 across 1.57-9.44B tokens.",
+   "source": "runs/he_gate_step12000_cpu_summary.txt (controls + partial counts, 4929s) and runs/milestones.jsonl pin he12k_step12000",
+   "config": {
+    "runner": "CUDA_VISIBLE_DEVICES= eval/humaneval_gen.py --device cpu --threads 32 --run v41gate_he12k_step12000_cpu --force (ckpt = pin he12k_step12000)",
+    "arm": "standard",
+    "n_problems": 164,
+    "pass1": 0,
+    "nonempty": 102,
+    "empty": 62,
+    "eos_first": 23,
+    "stop_at_0": 39,
+    "repetitive_nonempty": 10,
+    "wallclock_s": 4929
+   },
+   "uncertainty": "Greedy single sample. CPU fp32 materialized path (#280). Controls 164/164 canonical, 154/154 self-redecl, negatives green.",
+   "boundary": "Gate (standard) column at the first checkpoint beyond the 5B decision. Amendment-8 joint stop needs 0/164 AND val >= 2.829; val is far below, so training continues; the HumanEval '<10% plateau' early-stop reading is the controller's, not this fact's.",
+   "artifact_sha256": {
+    "preds_humaneval_ckpt_v41_gate_0911.milestone_he12k_step12000.pt.v41gate_he12k_step12000_cpu.jsonl": "3d615a01bc29bdac762d2ca07124346c686ecda3e60f44537ace5eda7068fbbd"
+   },
+   "measured": "2026-09-12",
+   "status": "measured",
+   "step": 12000,
+   "tokens_trained": 9437184000,
+   "ckpt_pin_sha256": "32d9f8af2dd717a60733c2cca3680f4b6634668a6f9373e91f2102c42b9e7b71",
+   "eval_ckpt_pin": "he12k_step12000 (see runs/milestones.jsonl)"
+  },
+  {
+   "id": "v41.humaneval_gate_nodoctest_step12000_0912",
+   "value": "V4.1 gate step 12000, HumanEval greedy no-doctest DIAGNOSTIC arm: pass@1 = 0/164, DOWN from 2/164 (HumanEval/23,/60) at step6000. The step6000 non-zero does not reproduce: with n=164 greedy it was noise (the step6000 fact's Fisher p was ~0.25). Empty rose 62 -> 80 (48.8%; eos_first 16, stop_at_0 64), non-empty fell 102 -> 84; repetitive 8/84 = 9.5%. The model writes the self-redeclaration stop more often without doctests and the two step6000 solutions vanished. No arm shows emerging HumanEval by 9.4B.",
+   "source": "runs/he_nodoctest12k_step12000_summary.txt (controls + partial counts, 3230s) and runs/milestones.jsonl pin he12k_step12000",
+   "config": {
+    "runner": "CUDA_VISIBLE_DEVICES= eval/humaneval_gen.py --device cpu --threads 32 --strip-doctests --run v41gate_he12k_nodoctest12k_cpu --force (ckpt = pin he12k_step12000; #290 arm)",
+    "arm": "strip_doctests",
+    "n_problems": 164,
+    "pass1": 0,
+    "passing_task_ids": [],
+    "prior_step6000_pass1": 2,
+    "nonempty": 84,
+    "empty": 80,
+    "eos_first": 16,
+    "stop_at_0": 64,
+    "repetitive_nonempty": 8,
+    "wallclock_s": 3230
+   },
+   "uncertainty": "Greedy single sample. 0 vs the step6000 2/164 on the SAME arm is not a measured degradation either: 2 is inside the noise of a 1.2% estimate at n=164. Controls green.",
+   "boundary": "Diagnostic second column, not the gate. Combined with v41.humaneval_gate_nodoctest_step6000_0912 the arm gives 2 -> 0 across 5B->9.4B, i.e. no monotone signal; keep collecting the column but it currently says no capability.",
+   "artifact_sha256": {
+    "preds_humaneval_ckpt_v41_gate_0911.milestone_he12k_step12000.pt.v41gate_he12k_nodoctest12k_cpu.jsonl": "ebeb297f2315cbf7de5fd81b80c6d46113e6ade9a1bd986e4e579a76f96b56bf"
+   },
+   "measured": "2026-09-12",
+   "status": "measured",
+   "step": 12000,
+   "tokens_trained": 9437184000,
+   "ckpt_pin_sha256": "32d9f8af2dd717a60733c2cca3680f4b6634668a6f9373e91f2102c42b9e7b71",
+   "eval_ckpt_pin": "he12k_step12000 (see runs/milestones.jsonl)"
   }
  ]
 }
