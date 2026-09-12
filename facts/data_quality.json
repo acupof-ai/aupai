@@ -1198,6 +1198,102 @@
    "uncertainty": "One parquet shard of 147, within-shard stratification; 11% double-read disagreement concentrated in the good-code/wrong-test boundary (whether to rescue a failing test). Precision/recall CIs are +-7pt. The hand labels judge solution+analysis instructional value; a different phi-1 threshold would move the rates. exec yield itself is deterministic given the sandbox.",
    "boundary": "L3 python shard 1, 2026-09-11, raw parquet rows. Does not generalise to the other 146 shards or non-python levels until full-set measurement. The confusion matrix characterises the exec predicate AS A SOLE filter; a stage-2 nontriviality/content filter would change precision, and not running exec over the good-code/wrong-test class would recover part of recall. No downstream model-quality claim is made from execution alone.",
    "status": "measured"
+  },
+  {
+   "id": "dq.func_shape.code_ultra_l2_dc",
+   "value": {
+    "functions_with_docstring_pct": 23.719,
+    "docstrings_with_doctest_pct": 1.581,
+    "functions_with_doctest_pct": 0.375,
+    "docs_problem_solution_shape_pct": 0.1,
+    "docs_raw_source_pct": 99.9,
+    "docs_full_python_parse_pct": 95.745,
+    "functions_in_sample": 75712
+   },
+   "unit": "percent (per-function for docstring/doctest over n functions; per-document for shape over n=20000 docs)",
+   "measured": "2026-09-12",
+   "source": "scripts/audit_func_shape.py on pod data/corpus/code_ultra_l2_dc (the decontaminated gate domain); runs/func_shape_audit_0912.json",
+   "config": {
+    "sample": "20000 docs, uniform stratified over all shards (per-file reservoir k=128, seed 7, largest-remainder per-file quotas)",
+    "docstring": "ast.get_docstring on FunctionDef/AsyncFunctionDef; L3 prose-prefix docs parsed by longest parseable code suffix",
+    "doctest": "regex ^\\s*>>> inside the docstring",
+    "problem_solution_shape": "imperative task instruction (write/implement/... a function/...) in first 30 lines AND a def AND assert/# Test/def test_",
+    "raw_source": "sampled doc not matching problem-solution"
+   },
+   "uncertainty": "document-shape binomial 95% half-width <=0.14pp at n=20000; per-function rates use n=51,698-117,005 functions, half-width <=0.13pp. Shape classifier is regex/heuristic, validated on known answers: L3 96-98%, three raw-source domains <=0.1%",
+   "status": "measured"
+  },
+  {
+   "id": "dq.func_shape.code_ultra_l3_noexec_dc",
+   "value": {
+    "functions_with_docstring_pct": 53.393,
+    "docstrings_with_doctest_pct": 2.344,
+    "functions_with_doctest_pct": 1.251,
+    "docs_problem_solution_shape_pct": 96.335,
+    "docs_raw_source_pct": 3.665,
+    "docs_full_python_parse_pct": 47.595,
+    "functions_in_sample": 51698
+   },
+   "unit": "percent (per-function for docstring/doctest over n functions; per-document for shape over n=20000 docs)",
+   "measured": "2026-09-12",
+   "source": "scripts/audit_func_shape.py on pod data/corpus/code_ultra_l3_noexec_dc (the decontaminated gate domain); runs/func_shape_audit_0912.json",
+   "config": {
+    "sample": "20000 docs, uniform stratified over all shards (per-file reservoir k=128, seed 7, largest-remainder per-file quotas)",
+    "docstring": "ast.get_docstring on FunctionDef/AsyncFunctionDef; L3 prose-prefix docs parsed by longest parseable code suffix",
+    "doctest": "regex ^\\s*>>> inside the docstring",
+    "problem_solution_shape": "imperative task instruction (write/implement/... a function/...) in first 30 lines AND a def AND assert/# Test/def test_",
+    "raw_source": "sampled doc not matching problem-solution"
+   },
+   "uncertainty": "document-shape binomial 95% half-width <=0.14pp at n=20000; per-function rates use n=51,698-117,005 functions, half-width <=0.13pp. Shape classifier is regex/heuristic, validated on known answers: L3 96-98%, three raw-source domains <=0.1%",
+   "status": "measured"
+  },
+  {
+   "id": "dq.func_shape.code_py_starcoder_dc",
+   "value": {
+    "functions_with_docstring_pct": 24.87,
+    "docstrings_with_doctest_pct": 1.574,
+    "functions_with_doctest_pct": 0.391,
+    "docs_problem_solution_shape_pct": 0.095,
+    "docs_raw_source_pct": 99.905,
+    "docs_full_python_parse_pct": 100.0,
+    "functions_in_sample": 117005
+   },
+   "unit": "percent (per-function for docstring/doctest over n functions; per-document for shape over n=20000 docs)",
+   "measured": "2026-09-12",
+   "source": "scripts/audit_func_shape.py on pod data/corpus/code_py_starcoder_dc (the decontaminated gate domain); runs/func_shape_audit_0912.json",
+   "config": {
+    "sample": "20000 docs, uniform stratified over all shards (per-file reservoir k=128, seed 7, largest-remainder per-file quotas)",
+    "docstring": "ast.get_docstring on FunctionDef/AsyncFunctionDef; L3 prose-prefix docs parsed by longest parseable code suffix",
+    "doctest": "regex ^\\s*>>> inside the docstring",
+    "problem_solution_shape": "imperative task instruction (write/implement/... a function/...) in first 30 lines AND a def AND assert/# Test/def test_",
+    "raw_source": "sampled doc not matching problem-solution"
+   },
+   "uncertainty": "document-shape binomial 95% half-width <=0.14pp at n=20000; per-function rates use n=51,698-117,005 functions, half-width <=0.13pp. Shape classifier is regex/heuristic, validated on known answers: L3 96-98%, three raw-source domains <=0.1%",
+   "status": "measured"
+  },
+  {
+   "id": "dq.func_shape.code_keep_p1_dc",
+   "value": {
+    "functions_with_docstring_pct": 20.109,
+    "docstrings_with_doctest_pct": 2.551,
+    "functions_with_doctest_pct": 0.513,
+    "docs_problem_solution_shape_pct": 0.05,
+    "docs_raw_source_pct": 99.95,
+    "docs_full_python_parse_pct": 77.13,
+    "functions_in_sample": 68427
+   },
+   "unit": "percent (per-function for docstring/doctest over n functions; per-document for shape over n=20000 docs)",
+   "measured": "2026-09-12",
+   "source": "scripts/audit_func_shape.py on pod data/corpus/code_keep_p1_dc (the decontaminated gate domain); runs/func_shape_audit_0912.json",
+   "config": {
+    "sample": "20000 docs, uniform stratified over all shards (per-file reservoir k=128, seed 7, largest-remainder per-file quotas)",
+    "docstring": "ast.get_docstring on FunctionDef/AsyncFunctionDef; L3 prose-prefix docs parsed by longest parseable code suffix",
+    "doctest": "regex ^\\s*>>> inside the docstring",
+    "problem_solution_shape": "imperative task instruction (write/implement/... a function/...) in first 30 lines AND a def AND assert/# Test/def test_",
+    "raw_source": "sampled doc not matching problem-solution"
+   },
+   "uncertainty": "document-shape binomial 95% half-width <=0.14pp at n=20000; per-function rates use n=51,698-117,005 functions, half-width <=0.13pp. Shape classifier is regex/heuristic, validated on known answers: L3 96-98%, three raw-source domains <=0.1%",
+   "status": "measured"
   }
  ]
 }
