@@ -590,3 +590,4 @@
 {"name": "v41gate", "step": 9900, "usage_frac": 0.8541666666666666, "entropy_norm": 0.9020507184930056, "load_gini": 0.4196450710296631, "tokens": 235929616, "window_steps": 600, "ts": "2026-09-12 06:29:10", "n_routed": 48, "top_k": 3}
 {"name": "v41gate", "step": 10000, "usage_frac": 0.8541666666666666, "entropy_norm": 0.9064469756146258, "load_gini": 0.405102014541626, "tokens": 235929600, "window_steps": 600, "ts": "2026-09-12 06:35:50", "n_routed": 48, "top_k": 3}
 {"name": "v41gate", "step": 10100, "usage_frac": 0.8541666666666666, "entropy_norm": 0.9039054953201429, "load_gini": 0.43120765686035156, "tokens": 235929600, "window_steps": 600, "ts": "2026-09-12 06:42:02", "n_routed": 48, "top_k": 3}
+{"name": "v41gate", "step": 10200, "usage_frac": 0.875, "entropy_norm": 0.9149342609444886, "load_gini": 0.3891092538833618, "tokens": 235929600, "window_steps": 600, "ts": "2026-09-12 06:48:27", "n_routed": 48, "top_k": 3}
