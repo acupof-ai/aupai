@@ -27,25 +27,29 @@ checkpoint — use its N in step 2 and note it in the exp result.
 ## 1. Read the standard HumanEval column and val, then close the exp row
 
 The gate number is the STANDARD (continuation) arm, the metric of
-runs/prereg.jsonl#v41_gate_0911. Greedy 164 on the final ckpt, one card:
+runs/prereg.jsonl#v41_gate_0911. Greedy 164 on the final ckpt, one card, via harness launch
+(every GPU process goes through it; harness writes its own `he_gate_final` exp row and
+injects CUDA_VISIBLE_DEVICES from `--cards`):
 
 ```bash
-CARD=<controller-granted> CUDA_VISIBLE_DEVICES=<card> \
-python3 eval/humaneval_gen.py --ckpt ckpt_v41_gate_0911.pt \
-  --run v41gate_final_cpu --force 2>&1 | tee runs/he_standard_final.log
+python3 scripts/harness.py launch he_gate_final --cards <card> \
+  --output data/eval/preds_humaneval_ckpt_v41_gate_0911.pt.v41gate_final.jsonl -- \
+  python3 eval/humaneval_gen.py --ckpt ckpt_v41_gate_0911.pt \
+  --run v41gate_final --force 2>&1 | tee runs/he_standard_final.log
 ```
 
 Read pass@1 from `HUMANEVAL pass@1 (greedy) = N/164`. The preds file is versioned by
-`--run` at `data/eval/preds_humaneval_ckpt_v41_gate_0911.pt.v41gate_final_cpu.jsonl` (read
-the exact path from the script's `preds saved:` line). Take final val from the last training
-log line `step 38146/38146 val X` (grep `runs/v41_gate_0911*.log`). Then:
+`--run` at `data/eval/preds_humaneval_ckpt_v41_gate_0911.pt.v41gate_final.jsonl` (read the
+exact path from the script's `preds saved:` line). Take final val from the last training log
+line `step 38146/38146 val X` (grep `runs/v41_gate_0911*.log`). Then close the gate's
+TRAINING exp row (distinct from harness's `he_gate_final` row):
 
 ```bash
 python3 scripts/exp.py done --name v41_gate_0911 --status ok \
   --result "HumanEval standard greedy pass@1 = N/164 (preds <preds saved path>); final val X" \
   --finding "gate >=30% met / not met at 30B under the standard arm" \
   --decision "post-gate SFT per runs/prereg.jsonl#v41_sft_0913 regardless; >=30% is the pretrain gate" \
-  --reading_artifact data/eval/preds_humaneval_ckpt_v41_gate_0911.pt.v41gate_final_cpu.jsonl
+  --reading_artifact data/eval/preds_humaneval_ckpt_v41_gate_0911.pt.v41gate_final.jsonl
 ```
 
 Use `--started "2026-09-12 02:07"` if exp complains about multiple open rows.
@@ -54,7 +58,7 @@ Use `--started "2026-09-12 02:07"` if exp complains about multiple open rows.
 
 ```bash
 ln ckpt_v41_gate_0911.pt ckpt_3.2b-a352m-e48_30b_20260913.pt
-ls -li ckpt_v41_gate_0911.pt ckpt_3.2b-a352m-e48_30b_30b_20260913.pt
+ls -li ckpt_v41_gate_0911.pt ckpt_3.2b-a352m-e48_30b_20260913.pt
 sha256sum ckpt_v41_gate_0911.pt ckpt_3.2b-a352m-e48_30b_20260913.pt
 ```
 
@@ -96,8 +100,12 @@ Total ~25-30 min plus checkpoint load. `api_cloze` is expected to record an erro
 ## 5. Launch the post-gate SFT on a second card
 
 Only after the panel card is assigned and the SFT card is confirmed free (a different card).
-The launcher runs its own cardless pack gate and live-claim gate, then trains and reads its
-own ChatML by-name HumanEval (runs/prereg.jsonl#v41_sft_0913):
+This is not wrapped in `harness launch --training` because `scripts/run_sft.sh`/the SFT
+launcher manage their own exp row, claim and release trap; the substitute is real — the
+script's own `python3 scripts/card_claim.py acquire --name v41_sft_0913 --cards <card2>`
+writes the same persistent claim in runs/claims/ that harness launch does (and its live-claim
+gate refuses on any holder first). The launcher then trains and reads its own ChatML
+by-name HumanEval (runs/prereg.jsonl#v41_sft_0913):
 
 ```bash
 HYPOTHESIS="ChatML code-instruction SFT moves HumanEval by-name pass@1 above 5/164 from an unseen-prefix 0/164 base" \
