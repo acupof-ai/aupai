@@ -186,11 +186,11 @@
  ],
  "theirs_baseline": [],
  "granted": "2026-09-03",
- "launch_block_granted": true,
- "block_cards": "0,1,2,3,4,5,6,7",
- "lane_card": null,
- "note": "GATE RUN v41_gate_0911 (fb, 2026-09-11 14:32Z): block 0-5 world 6, NO lane; cards 6,7 owner tilerl through the run (user ruling 2026-09-11 04:1xZ); one-hour notice sent tilerl-58 14:32Z. Pre-launch lane 5 ended. | 16:4xZ: HumanEval windows on card 6 (ckl via tilerl-a3); card 7 stays tileRL. | 2026-09-11 22:3xZ fb: USER RULING 2026-09-11 (formal run on 8 cards): world-8 resume of v41_gate_0911 at the .step6000 save (~23:13Z) on block 0-7, NO lane; tilerl-a3 handed card 7 at 22:3xZ (0 MiB, no claim) and is off all H20s; card 6 lent through 23:59Z under the pinned baseline, its permanent transfer waits on the theirs_baseline pin change (de, user order cited). | 2026-09-11 ~21:1xZ de (user order 2026-09-11 formal run on 8 cards; tilerl-a3 22:3xZ confirmed tileRL off all H20s): theirs_baseline [] and cards[6] = {owner: aupai} land together; card 6 is aupai's outright with no expiry, so midnight no longer reads it theirs while the world-8 run holds it.",
- "verified": "2026-09-08 fb: nvidia-smi read 2,4,5,7 at 0 MiB / 0% before the grant; runs/claims/ held only tilerl-ppsn/curve2/l5eval",
+ "launch_block_granted": false,
+ "block_cards": "",
+ "lane_card": "7",
+ "note": "GATE RUN v41_gate_0911 (fb, 2026-09-11 14:32Z): block 0-5 world 6, NO lane; cards 6,7 owner tilerl through the run (user ruling 2026-09-11 04:1xZ); one-hour notice sent tilerl-58 14:32Z. Pre-launch lane 5 ended. | 16:4xZ: HumanEval windows on card 6 (ckl via tilerl-a3); card 7 stays tileRL. | 2026-09-11 22:3xZ fb: USER RULING 2026-09-11 (formal run on 8 cards): world-8 resume of v41_gate_0911 at the .step6000 save (~23:13Z) on block 0-7, NO lane; tilerl-a3 handed card 7 at 22:3xZ (0 MiB, no claim) and is off all H20s; card 6 lent through 23:59Z under the pinned baseline, its permanent transfer waits on the theirs_baseline pin change (de, user order cited). | 2026-09-11 ~21:1xZ de (user order 2026-09-11 formal run on 8 cards; tilerl-a3 22:3xZ confirmed tileRL off all H20s): theirs_baseline [] and cards[6] = {owner: aupai} land together; card 6 is aupai's outright with no expiry, so midnight no longer reads it theirs while the world-8 run holds it. | 2026-09-12 14:2xZ fb: run stopped by user order at step 17411 (13.7B tokens; interrupt ckpt .interrupt.step17411, last periodic .step16000). USER ORDER: GPUs to tileRL -- all eight cards owner tilerl, no aupai block, no lane, until aupai's next launch notice. | 2026-09-12 15:4xZ fb: USER ORDER take a free card: card 7 aupai lane for the SFT probe; nvidia-smi read 2-7 at 0 MiB, tileRL on 0,1 (3 reserved).",
+ "verified": "2026-09-12 14:3xZ fb: nvidia-smi read all eight cards at 0 MiB after the SIGTERM stop; torchrun 3078695 gone.",
  "next_grant": {
   "to": "0.2b_8b_b192 (e1-43; prereg runs/prereg.jsonl#matched_batch_dense_0906@amended_1), dense comparator for 1.5b-a0.2b-e48_8b",
   "for": "a batch-matched dense curve to 8B on mix_200m_8b so the MoE endpoint has a control on the right mix; both sides share total 10,172 and anneal together at 9,155",
@@ -200,36 +200,36 @@
  },
  "cards": {
   "0": {
-   "owner": "aupai",
-   "note": "V4.1 gate-run block card, USER RULING 2026-09-11 04:1xZ: tileRL may use it until aupai's one-hour notice; clear at launch. Card 5 assigned 2026-09-11 04:1xZ to de (aupai-08) for the 15-min de-108 parity/B4/B8 step, released after."
+   "owner": "tilerl",
+   "note": "USER ORDER 2026-09-12 14:2xZ: v41_gate_0911 stopped at step 17411 (interrupt save) by user order; all eight cards to tileRL until aupai's next launch notice (fb). Ask fb before an aupai job."
   },
   "1": {
-   "owner": "aupai",
-   "note": "V4.1 gate-run block card, USER RULING 2026-09-11 04:1xZ: tileRL may use it until aupai's one-hour notice; clear at launch. Card 5 assigned 2026-09-11 04:1xZ to de (aupai-08) for the 15-min de-108 parity/B4/B8 step, released after."
+   "owner": "tilerl",
+   "note": "USER ORDER 2026-09-12 14:2xZ: v41_gate_0911 stopped at step 17411 (interrupt save) by user order; all eight cards to tileRL until aupai's next launch notice (fb). Ask fb before an aupai job."
   },
   "2": {
-   "owner": "aupai",
-   "note": "V4.1 gate-run block card, USER RULING 2026-09-11 04:1xZ: tileRL may use it until aupai's one-hour notice; clear at launch. Card 5 assigned 2026-09-11 04:1xZ to de (aupai-08) for the 15-min de-108 parity/B4/B8 step, released after."
+   "owner": "tilerl",
+   "note": "USER ORDER 2026-09-12 14:2xZ: v41_gate_0911 stopped at step 17411 (interrupt save) by user order; all eight cards to tileRL until aupai's next launch notice (fb). Ask fb before an aupai job."
   },
   "3": {
-   "owner": "aupai",
-   "note": "V4.1 gate-run block card, USER RULING 2026-09-11 04:1xZ: tileRL may use it until aupai's one-hour notice; clear at launch. Card 5 assigned 2026-09-11 04:1xZ to de (aupai-08) for the 15-min de-108 parity/B4/B8 step, released after."
+   "owner": "tilerl",
+   "note": "USER ORDER 2026-09-12 14:2xZ: v41_gate_0911 stopped at step 17411 (interrupt save) by user order; all eight cards to tileRL until aupai's next launch notice (fb). Ask fb before an aupai job."
   },
   "4": {
-   "owner": "aupai",
-   "note": "V4.1 gate-run block card; idle until the gate go (~09:30Z), not in block_cards during smoke j so that j's world-4 block is exactly 0-3. V4.1 gate-run block card, USER RULING 2026-09-11 04:1xZ: tileRL may use it until aupai's one-hour notice; clear at launch. Card 5 assigned 2026-09-11 04:1xZ to de (aupai-08) for the 15-min de-108 parity/B4/B8 step, released after."
+   "owner": "tilerl",
+   "note": "USER ORDER 2026-09-12 14:2xZ: v41_gate_0911 stopped at step 17411 (interrupt save) by user order; all eight cards to tileRL until aupai's next launch notice (fb). Ask fb before an aupai job."
   },
   "5": {
-   "owner": "aupai",
-   "note": "LANE card until the gate launch (fb 2026-09-11 04:3xZ): de-108 step 4 (de, aupai-08, ~15 card-minutes, single process) runs here first; at the one-hour notice block_cards becomes 0-5 again and the lane disappears (tileRL holds 6,7 by user ruling)."
+   "owner": "tilerl",
+   "note": "USER ORDER 2026-09-12 14:2xZ: v41_gate_0911 stopped at step 17411 (interrupt save) by user order; all eight cards to tileRL until aupai's next launch notice (fb). Ask fb before an aupai job."
   },
   "6": {
-  "owner": "aupai",
-  "note": "USER ORDER 2026-09-11 (formal run on 8 cards): aupai's outright, no expiry. tilerl-a3 handed the card 21:2xZ (sparsepin32k6 reaped) and confirmed 22:3xZ tileRL is off all H20s; the daily lend and the [0,6] baseline pin end together when theirs_baseline becomes [] (fb re-extended to 2026-09-12 00:00-23:59Z as the bridge until this landed). World-8 v41_gate_0911 block card."
- },
+   "owner": "tilerl",
+   "note": "USER ORDER 2026-09-12 14:2xZ: v41_gate_0911 stopped at step 17411 (interrupt save) by user order; all eight cards to tileRL until aupai's next launch notice (fb). Ask fb before an aupai job."
+  },
   "7": {
    "owner": "aupai",
-   "note": "USER RULING 2026-09-11 (formal run on 8 cards): handed over by tilerl-a3 2026-09-11 22:3xZ at 0 MiB, no tileRL process; block card for the world-8 resume of v41_gate_0911."
+   "note": "USER ORDER 2026-09-12 15:4xZ ('take a free one'): card 7 is aupai's lane for the SFT probe v41_sft_0913 (3b, ~3 h, single card) while tileRL holds the rest; reverts to tilerl when the probe's claim releases."
   }
  },
  "lane_note": "2026-09-05T15:1xZ fb (USER ORDER): E1 close REVERSED -- MoE judged on val loss at equal wall-clock and tokens plus score_matrix, not speed. E1' arms, 1B tokens each, --bf16: dense on 1,2; MoE-24 on 3,4; latent-MoE (d_latent 512) on whichever pair frees; 48-expert 30-step memory probe on the first free card. block_cards 1,2,3,4 = b0's two concurrent world-2 arms. 5+7 -> e1 experiment-1 control_arm (unchanged); 0,6 tileRL. || 2026-09-05T08:11Z fb: 5+7 -> e1 experiment-1 arms, sequential; 1,2 -> E1 (block_cards); 3,4 free; 0,6 tileRL. || 2026-09-05T05:54Z fb: pool = 3,4,5,7 free; 1,2 reserved for E1; 0,6 tileRL. Next grants: e1 experiment-1 arms (5,7 and 3,4 as world size requires) after its row is reviewed. || 2026-09-05T05:47Z fb: user standard -- only incremental results, no reproductions. Struck: memory grid, P1 rerun, cache discriminator, readout 0. Live grants: 1,2 E1 at module merge; 3,4 SFT p04/p16; 5 e1 control floor only if a readout consumes it; 7 free. || 2026-09-05T05:44Z fb: lane_card null -- every non-training job names its card with `harness launch --cards` (e1 d4296bb9), validated against cards[]. Memory grid CANCELLED (user: do not verify what the prior already says); cards 1,2 -> MoE E1 at module merge, 3,4 -> SFT p04/p16 (3b), 5 -> e1 control floor, 7 -> tilerl P1 rerun. || 2026-09-05T05:42Z fb: lane_card set to null -- every non-training job names its card with `harness launch --cards` (e1 d4296bb9), validated against cards[] below; a lane derived by the launcher no longer exists. || 2026-09-05T04:34Z fb: lane 7 -> tilerl P1 rerun; lane 5 -> e1 shape-fault probe then control floor. || 2026-09-05T04:26Z fb: lane 7 -> tilerl P1 rerun (RL-team grant, 30 min, one job). || 2026-09-05T03:21Z fb: lane 7 -> tilerl MoE microbench (RL-team grant, 2 h, one job); lane 5 idle. || 2026-09-05T01:42Z fb: lane 7 -> e1 arm_token_corr (RL-team grant, one job); lane 5 idle (control floor waits for a card grant)",
