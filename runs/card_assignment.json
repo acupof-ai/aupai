@@ -175,20 +175,21 @@
   }
  ],
  "_theirs_baseline_comment": [
-  "Cards another team owns by STANDING ORDER (user order 2026-09-06, '0,6 tileRL').",
-  "A lend note on one of these expires: it is ours only while its window is open.",
-  "harness pins this list to {0,6} citing that order -- see _assert_card_ownership,",
-  "property (6). Changing it needs a user order, not an edit."
+  "Cards another team owns by STANDING ORDER. Empty since the USER ORDER 2026-09-11 for a",
+  "formal run on 8 cards: all H20s are aupai's for the v41_gate_0911 world-8 run, and",
+  "tilerl-a3 confirmed 2026-09-11 22:3xZ that tileRL is off all H20s and handed card 6 back",
+  "outright (no expiry, no re-extension). The list was [0, 6] under the 2026-09-06",
+  "'0,6 tileRL' order, which the 09-11 order supersedes for both cards. The expiry mechanism",
+  "stays in place for a FUTURE baseline: if a card is added back here, a lend note on it is",
+  "ours only while its window parses and is open. _assert_card_ownership property (6) pins",
+  "the list to []; changing it needs a user order, not an edit."
  ],
- "theirs_baseline": [
-  0,
-  6
- ],
+ "theirs_baseline": [],
  "granted": "2026-09-03",
  "launch_block_granted": true,
  "block_cards": "0,1,2,3,4,5,6,7",
  "lane_card": null,
- "note": "GATE RUN v41_gate_0911 (fb, 2026-09-11 14:32Z): block 0-5 world 6, NO lane; cards 6,7 owner tilerl through the run (user ruling 2026-09-11 04:1xZ); one-hour notice sent tilerl-58 14:32Z. Pre-launch lane 5 ended. | 16:4xZ: HumanEval windows on card 6 (ckl via tilerl-a3); card 7 stays tileRL. | 2026-09-11 22:3xZ fb: USER RULING 2026-09-11 (formal run on 8 cards): world-8 resume of v41_gate_0911 at the .step6000 save (~23:13Z) on block 0-7, NO lane; tilerl-a3 handed card 7 at 22:3xZ (0 MiB, no claim) and is off all H20s; card 6 lent through 23:59Z under the pinned baseline, its permanent transfer waits on the theirs_baseline pin change (de, user order cited).",
+ "note": "GATE RUN v41_gate_0911 (fb, 2026-09-11 14:32Z): block 0-5 world 6, NO lane; cards 6,7 owner tilerl through the run (user ruling 2026-09-11 04:1xZ); one-hour notice sent tilerl-58 14:32Z. Pre-launch lane 5 ended. | 16:4xZ: HumanEval windows on card 6 (ckl via tilerl-a3); card 7 stays tileRL. | 2026-09-11 22:3xZ fb: USER RULING 2026-09-11 (formal run on 8 cards): world-8 resume of v41_gate_0911 at the .step6000 save (~23:13Z) on block 0-7, NO lane; tilerl-a3 handed card 7 at 22:3xZ (0 MiB, no claim) and is off all H20s; card 6 lent through 23:59Z under the pinned baseline, its permanent transfer waits on the theirs_baseline pin change (de, user order cited). | 2026-09-11 ~21:1xZ de (user order 2026-09-11 formal run on 8 cards; tilerl-a3 22:3xZ confirmed tileRL off all H20s): theirs_baseline [] and cards[6] = {owner: aupai} land together; card 6 is aupai's outright with no expiry, so midnight no longer reads it theirs while the world-8 run holds it.",
  "verified": "2026-09-08 fb: nvidia-smi read 2,4,5,7 at 0 MiB / 0% before the grant; runs/claims/ held only tilerl-ppsn/curve2/l5eval",
  "next_grant": {
   "to": "0.2b_8b_b192 (e1-43; prereg runs/prereg.jsonl#matched_batch_dense_0906@amended_1), dense comparator for 1.5b-a0.2b-e48_8b",
@@ -222,7 +223,10 @@
    "owner": "aupai",
    "note": "LANE card until the gate launch (fb 2026-09-11 04:3xZ): de-108 step 4 (de, aupai-08, ~15 card-minutes, single process) runs here first; at the one-hour notice block_cards becomes 0-5 again and the lane disappears (tileRL holds 6,7 by user ruling)."
   },
-  "6": "Lent to aupai (v41_gate_0911 world-8 block card, fb) 2026-09-12 00:00-23:59Z; re-extended daily by fb until de's theirs_baseline pin PR lands (user ruling 2026-09-11 formal run on 8 cards; tilerl-a3 off all H20s since 2026-09-11 22:3xZ).",
+  "6": {
+  "owner": "aupai",
+  "note": "USER ORDER 2026-09-11 (formal run on 8 cards): aupai's outright, no expiry. tilerl-a3 handed the card 21:2xZ (sparsepin32k6 reaped) and confirmed 22:3xZ tileRL is off all H20s; the daily lend and the [0,6] baseline pin end together when theirs_baseline becomes [] (fb re-extended to 2026-09-12 00:00-23:59Z as the bridge until this landed). World-8 v41_gate_0911 block card."
+ },
   "7": {
    "owner": "aupai",
    "note": "USER RULING 2026-09-11 (formal run on 8 cards): handed over by tilerl-a3 2026-09-11 22:3xZ at 0 MiB, no tileRL process; block card for the world-8 resume of v41_gate_0911."
@@ -248,6 +252,7 @@
   "MACHINE_PARSED": {
    "block_cards": "scripts/launch_gate.py:658-714 parses this. The cards a training block holds.",
    "lane_card": "Same parser. The card everything else queues on.",
+   "theirs_baseline": "scripts/harness_core.py _theirs_baseline parses this and scripts/harness.py _assert_card_ownership property (6) PINS it: [] since the 2026-09-11 formal-run-on-8 order, [0,6] before. The list a lend note expires against; empty means no card is another team's by standing order.",
    "cards": "PARSED BY THREE CODE PATHS AND STALE SINCE 2026-09-08 -- the dangerous combination, and this entry is a correction of what this map said an hour earlier. (1) launch_gate.py:666-680 `owner(idx)` returns cards[N] as prose, by exact key or by a range key covering N, and the card gate reads it. (2) launch_gate.py:2001 derives the 'held' set from cards' KEYS minus block and lane. (3) harness.py:21810 runs `_parse_lend_window` over cards['6'] -- the tileRL lend window is parsed out of that string, and its comment records four merges taken red when the live note drifted from a pinned clock. tileRL's own pod_run.sh guard reads this field too, over the network of two projects. WHAT IT CANNOT EXPRESS: a LOAN. Cards 1 and 3 read 'tileRL' here for the whole window they were lent to de's serve, because loans are written only in `note`. tilerl-27's guard classified card 1 as theirs and allowed a job onto it -- the guard ran correctly on a field that does not encode the question. That is the 2026-09-09 13:3xZ incursion, and its cause is this field, not the operator. DO NOT let it rot and do not make it current-state prose (that would be a second current-state field, the shape that failed twice today). It is replaced by an explicit machine field -- see _planned_holders_field."
   },
   "HISTORY": {
@@ -261,7 +266,6 @@
    "verified": "A 2026-09-08 nvidia-smi reading taken before that day's grant. A reading, not a state.",
    "launch_block_granted": "false since 2026-09-08. Not consulted by any launch path today.",
    "next_grant": "A queued grant (e1-43 dense comparator) that has not been issued. A plan, not a holding.",
-   "theirs_baseline": "[0, 6] -- the user's standing order of 2026-09-06. Still true, and the only STALE_PROSE entry that is.",
    "lane_note": "A 2026-09-05 user order reversing an E1 close. The order stands; its card assignments do not.",
    "lane_to": "A 2026-09-06 post-run sequence for a block that has since stopped.",
    "lane_two_card_exception": "A 2026-09-03 narrow exception (a link microbench needs two endpoints). Still the rule, not a holding.",
