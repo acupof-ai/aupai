@@ -571,6 +571,39 @@
    "uncertainty": "Greedy single sample; ~26 min GPU runtime because corrected completions decode to eos/max_new rather than truncating at ~15 tokens. 118 non-empty bodies judged by the same exec+SIGALRM scorer as the 164/164 canonical control.",
    "boundary": "Step-4000 pre-decision baseline; not evidence for or against the 30% gate, decided at step6000. Read jointly with the step2000 fact for the empty-rate trajectory.",
    "status": "measured"
+  },
+  {
+   "id": "v41.humaneval_gate_nodoctest_step6000_0912",
+   "value": "V4.1 gate v41_gate_0911 step 6000 (4.719B tokens), HumanEval greedy DIAGNOSTIC no-doctest arm: pass@1 = 2/164 = 1.22% vs the standard-prompt column 0/164 at the same checkpoint (v41.humaneval_gate_step6000_0912). The arm removes >>> / ... doctest examples and their expected output from each docstring but keeps the prose, because a plain-prompt CPU probe produced correct is_prime/fib while standard-prompt generations copied the doctest lines into loops. Passing tasks: HumanEval/23 (strlen) and HumanEval/60. Empty 62/164 = 37.8% (eos_first 15, stop_at_0 47), HIGHER than the standard 28.0%: with examples removed more generations re-declare the function and cut at the self-stop, so 102/164 non-empty; repetitive 4/102 = 3.9% of non-empty (standard 6/118 = 5.1%). Greedy single-sample n=164: 2 vs 0 is non-zero but not significant (one-sided Fisher p ~= 0.25). Ruling (fb 2026-09-12): the gate number stays the standard-prompt column; this is the second column at every checkpoint from step12000.",
+   "measured": "2026-09-12",
+   "source": "runs/he_nodoctest164_step6000_summary.txt (controls + all partial counts, 4730s) and runs/milestones.jsonl pin he6k_step6000",
+   "config": {
+    "runner": "CUDA_VISIBLE_DEVICES= eval/humaneval_gen.py --device cpu --threads 32 --strip-doctests --run v41gate_he6k_nodoctest164_cpu --force (ckpt = milestones pin he6k_step6000; #290 diagnostic arm)",
+    "arm": "strip_doctests: doctest examples + expected output removed, docstring prose kept",
+    "n_problems": 164,
+    "pass1": 2,
+    "passing_task_ids": [
+     "HumanEval/23",
+     "HumanEval/60"
+    ],
+    "standard_arm_pass1_same_ckpt": 0,
+    "nonempty": 102,
+    "empty": 62,
+    "eos_first": 15,
+    "stop_at_0": 47,
+    "repetitive_nonempty": 4,
+    "step": 6000,
+    "tokens_trained": 4718592000,
+    "wallclock_s": 4730,
+    "ckpt_pin_sha256": "84d1f0fcb1db5f8d198502d778e9a56c26c3c1bc9842bb31972245b67dcab488",
+    "eval_ckpt_pin": "he6k_step6000 (see runs/milestones.jsonl)"
+   },
+   "uncertainty": "Greedy single sample, n=164; delta 2 vs 0 has one-sided Fisher exact p ~= 0.25, so the arm is evidence the prompt construction changes the number, not proof of 1.2% capability. CPU fp32 materialized path (#280). Controls: 164/164 canonical, 154/154 self-redecl, negative halves green.",
+   "boundary": "Diagnostic second column, not the gate metric. Explains WHY the standard prompt reads zero (doctest-copy loops, standard empty 46 vs no-doctest 62); it does not move the standard 0/164 or the amendment-8 joint stop rule. Trajectory from step12000 decides whether the gap widens.",
+   "status": "measured",
+   "artifact_sha256": {
+    "preds_humaneval_ckpt_v41_gate_0911.milestone_he6k_step6000.pt.v41gate_he6k_nodoctest164_cpu.jsonl": "a552056fd5ae5a2998eb6b03f18fe57c23a6d5af0748bbf58a931f1c3dd2bce0"
+   }
   }
  ]
 }
