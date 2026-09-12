@@ -1,0 +1,119 @@
+claimed 7 for v41_sft_b8oom_0913
+vocab_id matches: f1f860970d15d623
+sft rows 9608 per rank (world 1)
+resumed ckpt_v41_gate_0911.pt.step16000 | params 3209.4M | fp8 True | fa True | doc_mask True
+argv ["--resume", "ckpt_v41_gate_0911.pt.step16000", "--sft_path", "data/sft/sft_v41_chatml_post30b_0912.pt", "--out", "/tmp/ckpt_b8oom_throwaway.pt", "--epochs", "2", "--batch", "8", "--lr_scale", "0.1", "--save_every", "100000"]
+lr_scale 0.1 total_steps 2402 stop_after None batch 8 epochs 2 seed 42
+  lr[Muon:0] initial 0.01 -> step0 2e-06
+  lr[AdamW:0] initial 0.1 -> step0 2e-05
+  lr[AdamW:0] initial 0.15 -> step0 3e-05
+  lr[AdamW:0] initial 0.01 -> step0 2e-06
+  lr[AdamW:0] initial 0.01 -> step0 2e-06
+[rank0]:W0912 20:28:49.037000 3581218 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 3062, in forward
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2977, in _body
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2549, in forward
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1450, in forward
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 909, in forward
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 995, in _forward_csa2
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 384, in entries_per_doc
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 318, in _doc_blocks
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank0]:W0912 20:28:49.946000 3581218 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/work/aupai/sft_math.py", line 626, in <module>
+[rank0]:     main()
+[rank0]:   File "/work/aupai/sft_math.py", line 578, in main
+[rank0]:     opt.step()
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/optim/optimizer.py", line 533, in wrapper
+[rank0]:     out = func(*args, **kwargs)
+[rank0]:           ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+[rank0]:     return func(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/work/aupai/train.py", line 968, in step
+[rank0]:     W, M = fn(G, W, M, lr_t, mom_t, wd_t)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1024, in compile_wrapper
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/work/aupai/train.py", line 853, in muon_update
+[rank0]:     def muon_update(
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1263, in _fn
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_functorch/aot_autograd.py", line 1200, in forward
+[rank0]:     return compiled_fn(full_args)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_functorch/_aot_autograd/runtime_wrappers.py", line 2298, in __call__
+[rank0]:     return self.compiled_fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_functorch/_aot_autograd/runtime_wrappers.py", line 580, in runtime_wrapper
+[rank0]:     all_outs = call_func_at_runtime_with_args(
+[rank0]:                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_functorch/_aot_autograd/utils.py", line 138, in call_func_at_runtime_with_args
+[rank0]:     out = normalize_as_list(f(args))
+[rank0]:                             ^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_functorch/_aot_autograd/runtime_wrappers.py", line 783, in wrapper
+[rank0]:     return compiled_fn(runtime_args)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/output_code.py", line 656, in __call__
+[rank0]:     return self.current_callable(inputs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_inductor/utils.py", line 3401, in run
+[rank0]:     out = model(new_inputs)
+[rank0]:           ^^^^^^^^^^^^^^^^^
+[rank0]:   File "/tmp/torchinductor_root/uc/cuce2ptddfk5b6p4d4xhejxefl3fojd2pq2pltlqeudujh3s33wr.py", line 691, in call
+[rank0]:     buf2 = empty_strided_cuda((576, 1024, 1024), (1048576, 1024, 1), torch.bfloat16)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]: torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 1.12 GiB. GPU 0 has a total capacity of 95.22 GiB of which 953.56 MiB is free. Process 991802 has 94.28 GiB memory in use. Of the allocated memory 92.94 GiB is allocated by PyTorch, and 308.44 MiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://docs.pytorch.org/docs/stable/notes/cuda.html#optimizing-memory-usage-with-pytorch-cuda-alloc-conf)
+[rank0]:[W912 20:29:03.704984909 ProcessGroupNCCL.cpp:1575] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+E0912 20:29:06.289000 3581146 torch/distributed/elastic/multiprocessing/api.py:986] failed (exitcode: 1) local_rank: 0 (pid: 3581218) of binary: /usr/bin/python3
+Traceback (most recent call last):
+  File "/usr/local/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 362, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 990, in main
+    run(args)
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 981, in run
+    elastic_launch(
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 170, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 317, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+============================================================
+sft_math.py FAILED
+------------------------------------------------------------
+Failures:
+  <NO_OTHER_FAILURES>
+------------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-09-12_20:29:06
+  host      : iv-yeozpb5g5cbw80bls64e
+  rank      : 0 (local_rank: 0)
+  exitcode  : 1 (pid: 3581218)
+  error_file: <N/A>
+  traceback : To enable traceback see: https://pytorch.org/docs/stable/elastic/errors.html
+============================================================
+B8OOM_EXIT=1
