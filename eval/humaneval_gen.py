@@ -328,11 +328,13 @@ def main():
         nrep = sum(bool(repetitive(r["gen"])) for r in nonempty)
         npass = sum(bool(r.get("ok")) for r in rows)
         nempty = len(rows) - len(nonempty)
+        rep_frac = f"{100 * nrep / len(nonempty):.1f}%" if nonempty else "n/a (0 non-empty)"
+        pass_frac = f"{100 * npass / len(rows):.2f}%" if rows else "n/a (empty preds file)"
+        empty_frac = f"{100 * nempty / len(rows):.1f}%" if rows else "n/a"
         print(f"{os.path.basename(args.preds)}: n={len(rows)} pass@1={npass}/{len(rows)} "
-              f"= {100 * npass / len(rows):.2f}%  nonempty={len(nonempty)} "
-              f"repetitive={nrep}/{len(nonempty)} = "
-              f"{100 * nrep / len(nonempty):.1f}% of non-empty "
-              f"(empty {nempty}/{len(rows)} = {100 * nempty / len(rows):.1f}%)", flush=True)
+              f"= {pass_frac}  nonempty={len(nonempty)} "
+              f"repetitive={nrep}/{len(nonempty)} = {rep_frac} of non-empty "
+              f"(empty {nempty}/{len(rows)} = {empty_frac})", flush=True)
         return
 
     probs = [json.loads(l) for l in open(args.data, encoding="utf-8") if l.strip()]
@@ -470,9 +472,9 @@ def main():
     print(f"empty-completion split: eos_first {neos}/{len(probs)}, "
           f"stop_at_0 {nstop}/{len(probs)} (total empty {nempty}/{len(probs)} = "
           f"{100 * nempty / len(probs):.1f}%)", flush=True)
+    rep_frac = f"{100 * nrep / n_nonempty:.1f}%" if n_nonempty else "n/a (0 non-empty)"
     print(f"repetitive non-empty (last 200 chars, >=3 consecutive equal lines or tokens): "
-          f"{nrep}/{n_nonempty} = "
-          f"{100 * nrep / n_nonempty:.1f}% of non-empty", flush=True)
+          f"{nrep}/{n_nonempty} = {rep_frac} of non-empty", flush=True)
     print(f"preds saved: {out_path}", flush=True)
 
 
