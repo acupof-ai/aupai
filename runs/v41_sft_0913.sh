@@ -1,21 +1,5 @@
 #!/bin/bash
-# restartable: one-shot post-gate ChatML SFT launcher for prereg v41_sft_0913. DRAFT -- no
-# launch until the controller's go and the gate run has ended.
-#
-# Stage: resume the FINAL gate checkpoint, one epoch+ over the 3b-22 ChatML pack, then read
-# HumanEval pass@1 through the ChatML/by-name arm (eval/humaneval_gen.py --chatml).
-# One card, default card 0 (override CARD=). The gate run trains world-8 on block 0-7, so
-# this script refuses hard while any live claim holds the chosen card -- the gate claim
-# included -- and relies on card_claim.py acquire --wait 0 as the second gate.
-#
-# Recipe (justification in runs/prereg.jsonl#v41_sft_0913):
-#   pack data/sft/sft_v41_chatml_post30b_0912.pt = 9,610 rows x 4096, 27.97M supervised
-#   tokens (71.0% of packed), vocab_id f1f860970d15d623 matching the gate ckpt.
-#   EPOCHS=2, BATCH=8 (single card) -> 2 * (9610 // 8) = 2402 optimizer steps, 55.9M
-#   supervised tokens seen. LR_SCALE=0.1 (sft_math.py default; gate peak LR x 0.1).
-#   BATCH 8 seq4096 fp8 grad-ckpt single card: the resumed cfg carries --csa2_win_flash,
-#   whose smoke peak was 43.5 GiB at B4; B8 is estimated ~60 GiB, under the 80 GiB ceiling;
-#   first launch confirms nvidia-smi and the prereg is amended if B8 OOMs (drop to B4).
+# restartable:
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,9 +7,6 @@ NAME=v41_sft_0913
 RESUME=${RESUME:-ckpt_v41_gate_0911.pt}
 PACK=data/sft/sft_v41_chatml_post30b_0912.pt
 OUT=ckpt_${NAME}.pt
-# The device is the caller's CUDA_VISIBLE_DEVICES; CARD is only the fallback when none was
-# exported. The safe idiom keeps this launcher from writing a physical index past a lane the
-# controller confined it to, and lets the go set the free card via CUDA_VISIBLE_DEVICES.
 CARD=${CARD:-0}
 export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-$CARD}
 DEV=$CUDA_VISIBLE_DEVICES
