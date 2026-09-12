@@ -68,3 +68,10 @@ Eval card: closed, B in effect (#280 CPU path on the pod). None pending. Standin
 - Chinese block: zh_wiki_dc 0.271B + zh_c4_dc 0.501B = 0.771B (2.57%), 0 HE/MBPP hits, held for a post-gate phase; gate mix frozen (ruling to ae/0e). PR #291 to 3b.
 - 3b-22 SFT pack built: 39.37M tokens, 9610 rows, 72/18/10 code/en/zh; PR #293 blocked on the no-comment rule, approve on resubmit.
 - Open: user's named deletion go (runs/deletion_0912_candidates.txt); 3b merges #290 #291 #292 #293.
+
+## Run state 2026-09-12 11:0xZ: step 14230, step12000 HumanEval 0/164 both columns
+
+- Run: step 14230/38146, 27K tok/s/gpu, peak 43.4 GiB, no NaN; warmdown since 13352; val 1.840@12000 1.835@12500 1.830@13000 1.820@13500 1.818@14000; .step14000 saved 10:52Z.
+- HumanEval on he12k pin (CPU, controls green): standard 0/164 (empty 62, repetitive 10/102); no-doctest 0/164 (was 2/164 at step6000; empty 80). Trajectory standard 0/0/0/0 at 2000/4000/6000/12000. The step6000 no-doctest 2/164 reads as noise at n=164.
+- amended_8 joint stop stays off (val far below 2.829). Plateau rule (<10% by step 20000, ~17:1xZ) is the next controller call; options drafted for the user: A stop at 20000 and SFT; B continue to 30B per prereg; C pause at 20000, 3 h SFT probe on one card (runs/v41_sft_0913.sh, by-name ChatML read), resume or stop on its number.
+- Merged this tick by fb: #293 (SFT pack builder), #296 (SFT launcher + prereg v41_sft_0913 + --chatml by-name arm + --check_pack), #297 (run-end sequence runs/v41_gate_0911_end.md); 3b merged #290 #291 #292 #294 #295. Pod stamp 3e0511cd. 3b-21/22/23/24 closed.
