@@ -604,6 +604,162 @@
    "artifact_sha256": {
     "preds_humaneval_ckpt_v41_gate_0911.milestone_he6k_step6000.pt.v41gate_he6k_nodoctest164_cpu.jsonl": "a552056fd5ae5a2998eb6b03f18fe57c23a6d5af0748bbf58a931f1c3dd2bce0"
    }
+  },
+  {
+   "id": "v41.humaneval_gate_step12000_0912",
+   "value": "V4.1 gate v41_gate_0911 step 12000 (9.437B tokens), standard-prompt HumanEval greedy CPU: pass@1 = 0/164. Fourth consecutive genuine zero (steps 2000/4000/6000/12000). Empty 62/164 = 37.8% (eos_first 23, stop_at_0 39), 102/164 non-empty, repetitive 10/102 = 9.8%. Standard-pass trajectory 0,0,0,0 across 1.57-9.44B tokens.",
+   "source": "runs/he_gate_step12000_cpu_summary.txt (controls + partial counts, 4929s) and runs/milestones.jsonl pin he12k_step12000",
+   "config": {
+    "runner": "CUDA_VISIBLE_DEVICES= eval/humaneval_gen.py --device cpu --threads 32 --run v41gate_he12k_step12000_cpu --force (ckpt = pin he12k_step12000)",
+    "arm": "standard",
+    "n_problems": 164,
+    "pass1": 0,
+    "nonempty": 102,
+    "empty": 62,
+    "eos_first": 23,
+    "stop_at_0": 39,
+    "repetitive_nonempty": 10,
+    "wallclock_s": 4929
+   },
+   "uncertainty": "Greedy single sample. CPU fp32 materialized path (#280). Controls 164/164 canonical, 154/154 self-redecl, negatives green.",
+   "boundary": "Gate (standard) column at the first checkpoint beyond the 5B decision. Amendment-8 joint stop needs 0/164 AND val >= 2.829; val is far below, so training continues; the HumanEval '<10% plateau' early-stop reading is the controller's, not this fact's.",
+   "artifact_sha256": {
+    "preds_humaneval_ckpt_v41_gate_0911.milestone_he12k_step12000.pt.v41gate_he12k_step12000_cpu.jsonl": "3d615a01bc29bdac762d2ca07124346c686ecda3e60f44537ace5eda7068fbbd"
+   },
+   "measured": "2026-09-12",
+   "status": "measured",
+   "step": 12000,
+   "tokens_trained": 9437184000,
+   "ckpt_pin_sha256": "32d9f8af2dd717a60733c2cca3680f4b6634668a6f9373e91f2102c42b9e7b71",
+   "eval_ckpt_pin": "he12k_step12000 (see runs/milestones.jsonl)"
+  },
+  {
+   "id": "v41.humaneval_gate_nodoctest_step12000_0912",
+   "value": "V4.1 gate step 12000, HumanEval greedy no-doctest DIAGNOSTIC arm: pass@1 = 0/164, DOWN from 2/164 (HumanEval/23,/60) at step6000. The step6000 non-zero does not reproduce: with n=164 greedy it was noise (the step6000 fact's Fisher p was ~0.25). Empty rose 62 -> 80 (48.8%; eos_first 16, stop_at_0 64), non-empty fell 102 -> 84; repetitive 8/84 = 9.5%. The model writes the self-redeclaration stop more often without doctests and the two step6000 solutions vanished. No arm shows emerging HumanEval by 9.4B.",
+   "source": "runs/he_nodoctest12k_step12000_summary.txt (controls + partial counts, 3230s) and runs/milestones.jsonl pin he12k_step12000",
+   "config": {
+    "runner": "CUDA_VISIBLE_DEVICES= eval/humaneval_gen.py --device cpu --threads 32 --strip-doctests --run v41gate_he12k_nodoctest12k_cpu --force (ckpt = pin he12k_step12000; #290 arm)",
+    "arm": "strip_doctests",
+    "n_problems": 164,
+    "pass1": 0,
+    "passing_task_ids": [],
+    "prior_step6000_pass1": 2,
+    "nonempty": 84,
+    "empty": 80,
+    "eos_first": 16,
+    "stop_at_0": 64,
+    "repetitive_nonempty": 8,
+    "wallclock_s": 3230
+   },
+   "uncertainty": "Greedy single sample. 0 vs the step6000 2/164 on the SAME arm is not a measured degradation either: 2 is inside the noise of a 1.2% estimate at n=164. Controls green.",
+   "boundary": "Diagnostic second column, not the gate. Combined with v41.humaneval_gate_nodoctest_step6000_0912 the arm gives 2 -> 0 across 5B->9.4B, i.e. no monotone signal; keep collecting the column but it currently says no capability.",
+   "artifact_sha256": {
+    "preds_humaneval_ckpt_v41_gate_0911.milestone_he12k_step12000.pt.v41gate_he12k_nodoctest12k_cpu.jsonl": "ebeb297f2315cbf7de5fd81b80c6d46113e6ade9a1bd986e4e579a76f96b56bf"
+   },
+   "measured": "2026-09-12",
+   "status": "measured",
+   "step": 12000,
+   "tokens_trained": 9437184000,
+   "ckpt_pin_sha256": "32d9f8af2dd717a60733c2cca3680f4b6634668a6f9373e91f2102c42b9e7b71",
+   "eval_ckpt_pin": "he12k_step12000 (see runs/milestones.jsonl)"
+  },
+  {
+   "id": "v41.gate_run_v41_gate_0911_summary",
+   "value": "V4.1 flat CSA2+SWA MoE gate run v41_gate_0911, stopped by user order at step 17411 / 38146 on 2026-09-12 14:29Z after 13.69B of the 30B tokens, before the planned step20000 read. Two segments: world 6 (NGPU6 accum8, steps 0-6000, launch 09-11 15:07Z) and world 8 (NGPU8 accum6, steps 6000-17411, resume 09-12 02:07Z), identical 786,432 tok/step. VAL fell monotonically 2.444 (step500) -> 1.950 (6000) -> 1.759 (17000, last read), always far below the smoke-g reference 2.829, so prereg amendment 8's joint HumanEval+val stop never tripped on the val clause. HumanEval standard greedy was a genuine 0/164 at every checkpoint scored (2000, 4000, 6000, 12000; see the per-checkpoint facts); the diagnostic no-doctest arm gave 2/164 at 6000 (HumanEval/23,/60) and 0/164 at 12000, i.e. noise at n=164. Standard empty rate 28.0% (6k) -> 37.8% (12k); repetitive-non-empty 5.1% -> 9.8%. Peak memory flat 43.4 GiB, 0 NaN over both segments; world 8 steady 26-27K tok/s/gpu vs 28K world 6. Stop cause: user SIGTERM after the all-zero HumanEval trajectory, not a failure; an .interrupt.step17411 was saved cleanly and cards returned to tileRL.",
+   "measured": "2026-09-12",
+   "source": "runs/v41_gate_0911_w6_val_excerpt.txt (steps 500-6000 recovered from controller monitor), runs/v41_gate_0911_w8_excerpt.txt (steps 6500-17411 val + stop), and the per-checkpoint facts v41.humaneval_gate_step{2000,4000,6000,12000}_*",
+   "config": {
+    "name": "v41_gate_0911",
+    "model": "flat d1024 L12 H8, CSA2 + PureSWA2 + csa2_win_flash, MoEFFN 48 top3+1 expert_ffn1728, fp8, 3,209,392,128 total / 342,847,488 active params",
+    "segments": [
+     {
+      "world": 6,
+      "ngpu": 6,
+      "accum": 8,
+      "steps": "0-6000",
+      "tok_s_gpu": 28000,
+      "peak_gib": 43.4
+     },
+     {
+      "world": 8,
+      "ngpu": 8,
+      "accum": 6,
+      "steps": "6000-17411",
+      "tok_s_gpu": 26500,
+      "peak_gib": 43.4
+     }
+    ],
+    "tokens_per_step": 786432,
+    "schedule_steps": 38146,
+    "tokens_trained_at_stop": 13690000000,
+    "val_trajectory": {
+     "500": 2.444,
+     "1000": 2.208,
+     "2000": 2.108,
+     "3000": 2.036,
+     "4000": 1.995,
+     "5000": 1.975,
+     "6000": 1.95,
+     "6500": 1.934,
+     "7000": 1.94,
+     "7500": 1.91,
+     "8000": 1.911,
+     "8500": 1.897,
+     "9000": 1.892,
+     "9500": 1.88,
+     "10000": 1.888,
+     "10500": 1.866,
+     "11000": 1.86,
+     "11500": 1.846,
+     "12000": 1.84,
+     "12500": 1.835,
+     "13000": 1.83,
+     "13500": 1.82,
+     "14000": 1.818,
+     "14500": 1.804,
+     "15000": 1.796,
+     "15500": 1.782,
+     "16000": 1.771,
+     "16500": 1.77,
+     "17000": 1.759
+    },
+    "humaneval_standard": {
+     "2000": 0,
+     "4000": 0,
+     "6000": 0,
+     "12000": 0
+    },
+    "humaneval_nodoctest": {
+     "6000": 2,
+     "12000": 0
+    },
+    "standard_empty_fraction": {
+     "6000": 0.28,
+     "12000": 0.378
+    },
+    "standard_repetitive_fraction_nonempty": {
+     "6000": 0.051,
+     "12000": 0.098
+    },
+    "nan_count_both_segments": 0,
+    "stop": {
+     "when": "2026-09-12T14:29Z",
+     "step": 17411,
+     "cause": "user order SIGTERM (signal 15)",
+     "last_periodic": "step16000 periodic checkpoint (name under artifact_sha256)",
+     "interrupt_ckpt": "interrupt checkpoint at the stopping step (name under artifact_sha256)",
+     "interrupt_bytes": 12974001173,
+     "exit_rc": 1,
+     "cards_after": "returned to tileRL"
+    }
+   },
+   "uncertainty": "val entries 500-6000 are controller-monitor reads transcribed before the w6 log truncation (the excerpt names this); 6500-17410 are the live log. HumanEval greedy single samples n=164. Throughput is the printed interval mean range, not a strict benchmark; world sizes changed at 6000 so the two segments are not strictly paired.",
+   "boundary": "This is the run SUMMARY, not a new measurement: each HumanEval number is sourced from its own fact and artifact. The run did not reach 30B or the 30% gate; it records that at 13.69B tokens val improved normally while standard HumanEval stayed zero at every read, which is the evidence the user stopped on. It does not establish a ceiling beyond 13.69B.",
+   "status": "measured",
+   "artifact_sha256": {
+    "ckpt_v41_gate_0911.pt.interrupt.step17411": "f908d9d06a38b272d823f344 (sha256 prefix; full hash on pod)",
+    "ckpt_v41_gate_0911.pt.step16000": "4c2de45bbfe00995783ad1f3 (sha256 prefix; full hash on pod)"
+   }
   }
  ]
 }
