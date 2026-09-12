@@ -1,0 +1,11 @@
+# v41_gate_0911 world-6 segment (steps 0-6000), val lines recovered from the controller's log monitor
+# The 2026-09-11 23:27Z world-8 relaunch truncated runs/v41_gate_0911.log; this is what survives, read at the time.
+# step 500/38146 val 2.444 (read 15:5xZ by fb)
+step 1000/38146 val 2.208 val_s 3.61 val_s_total 52.9
+step 2000/38146 val 2.108 val_s 3.53 val_s_total 60.8
+step 3000/38146 val 2.036 val_s 3.55 val_s_total 68.5
+step 4000/38146 val 1.995 val_s 3.57 val_s_total 76.3
+step 5000/38146 val 1.975 val_s 3.54 val_s_total 84.1
+step 6000/38146 val 1.950 val_s 3.53 val_s_total 91.8
+# step 1500 val 2.152, step 2500 val 2.060, step 3500..5500: 5500 val 1.946 (fb reads 18:5xZ, 19:1xZ, 23:07Z)
+# throughput 28K tok/s/gpu, 4.65 s/step, peak 43.4 GiB, MFU 19%, 0 NaN across the segment; saves .step2000 17:54Z, .step4000 20:33Z, .step6000 23:16Z
