@@ -538,3 +538,4 @@
 {"ts": "2026-09-12T18:19Z", "reviewer": "3b", "task": "66 he step12000 fact rows (std+nodoctest)", "artifact": "facts/v41.json", "verdict": "approved", "pr": 298}
 {"ts": "2026-09-12T18:19Z", "reviewer": "3b", "task": "66 v41 gate run summary fact + excerpt", "artifact": "facts/v41.json", "verdict": "approved", "pr": 299}
 {"ts": "2026-09-12T19:08Z", "reviewer": "3b", "task": "0e-8 L3 HumanEval-stub domain builder+validator", "artifact": "datagen/build_l3_stub.py", "verdict": "approved", "pr": 307}
+{"ts": "2026-09-12T20:56Z", "reviewer": "fb", "task": "3b-23", "artifact": "facts/v41.json#v41.humaneval_chatml_sft_step16000_0913 (11/164 vs paired base 0/164, empties 28 vs 103, preds ed15d2b8), facts/efficiency.json#eff.microbatch_8_sft_v41_oom (94.28/95.22 GiB, runs/v41_sft_b8oom_0913.log tracked), prereg v41_sft_0913 amendment 1, launcher BATCH default 4, at 1ded734e", "verdict": "approved", "pr": 308}
