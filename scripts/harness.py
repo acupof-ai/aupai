@@ -22322,31 +22322,41 @@ def _selftest_card_lend_expires():
         f"the unmutated live file must PASS or every FAIL below proves nothing: "
         f"{str(verdict(lambda d: None))[:200]}")
 
-    # THE LIVE PARTITION AND PIN ARE READ, NOT TYPED. The 2026-09-11 order emptied the baseline
-    # and made cards 6 and 7 aupai objects. A future order is the only thing allowed to move any
-    # of these, and property (6) is the pin that says so.
+    # THE LIVE PARTITION IS DERIVED FROM THE LIVE FILE, NEVER TYPED. This asserted "all 8 ours,
+    # none theirs" and named cards 6/7, which pinned the 2026-09-11 world-8 shape; the
+    # 2026-09-12 14:2xZ order hands all eight to tileRL and took main CI red -- the §271 shape
+    # this function warns about. The expected state of EACH card is instead computed from that
+    # card's own cards[] entry: an object's owner (aupai defaults to ours, an observed_block
+    # fails closed to theirs, tilerl is theirs), or the same lend-window parse _aupai_cards uses
+    # for an old-style string. Then the assertion is only "_aupai_cards agrees with that
+    # derivation", which holds for any allocation the controller writes and survives the next.
+    # Property (6) still pins theirs_baseline itself -- that IS a standing user decision.
     _live_root = world(lambda d: None)
     try:
         _live_o, _live_t, _live_map = _aupai_cards(_live_root)
-        _base = _theirs_baseline(_live_root)
-        assert sorted(_base) == [], (
-            f"the standing baseline moved from [] to {sorted(_base)} -- property (6) pins it; "
-            f"the user's 2026-09-11 formal-run-on-8 order emptied it")
-        assert sorted(_live_o) == [0, 1, 2, 3, 4, 5, 6, 7] and not _live_t, (
-            f"the world-8 block expects all 8 ours under baseline [], got ours={sorted(_live_o)} "
-            f"theirs={sorted(_live_t)}")
-        for _c in (6, 7):
-            assert isinstance(_live_map.get(_c), dict), (
-                f"card {_c} must be an owner object under the 09-11 order, got "
-                f"{str(_live_map.get(_c))[:90]!r}")
-        # CARD 7'S STATE FOLLOWS ITS OWN OBJECT OWNER, NEVER A LITERAL. A hardcoded "7 theirs"
-        # took CI red on 2026-09-11 when tilerl-a3 handed card 7 over and the grant object became
-        # aupai while this assertion still named theirs (bd7620b1); a hardcoded "ours" re-reds
-        # the day it moves back. Derive the expected state from the object and compare.
-        _want7_ours = str(_live_map[7].get("owner")) == "aupai"
-        assert (7 in _live_o) == _want7_ours and (7 in _live_t) != _want7_ours, (
-            f"card 7 partition state {('ours' if 7 in _live_o else 'theirs')} disagrees with its "
-            f"object owner {_live_map[7].get('owner')!r}")
+        _base = set(_theirs_baseline(_live_root))
+
+        def _expected_state(card, entry):
+            if isinstance(entry, dict):
+                _owner = str(entry.get("owner") or "").strip().lower()
+                if _owner == "tilerl":
+                    return "theirs"
+                if _owner == "aupai":
+                    # observed_block is a blocking FACT and fails closed (unmeasured -> theirs),
+                    # the same rule _classify_card_entry applies with probe_holds=None.
+                    return "theirs" if entry.get("observed_block") else "ours"
+                return "unclassified"
+            # Old prose entries: the same baseline-gated classifier _aupai_cards runs.
+            return _classify_card_note(entry, baseline_theirs=(card in _base))
+
+        _exp_o, _exp_t = [], []
+        for _c, _entry in _live_map.items():
+            _k = _expected_state(_c, _entry)
+            (_exp_t if _k == "theirs" else _exp_o).append(_c)
+        _exp_o, _exp_t = sorted(_exp_o), sorted(_exp_t)
+        assert sorted(_live_o) == _exp_o and sorted(_live_t) == _exp_t, (
+            f"_aupai_cards disagrees with the cards[] entries' own owners: expected "
+            f"ours={_exp_o} theirs={_exp_t}, got ours={sorted(_live_o)} theirs={sorted(_live_t)}")
         assert not _unclassified_cards(_live_root), (
             f"the live grant leaves cards unclassified: {sorted(_unclassified_cards(_live_root))}")
     finally:
@@ -22404,11 +22414,15 @@ def _selftest_card_lend_expires():
     finally:
         _sh.rmtree(_w_past, ignore_errors=True)
 
-    # THE SAME WINDOW ON A NON-BASELINE CARD FAILS THE FULL INVARIANT. Baseline stays the pinned
-    # [], so this reaches property (3), whose only exception is a baselined card inside a window.
-    assert verdict(lambda d: d["cards"].__setitem__("5", _open_note)) is not None, (
-        "the open-lend exemption fired on a NON-baseline card (5). A tileRL-subject card may "
-        "read ours only when it is in theirs_baseline AND inside its window")
+    # A LEND NOTE ON A NON-BASELINE CARD CANNOT MAKE IT OURS. Property (3)'s exception is gated on
+    # the baseline, and the classifier assertion above (baseline_theirs=False constant across the
+    # window) already proves the gate. It cannot also be asserted at the invariant layer on a
+    # baseline [] tree: off the baseline a tileRL-subject lend note correctly classifies THEIRS,
+    # which satisfies the invariant rather than failing it -- there is no live card on which a
+    # non-baseline lend could read ours, so the case is exercised at the classifier/launch layer,
+    # where the gate actually decides. (Pre-2026-09-12 this was a full-invariant FAIL because
+    # card 5 was then an owner-aupai object; when the controller handed all cards to tileRL the
+    # premise disappeared, the §271 allocation-vs-mechanism split this whole test now follows.)
 
     # THE GRANTED-LEADING NOTE FORM THE CONTROLLER ACTUALLY WRITES (tilerl-0a, PR #58): one date,
     # Z on both times ('21:30Z-21:45Z'); a regex anchored on "lent" or a trailing Z misses it,
@@ -22539,25 +22553,34 @@ def _selftest_card_lend_expires():
         assert _ref, f"--cards 3 was ACCEPTED with an unreadable note ({_got!r})"
     finally:
         _sh.rmtree(t_uncl, ignore_errors=True)
-    assert verdict(lambda d: d["cards"].__setitem__(
-        "2", {"owner": "tilerl", "note": "handed over 2026-09-11"})) is not None, (
+    def block2_other(d):
+        d["cards"]["2"] = {"owner": "tilerl", "note": "handed over 2026-09-12"}
+        # property (4) only fires when the SAME controller grants a block that includes the card,
+        # so give this world a block grant naming it; the live tree grants no block today.
+        d["launch_block_granted"] = True
+        d["block_cards"] = "0,1,2,3"
+
+    assert verdict(block2_other) is not None, (
         "a block card whose object owner is the other team PASSED -- property (4) permissive "
         "drift")
 
-    return ("card lend expiry: the standing theirs_baseline is [] (user order 2026-09-11, all "
-            "eight H20s aupai's) and property (6) pins it -- growing it to [6] or [0,6,7] or "
-            "removing the key all FAIL the invariant, an explicit [] PASSes; all 8 live cards "
-            "are owner-aupai objects with none unclassified. The expiry mechanism stays covered "
-            "for a FUTURE baseline at the classifier/launch layer on worlds that re-baseline "
-            "card 6: an open tileRL-subject lend reads ours inside and theirs a day either side, "
-            "a past one theirs and --cards refuses, the same window on a non-baseline card "
-            "FAILs the invariant; 4c's GRANTED-leading 21:30Z-21:45Z form parses with Z on "
-            "both times, reads ours inside/theirs after and --cards refuses through the launch "
-            "path; a claimed lend with no window, 25:99Z or a backwards window all read "
-            "unclassified and refuse; a windowless GRANTED on a baselined card refuses, never "
-            "theirs; the AGENTS.md 'theirs_baseline []' citation PASSes present, FAILs "
-            "redacted, PASSes absent; an unreadable note on block card 3 refuses that card but "
-            "passes the invariant, while an {owner: tilerl} block card still FAILs")
+    return ("card lend expiry: the standing theirs_baseline is pinned [] (user order 2026-09-11; "
+            "property (6) FAILs growing it to [6]/[0,6,7] or removing the key, an explicit [] "
+            "PASSes); the LIVE ours/theirs partition is derived from each cards[] entry's own "
+            "owner object or lend-window parse and _aupai_cards is asserted to agree, with no "
+            "literal card sets -- so an all-ours world-8 block and the 2026-09-12 all-tileRL "
+            "handover both pass without a code edit. The expiry mechanism stays covered for a "
+            "FUTURE baseline at the classifier/launch layer on worlds that re-baseline card 6: "
+            "an open tileRL-subject lend reads ours inside and theirs a day either side, a past "
+            "one theirs and --cards refuses, and a non-baseline card's verdict is constant "
+            "across the window (the baseline flag, not prose, gates the transfer); 4c's "
+            "GRANTED-leading 21:30Z-21:45Z form parses with Z on both times, reads ours "
+            "inside/theirs after and --cards refuses through the launch path; a claimed lend "
+            "with no window, 25:99Z or a backwards window all read unclassified and refuse; a "
+            "windowless GRANTED on a baselined card refuses, never theirs; the AGENTS.md "
+            "'theirs_baseline []' citation PASSes present, FAILs redacted, PASSes absent; an "
+            "unreadable note on block card 3 refuses that card but passes the invariant, while "
+            "an {owner: tilerl} card inside a granted block still FAILs")
 
 
 def _selftest_card_observed_blocks():
