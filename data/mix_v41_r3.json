@@ -1,0 +1,62 @@
+{
+ "total_tokens": 30000000000,
+ "domains": {
+  "code_ultra_l3_stub_r3_dc": {
+   "weight": 0.47,
+   "epochs": 3,
+   "anneal": 0.45,
+   "fingerprint": "UNBUILT_TODO_3B_HOLDOUT_SPLIT",
+   "epochs_pool_measured": false,
+   "epochs_pool_source": "UNBUILT post-holdout split of code_ultra_l3_stub_dc (0e-8 landed 4,993,975,636 doc tokens / packed pool 4,993,972,598, fp 12ec3cd220b8fe13, facts/corpus_supply.json#cs.code_ultra_l3_stub_dc_landed_0913). 3b holds out a 2% slice for the SFT pack (user decision 2026-09-13 03:4xZ); this r3 domain is the remaining 98%, expected pool ~4.894B tokens, and must be built as a NEW dir (frozen-domain rule) with its own fp_dir + gate-vocab cache before launch. Expected draw 0.47*27B + 0.45*3B = 12.69+1.35 = 14.04B vs expected cap 4.894B*3 = 14.68B (2.87 epochs); feasible even if the true holdout is 3% (cap 14.53B), infeasible if the split removes >4.4% -- recheck on the real stamp."
+  },
+  "code_keep_p1_dc": {
+   "weight": 0.25,
+   "epochs": 3,
+   "anneal": 0.20,
+   "fingerprint": "d7b4f3a09c5707b0",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_keep_p1_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=2626977570. Draw 0.25*27B + 0.20*3B = 6.75+0.60 = 7.35B vs cap 2.627B*3 = 7.881B (2.80 epochs)."
+  },
+  "textbooks_v41": {
+   "weight": 0.10,
+   "epochs": 3,
+   "anneal": 0.10,
+   "fingerprint": "UNBUILT_TODO_DE",
+   "epochs_pool_measured": false,
+   "epochs_pool_source": "UNBUILT placeholder (de): synthetic v41 textbooks, planned ~1.0B tokens; no corpus dir, cache or fingerprint yet -- weight is a placeholder until de lands the build. Draw 0.10*27B + 0.10*3B = 2.7+0.3 = 3.00B, exactly a 1.0B pool x3; a landing below 0.985B silently caps in build_mix, so the weight must be recomputed against the measured stamp before launch (a 0.9B landing supports at most 0.09 main / 0.09 anneal)."
+  },
+  "code_ultra_l2_dc": {
+   "weight": 0.07,
+   "epochs": 1,
+   "anneal": 0.13,
+   "fingerprint": "adf2ff20698dae8a",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_ultra_l2_dc.pt on the pod (vocab f1f860970d15d623); measured_pool_tokens=15340876449. Natural code cut to 7% per the phi-1 route (user: <=10% or zero). Draw 0.07*27B + 0.13*3B = 1.89+0.39 = 2.28B, one epoch, far under pool."
+  },
+  "math_owm_stage2_dc": {
+   "weight": 0.05,
+   "epochs": 1,
+   "anneal": 0.05,
+   "fingerprint": "4b1469bfe4667706",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_math_owm_stage2_dc.pt on the pod (vocab f1f860970d15d623); measured_pool_tokens=5857969755. Draw 1.35+0.15 = 1.50B, one epoch (phi-1 math is a small share)."
+  },
+  "en_c4_stage2_dc": {
+   "weight": 0.03,
+   "epochs": 1,
+   "anneal": 0.02,
+   "fingerprint": "c59c2e4227d875ec",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_en_c4_stage2_dc.pt on the pod (vocab f1f860970d15d623); measured_pool_tokens=1985211248. English capped at 3% per the phi-1 route. Draw 0.81+0.06 = 0.87B, one epoch."
+  },
+  "cot_dc": {
+   "weight": 0.03,
+   "epochs": 3,
+   "anneal": 0.05,
+   "fingerprint": "0d9f495913438657",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_cot_dc.pt on the pod (vocab f1f860970d15d623); measured_pool_tokens=399994717. Draw 0.81+0.15 = 0.96B vs cap 0.400B*3 = 1.200B (2.40 epochs); 3% main is the largest share that stays at the epochs<=3 ruling through both phases."
+  }
+ },
+ "_comment": "DRAFT ROUND-3 MIX (ae-9, USER DECISION 2026-09-13 03:4xZ): phi-1 route -- a ~9-10B unique set repeated ~3 epochs over 30B; data/mix_v41_r2.json (natural-code reshuffle) is SHELVED. Same main/anneal split as the gate (main 27B, anneal 3B, anneal_frac 0.10). weights sum 1.00000; anneal sums 1.00000. Repeated core (the phi-1 textbook/filtered-code idea): code_ultra_l3_stub_r3_dc ~4.89B (HumanEval-shaped stub+docstring->body, 98% of 0e-8's 4.994B after 3b's 2% SFT holdout), code_keep_p1_dc 2.627B (the classifier keep set = our filtered-Stack half), textbooks_v41 ~1.0B synthetic (de, placeholder) = ~8.5B unique at 3 epochs. Single-epoch/small additions: natural L2 7% (<=10% allowed), math 5%, English 3%; CoT 3% at epochs 3 (0.96B draw vs 1.20B cap). Starcoder, rp1t and the unfiltered L3 noexec domain are NOT in r3. Total per-domain draws: stub 14.04B / keep_p1 7.35B / textbooks 3.00B / L2 2.28B / math 1.50B / CoT 0.96B / en_c4 0.87B = 30.00B. Anneal leans to stub (45%) + textbooks (10%) + keep_p1 (20%) = 75% prompt/spec->body shapes for the final 3B. EPOCH CAP PREMISE CHECKED IN CODE (fb): train.py:2839 computes want per phase and train.py:2841 caps at int(len(pool)*epochs)-used[name]; used accumulates across the main and anneal phase loops (train.py:2845 increments it), so the cap is a TOTAL-draw cap: a 5B pool at epochs 3 permits up to 15B in the 30B schedule. Stub 14.04B/14.68B cap and keep_p1 7.35B/7.88B both pass with margin; textbooks 3.00B/3.00B is exact and is the binding placeholder. UNLAUNCHABLE until: (1) 3b/0e split the 2% SFT holdout and build+stamp+cache code_ultra_l3_stub_r3_dc replacing UNBUILT_TODO_3B_HOLDOUT_SPLIT; (2) de lands textbooks_v41 with a measured fp and cache and the textbook weight is recomputed against the real stamp. launch_gate gate_epochs_measured/gate_corpora and train.py _assert_mix_domains are expected to name both placeholders NO-GO; that refusal is intended."
+}
