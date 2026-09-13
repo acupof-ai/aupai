@@ -59,3 +59,64 @@ all owned by live roster members.
 ## Open user decisions
 
 Eval card: closed, B in effect (#280 CPU path on the pod). None pending. Standing: Standing: tileRL keeps 6,7 through the run; L3 exec dropped; 390G reference weights kept.
+
+## Run state 2026-09-12 05:5xZ: step 9200, val 1.892@9000
+
+- Run: step 9200/38146, 26K tok/s/gpu steady, peak 43.4 GiB, ETA 31.3 h; val 1.911@8000 1.897@8500 1.892@9000; .step8000 saved 04:27Z. Next save .step10000; next HumanEval (both columns, CPU) at .step12000 ~08:5xZ.
+- HumanEval no-doctest arm, full 164 on he6k: 2/164 (HumanEval/23, /60) vs standard 0/164; empty 62/164; Fisher ~0.25. Ruling: second column from step12000, gate number stays the standard column (66 writes the fact after #290).
+- Merged by fb this tick: #285 (theirs_baseline [], card 6 aupai outright; daily lend re-extension ENDS), #289 (harness launch rotates runs/<name>.log), #282 (review pairs from roster.json). Pod stamp dbf721e2.
+- Chinese block: zh_wiki_dc 0.271B + zh_c4_dc 0.501B = 0.771B (2.57%), 0 HE/MBPP hits, held for a post-gate phase; gate mix frozen (ruling to ae/0e). PR #291 to 3b.
+- 3b-22 SFT pack built: 39.37M tokens, 9610 rows, 72/18/10 code/en/zh; PR #293 blocked on the no-comment rule, approve on resubmit.
+- Open: user's named deletion go (runs/deletion_0912_candidates.txt); 3b merges #290 #291 #292 #293.
+
+## Run state 2026-09-12 11:0xZ: step 14230, step12000 HumanEval 0/164 both columns
+
+- Run: step 14230/38146, 27K tok/s/gpu, peak 43.4 GiB, no NaN; warmdown since 13352; val 1.840@12000 1.835@12500 1.830@13000 1.820@13500 1.818@14000; .step14000 saved 10:52Z.
+- HumanEval on he12k pin (CPU, controls green): standard 0/164 (empty 62, repetitive 10/102); no-doctest 0/164 (was 2/164 at step6000; empty 80). Trajectory standard 0/0/0/0 at 2000/4000/6000/12000. The step6000 no-doctest 2/164 reads as noise at n=164.
+- amended_8 joint stop stays off (val far below 2.829). Plateau rule (<10% by step 20000, ~17:1xZ) is the next controller call; options drafted for the user: A stop at 20000 and SFT; B continue to 30B per prereg; C pause at 20000, 3 h SFT probe on one card (runs/v41_sft_0913.sh, by-name ChatML read), resume or stop on its number.
+- Merged this tick by fb: #293 (SFT pack builder), #296 (SFT launcher + prereg v41_sft_0913 + --chatml by-name arm + --check_pack), #297 (run-end sequence runs/v41_gate_0911_end.md); 3b merged #290 #291 #292 #294 #295. Pod stamp 3e0511cd. 3b-21/22/23/24 closed.
+
+## 2026-09-12 14:3xZ: v41_gate_0911 STOPPED by user order; cards to tileRL
+
+- Stopped at step 17411/38146 (13.7B tokens) by SIGTERM to torchrun 3078695; .interrupt.step17411 saved 14:28Z; last periodic .step16000; nvidia-smi 0 MiB on 0-7 after. exp row reclassified stopped (reason logged); prereg amendment 10.
+- Why: HumanEval 0/164 in both columns through step12000; the 164 step12000 generations show 62 empty (23 EOS-first, 39 stop-first), 101/102 non-empty re-declare the function, 73 reach a body and the bodies are wrong. Read as the L3 problem-to-solution shape (30% of mix, 96% of L3 rows) teaching "write a new def", not "continue this body".
+- Cards: USER ORDER all eight to tileRL (runs/card_assignment.json 27cd6831 on main and pod); tileRL took 0,1,2 (+3 reserved) at 14:4xZ. aupai gives a one-hour notice before its next launch.
+- Next round plan (user agreed in principle): reshape code data -- L3 as stub+docstring -> body continuation or weight 30% -> 10-15%; FIM in the packer; doctest slice generated from L3 solutions; docstring-without-body filter; CoT 1.5% -> ~5%. SFT probe (#296 launcher) on .step16000 when a card is available. Owners assigned next tick.
+- USER ORDER: 0e is the standing disk scavenger (清道夫): tmp local+pod, deletion_0912 groups A-D, daily sweep, manifest per deletion.
+- Dispatched 14:5xZ for round 2 (no card, no launch): ae-8 data/mix_v41_r2.json draft (L3 30->10-15%, CoT 5%, placeholders l3_stub/doctest_gen, anneal restated) -> de reviews; 0e-8 code_ultra_l3_stub_dc (stub+docstring->body, drop docstring-without-body rows) -> 3b; de-114 FIM in the packer (sentinel-slot question first), de-115 doctest generator slice -> fb; 3b-25 SFT pack v2 with 10% CoT slice -> fb; SFT probe on .step16000 waits on a tileRL card + user go; 66 run-summary fact; 98 page shows stopped.
+
+## 2026-09-13 19:2xZ: SFT probe 11/164 (6.71%) by-name ChatML
+
+- v41_sft_0913 on card 7: resume .step16000 (12.6B), pack v1 (72/18/10 code/en/zh, 27.97M supervised tok), B4 (B8 OOM at the Muon step 94.3/95.2 GiB), 2 epochs = 4804 steps, lr_scale 0.1, loss 1.54 -> 0.99. HumanEval greedy, ChatML prompt, function extracted by name: **11/164 = 6.71%**, above the prereg floor 5/164 (Fisher p=.03 vs 0). Base under the same arm (paired control) running next on card 7. preds data/eval/preds_humaneval_ckpt_v41_sft_0913.pt.chatml.v41_sft_0913.jsonl.
+- Reading: the base has code capability the continuation arm cannot see; SFT teaches "complete this function" in 4804 single-card steps. The 30% gate remains far; next round = reshaped pretrain data (0e-8 stub domain landed: 5.0B tokens, fp 12ec3cd2; docstring-without-body class measured tiny, so the 38% empties were model behaviour) + SFT v2 with CoT.
+- Disk: probe saved 13G every 200 steps (14 pruned by 3b, #306 sets save_every 1000); pod 75%.
+- 20:03Z paired control: base .step16000 under the same --chatml by-name arm = 0/164 (103 empty). SFT 11/164 vs base 0/164; prereg v41_sft_0913 criterion met. Card 7 reverts to tileRL after 3b's B8 OOM rerun status.
+
+## 2026-09-13 03:4xZ USER DECISION: round 3 takes the phi-1 route
+
+Reasoning given to the user and accepted ("按你的想法来"): at 350M active, natural code reaches
+~13% HumanEval only at ~200B tokens (CodeGen-350M-mono); every 30%+ result is 1.3B+ at 2T
+tokens, except phi-1, which reaches 29% base / 45% after exercises SFT on ~7B synthetic
+textbook tokens repeated. Our run 1 (13.7B natural tokens, 0/164 base, 11/164 after ChatML
+SFT) sits in the expected band. mix_v41_r2 (natural-code reshuffle) is shelved.
+
+Round 3 set, ~9-10B unique x ~3 epochs = 30B: code_keep_p1_dc 2.81B, code_ultra_l3_stub_dc
+5.0B minus a 2% SFT holdout, textbooks_v41 ~1.0B synthetic (de, gen_textbooks.py from #209),
+math_owm 5%, cot 3% x3. SFT stage: plain docstring->body exercises from the holdout (3b), no
+ChatML, so the base eval reads the same shape.
+
+| task | owner | deliverable |
+|---|---|---|
+| de-117 | de | textbooks_v41 domain, 1.0B tokens; serve + card-hours by 04:4xZ |
+| ae-9 | ae | data/mix_v41_r3.json with supply arithmetic |
+| 3b-24 | 3b | 2% stub holdout list + plain-format exercises SFT pack, decontaminated |
+| 66-18 | 66 | prereg v41_r3_0914 + launcher draft (w8 accum 6) |
+| 98 | 98 | stub cache minus holdout; textbooks cache; page line |
+| 0e | 0e | deletion_0913 (aupai_raw 150G + step12000/14000; early ckpts after facts check) |
+| tilerl-a3 | ask | 2 cards x 72h for the 27B serve, or their endpoint |
+
+Cards: still all tileRL; nothing of ours runs. Launch of round 3 needs 8 cards, one-hour notice, user go.
+
+## 2026-09-13 08:1xZ v41_r3_0914 running
+
+Launched 07:54Z by 66 on block 0-7 world 8 accum 6, mix data/mix_v41_r3.json (six domains, no textbooks), stub via cache_exclude 56d12083dc30bdf2 (#318, #321). Step 210/38,070 loss 3.80, 26K tok/s/gpu, MFU 18%, peak 43.45 GiB, no NaN. At 208K tok/s the 30B run takes ~40 h; step 6000 (4.72B, first HumanEval base) lands ~14:20Z. Textbooks: gen-A aupai-c1 [705f35] and gen-B aupai-fe generate off-GPU (Claude subagents), 3b-26 vets (exec every python block, decontam, dedup, handread); target 200-300M tokens for data/mix_v41_r3_anneal.json. Teacher serve torn down; Qwen3.6-35B-A3B-FP8 kept at /data00/models.

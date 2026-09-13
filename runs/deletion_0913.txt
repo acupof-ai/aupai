@@ -1,0 +1,36 @@
+DELETED 2026-09-13 batch — standing scavenger 0e, USER GO 03:1xZ ("你自己清理就行")
+schema: DELETED <UTC> <path> <size>MB <kind>; exact-path rm, lsof + ionice idle, grep refs under scripts/datagen/eval before each.
+df: avail 545G -> 718G (+173G), used 72% -> 63%.
+
+Batch 1 (named directly):
+DELETED 2026-09-13T03:37:29Z /data00/aupai_raw 152905MB RAW
+DELETED 2026-09-13T03:37:29Z /work/aupai/ckpt_v41_gate_0911.pt.step12000 12373MB CKPT
+DELETED 2026-09-13T03:37:29Z /work/aupai/ckpt_v41_gate_0911.pt.step14000 12373MB CKPT
+
+Batch 2 (after harness check + fact-source gate):
+DELETED 2026-09-13T03:45:55Z /work/aupai/ckpt_v41_gate_0911.pt.step2000 12373MB CKPT
+DELETED 2026-09-13T03:45:55Z /work/aupai/ckpt_v41_gate_0911.pt.step4000 12373MB CKPT
+DELETED 2026-09-13T03:45:55Z /work/aupai/ckpt_v41_gate_0911.pt.step6000 12373MB CKPT
+DELETED 2026-09-13T03:45:55Z /work/aupai/ckpt_v41_gate_0911.pt.interrupt.step6088 12373MB CKPT
+
+du sum 227,143MB vs df +173G: four raw rolling saves (step2000/4000/6000/12000) are hardlinks
+(link count 2) to their pinned .milestone_he{2,4,6,12}k_*.pt, so unlinking the raw NAME frees
+no blocks (the milestone inode stays). Only step14000 (no milestone pin) and interrupt.step6088
+were standalone (2 x 12,373MB = 24,746MB freed). Real df freeing = 152,905 + 24,746 = 177,651MB (~173.5G).
+
+Gates run before batch 2:
+- `python3 scripts/harness.py check`: ckpt_facts_sources_present SKIPs auth=pod ("repo check, not
+  authoritative"); its FAILs were unrelated/pre-existing (mix_shards_present + mix_supply name the
+  retired ladder mixes whose pre-_dc corpus sweep 1 removed; milestone_ckpt_pinned rows for older
+  models; root_durable emptyDir; eval_registry mbpp_holdouts).
+- Exact-name git grep of facts@origin/main for the four raw names (step2000/step4000/step6000/
+  interrupt.step6088): NONE. Facts cite the .milestone_he*_step* pins, not the rolling saves, so
+  ckpt_facts_sources_present names none of the deleted files.
+- scripts/datagen/eval grep: aupai_raw appears only in input fetchers/converters (refetchable; no
+  gate/training loader); step12000/14000 appears once as a log-name comment (eval/domain_bpb.py).
+
+Verified present after:
+- all four milestones ckpt_v41_gate_0911.milestone_he{2k,4k,6k,12k}_step{2,4,6,12}000.pt
+- ckpt_v41_gate_0911.pt.step16000, ckpt_v41_gate_0911.pt.interrupt.step17411 (KEEP)
+- ckpt_v41_sft_0913.pt and ckpt_v41_sft_0913.pt.step4800 (KEEP; probe live)
+HELD_SKIP: 0.
