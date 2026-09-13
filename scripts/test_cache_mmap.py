@@ -277,6 +277,7 @@ def _check_premises():
         "scripts/test_mix_val_frac.py",             # fixture: a real cache in a temp dir
         "scripts/test_mix_anneal_and_cursor.py",    # fixture: same
         "scripts/test_cache_mmap.py",               # this file's own 0.92 GiB fixture
+        "scripts/pretokenize_domains.py",           # #315: torch.save(data, cache), default zip
     }
     src = subprocess.run(["git", "ls-files", "-z", "*.py"],
                          capture_output=True, text=True, cwd=ROOT)
