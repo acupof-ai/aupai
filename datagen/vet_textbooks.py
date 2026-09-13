@@ -26,6 +26,11 @@ HANDREAD = os.path.join(ROOT, "runs", "textbooks_claude_handread.jsonl")
 MIN_TOK, MAX_TOK = 800, 6000
 EXEC_TIMEOUT = 10
 SEED = 20260913
+# Supersede rule (fb 2026-09-14): for one (seed_topic,lens) key, the longest
+# exec-passing version at/above this word count wins; shorter duplicates of that
+# key drop as "superseded" (a first-shipped-short dedup bug; genA_0020 rows
+# carry an explicit supersedes field).
+MIN_SUPERSEDE_WORDS = 1500
 NEAR_THRESHOLD = 0.8
 GROUP_NEAR_THRESHOLD = 0.5
 SHINGLE = 5
@@ -160,6 +165,7 @@ def main():
              "exec_skipped_blocks": 0,
              "decon_drop": 0, "exact_dup_drop": 0, "near_dup_drop": 0,
              "group_near_dup_drop": 0,
+             "superseded_drop": 0,
              "length_drop": 0, "no_code_blocks": 0, "rows_out": 0, "tokens_out": 0}
     stats_by_source = {}
 
@@ -167,21 +173,20 @@ def main():
         s = stats_by_source.setdefault(source, {
             "rows_in": 0, "exec_pass": 0, "exec_fail": 0, "exec_fail_class": {},
             "decon_drop": 0, "exact_dup_drop": 0, "near_dup_drop": 0,
-            "group_near_dup_drop": 0, "length_drop": 0, "no_code_blocks": 0,
+            "group_near_dup_drop": 0, "superseded_drop": 0,
+            "length_drop": 0, "no_code_blocks": 0,
             "rows_out": 0, "tokens_out": 0})
         return s
 
     failures = []
 
     seen_exact = set()
-    kept = []
-    kept_shingles = []
-    index = defaultdict(list)
-    group_index = defaultdict(list)
+    passed = []   # (r, ntok, source, exact, sh) rows that clear every hard gate
 
+    # ---- Stage A: per-row hard gates (trunc/length/decon/exact/exec) ----
     for idx, r in enumerate(rows):
         if idx % 250 == 0:
-            print(f"[progress] {idx}/{n_in} chapters evaluated", flush=True)
+            print(f"[progress] {idx}/{n_in} chapters gated", flush=True)
         text = r.get("text") or ""
         source = r.get("source", "unknown")
         ss = _src(source)
@@ -231,11 +236,46 @@ def main():
             continue
         stats["exec_pass"] += 1
         ss["exec_pass"] += 1
+        seen_exact.add(exact)
+        passed.append((r, ntok, source, exact, shingles(text)))
 
-        sh = shingles(text)
+    # ---- Stage B: supersede winners, then near/group duplicates ----
+    # Pick, per (source, seed_topic, lens), the LONGEST exec-passing version at
+    # or above MIN_SUPERSEDE_WORDS. Rows with a null seed_topic have no key and
+    # are never superseded. Tie-break: longer words, then later source-file order
+    # (the superseding delivery), deterministic.
+    stats["superseded_drop"] = 0
+    best = {}   # key -> (words, stage-order index into passed)
+    for k, (r, _nt, _src, _ex, _sh) in enumerate(passed):
+        seed = r.get("seed_topic")
+        if not seed:
+            continue
+        key = (_src, seed, r.get("lens"))
+        words = len((r.get("text") or "").split())
+        cur = best.get(key)
+        if cur is None or (words, k) > (cur[0], cur[1]):
+            best[key] = (words, k)
+    # Only keys whose longest passing version clears the word floor retire
+    # shorter versions; a key with no >=floor version is left untouched.
+    winning = {key: idx for key, (words, idx) in best.items()
+               if words >= MIN_SUPERSEDE_WORDS}
+
+    kept = []
+    kept_shingles = []
+    index = defaultdict(list)
+    group_index = defaultdict(list)
+    for k, (r, ntok, source, _exact, sh) in enumerate(passed):
+        ss = _src(source)
+        seed = r.get("seed_topic")
+        key = (source, seed, r.get("lens")) if seed else None
+        if key in winning and k != winning[key]:
+            stats["superseded_drop"] += 1
+            ss["superseded_drop"] = ss.get("superseded_drop", 0) + 1
+            add_fail(failures, r, source, "superseded",
+                     {"seed_topic": seed, "lens": r.get("lens")})
+            continue
         cands = {j for s in sh for j in index.get(s, ())}
-        near = any(jaccard(sh, kept_shingles[j]) >= NEAR_THRESHOLD for j in cands)
-        if near:
+        if any(jaccard(sh, kept_shingles[j]) >= NEAR_THRESHOLD for j in cands):
             stats["near_dup_drop"] += 1
             ss["near_dup_drop"] += 1
             add_fail(failures, r, source, "near_dup")
@@ -243,15 +283,13 @@ def main():
 
         group = r.get("seed_topic")
         gcands = {j for s in sh for j in group_index.get((group, s), ())} if group else set()
-        gnear = any(jaccard(sh, kept_shingles[j]) >= GROUP_NEAR_THRESHOLD for j in gcands)
-        if gnear:
+        if any(jaccard(sh, kept_shingles[j]) >= GROUP_NEAR_THRESHOLD for j in gcands):
             stats["group_near_dup_drop"] += 1
             ss["group_near_dup_drop"] += 1
             add_fail(failures, r, source, "group_near_dup", {"seed_topic": group})
             continue
 
         j = len(kept)
-        seen_exact.add(exact)
         for s in sh:
             index[s].append(j)
             if group:
