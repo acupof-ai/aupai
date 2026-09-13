@@ -2,8 +2,9 @@
 # DRAFT round 3 (USER DECISION 2026-09-13 03:4xZ): phi-1 route -- small high-quality set x3
 # epochs, 30B token budget. World 8, B4/accum6 = 786,432 tokens/step, same V4.1 flat stack as
 # v41_gate_0911 (csa2_win_flash). Mix data/mix_v41_r3.json is drafted by ae and MUST be on main
-# with measured caches before launch. NO LAUNCH from this file: needs 8 cards granted from tileRL
-# and the controller's explicit go.
+# with measured caches before launch. NO LAUNCH from this file: grant a985b597 already assigns
+# all eight cards to aupai; the textbook-generator serve occupies 0-7 first, so launch waits for
+# that serve to end and for the controller's explicit go.
 cd /work/aupai || exit 1
 export NGPU=8
 exec python3 scripts/harness.py launch v41_r3_0914 --training --class incremental --hypothesis "V4.1 flat CSA2 MoE round 3, phi-style small high-quality mix x3 epochs to 30B (prereg v41_r3_0914)" \
