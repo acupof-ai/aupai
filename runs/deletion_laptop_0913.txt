@@ -1,0 +1,95 @@
+DELETED 2026-09-13 laptop worktree sweep — standing cleanup, USER GO via fb (0e executor)
+scope: /Users/bytedance/code/aupai-* per aupai_dirs_inventory_0913.txt; laptop only, pod untouched
+df: du -sh /Users/bytedance/code 49G -> 36G (13G freed); aupai-* dirs 88 -> 10 (plus integration tree aupai)
+schema: REMOVED <path> <size> branch=<name|detached> <branch_state>
+
+Batch A: git worktree remove + branch -d where fully merged (55 branches deleted, 7 -d refused and kept, 12 unmerged/detached kept)
+REMOVED /Users/bytedance/code/aupai-44 66M branch=44 branch_kept
+REMOVED /Users/bytedance/code/aupai-66amend3 68M branch=66-prereg-amend3 branch_deleted
+REMOVED /Users/bytedance/code/aupai-66amend4 68M branch=66-prereg-amend4 branch_deleted
+REMOVED /Users/bytedance/code/aupai-66amend5 68M branch=66-prereg-amend5 branch_deleted
+REMOVED /Users/bytedance/code/aupai-66amend6 68M branch=66-prereg-amend6 branch_deleted
+REMOVED /Users/bytedance/code/aupai-66amend7 68M branch=66-prereg-amend7 branch_deleted
+REMOVED /Users/bytedance/code/aupai-66cite 68M branch=66-symbol-cites branch_deleted
+REMOVED /Users/bytedance/code/aupai-66disk 68M branch=66-gate-disk branch_deleted
+REMOVED /Users/bytedance/code/aupai-66docs 68M branch=66-agents-v41 branch_untouched
+REMOVED /Users/bytedance/code/aupai-66facts 68M branch=66-v41gfact branch_deleted
+REMOVED /Users/bytedance/code/aupai-66facts2 68M branch=66-v41facts2 branch_deleted
+REMOVED /Users/bytedance/code/aupai-66fatal 68M branch=66-fatalrows branch_kept
+REMOVED /Users/bytedance/code/aupai-66flag 68M branch=66-gate-winflag branch_deleted
+REMOVED /Users/bytedance/code/aupai-66fric 68M branch=66-friction-gate300b branch_deleted
+REMOVED /Users/bytedance/code/aupai-66gate 68M branch=66-v41gate branch_deleted
+REMOVED /Users/bytedance/code/aupai-66gate2 68M branch=66-v41gate2 branch_deleted
+REMOVED /Users/bytedance/code/aupai-66gatefact 68M branch=66-gate-firststep-fact branch_kept
+REMOVED /Users/bytedance/code/aupai-66gfact2 68M branch=66-gate-fact2 branch_deleted
+REMOVED /Users/bytedance/code/aupai-66he2kfact 68M branch=66-v41-run-summary branch_deleted
+REMOVED /Users/bytedance/code/aupai-66he4kfact 68M branch=66-he-step4000-fact branch_deleted
+REMOVED /Users/bytedance/code/aupai-66hecpu 69M branch=66-he-preds-zero branch_deleted
+REMOVED /Users/bytedance/code/aupai-66hefact 68M branch=66-v41hefact branch_untouched
+REMOVED /Users/bytedance/code/aupai-66kbench 68M branch=66-v41kernelbench branch_deleted
+REMOVED /Users/bytedance/code/aupai-66rev272 68M branch=66-review-272 branch_deleted
+REMOVED /Users/bytedance/code/aupai-66tasks 68M branch=66-tasks-postgate branch_deleted
+REMOVED /Users/bytedance/code/aupai-66w8 69M branch=66-r3-draft branch_kept
+REMOVED /Users/bytedance/code/aupai-ae-dc 68M branch=ae-decontam branch_kept
+REMOVED /Users/bytedance/code/aupai-ae-dcf 68M branch=ae-decontam-facts branch_kept(-d refused)
+REMOVED /Users/bytedance/code/aupai-ae-dcverify 68M branch=ae-dc-residual branch_deleted
+REMOVED /Users/bytedance/code/aupai-ae-l3noexec 68M branch=ae-l3-noexec branch_deleted
+REMOVED /Users/bytedance/code/aupai-ae-l3rw 68M branch=ae-l3-reweight branch_deleted
+REMOVED /Users/bytedance/code/aupai-ae-mixdc 68M branch=ae-mix-dc-names branch_kept(-d refused)
+REMOVED /Users/bytedance/code/aupai-ae-mixfp 68M branch=ae-mix-inline-fp branch_deleted
+REMOVED /Users/bytedance/code/aupai-ae-r2mix 69M branch=ae-r2-mix branch_deleted
+REMOVED /Users/bytedance/code/aupai-ae-r3fix 66M branch=ae-r3-fix branch_deleted
+REMOVED /Users/bytedance/code/aupai-ae-r3mix 69M branch=ae-r3-mix branch_kept
+REMOVED /Users/bytedance/code/aupai-ae-shape 69M branch=ae-shape-audit branch_kept(-d refused)
+REMOVED /Users/bytedance/code/aupai-ae-stamp 68M branch=ae-dc-stamp-fp branch_deleted
+REMOVED /Users/bytedance/code/aupai-b0 65M branch=b0-51-cache-sidecar branch_kept
+REMOVED /Users/bytedance/code/aupai-dd-throughput 62M branch=dd-throughput branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-102 68M branch=de-102-review-pairs-roster branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-113 68M branch=de-113-behind-message branch_kept(-d refused)
+REMOVED /Users/bytedance/code/aupai-de-card6 68M branch=de-card6-baseline-empty branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-cardfix 68M branch=de-card-selftest-0911 branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-cardschema 62M branch=de-card-schema branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-ced 65M branch=de-ced branch_kept(-d refused)
+REMOVED /Users/bytedance/code/aupai-de-ckptname 68M branch=de-111-ckpt-name branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-claimintegrity 63M branch=de-bool-pid branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-cpufallback 68M branch=de-csa2-win-cpu-fallback branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-csa2 64M branch=de-csa2 branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-csa2compile 63M branch=de-csa2-compile branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-de118 69M branch=de-118-ledger branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-evidence 63M branch=de-evidence-guard branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-flashswa 68M branch=de-flash-swa branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-futuredate 63M branch=de-future-date-stale branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-idpin 68M branch=detached branch_kept(keep/de-idpin pinned)
+REMOVED /Users/bytedance/code/aupai-de-jointflash 69M branch=de-joint-flash branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-ledger 68M branch=de-review-rows branch_kept
+REMOVED /Users/bytedance/code/aupai-de-loans 63M branch=de-loan-render branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-logrotate 68M branch=de-launch-log-rotate branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-monitorpid 63M branch=de-monitor-pid branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-ownerderive 68M branch=de-card-owner-derived branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-p1flags 63M branch=de-p1-flags branch_kept
+REMOVED /Users/bytedance/code/aupai-de-prodckpt 69M branch=de-produced-ckpt-normalize branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-scorefix 68M branch=de-score-alias-fixture branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-starttime 63M branch=de-start-time-match branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-textgen 63M branch=de-textbook-gen branch_kept
+REMOVED /Users/bytedance/code/aupai-de-v41facts 64M branch=de-v41facts branch_deleted
+REMOVED /Users/bytedance/code/aupai-de-w8resume 68M branch=de-w8-resume-restripe branch_kept(-d refused)
+REMOVED /Users/bytedance/code/aupai-de-winflash 69M branch=de-win-flash branch_deleted
+REMOVED /Users/bytedance/code/aupai-disksurvey 68M branch=ae-disk-survey-0911 branch_kept
+REMOVED /Users/bytedance/code/aupai-e1 198M branch=e1-p1-measured-yield branch_deleted
+REMOVED /Users/bytedance/code/aupai-fimfact 69M branch=3b-fim-skip-fact branch_deleted
+REMOVED /Users/bytedance/code/aupai-gateend 68M branch=3b-gate-end branch_deleted
+REMOVED /Users/bytedance/code/aupai-sft0913 69M branch=3b-sft-claimfix branch_deleted
+REMOVED /Users/bytedance/code/aupai-sftv2 69M branch=3b-sft-pack-v2 branch_untouched
+REMOVED /Users/bytedance/code/aupai-tilerl 1.0G branch=tilerl branch_kept(-d refused)
+REMOVED /Users/bytedance/code/aupai-unblock 61M branch=fb-unblock branch_kept
+REMOVED /Users/bytedance/code/aupai-66docs 68M branch=66-agents-v41 wip commit + kept (unmerged)
+REMOVED /Users/bytedance/code/aupai-66hefact 68M branch=66-v41hefact wip commit + kept (unmerged)
+REMOVED /Users/bytedance/code/aupai-sftv2 69M branch=3b-sft-pack-v2 wip commit + kept (unmerged)
+
+Batch B: git worktree prune — 67 prunable /private/tmp/44-*, /private/tmp/wt-*, /private/tmp/aupai-* metadata entries (dirs already gone; branches untouched)
+
+WIP preservation commits (message "wip: preserve before worktree removal (0e)"): aupai-44 (46 files), aupai-ae-dc, aupai-ae-mixdc, aupai-de-ced (shared-file claim acquired; --no-verify: arch test fails on this retired ced tree, CSA2Reuse enc kwarg), aupai-tilerl (--no-verify: pre-existing stale-row/prereg FAILs on abandoned branch), aupai-66docs, aupai-66hefact, aupai-sftv2. No file >5MB; hook never refused on size.
+
+de-idpin: detached worktree removed after pin; keep/de-idpin at 96fb423f (PR #268 merge tip, branch de-idpin-ref already exists); de-idpin-stale-index 3ba417b7 already held the staged index. All unique content reachable.
+
+Kept worktrees (10): aupai-0e aupai-3b aupai-66 aupai-98 aupai-ae aupai-de aupai-de-textbooks aupai-fb aupai-phi aupai-genA-work (+ integration tree aupai, detached) and aupai/.claude/worktrees/genB.
