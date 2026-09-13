@@ -1056,6 +1056,12 @@ def main():
         # (the first version scheduled 17.4B of a 16.57B L2) would rewrite the launch
         # mix silently without the known-answer cases.
         "scripts/reweight_l3_shortfall.py",
+        # The vetted-textbook -> shard-domain staging converter (98). Registered because its
+        # invariants are only checkable on a known-answer world: text->content key only,
+        # vet decon_fp copied into the domain stats, temp+os.replace with no source inode
+        # sharing (§302: a hardlink opened for writing truncated the vetted originals),
+        # and re-stage without --force must refuse.
+        "scripts/stage_textbook_domain.py",
         "scripts/corpus_snapshot.py",
         # The exact token counter behind cs.code_rp1t_landed and cs.code_dedup08_landed.
         # Registered because it is the instrument that CORRECTS a measurement-basis defect:
