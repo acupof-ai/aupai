@@ -549,3 +549,4 @@
 {"ts": "2026-09-13T06:07Z", "reviewer": "fb", "task": "3b-25", "artifact": "facts/tokenizer.json", "verdict": "approved", "pr": 316}
 {"ts": "2026-09-13T06:43Z", "reviewer": "fb", "task": "ae-9", "artifact": "data/mix_v41_r3.json", "verdict": "approved", "pr": 317}
 {"ts": "2026-09-13T07:05Z", "reviewer": "de", "task": "de-118 cache_exclude second read", "artifact": "train.py:2135-2150,2236-2258,2707-2709 at 88150553; pretokenize_domains.py:120-125 #315", "verdict": "approved", "pr": 318, "owner": "fb"}
+{"ts": "2026-09-13T07:07Z", "reviewer": "3b", "task": "fb per-domain cache_exclude holdout-minus token cache", "artifact": "train.py", "verdict": "approved", "pr": 318}
