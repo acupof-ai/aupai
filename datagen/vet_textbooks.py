@@ -246,11 +246,11 @@ def main():
     # (the superseding delivery), deterministic.
     stats["superseded_drop"] = 0
     best = {}   # key -> (words, stage-order index into passed)
-    for k, (r, _nt, _src, _ex, _sh) in enumerate(passed):
+    for k, (r, _ntok2, src2, _ex, _sh) in enumerate(passed):
         seed = r.get("seed_topic")
         if not seed:
             continue
-        key = (_src, seed, r.get("lens"))
+        key = (src2, seed, r.get("lens"))
         words = len((r.get("text") or "").split())
         cur = best.get(key)
         if cur is None or (words, k) > (cur[0], cur[1]):
