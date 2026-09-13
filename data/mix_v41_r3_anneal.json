@@ -9,7 +9,7 @@
    "epochs_pool_measured": false,
    "epochs_pool_source": "UNBUILT placeholder: synthetic v41 textbooks being generated off-GPU by two Claude sessions (user order 2026-09-13 06:1xZ); not ready for the r3 launch, so they enter THIS stage-2 mix. No corpus dir, cache, token count or fingerprint yet -- the 0.50 weight is a PLACEHOLDER pending the measured landing: if the corpus lands at the planned >=1.5B pool the weight stands at one epoch (draw 1.5B main + 0.15B anneal = 1.65B); if it lands smaller, either the weight falls or epochs rises, and the other two domains absorb the share. Recompute from facts/corpus_supply when 98/3b records the landing."
   },
-  "code_ultra_l3_stub_r3_dc": {
+  "code_ultra_l3_stub_dc": {
    "weight": 0.30,
    "epochs": 1,
    "anneal": 0.30,

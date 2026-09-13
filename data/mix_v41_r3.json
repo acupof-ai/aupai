@@ -1,7 +1,7 @@
 {
  "total_tokens": 30000000000,
  "domains": {
-  "code_ultra_l3_stub_r3_dc": {
+  "code_ultra_l3_stub_dc": {
    "weight": 0.47,
    "epochs": 3,
    "anneal": 0.45,
