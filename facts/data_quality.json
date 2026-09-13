@@ -1328,7 +1328,7 @@
     "cert_bar_handread": 4.0,
     "cert_result": "FAIL_HANDREAD",
     "handread_per_source": 30,
-    "handread_correctness_genA": 3.9,
+    "handread_correctness_genA": 3.967,
     "handread_pedagogy_genA": 4.2,
     "handread_correctness_genB": 4.333,
     "handread_pedagogy_genB": 4.333,
@@ -1342,7 +1342,8 @@
     "exec_pass_rate_genA_all": 0.8491,
     "exec_pass_rate_genB_all": 0.8663,
     "exec_classification_correction": "The 86.16% all-failures rate is NOT a code-quality drop: 535/698 exec failures are env_unsandboxable (sandbox RLIMIT_NPROC=64 thread/fork refusals 'can't start new thread', BlockingIOError, missing third-party modules, no network) that fail_class previously miscounted as 'code' because it required an os/network token in the source. Correct code-only exec rate is 96.38% (A 96.10/B 96.49), comfortably over 90. fail_class now reads env signatures from the error text and exec_pass_rate excludes env; exec_pass_rate_all_failures kept for comparison. Real code fails = 162 (A 47/B 115): AssertionError 33, FileNotFound 21, coroutine-never-awaited ~20, NameErrors.",
-    "new_batch_code_only_exec": "new gen-A 0012-0017 code-only 0.92-1.00 (0017 new-prompt = 1.00); gen-B 0021-0026 small files 0.75-0.91 (n 4-17 each, weak but noisy)."
+    "new_batch_code_only_exec": "new gen-A 0012-0017 code-only 0.92-1.00 (0017 new-prompt = 1.00); gen-B 0021-0026 small files 0.75-0.91 (n 4-17 each, weak but noisy).",
+    "handread_note_0914": "2 of 9 gen-A <=3 calls overturned on critic second-look (deadlocks Coffman #3-not-#2; set-cover hypothetical-gap misread); gen-A <=3 chapters now 7/30, correctness 3.90->3.967, still <4 so cert unchanged FAIL. Blind critic-holdout n=20 gold: 7 keep/13 fix/0 drop, mean c3.65."
    },
    "measured": "2026-09-14",
    "source": "pod python3 datagen/vet_textbooks.py over 4880 delivered chapters; stats data/corpus/textbooks_claude_v41_vetted/vet_textbooks_stats.json; handread runs/textbooks_handread_full_0913.jsonl (60 ch, reviewer workflow of 60 independent high-effort reads); cf scanner scripts/decontam_md_counterfactual.py",
