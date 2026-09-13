@@ -547,3 +547,4 @@
 {"ts": "2026-09-13T05:44Z", "reviewer": "fb", "task": "98-9", "artifact": "scripts/pretokenize_domains.py", "verdict": "approved", "pr": 315}
 {"ts": "2026-09-13T05:35Z", "reviewer": "3b", "task": "66 v41_r3_0914 phi-route prereg + w8 launcher DRAFT", "artifact": "runs/prereg.jsonl", "verdict": "approved", "pr": 311}
 {"ts": "2026-09-13T06:07Z", "reviewer": "fb", "task": "3b-25", "artifact": "facts/tokenizer.json", "verdict": "approved", "pr": 316}
+{"ts": "2026-09-13T06:43Z", "reviewer": "fb", "task": "ae-9", "artifact": "data/mix_v41_r3.json", "verdict": "approved", "pr": 317}
