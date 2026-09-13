@@ -5262,25 +5262,18 @@ def _selftest_produced_checkpoint_inputs():
     bare X.pt as a 'free' ckpt unless the suffix is normalised off the input set. 2026-09-12:
     a v41_sft resume of ckpt_v41_gate_0911.pt.step16000 was credited with producing
     ckpt_v41_gate_0911 and false-FAILed score_matrix_present."""
-    # A step-path resume leaves no free ckpt: the bare core is an input after normalisation.
     cmd = "./run_ddp.sh --resume ckpt_v41_gate_0911.pt.step16000 --name v41_sft_0913"
     assert produced_checkpoint(cmd, "v41_sft_0913") == "ckpt_v41_sft_0913", (
         "--name decides the produced ckpt; the resumed bare core must not override it")
-    # A step-path resume with NO --name leaves the bare core as the only CKPT_RE match: old code
-    # (verbatim input match only) counted it as the single free output and mis-credited the run
-    # with the resumed gate checkpoint; normalised inputs make produced_checkpoint return None.
     cmd2 = "python3 sft.py --resume ckpt_v41_gate_0911.pt.step16000 some other args"
     assert produced_checkpoint(cmd2, "r") is None, (
         "a step-suffixed resume with no --out/--name must not credit the resumed bare core as "
         "this run's output")
-    # An interrupt step path behaves identically.
     cmd3 = "python3 sft.py --resume ckpt_a.pt.interrupt.step32 more args"
     assert produced_checkpoint(cmd3, "r") is None, (
         "an .interrupt.stepN resume input must normalise to its bare core too")
-    # A bare, suffixless input is excluded as before.
     assert produced_checkpoint(
         "./run_ddp.sh --resume ckpt_k4.pt --name rld", "rld") == "ckpt_rld"
-    # A genuinely free ckpt (no flag) is still the produced one.
     assert produced_checkpoint(
         "./run_ddp.sh ckpt_newrun.pt --resume ckpt_in.pt.step5", "x") == "ckpt_newrun"
     print("  produced_checkpoint: step/interrupt-suffixed resume inputs normalize to bare cores")
