@@ -98,7 +98,17 @@
    "rows": 0,
    "humaneval_problems": [],
    "mbpp_problems": 0
+  },
+  "code_ultra_l3_stub_dc": {
+   "docs": 13682629,
+   "shards": 201,
+   "rows": 0,
+   "humaneval_problems": [],
+   "mbpp_problems": 0,
+   "gate": "NEW whitespace-13-gram (fp 0aefe6a2aa5e130f), full scan 2026-09-14",
+   "rows_source": "0 hits across transformed last-top-func+folded-docstring stub corpus; 46/46 prior rows match noexec_dc keys (pod runs/rev_stub_gate_hits.jsonl + rev_stub_gate_full.log)"
   }
  },
- "total_rows": 414
+ "total_rows": 414,
+ "stub_note": "code_ultra_l3_stub_dc transformed corpus has 0 gate hits; empty exclude manifest -> build_excluded_cache drops 0 and stamps .srcfp exclude=<msha>:0. The 46 rows stay keyed to code_ultra_l3_noexec_dc only."
 }
