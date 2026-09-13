@@ -23,10 +23,11 @@ import random
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SEEDS = os.path.join(ROOT, "data/topic_seeds/cs_v1/topic_seeds_cs.jsonl")
-OUTDIR = os.path.join(ROOT, "data/corpus/textbooks_v41")
+ROOT = Path(__file__).resolve().parent.parent
+SEEDS = ROOT / "data/topic_seeds/cs_v1/topic_seeds_cs.jsonl"
+OUTDIR = ROOT / "data/corpus/textbooks_v41"
 
 
 def parse_ports(spec):
@@ -108,7 +109,7 @@ def gen_one(idx, topic, lens, n, port, model, retries=2):
         "max_tokens": 1600,
         "temperature": 0.7,
         "top_p": 0.95,
-        "reasoning_effort": "none",
+        "chat_template_kwargs": {"enable_thinking": False},
     }).encode()
     for _ in range(retries + 1):
         try:
@@ -118,6 +119,9 @@ def gen_one(idx, topic, lens, n, port, model, retries=2):
             with urllib.request.urlopen(req, timeout=300) as r:
                 resp = json.loads(r.read())
             content = resp["choices"][0]["message"]["content"]
+            if "</think>" in content:
+                content = content.split("</think>", 1)[1]
+            content = content.strip()
             toks = int((resp.get("usage") or {}).get("completion_tokens", 0))
             if content and len(content) > 200:
                 return idx, topic, lens, n, content, toks, None
@@ -130,18 +134,19 @@ def gen_one(idx, topic, lens, n, port, model, retries=2):
 def existing_keys():
     """(topic, lens, n) keys and summed tokens already on disk (all shards share OUTDIR)."""
     keys, total = set(), 0
-    if not os.path.isdir(OUTDIR):
+    if not OUTDIR.is_dir():
         return keys, total
-    for fn in sorted(os.listdir(OUTDIR)):
-        if not fn.endswith(".jsonl"):
+    for fp in sorted(OUTDIR.iterdir()):
+        if not fp.name.endswith(".jsonl"):
             continue
-        for line in open(os.path.join(OUTDIR, fn), encoding="utf-8"):
-            line = line.strip()
-            if not line:
-                continue
-            r = json.loads(line)
-            keys.add((r["topic"], r["lens"], r["n"]))
-            total += int(r.get("tokens", 0))
+        with fp.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                r = json.loads(line)
+                keys.add((r["topic"], r["lens"], r["n"]))
+                total += int(r.get("tokens", 0))
     return keys, total
 
 
@@ -177,16 +182,17 @@ def main():
         except SystemExit:
             model = "qwen38-27b"
 
-    topics = [json.loads(l)["topic"] for l in open(SEEDS, encoding="utf-8")
-              if l.strip() and json.loads(l).get("topic")]
+    with SEEDS.open(encoding="utf-8") as f:
+        topics = [json.loads(l)["topic"] for l in f
+                  if l.strip() and json.loads(l).get("topic")]
     done_keys, total_tok = existing_keys()
-    os.makedirs(OUTDIR, exist_ok=True)
+    OUTDIR.mkdir(parents=True, exist_ok=True)
 
     def lens_for(topic, n):
         h = int(hashlib.sha256(f"{topic}\x1f{n}".encode()).hexdigest(), 16)
         x = (h % 10000) / 10000.0
         acc = 0
-        for name, w in zip(_LENS_NAMES, _LENS_WEIGHTS):
+        for name, w in zip(_LENS_NAMES, _LENS_WEIGHTS, strict=True):
             acc += w / sum(_LENS_WEIGHTS)
             if x < acc:
                 return name
@@ -203,10 +209,10 @@ def main():
     print(f"shard {args.shard}/{args.shards} port {port} model {model}: {len(plan)} chapters; "
           f"{total_tok/1e9:.4f}B on disk; shard target {shard_target/1e6:.0f}M", flush=True)
 
-    shard_idx = len([f for f in os.listdir(OUTDIR)
-                     if f.endswith(".jsonl") and f.startswith(f"textbooks_s{args.shard:02d}_")])
-    fout = open(os.path.join(OUTDIR, f"textbooks_s{args.shard:02d}_{shard_idx:04d}.jsonl"), "a",
-                encoding="utf-8")
+    shard_idx = len([f for f in OUTDIR.iterdir()
+                     if f.name.endswith(".jsonl") and f.name.startswith(f"textbooks_s{args.shard:02d}_")])
+    fout = (OUTDIR / f"textbooks_s{args.shard:02d}_{shard_idx:04d}.jsonl").open(
+        "a", encoding="utf-8")
     in_shard = 0
     ok = err = 0
     run_tok = 0
@@ -230,8 +236,7 @@ def main():
                     fout.close()
                     shard_idx += 1
                     in_shard = 0
-                    fout = open(os.path.join(
-                        OUTDIR, f"textbooks_s{args.shard:02d}_{shard_idx:04d}.jsonl"),
+                    fout = (OUTDIR / f"textbooks_s{args.shard:02d}_{shard_idx:04d}.jsonl").open(
                         "a", encoding="utf-8")
             else:
                 err += 1
