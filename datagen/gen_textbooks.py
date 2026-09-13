@@ -27,8 +27,25 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SEEDS = os.path.join(ROOT, "data/topic_seeds/cs_v1/topic_seeds_cs.jsonl")
 OUTDIR = os.path.join(ROOT, "data/corpus/textbooks_v41")
-DEFAULT_PORT = 8100
-MODEL = os.environ.get("TEACHER_MODEL", "qwen38-27b")
+
+
+def parse_ports(spec):
+    ports = []
+    for part in str(spec).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            a, b = part.split("-", 1)
+            ports.extend(range(int(a), int(b) + 1))
+        else:
+            ports.append(int(part))
+    if not ports:
+        raise SystemExit("no --ports given")
+    return ports
+
+
+MODEL = os.environ.get("TEACHER_MODEL", "")
 
 LENSES = [
     ("with runnable Python examples and tests that assert the result", 4),
@@ -67,9 +84,26 @@ def shard_of(topic, lens, n, shards):
     return int(chapter_key(topic, lens, n), 16) % shards
 
 
-def gen_one(idx, topic, lens, n, port, retries=2):
+def served_model_name(port, retries=40, wait=15):
+    if MODEL:
+        return MODEL
+    last = ""
+    for _ in range(retries):
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/models", timeout=10) as r:
+                data = json.loads(r.read())
+            names = [m.get("id") for m in data.get("data", []) if m.get("id")]
+            if names:
+                return names[0]
+        except Exception as e:
+            last = str(e)[:100]
+        time.sleep(wait)
+    raise SystemExit(f"no model served on port {port} after waiting: {last}")
+
+
+def gen_one(idx, topic, lens, n, port, model, retries=2):
     body = json.dumps({
-        "model": MODEL,
+        "model": model,
         "messages": [{"role": "user", "content": PROMPT.format(topic=topic, lens=lens)}],
         "max_tokens": 1600,
         "temperature": 0.7,
@@ -119,10 +153,29 @@ def main():
                     help="TOTAL target across all shards; this shard stops at target/shards")
     ap.add_argument("--shard", type=int, default=0)
     ap.add_argument("--shards", type=int, default=1)
-    ap.add_argument("--port", type=int, default=DEFAULT_PORT)
+    ap.add_argument("--port", type=int, default=0, help="single endpoint; overridden by --ports")
+    ap.add_argument("--ports", default="",
+                    help="comma/range list, e.g. 30000-30007; one serve per shard in order")
     args = ap.parse_args()
-    if not (0 <= args.shard < args.shards):
-        raise SystemExit(f"--shard {args.shard} out of range for --shards {args.shards}")
+    if args.ports:
+        ports = parse_ports(args.ports)
+        args.shards = len(ports)
+        args.shard = args.shard if 0 <= args.shard < args.shards else 0
+        port = ports[args.shard]
+    else:
+        if not (0 <= args.shard < args.shards):
+            raise SystemExit(f"--shard {args.shard} out of range for --shards {args.shards}")
+        ports = None
+        port = args.port or 30000
+    if args.shards == 1 and args.ports:
+        raise SystemExit("--ports lists several serves; run one process per shard, not one")
+
+    model = served_model_name(port) if not args.smoke else (MODEL or None)
+    if args.smoke and not model:
+        try:
+            model = served_model_name(port, retries=1, wait=1)
+        except SystemExit:
+            model = "qwen38-27b"
 
     topics = [json.loads(l)["topic"] for l in open(SEEDS, encoding="utf-8")
               if l.strip() and json.loads(l).get("topic")]
@@ -147,9 +200,8 @@ def main():
         plan = plan[:args.smoke]
     shard_target = args.target_tokens / args.shards
     shard_have = 0
-    print(f"shard {args.shard}/{args.shards} port {args.port}: {len(plan)} chapters to generate; "
-          f"{total_tok/1e9:.4f}B tokens already on disk; shard target {shard_target/1e6:.0f}M",
-          flush=True)
+    print(f"shard {args.shard}/{args.shards} port {port} model {model}: {len(plan)} chapters; "
+          f"{total_tok/1e9:.4f}B on disk; shard target {shard_target/1e6:.0f}M", flush=True)
 
     shard_idx = len([f for f in os.listdir(OUTDIR)
                      if f.endswith(".jsonl") and f.startswith(f"textbooks_s{args.shard:02d}_")])
@@ -160,7 +212,7 @@ def main():
     run_tok = 0
     t0 = time.time()
     with ThreadPoolExecutor(max_workers=args.workers) as pool:
-        futs = {pool.submit(gen_one, i, t, lens, n, args.port): i
+        futs = {pool.submit(gen_one, i, t, lens, n, port, model): i
                 for i, (t, lens, n) in enumerate(plan)}
         for f in as_completed(futs):
             idx, topic, lens, n, text, toks, e = f.result()
