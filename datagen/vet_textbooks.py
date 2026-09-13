@@ -69,11 +69,30 @@ def first_error(err):
 _OS_NET = ("mkfifo", "socket", "websocket", "bind(", "listen(", "connect(", "os.fork",
            "subprocess", "requests.", "http")
 
+# Sandbox refusals, not chapter defects. The chroot/namespaces have no network,
+# RLIMIT_NPROC=64 (thread/process chapters: "can't start new thread",
+# BlockingIOError on fork), a 2GB AS cap, a tiny /dev, and only stdlib, so a
+# chapter that spins threads, forks, imports a third-party module or resolves a
+# host fails because of the environment. Classify these from the error text
+# directly; requiring an os/network token in the source let threading-only
+# chapters be miscounted as code (536/698 "code" fails on 2026-09-14 were this).
+_ENV_ERR = (
+    "TIMEOUT", "Operation not permitted", "start new thread",
+    "unable to start watchdog thread", "Resource temporarily unavailable",
+    "Cannot allocate memory", "Memory allocation still failed",
+    "Too many open files", "Name or service not known", "gaierror",
+    "sigprocmask", "unshare:", "Connection refused", "Network is unreachable",
+)
+_ENV_PREFIX = ("ModuleNotFoundError:", "ImportError:")  # third-party absent from chroot
+
 
 def fail_class(code, err):
     joined = "\n".join(code)
-    if ("TIMEOUT" in err or "PermissionError" in err
-            or "Operation not permitted" in err) and any(t in joined for t in _OS_NET):
+    if any(t in err for t in _ENV_ERR):
+        return "env_unsandboxable"
+    if any(err.lstrip().startswith(p) for p in _ENV_PREFIX):
+        return "env_unsandboxable"
+    if ("PermissionError" in err) and any(t in joined for t in _OS_NET):
         return "env_unsandboxable"
     if "header.payload" in joined and "is not defined" in err:
         return "prose_in_python_fence"
@@ -291,14 +310,26 @@ def main():
     for ss in stats_by_source.values():
         ss.setdefault("n_field_sum", 0)
 
-    denom = stats["exec_pass"] + stats["exec_fail"]
-    stats["exec_pass_rate"] = round(stats["exec_pass"] / denom, 4) if denom else None
+    env_total = stats["exec_fail_class"].get("env_unsandboxable", 0)
+    denom_all = stats["exec_pass"] + stats["exec_fail"]
+    # Code-only denominator: env_unsandboxable (thread/fork/network/third-party
+    # refusals from the chroot) are not chapter defects and must not fail a batch
+    # for writing code the sandbox cannot run. Keep the all-failures rate too so
+    # the two readings stay comparable and a sandbox regression is visible.
+    denom_code = stats["exec_pass"] + stats["exec_fail"] - env_total
+    stats["exec_pass_rate_all_failures"] = (
+        round(stats["exec_pass"] / denom_all, 4) if denom_all else None)
+    stats["exec_pass_rate"] = (
+        round(stats["exec_pass"] / denom_code, 4) if denom_code else None)
     stats["length_bounds_tokens"] = [MIN_TOK, MAX_TOK]
     stats["near_dup_jaccard"] = NEAR_THRESHOLD
     stats["group_near_dup_jaccard"] = GROUP_NEAR_THRESHOLD
     for ss in stats_by_source.values():
-        d = ss["exec_pass"] + ss["exec_fail"]
-        ss["exec_pass_rate"] = round(ss["exec_pass"] / d, 4) if d else None
+        env_s = ss["exec_fail_class"].get("env_unsandboxable", 0)
+        da = ss["exec_pass"] + ss["exec_fail"]
+        dc = da - env_s
+        ss["exec_pass_rate_all_failures"] = round(ss["exec_pass"] / da, 4) if da else None
+        ss["exec_pass_rate"] = round(ss["exec_pass"] / dc, 4) if dc else None
     stats["by_source"] = stats_by_source
 
     with open(os.path.join(args.out, "vet_textbooks_stats.json"), "w", encoding="utf-8") as fh:
