@@ -721,6 +721,38 @@
    "uncertainty": "Three-of-119/147 UltraData parquet shards fed the two UltraData domains; the other five domains are full. The 32K-over-20K margin (2.9%) and rebuild-over-frozen margin (9.9%) are single-fit/single-held-out point estimates with no cross-seed spread; the earlier UltraData study showed <0.2pt cross-segment spread on this kind of metric, and 32K wins every domain, so the ranking is not a near-tie. Intrinsic metrics screen; the definitive condition-3 step remains two pretrains differing only in vocabulary, which the rebuild now enables at zero checkpoint cost. A larger equal-byte fit was unnecessary (chars/token is fit-size-flat past a small threshold, build_tokenizer.py note). Full-set UltraData conversion can shift the absolute tokens/byte slightly, not the size ordering.",
    "boundary": "Holds for the seven gate-mix domains on 2026-09-10. Every corpus token count in the frozen vocabulary (0e build_corpus_stats, the 18.56B cached tokens) is restated in the new unit after the tokenizer PR merges and pod-pushes; old checkpoints keep loading from their stored vocab_id and the backup data/tokenizer_frozen_0829.json. Says nothing about non-python UltraData levels or downstream HumanEval performance.",
    "status": "measured"
+  },
+  {
+   "id": "tok.fim_sentinels_absent_0913",
+   "value": "The gate tokenizer (vocab_id f1f860970d15d623) has NO fill-in-the-middle sentinels and NO free slot to add them: the vocabulary is full at 32,768/32,768 ids with zero gaps (ids 2..32762 are all real BPE, e.g. id 2 = '!'), and the only 7 special tokens are <unk>=0, <eos>=1, <|im_start|>=32763, <|im_end|>=32764, <|think|>=32765, <|/think|>=32766, [NUM]=32767. There is no <fim_prefix>/<fim_suffix>/<fim_middle>/<fim_sep>; 32765/32766 are occupied by the think pair and cannot be reused for FIM. Adding the three FIM sentinels requires rebuilding the tokenizer (grow past 32,768 or repurpose slots), which changes vocab_id and breaks every existing V4.1 checkpoint and the gate token caches. DECISION (controller 2026-09-13): skip FIM for round 3; revisit only at a round-4 tokenizer rebuild. Measured live on the pod tokenizer.json.",
+   "measured": "2026-09-13",
+   "source": "data/tokenizer.json on the pod (vocab f1f860970d15d623): full id enumeration 0..32767 shows no missing ids and the added-token special set lists only the seven above",
+   "config": {
+    "vocab_size": 32768,
+    "free_ids": 0,
+    "fim_tokens_present": 0,
+    "special_tokens": {
+     "<unk>": 0,
+     "<eos>": 1,
+     "<|im_start|>": 32763,
+     "<|im_end|>": 32764,
+     "<|think|>": 32765,
+     "<|/think|>": 32766,
+     "[NUM]": 32767
+    },
+    "sentinels_needed_for_fim": [
+     "<fim_prefix>",
+     "<fim_suffix>",
+     "<fim_middle>"
+    ],
+    "round_3_decision": "skip",
+    "revisit_condition": "round-4 tokenizer rebuild that grows the vocab and re-encodes caches/checkpoints"
+   },
+   "uncertainty": "exact enumeration of the live tokenizer; not an estimate. Byte-vs-word BPE and the 2026-09-09 rebuild history are unchanged by this fact.",
+   "boundary": "This rules out FIM only on the CURRENT vocab; it says nothing about whether FIM is worth doing after a rebuild, and the think-pair tokens are not evidence the slots are free. Round-3 coding uses the phi continuation/CodeExercises format on the existing vocab.",
+   "status": "measured",
+   "guard_phrases": [],
+   "retracted_value": []
   }
  ]
 }
