@@ -1298,22 +1298,28 @@
   {
    "id": "dq.textbooks_claude_v41_vet_0913",
    "value": {
-    "rows_in": 4388,
-    "rows_kept": 4066,
-    "tokens_out": 8762483,
-    "exec_pass_rate": 0.9313,
-    "exec_pass_rate_genA": 0.9261,
-    "exec_pass_rate_genB": 0.9327,
-    "exec_fail": 300,
-    "exec_fail_code": 195,
-    "exec_fail_env_unsandboxable": 104,
+    "rows_in": 4767,
+    "rows_kept": 4397,
+    "tokens_out": 9943276,
+    "decontam_fp": "0aefe6a2aa5e130f",
+    "decon_drop_unchanged_by_de_fix": "11 before (86e19705) -> 11 after (0aefe6a2); counterfactual scan N0=N1=N2=N3=11, H/C/J=0",
+    "exec_pass_rate": 0.929,
+    "exec_pass_rate_genA": 0.9252,
+    "exec_pass_rate_genB": 0.9302,
+    "exec_fail": 336,
+    "exec_fail_code": 225,
+    "exec_fail_env_unsandboxable": 110,
     "exec_fail_prose_in_fence": 1,
     "decon_13gram_drop": 11,
-    "truncated_drop": 6,
-    "length_drop": 5,
+    "truncated_drop": 7,
+    "length_drop": 16,
     "exact_dup_drop": 0,
     "near_dup_drop": 0,
     "within_seed_topic_dup_drop": 0,
+    "n_normalised_rows": 3199,
+    "n_field_sum_output": 8927322,
+    "n_field_sum_source_corrupted": 9399951,
+    "n_verified": "all 4397 kept rows n==len(text)//4; n_field_sum == sum(len//4) exactly",
     "handread_n": 30,
     "handread_correctness_mean": 4.967,
     "handread_pedagogy_mean": 4.633,
@@ -1322,20 +1328,22 @@
     "cert_bar_handread": 4.0,
     "cert_result": "PASS"
    },
-   "measured": "2026-09-13",
-   "source": "pod python3 datagen/vet_textbooks.py over data/corpus/textbooks_claude_v41/genA_0000-0005 + genB_0000-0017; stats data/corpus/textbooks_claude_v41_vetted/vet_textbooks_stats.json; handread runs/textbooks_handread_full_0913.jsonl (15 chapters/source, seed 20260913, reviewer 3b)",
+   "measured": "2026-09-14",
+   "source": "pod python3 datagen/vet_textbooks.py over 4767 delivered chapters (genA_0000-0009 + genB_0000-0020); stats data/corpus/textbooks_claude_v41_vetted/vet_textbooks_stats.json; counterfactual via scripts/decontam_md_counterfactual.py; handread runs/textbooks_handread_full_0913.jsonl (30 ch, reviewer 3b)",
    "config": {
     "exec": "all col-0 ```python blocks per chapter concatenated in document order, datagen/sandbox_exec.py (chroot+net/pid ns, 10s timeout); env_unsandboxable = timeout/permission on os/network/socket tokens; chapter passes only if every block program exits 0",
-    "decontam": "filters/decontam_ngram.py 13-token n-gram set membership vs HumanEval/MBPP",
+    "decontam": "filters/decontam_ngram.py 13-token n-gram vs HumanEval/MBPP; re-run after de PR #324 changed normalise to whitespace-only (fp 0aefe6a2aa5e130f = hash(module+both gate files)); zero additional textbook drops",
     "dup": "exact sha1 on whitespace-normalized prose; near-dup word 5-shingle Jaccard >=0.8 vs all kept; within-seed_topic Jaccard >=0.5",
     "length": "800-6000 gate-vocabulary tokens per chapter, bounds inclusive",
     "truncation": "drop when final non-empty line is a bare markdown header or fence count is odd; added after ae inspection found 2 truncated chapters that passed the exec gate",
     "handread": "30-chapter seeded stratified sample (15 gen-A, 15 gen-B), scored correctness and pedagogy 1-5 by 3b",
-    "pass_rate_base": "exec_pass/(exec_pass+exec_fail); decon/length/truncated drops excluded from denominator"
+    "pass_rate_base": "exec_pass/(exec_pass+exec_fail); decon/length/truncated drops excluded from denominator",
+    "n_normalisation": "vet rewrites n=len(text)//4 on every kept row; delivered gen-B n was ~0 and early gen-A n was a chapter id, so a raw n sum (29.6M) overstated the pool",
+    "tokens": "stats tokens_out = gate-tokenizer count recomputed from the files on disk after writing"
    },
-   "uncertainty": "Full population for exec/decon/dup gates, no sampling. Handread n=30: one-scorer review; per-source means gen-A c5.00/p4.80, gen-B c4.93/p4.47. exec-pass margin above the 90% bar is 3.1pt overall; gen-A margin 2.6pt on n=934.",
+   "uncertainty": "Full population for exec/decon/dup. Handread n=30 single-scorer. exec margin 2.9pt over the 90% bar. 110 env_unsandboxable are environment refusals, not proven chapter defects.",
    "status": "measured",
-   "boundary": "Certifies the textbooks_claude_v41_vetted corpus for data/mix_v41_r3_anneal.json at the present 8.76M-token state only. Generation is ongoing (gen-A/gen-B continue to append genA_NNNN/genB_NNNN files); every new delivery needs a re-run and the certification holds only while both bars keep passing. env_unsandboxable failures are environment refusals, not proven chapter defects."
+   "boundary": "Certifies textbooks_claude_v41_vetted at this 4397-row / 9.94M-token snapshot only; generation continues, every delivery re-runs vet and certification holds only while both bars keep passing. tokens_out (gate vocab) and n_sum (len//4) are different units: 9.94M vs 8.93M."
   }
  ]
 }
