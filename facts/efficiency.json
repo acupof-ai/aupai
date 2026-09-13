@@ -3634,6 +3634,33 @@
       "uncertainty": "measured once; warmup time may vary with batch shape count",
       "boundary": "one-time cost per serve process start; not per-request",
       "status": "measured"
+    },
+    {
+      "id": "eff.microbatch_8_sft_v41_oom",
+      "value": "Post-gate SFT (sft_math.py on the V4.1 3.2b-a352m-e48 model resumed from v41_gate_0911 step16000, fp8, --csa2_win_flash, grad checkpointing ON, torch.compile) OOMs single H20 at true micro-batch 8 / accum 1 / seq 4096: torch.OutOfMemoryError at the FIRST Muon optimizer step (sft_math.py opt.step -> train.py muon_update), tried to allocate 1.12 GiB with 94.28 GiB in use of 95.22 GiB capacity (92.94 GiB PyTorch-allocated). Reproduced deterministically to the MiB on 2026-09-12; the earlier probe OOM was the same 94.28/95.22. sft_math has NO gradient-accumulation loop, so --batch is the real microbatch (unlike train.py B4/accum8). Verdict: do not run this SFT at B8 single-card; B4 measured 76.7 GiB and completes 4804 steps. Grow effective batch through more cards, not micro-batch.",
+      "measured": "2026-09-12",
+      "source": "runs/v41_sft_b8oom_0913.log (dedicated deterministic single-card B8 repro; argv, resolved model and the torch.OutOfMemoryError at sft_math.py:578 opt.step / train.py muon_update)",
+      "config": {
+        "dim": 1024,
+        "layers": 12,
+        "batch": 8,
+        "accum": 1,
+        "seq": 4096,
+        "fp8": true,
+        "cards": 1,
+        "grad_ckpt": true,
+        "csa2_win_flash": true,
+        "moe_experts": 48,
+        "moe_top_k": 3,
+        "compile": true,
+        "optimizer": "Muon (OOM at its bf16 576x1024x1024 update buffer, +1.12 GiB)",
+        "entry_point": "sft_math.py (no accumulation loop; --batch is the true microbatch)",
+        "result": "CUDA OOM 94.28/95.22 GiB, +1.12 GiB needed at Muon optimizer step, single card",
+        "fallback": "B4 measured 76.7 GiB peak, runs to completion (v41_sft_0913)"
+      },
+      "uncertainty": "Deterministic, reproduced twice to the MiB (probe 2026-09-12 ~16:03Z and dedicated rerun 20:29Z). Peak is dominated by the optimizer-step allocation, not the forward; the +1.12 GiB Muon buffer is the marginal that does not fit.",
+      "boundary": "Single-card SFT only; it does not transfer to the train.py world-N gate line (different optimizer step shape and per-rank headroom). grad_ckpt here is the sft_math default ON, overriding the resumed gate cfg's grad_ckpt=False.",
+      "status": "measured"
     }
   ]
 }
