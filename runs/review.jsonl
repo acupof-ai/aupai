@@ -553,3 +553,5 @@
 {"ts": "2026-09-13T07:44Z", "reviewer": "3b", "task": "fb r3 mix stub domain rename matches corpus/excluded cache", "artifact": "data/mix_v41_r3.json", "verdict": "approved", "pr": 321}
 {"ts": "2026-09-13T08:01Z", "reviewer": "3b", "task": "98 round-3 stub holdout-excluded cache fact", "artifact": "facts/corpus_supply.json", "verdict": "approved", "pr": 320}
 {"ts": "2026-09-13T14:43Z", "reviewer": "3b", "task": "deletion manifest verification", "artifact": "runs/deletion_laptop_0913.txt", "verdict": "approved", "pr": 322}
+{"ts": "2026-09-13T15:13Z", "reviewer": "ae", "task": "PR #323", "artifact": "datagen/vet_textbooks.py", "verdict": "approved", "pr": 323}
+{"ts": "2026-09-13T15:57Z", "reviewer": "ae", "task": "PR #324", "artifact": "filters/decontam_ngram.py", "verdict": "approved", "pr": 324}
