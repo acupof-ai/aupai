@@ -1783,6 +1783,27 @@
    "uncertainty": "zero residual is a statement about the _dc bytes at scan time; a later rewrite of a _dc dir would need a rescan (its build_corpus_stats fingerprint would also change and the launch guard would refuse).",
    "boundary": "six non-ultra domains only; the two ultra _dc aggregates carry their own decontam_ngram counts from 0e's pipeline, not this rescan.",
    "status": "measured"
+  },
+  {
+   "id": "cont.decon_markdown_comment_strip_0913",
+   "value": {
+    "defect": "filters/decontam_ngram.normalise() stripped every ^\\s*(#|//) line as a code comment. Correct for code corpora, wrong for markdown textbook corpora: '#' headings/prose and '//'-prefixed prose lines were deleted before shingling.",
+    "measured": "2026-09-13 code_ultra_l2_dc (decontam_fp=86e19705b05c4b42 build stamp)",
+    "false_negative": "28/28 rows the whitespace-13-gram audit flags return NO production hit: 10 solution rows (Heron formula x8, number-dict, by_length, roman table) on '#' lines, 18 HumanEval/78 prompt rows in '#'-headed multilingual prose. Full audit 414 rows/8 domains.",
+    "false_positive_control": "same audit scanner over 2608 CPython Lib functions (>=13 whitespace words, seed 0): 0 hits (pod runs/contam_fp_baseline.json)",
+    "fix": "merged PR #324 commit d4233e64: whitespace-collapse-only normaliser identical to audit_gate_contamination._grams; new decontam_fp 0aefe6a2aa5e130f; vetted textbook decontam re-run is 3b's loop",
+    "exclude_manifests": "PR #325 commit 4eb316e6 data/sft/<domain>.gate_exclude_manifest.jsonl (phi_l3_stub_holdout_manifest format), 414 rows/8 domains; r3 HumanEval union {19,66,71,78,105,123,129,156}"
+   },
+   "measured": "2026-09-13",
+   "source": "scripts/audit_gate_contamination.py full 8-domain scan (tracked; re-runnable): conclusions merged in PR #324 d4233e64 (module fix) and PR #325 4eb316e6 (414-row exclude manifests + r3 HE union); CPython-Lib control protocol: 2608 ordinary stdlib functions seeded 0, 0 hits",
+   "config": {
+    "audit_scanner": "scripts/audit_gate_contamination.py whitespace-collapse, no comment strip, N=13, HE prompt+canonical_solution / MBPP text+code",
+    "production_decon": "filters/decontam_ngram.py, N=13, fp 86e19705->0aefe6a2 (PR#324)",
+    "fp_baseline": "0/2608 CPython Lib functions random.Random(0)",
+    "l2_humaneval": "runs/contam_l2_humaneval.json pod: 5 problems 28 rows"
+   },
+   "uncertainty": "HumanEval l2 rows individually verified; full 414-row production-class rerun not repeated (de's 28/28+0/2608 acceptance on the same 28 rows and module equivalence stands in for the class)",
+   "status": "measured"
   }
  ]
 }
