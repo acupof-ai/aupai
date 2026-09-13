@@ -1741,7 +1741,7 @@
    "value": 42014293,
    "unit": "supervised BODY tokens (target side only, prompt masked) across the two phi-1 CodeExercises continuation SFT packs cut from a deterministic 2% hash holdout of code_ultra_l3_stub_dc; NOT in any pretrain mix and not pretrained on -- the held 273,879-document set is excluded from the round-3 pretrain cache",
    "measured": "2026-09-13",
-   "source": "datagen/build_phi_codeexercises_pack.py; packs data/sft/sft_phi_codeexercises_0913.pt (sha256 7ae462ccdd33065d) and data/sft/sft_phi_codeexercises_doctest_0913.pt (sha256 ebd534806693b379); exclusion contract data/sft/phi_l3_stub_holdout_manifest.jsonl (273879 rows, sha256 7188d55e57b8872f); handread runs/sft_phi_codeexercises_handread.jsonl",
+   "source": "datagen/build_phi_codeexercises_pack.py; packs data/sft/sft_phi_codeexercises_0913.pt (sha256 7ae462ccdd33065d) and data/sft/sft_phi_codeexercises_doctest_0913.pt (sha256 fd3dc27e5dae210d); exclusion contract data/sft/phi_l3_stub_holdout_manifest.jsonl (273879 rows, sha256 56d12083dc30bdf2); handread runs/sft_phi_codeexercises_handread.jsonl",
    "config": {
     "source_domain": "code_ultra_l3_stub_dc (13,682,629 docs / 4,993,975,636 tokens, cs.code_ultra_l3_stub_dc_landed_0913)",
     "split_rule": "sha1(_norm(content)) mod 100 < 2, deterministic; _norm is whitespace-insensitive (datagen/gen_exercises.py)",
@@ -1762,7 +1762,8 @@
      "examples": 10487,
      "packed_rows": 994,
      "supervised_body_tokens": 2014232,
-     "pack_sha256": "ebd534806693b379d5deb4d83ba284a0a9e3210587e8ebae7e139d034c5df8c8"
+     "pack_sha256": "fd3dc27e5dae210d4c3e2c11438d58155afc5717ad34bf553031d7917464fbd1",
+     "seq_too_long_drops": {"primary": 26, "doctest": 3}
     },
     "held_not_in_sft": 97770,
     "in_sft_pack_total": 176109,
