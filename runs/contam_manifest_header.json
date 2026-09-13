@@ -1,0 +1,9 @@
+{
+ "_header": {
+  "purpose": "stage-2 cache_exclude holdout: docs dropping any 13-whitespace-gram hit vs HumanEval prompt+canonical_solution or MBPP text+code",
+  "audit": "runs/contam_gate_audit.json (scripts/audit_gate_contamination.py: whitespace-collapse normaliser, no comment stripping; HE prompt+canonical_solution keyed, MBPP text+code)",
+  "decontam_fp": "0aefe6a2aa5e130f (filters/decontam_ngram.py, whitespace-only normalise merged bed1c729 PR#324)",
+  "fp_baseline": "runs/contam_fp_baseline.json: 0/2608 CPython Lib functions",
+  "row_key": "url OR sha1(whitespace-normalised content), consumed by scripts/pretokenize_domains.py --exclude-manifest"
+ }
+}
