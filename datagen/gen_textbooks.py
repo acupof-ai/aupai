@@ -106,7 +106,7 @@ def gen_one(idx, topic, lens, n, port, model, retries=2):
     body = json.dumps({
         "model": model,
         "messages": [{"role": "user", "content": PROMPT.format(topic=topic, lens=lens)}],
-        "max_tokens": 1600,
+        "max_tokens": 4096,
         "temperature": 0.7,
         "top_p": 0.95,
         "chat_template_kwargs": {"enable_thinking": False},
@@ -119,16 +119,17 @@ def gen_one(idx, topic, lens, n, port, model, retries=2):
             with urllib.request.urlopen(req, timeout=300) as r:
                 resp = json.loads(r.read())
             content = resp["choices"][0]["message"]["content"]
+            finish = resp["choices"][0].get("finish_reason", "")
             if "</think>" in content:
                 content = content.split("</think>", 1)[1]
             content = content.strip()
             toks = int((resp.get("usage") or {}).get("completion_tokens", 0))
             if content and len(content) > 200:
-                return idx, topic, lens, n, content, toks, None
+                return idx, topic, lens, n, content, toks, finish, None
             err = f"too short: {len(content)} chars"
         except Exception as e:
             err = str(e)[:120]
-    return idx, topic, lens, n, None, 0, err
+    return idx, topic, lens, n, None, 0, "", err
 
 
 def existing_keys():
@@ -221,10 +222,10 @@ def main():
         futs = {pool.submit(gen_one, i, t, lens, n, port, model): i
                 for i, (t, lens, n) in enumerate(plan)}
         for f in as_completed(futs):
-            idx, topic, lens, n, text, toks, e = f.result()
+            idx, topic, lens, n, text, toks, finish, e = f.result()
             if text is not None:
                 fout.write(json.dumps({"topic": topic, "lens": lens, "n": n, "shard": args.shard,
-                                       "text": text, "tokens": toks},
+                                       "text": text, "tokens": toks, "finish": finish},
                                       ensure_ascii=False) + "\n")
                 fout.flush()
                 total_tok += toks
