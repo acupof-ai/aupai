@@ -116,3 +116,7 @@ ChatML, so the base eval reads the same shape.
 | tilerl-a3 | ask | 2 cards x 72h for the 27B serve, or their endpoint |
 
 Cards: still all tileRL; nothing of ours runs. Launch of round 3 needs 8 cards, one-hour notice, user go.
+
+## 2026-09-13 08:1xZ v41_r3_0914 running
+
+Launched 07:54Z by 66 on block 0-7 world 8 accum 6, mix data/mix_v41_r3.json (six domains, no textbooks), stub via cache_exclude 56d12083dc30bdf2 (#318, #321). Step 210/38,070 loss 3.80, 26K tok/s/gpu, MFU 18%, peak 43.45 GiB, no NaN. At 208K tok/s the 30B run takes ~40 h; step 6000 (4.72B, first HumanEval base) lands ~14:20Z. Textbooks: gen-A aupai-c1 [705f35] and gen-B aupai-fe generate off-GPU (Claude subagents), 3b-26 vets (exec every python block, decontam, dedup, handread); target 200-300M tokens for data/mix_v41_r3_anneal.json. Teacher serve torn down; Qwen3.6-35B-A3B-FP8 kept at /data00/models.
