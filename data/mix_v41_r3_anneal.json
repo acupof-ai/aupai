@@ -1,0 +1,31 @@
+{
+ "total_tokens": 3000000000,
+ "domains": {
+  "textbooks_claude_v41": {
+   "weight": 0.50,
+   "epochs": 1,
+   "anneal": 0.50,
+   "fingerprint": "UNBUILT_TODO_CLAUDE_TEXTBOOKS",
+   "epochs_pool_measured": false,
+   "epochs_pool_source": "UNBUILT placeholder: synthetic v41 textbooks being generated off-GPU by two Claude sessions (user order 2026-09-13 06:1xZ); not ready for the r3 launch, so they enter THIS stage-2 mix. No corpus dir, cache, token count or fingerprint yet -- the 0.50 weight is a PLACEHOLDER pending the measured landing: if the corpus lands at the planned >=1.5B pool the weight stands at one epoch (draw 1.5B main + 0.15B anneal = 1.65B); if it lands smaller, either the weight falls or epochs rises, and the other two domains absorb the share. Recompute from facts/corpus_supply when 98/3b records the landing."
+  },
+  "code_ultra_l3_stub_r3_dc": {
+   "weight": 0.30,
+   "epochs": 1,
+   "anneal": 0.30,
+   "fingerprint": "12ec3cd220b8fe13",
+   "cache_exclude": "56d12083dc30bdf2",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "98 holdout-excluded cache /data00/tokens_code_ultra_l3_stub_dc.excl56d12083dc30bdf2.pt: 4,894,050,865 packed tokens, sha256 9d649f2cfa70df24, .srcfp 12ec3cd220b8fe13|exclude=56d12083dc30bdf2:273879, vocab f1f860970d15d623; reads through the de-118 cache_exclude mix contract. Stage-2 draw 0.30*2.7B + 0.30*0.3B = 0.90B, one epoch of the pool; the stage-1 cursor on this domain is discarded across mixes (different mix), so repetition here is a deliberate fourth pass over 0.9B of stub rows after the textbooks."
+  },
+  "code_keep_p1_dc": {
+   "weight": 0.20,
+   "epochs": 1,
+   "anneal": 0.20,
+   "fingerprint": "d7b4f3a09c5707b0",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load tokens_code_keep_p1_dc.pt, measured_pool_tokens=2626977570. Stage-2 draw 0.20*2.7B + 0.20*0.3B = 0.60B, one epoch of the pool as a fourth filtered-code pass."
+  }
+ },
+ "_comment": "DRAFT STAGE-2 ANNEAL MIX (ae-9, user order 2026-09-13 06:1xZ): a separate ~3B-token run FROM the r3 final checkpoint after data/mix_v41_r3.json completes 30B. This is where the off-GPU Claude-generated textbooks enter -- they will not exist at the r3 launch. Composition intent: textbooks lead at 0.50, stub 0.30, keep_p1 0.20 (weight==anneal per domain so the 2.7B/0.3B main-anneal split does not skew the placeholder; weights and anneal each sum to 1.00000). ALL TEXTBOOK NUMBERS ARE PLACEHOLDERS until the corpus lands: the 0.50 weight, the epochs=1 assumption and the domain fingerprint must be recomputed against the measured pool, then launch_gate will go green. The two code domains use measured caches and de-118's cache_exclude for the stub. Cursor note: build_mix under a new mix discards per-domain cursors (srcfp/name differ), so this is a fresh ~0.9B stub + 0.6B keep_p1 pass after three r3 epochs -- deliberate additional repetition, flagged for the reviewer. Non-launchable until: textbooks_claude_v41 is built/stamped/tokenized and its placeholder fields replaced; de-118 is merged for cache_exclude."
+}
