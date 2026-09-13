@@ -91,3 +91,28 @@ Eval card: closed, B in effect (#280 CPU path on the pod). None pending. Standin
 - Reading: the base has code capability the continuation arm cannot see; SFT teaches "complete this function" in 4804 single-card steps. The 30% gate remains far; next round = reshaped pretrain data (0e-8 stub domain landed: 5.0B tokens, fp 12ec3cd2; docstring-without-body class measured tiny, so the 38% empties were model behaviour) + SFT v2 with CoT.
 - Disk: probe saved 13G every 200 steps (14 pruned by 3b, #306 sets save_every 1000); pod 75%.
 - 20:03Z paired control: base .step16000 under the same --chatml by-name arm = 0/164 (103 empty). SFT 11/164 vs base 0/164; prereg v41_sft_0913 criterion met. Card 7 reverts to tileRL after 3b's B8 OOM rerun status.
+
+## 2026-09-13 03:4xZ USER DECISION: round 3 takes the phi-1 route
+
+Reasoning given to the user and accepted ("按你的想法来"): at 350M active, natural code reaches
+~13% HumanEval only at ~200B tokens (CodeGen-350M-mono); every 30%+ result is 1.3B+ at 2T
+tokens, except phi-1, which reaches 29% base / 45% after exercises SFT on ~7B synthetic
+textbook tokens repeated. Our run 1 (13.7B natural tokens, 0/164 base, 11/164 after ChatML
+SFT) sits in the expected band. mix_v41_r2 (natural-code reshuffle) is shelved.
+
+Round 3 set, ~9-10B unique x ~3 epochs = 30B: code_keep_p1_dc 2.81B, code_ultra_l3_stub_dc
+5.0B minus a 2% SFT holdout, textbooks_v41 ~1.0B synthetic (de, gen_textbooks.py from #209),
+math_owm 5%, cot 3% x3. SFT stage: plain docstring->body exercises from the holdout (3b), no
+ChatML, so the base eval reads the same shape.
+
+| task | owner | deliverable |
+|---|---|---|
+| de-117 | de | textbooks_v41 domain, 1.0B tokens; serve + card-hours by 04:4xZ |
+| ae-9 | ae | data/mix_v41_r3.json with supply arithmetic |
+| 3b-24 | 3b | 2% stub holdout list + plain-format exercises SFT pack, decontaminated |
+| 66-18 | 66 | prereg v41_r3_0914 + launcher draft (w8 accum 6) |
+| 98 | 98 | stub cache minus holdout; textbooks cache; page line |
+| 0e | 0e | deletion_0913 (aupai_raw 150G + step12000/14000; early ckpts after facts check) |
+| tilerl-a3 | ask | 2 cards x 72h for the 27B serve, or their endpoint |
+
+Cards: still all tileRL; nothing of ours runs. Launch of round 3 needs 8 cards, one-hour notice, user go.
