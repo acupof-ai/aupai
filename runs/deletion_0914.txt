@@ -1,0 +1,19 @@
+DELETION 2026-09-13T16:57Z (98, fb named order via aupai-47)
+
+Pod-only files. The two entries are hardlinks 98 created while staging a
+CPU pretokenize smoke domain for vetted textbooks; they shared inodes with
+data/corpus/textbooks_claude_v41_vetted/claude-gen-A.jsonl (inode 86488687)
+and claude-gen-B.jsonl (inode 86488702). A key-conversion step then
+truncated those inodes to 0 bytes (see gate_failure_incidents.md §302), so
+removing the smoke-side links left the vetted dir holding two 0-byte files
+pending 3b's re-vet from the raw corpus.
+
+HARDLINK data/corpus/textbooks_vetted_smoke/tb_vetted_0000.jsonl 0B (inode 86488687, link of vetted claude-gen-A.jsonl)
+HARDLINK data/corpus/textbooks_vetted_smoke/tb_vetted_0001.jsonl 0B (inode 86488702, link of vetted claude-gen-B.jsonl)
+DIR data/corpus/textbooks_vetted_smoke/ (removed, was empty after the two links)
+
+Inode audit before removal: find data/corpus -samefile showed each smoke
+file sharing its inode with exactly one vetted file and nothing else
+(code_keep_p1's own hard-link assembly was checked: no overlap).
+
+DELETED 2 hardlinks + 1 empty dir 2026-09-13T16:57Z, pod only
