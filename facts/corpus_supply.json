@@ -1593,7 +1593,12 @@
     "kept_chars": 190840021,
     "final_shards": 6,
     "filters": "min200chars + secrets redaction + 13-gram HumanEval/MBPP decontam (0 hits) + exact normalized dedup (1 dup)",
-    "rejects": {"empty_short": 406, "secret_redacted": 0, "decontam": 0, "dup": 1},
+    "rejects": {
+     "empty_short": 406,
+     "secret_redacted": 0,
+     "decontam": 0,
+     "dup": 1
+    },
     "corpus_fingerprint": "4bfdd41fd49c16d0",
     "decontam_fp": "86e19705b05c4b42",
     "vocab": "f1f860970d15d623",
@@ -1644,7 +1649,12 @@
     "kept_chars": 337323043,
     "final_shards": 10,
     "filters": "min200chars + secrets redaction (1 redacted) + 13-gram HumanEval/MBPP decontam (0 hits) + exact normalized dedup (0 within source)",
-    "rejects": {"empty_short": 26739, "secret_redacted": 1, "decontam": 0, "dup": 0},
+    "rejects": {
+     "empty_short": 26739,
+     "secret_redacted": 1,
+     "decontam": 0,
+     "dup": 0
+    },
     "corpus_fingerprint": "11fc3ccd9a515d44",
     "decontam_fp": "86e19705b05c4b42",
     "vocab": "f1f860970d15d623",
@@ -1699,7 +1709,14 @@
     "final_shards": 200,
     "survivor_uuids": 15308313,
     "folded_task_docstring": 53013,
-    "rejected_survivors": {"no_last_top_func": 1543984, "docstring_no_body": 6, "body_only_pass_or_ellipsis": 465, "unparse_fail": 2, "ngram13_decontam": 17501, "candidate_pre_global_dedup": 13746355},
+    "rejected_survivors": {
+     "no_last_top_func": 1543984,
+     "docstring_no_body": 6,
+     "body_only_pass_or_ellipsis": 465,
+     "unparse_fail": 2,
+     "ngram13_decontam": 17501,
+     "candidate_pre_global_dedup": 13746355
+    },
     "corpus_fingerprint": "12ec3cd220b8fe13",
     "decontam_fp": "86e19705b05c4b42",
     "vocab": "f1f860970d15d623",
@@ -1763,7 +1780,10 @@
      "packed_rows": 994,
      "supervised_body_tokens": 2014232,
      "pack_sha256": "fd3dc27e5dae210d4c3e2c11438d58155afc5717ad34bf553031d7917464fbd1",
-     "seq_too_long_drops": {"primary": 26, "doctest": 3}
+     "seq_too_long_drops": {
+      "primary": 26,
+      "doctest": 3
+     }
     },
     "held_not_in_sft": 97770,
     "in_sft_pack_total": 176109,
@@ -1774,6 +1794,42 @@
    },
    "uncertainty": "exact full-population split and encode counts; body tokens are the pack's target-side count (CHECK_PACK reports 40.17M/2.02M including the supervised EOS, builder counts 40.00M/2.01M body tokens pre-EOS). Primary selection stops at the first ranked doc that crosses 40M, so the total is 40.0M not an exact cap. The 13-gram decon drop is 0 because the source domain was already built _dc; the gate is still run on the rebuilt prompt+body.",
    "boundary": "Holdout semantics: the entire 273,879-doc held set -- including the 97,770 not packed for token budget -- is excluded from round-3 PRETRAINING via the manifest (url + content hash), so the SFT target never appears in pretrain. The pretrain cache build must consume the manifest before encoding (coordinated with 98/0e); this fact records the split, the exclusion is enforced there, not by this fact. Supervised total 42.0M is within the 30-50M target; phi-1 used <180M, this is a deliberate smaller probe.",
+   "status": "measured",
+   "tokens_status": "measured",
+   "guard_phrases": [],
+   "retracted_value": []
+  },
+  {
+   "id": "cs.phi_l3_stub_holdout_excluded_cache_0913",
+   "value": 4894054480,
+   "unit": "full tensor tokens (torch stream), round-3 phi-1 stub cache post holdout exclusion, vocab f1f860970d15d623",
+   "measured": "2026-09-13",
+   "source": "scripts/pretokenize_domains.py --exclude-manifest (PR #315) over data/corpus/code_ultra_l3_stub_dc, writing pod /data00/tokens_code_ultra_l3_stub_dc.excl56d12083dc30bdf2.pt; holdout set data/sft/phi_l3_stub_holdout_manifest.jsonl (PR #314); 0e independent second-read review PR #319",
+   "config": {
+    "cache": "tokens_code_ultra_l3_stub_dc.excl56d12083dc30bdf2.pt",
+    "full_tensor_tokens": 4894054480,
+    "row_aligned_pool_tokens": 4894050865,
+    "rows": 1194545,
+    "trailing_partial": 3615,
+    "sha256_16": "9d649f2cfa70df24",
+    "bytes": 19576220099,
+    "seconds": 762,
+    "workers": "24 x RAYON 5 = 120 CPU",
+    "docs_scanned": 13682629,
+    "dropped_holdout": 273879,
+    "kept_docs": 13408750,
+    "holdout_fraction_pct": 2.0,
+    "exclude_key": "url OR sha1(re.sub(r'\\s+',' ',content).strip()); 0e verified url_hit == sha_hit == both == 273879 (identical set, zero disagreement)",
+    "manifest_sha256_16": "56d12083dc30bdf2 (main, PR #314; rebuilt from 7188d55e with rows unchanged, order only)",
+    "corpus_fp": "12ec3cd220b8fe13",
+    "cache_srcfp": "12ec3cd220b8fe13|exclude=56d12083dc30bdf2:273879",
+    "vocab_id": "f1f860970d15d623",
+    ".seed": 42,
+    "held_out_tokens": 99918118,
+    "co_resident": "built CPU-only alongside 0e10 teacher serve on card 7; cache_guard WARN-and-pass (unrecorded domain, lower bound 0)"
+   },
+   "uncertainty": "none; full tensor + row counts exact, drop set independently verified by 0e",
+   "boundary": "the round-3 stub pretrain input (HumanEval-shaped L3 minus the 2% SFT holdout); not the SFT packs (separate, PR #314) and not the full un-excluded L3",
    "status": "measured",
    "tokens_status": "measured",
    "guard_phrases": [],
