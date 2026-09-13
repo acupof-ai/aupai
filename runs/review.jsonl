@@ -545,3 +545,4 @@
 {"ts": "2026-09-13T05:33Z", "reviewer": "fb", "task": "de-117", "artifact": "datagen/gen_textbooks.py", "verdict": "approved", "pr": 313}
 {"ts": "2026-09-13T05:44Z", "reviewer": "fb", "task": "3b-24", "artifact": "data/sft/phi_l3_stub_holdout_manifest.jsonl", "verdict": "approved", "pr": 314}
 {"ts": "2026-09-13T05:44Z", "reviewer": "fb", "task": "98-9", "artifact": "scripts/pretokenize_domains.py", "verdict": "approved", "pr": 315}
+{"ts": "2026-09-13T05:35Z", "reviewer": "3b", "task": "66 v41_r3_0914 phi-route prereg + w8 launcher DRAFT", "artifact": "runs/prereg.jsonl", "verdict": "approved", "pr": 311}
