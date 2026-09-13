@@ -311,15 +311,59 @@ def main():
     by_source_kept = defaultdict(list)
     for item in kept:
         by_source_kept[item[2]].append(item)
-    with open(args.handread, "w", encoding="utf-8") as fh:
-        for source in sorted(by_source_kept):
-            pool = by_source_kept[source]
-            sample = rng.sample(pool, min(args.handread_n, len(pool)))
-            for r, ntok, src in sample:
-                fh.write(json.dumps({"topic": r.get("topic"), "source": src,
-                                     "tokens": ntok, "text": r.get("text"),
-                                     "correctness_1_5": None, "pedagogy_1_5": None,
-                                     "reviewer_note": None}, ensure_ascii=False) + "\n")
+
+    # If a scored handread file already exists at args.handread, keep it and fold
+    # the scores into stats. Otherwise emit a fresh blank sample of handread_n
+    # per source.
+    handread_rows = []
+    if os.path.exists(args.handread):
+        with open(args.handread, encoding="utf-8") as fh:
+            handread_rows = [json.loads(l) for l in fh if l.strip()]
+    scored = [r for r in handread_rows
+              if r.get("correctness_1_5") is not None and r.get("pedagogy_1_5") is not None]
+    if not scored:
+        with open(args.handread, "w", encoding="utf-8") as fh:
+            for source in sorted(by_source_kept):
+                pool = by_source_kept[source]
+                sample = rng.sample(pool, min(args.handread_n, len(pool)))
+                for r, ntok, src in sample:
+                    fh.write(json.dumps({"topic": r.get("topic"), "source": src,
+                                         "tokens": ntok, "text": r.get("text"),
+                                         "correctness_1_5": None, "pedagogy_1_5": None,
+                                         "reviewer_note": None}, ensure_ascii=False) + "\n")
+    else:
+        def _mean(xs, k):
+            return round(sum(x[k] for x in xs) / len(xs), 3) if xs else None
+
+        hr = {"n": len(scored),
+              "correctness_mean": _mean(scored, "correctness_1_5"),
+              "pedagogy_mean": _mean(scored, "pedagogy_1_5"),
+              "bar": 4.0,
+              "by_source": {}}
+        for source in sorted({r.get("source") for r in scored}):
+            sub = [r for r in scored if r.get("source") == source]
+            sc = _mean(sub, "correctness_1_5")
+            sp = _mean(sub, "pedagogy_1_5")
+            hr["by_source"][source] = {
+                "n": len(sub),
+                "correctness_mean": sc,
+                "pedagogy_mean": sp,
+                "passes_bar": sc is not None and sp is not None and sc >= 4 and sp >= 4,
+            }
+        c = hr["correctness_mean"]
+        p = hr["pedagogy_mean"]
+        hr["overall_mean"] = round((c + p) / 2, 3)
+        # Certification is PER GENERATOR: every source with a sample must clear
+        # both axes. A pooled mean can hide one weak source (gen-A 3.9 under a
+        # 4.117 pooled correctness on 2026-09-13), so the overall flag is the
+        # conjunction of the per-source flags, not a test of the pooled mean.
+        hr["passes_bar"] = bool(hr["by_source"]) and all(
+            v["passes_bar"] for v in hr["by_source"].values()
+        )
+        stats["handread"] = hr
+        # rewrite stats now that handread is folded in
+        with open(os.path.join(args.out, "vet_textbooks_stats.json"), "w", encoding="utf-8") as fh:
+            json.dump(stats, fh, indent=2)
 
     print("VET_STATS " + json.dumps(stats), flush=True)
     print(f"[out] {len(kept)} chapters -> {args.out}; {len(failures)} failures logged; "
