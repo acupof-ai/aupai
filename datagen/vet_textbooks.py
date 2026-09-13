@@ -16,7 +16,7 @@ sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "filters"))
 
-from decontam_ngram import Decontaminator  # noqa: E402
+from decontam_ngram import HUMANEVAL, MBPP, Decontaminator, decontam_fp  # noqa: E402,I001
 
 DATA = os.path.join(ROOT, "data")
 SRC_DIR = os.path.join(DATA, "corpus", "textbooks_claude_v41")
@@ -56,9 +56,7 @@ def truncated(text):
         return True
     if lines[-1].lstrip().startswith('#'):
         return True
-    if text.count('```') % 2:
-        return True
-    return False
+    return bool(text.count('```') % 2)
 
 
 def first_error(err):
@@ -138,7 +136,8 @@ def main():
     n_in = len(rows)
     print(f"[load] {n_in} chapters from {len(files)} file(s)", flush=True)
 
-    stats = {"rows_in": n_in, "exec_pass": 0, "exec_fail": 0, "exec_fail_class": {},
+    stats = {"rows_in": n_in, "decontam_fp": decontam_fp(HUMANEVAL, MBPP),
+             "exec_pass": 0, "exec_fail": 0, "exec_fail_class": {},
              "exec_skipped_blocks": 0,
              "decon_drop": 0, "exact_dup_drop": 0, "near_dup_drop": 0,
              "group_near_dup_drop": 0,
@@ -161,7 +160,9 @@ def main():
     index = defaultdict(list)
     group_index = defaultdict(list)
 
-    for r in rows:
+    for idx, r in enumerate(rows):
+        if idx % 250 == 0:
+            print(f"[progress] {idx}/{n_in} chapters evaluated", flush=True)
         text = r.get("text") or ""
         source = r.get("source", "unknown")
         ss = _src(source)
@@ -241,18 +242,55 @@ def main():
 
     os.makedirs(args.out, exist_ok=True)
     by_source = defaultdict(list)
-    for r, ntok, source in kept:
+    # Normalise the row's own n field to len(text)//4 on EVERY kept row. Some
+    # delivered batches wrote a chapter id / 0 into n; the vetted output is the
+    # stage-2 input and must carry the spec value so a downstream sum of n is a
+    # character-derived token proxy, not corrupted source data.
+    n_recomputed = 0
+    n_src_sum = defaultdict(int)
+    for r, _ntok, source in kept:
+        n_src_sum[source] += r.get("n", 0)
+        want = len(r.get("text") or "") // 4
+        if r.get("n") != want:
+            r["n"] = want
+            n_recomputed += 1
         by_source[source].append(r)
-        stats["tokens_out"] += ntok
-        ss = stats_by_source[source]
-        ss["rows_out"] += 1
-        ss["tokens_out"] += ntok
+    stats["n_recomputed_rows"] = n_recomputed
+    stats["n_field_sum_source_corrupted"] = sum(n_src_sum.values())
     for source, recs in by_source.items():
         path = os.path.join(args.out, f"{source}.jsonl")
         with open(path, "w", encoding="utf-8") as fh:
             for r in recs:
                 fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-    stats["rows_out"] = len(kept)
+    # Stats are recomputed from the files ON DISK after writing, so they describe
+    # the vetted directory itself. tokens = gate-tokenizer count (the real number
+    # to read); n_field_sum = sum of the normalised n (len(text)//4) on output;
+    # n_field_sum_source_corrupted keeps what the delivered source summed to.
+    disk = {}
+    for source in by_source:
+        path = os.path.join(args.out, f"{source}.jsonl")
+        dtok = dn = drows = 0
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                rr = json.loads(line)
+                dtok += len(tok.encode(rr.get("text") or "").ids)
+                dn += rr.get("n", 0)
+                drows += 1
+        disk[source] = {"rows": drows, "tokens": dtok, "n_field_sum": dn}
+    for source, d in disk.items():
+        ss = stats_by_source[source]
+        ss["rows_out"] = d["rows"]
+        ss["tokens_out"] = d["tokens"]
+        ss["n_field_sum"] = d["n_field_sum"]
+        ss["n_field_sum_source_corrupted"] = n_src_sum[source]
+    stats["rows_out"] = sum(d["rows"] for d in disk.values())
+    stats["tokens_out"] = sum(d["tokens"] for d in disk.values())
+    stats["n_field_sum"] = sum(d["n_field_sum"] for d in disk.values())
+    for ss in stats_by_source.values():
+        ss.setdefault("n_field_sum", 0)
+
     denom = stats["exec_pass"] + stats["exec_fail"]
     stats["exec_pass_rate"] = round(stats["exec_pass"] / denom, 4) if denom else None
     stats["length_bounds_tokens"] = [MIN_TOK, MAX_TOK]
