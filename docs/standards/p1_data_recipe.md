@@ -197,8 +197,10 @@ Ruling 2026-09-09 (fb, reviewed by 44 without challenge). The vocabulary frozen 
 unfrozen for p1. **This invalidates nothing, because p1 has no checkpoints and that is the whole
 reason the decision is cheap today and monotonically more expensive from p1's first step.**
 
-**No gate forced it.** Measured by b0 on the real composition (seeds 7/13/21, 143-162 textbook
-chapters plus the three code domains at 4M chars, 88:12):
+**No gate forced it.** Measured by b0 on the real composition (seeds 7/13/21, the
+whole textbook file plus the three code domains at 4M chars, 88:12; the chapter
+count is identical across seeds — tokenizer_p1_real.py load_textbooks only
+shuffles, with no cap, so "143-162 chapters per seed" is unreachable):
 
 | gate | value | |
 |---|---|---|
