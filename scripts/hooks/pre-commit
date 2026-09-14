@@ -1393,6 +1393,15 @@ def main():
         # asserts they stay >0.02 apart so a relabel remains detectable; another asserts that
         # pairing at matched STEPS instead of matched tokens reverses the sign.
         "eval/equal_token_gap.py",
+        # Stage-2 paired sampling (66, 2026-09-14). paired_bootstrap.py carries --selftest:
+        # its refusal is the pairing contract -- preds whose per-task sample_idx sets differ
+        # (or one file greedy n=1, the other n=10) must be refused, not yield a mislabeled CI;
+        # the selftest builds missing-si / shifted-si / greedy-vs-n worlds. test_sampling_paired
+        # takes no arguments and ignores --selftest: it proves eval/sampling.py's per-
+        # (task_id, sample_idx) reseed aligns T/C first-draws after differing sample-0 lengths,
+        # and that the old reseed-once scheme misaligns si>=1. Both CPU-only, fake models.
+        "eval/paired_bootstrap.py",
+        "eval/test_sampling_paired.py",
         # The rate printed on a val_every boundary covers the validation pass, so it is not a
         # training rate. Registered because reading two of them as a ratio does NOT cancel:
         # validation costs two arms different absolute amounts, and sampling steps
@@ -2580,6 +2589,8 @@ def main():
         # without touching harness.py. 0.5s. (harness.py itself is deliberately absent from this
         # map: it is excluded from the hook's selftests for cost, recorded at check_selftests_are_gated.)
         "scripts/board.py": {"scripts/test_integration_tree_guard.py"},
+        # Stage-2 sampler (66): editing the shared RNG contract must run the pairing test.
+        "eval/sampling.py": {"eval/test_sampling_paired.py"},
     }
     _subject_tests = set()
     for _subj in staged("AM"):
