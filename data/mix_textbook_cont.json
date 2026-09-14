@@ -14,7 +14,7 @@
    "anneal": 0.2999,
    "epochs": 4,
    "fingerprint": "e473e748ae3ea4e2",
-   "role": "TREATMENT: rebuilt Claude Python textbook (0e 1938-row keep pool); exactly 4 trainable-pool epochs (7,888 rows), starts row 0 (no r3 cursor)",
+   "role": "TREATMENT: rebuilt Claude Python textbook (0e keep list; 1,938 source docs, 1,972-row trainable pool after the 103-row val holdout); exactly 4 trainable-pool epochs (7,888 rows), starts row 0 (no r3 cursor)",
    "pool_rows": 1972,
    "cursor_used_rows": 0,
    "segment_rows": 7888,
