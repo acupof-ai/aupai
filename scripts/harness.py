@@ -87,6 +87,7 @@ from harness_core import (  # noqa: E402
     _gitignored_set,
     _main_touched,
     _mentions_lend,
+    _open_row_started,
     _parse_lend_window,
     _read_tasks,
     _tmp_repo,
@@ -298,10 +299,54 @@ def _is_mount(path):
         return False
 
 
-#: The eight sessions in this round and each one's reviewer. A delivery gets a second
-#: reader who is not its author: the controller review with 44 caught four evidenced
-#: errors in one day and nobody else's work had one (user order, 2026-08-31 22:00).
-REVIEW_PAIRS = {'de': '44', '44': 'de', 'b0': 'de', '3b': 'b0', 'fb': '44', 'e1': '3b', 'tilerl': 'b0', '98': 'fb', 'ae': 'de', '0e': '3b', '66': 'de'}  # keep in sync with runs/roster.json pairs; ae/0e/66 added 2026-09-10 post-restart; de-102 replaces this literal with a roster.json read
+#: Reviewer pairs are NOT a code literal (de-102). They are read from runs/roster.json's
+#: `pairs`, the one human-edited source, and validated against `members` on every load. A
+#: delivery gets a second reader who is not its author; the controller review with 44 caught
+#: four evidenced errors in one day and nobody else's work had one (user order, 2026-08-31).
+#: A literal here disagreed with roster.json for 19 hours and refused live members, which is
+#: the human-half/machine-half split the file's pairs_note documents.
+_REVIEW_PAIRS_CACHE = {}
+
+
+def review_pairs(root=None):
+    """{member: reviewer} from runs/roster.json `pairs`, validated against `members`.
+
+    One fact, read at use, so adding a member+pairs entry to roster.json makes the name usable
+    as --reviewer/--pair with no code edit. Raises loudly when the file disagrees with itself:
+    a `pairs` key whose name is not a member, a member with no pair, or a pair whose reviewer is
+    not a member. Pairs are DIRECTIONAL (a reviewer is not reviewed back by its member), so no
+    symmetry is required. Departed members appear in neither set, so they are refused as
+    reviewers -- correct, their rows are history. A missing roster.json raises too: review/task
+    commands must not silently accept any name because the file that names the team is absent.
+    """
+    root = root or ROOT
+    if root in _REVIEW_PAIRS_CACHE:
+        return _REVIEW_PAIRS_CACHE[root]
+    p = os.path.join(root, "runs", "roster.json")
+    if not os.path.exists(p):
+        raise RuntimeError(f"no runs/roster.json under {root}; cannot validate a reviewer "
+                           f"without the team file")
+    d = json.load(open(p, encoding="utf-8"))
+    members = {m["name"] for m in d.get("members", [])}
+    pairs = dict(d.get("pairs") or {})
+    if not members:
+        raise RuntimeError("runs/roster.json has no members; a review pair cannot be validated")
+    bad_ref = sorted(set(pairs) - members)
+    if bad_ref:
+        raise RuntimeError(f"runs/roster.json pairs name non-members {bad_ref}; every pairing "
+                           f"must be of a live member")
+    bad_target = sorted({v for v in pairs.values() if v not in members})
+    if bad_target:
+        raise RuntimeError(f"runs/roster.json pairs assign reviewers that are not members "
+                           f"{bad_target}")
+    unpaired = sorted(members - set(pairs))
+    if unpaired:
+        raise RuntimeError(f"runs/roster.json members {unpaired} have no pair entry; every live "
+                           f"member needs a reviewer")
+    _REVIEW_PAIRS_CACHE[root] = pairs
+    return pairs
+
+
 #: How long a dirty or untracked file may sit before the check names it. ONE constant
 #: for both: they measure the same thing (work parked in a tree others share) and split
 #: values -- 30 min for dirty, 24 h for untracked -- meant the noisier half fired on
@@ -338,7 +383,8 @@ _RULE_CHECKS = {
         "selftests_are_gated",
     # pinned_ids + tokenizer_roundtrip catch a REBUILD after the fact (moved specials,
     # a dropped byte). Neither can see the unfreeze decision itself.
-    "Tokenizer frozen 2026-08-29": "pinned_ids",
+    "Tokenizer rebuilt 2026-09-10 under unfreeze condition 2": "pinned_ids",
+    "Vocabulary rebuilt 2026-09-10 (condition 2)": "pinned_ids",
     "Vocabulary identity": "vocab_id_on_load_path",
     "When there is no lane card at all": "coresident_cache_refusal",
     "Long jobs detach": "no_foreground_pod_training",
@@ -354,7 +400,7 @@ _RULE_CHECKS = {
     "runs/.jsonl ledgers merge by union": "no_ghost_running",
     "scripts/pod_push.sh pushes only content reachable from main": "pod_drift",
     "A commit that touches a file in the manifest's scope is pushed by its committer": "pod_drift",
-    "Corpus directories named by any ladder mix": "ladder_config_frozen",
+    "Mix-named corpus directories are frozen": "ladder_config_frozen",
     "Code goes through a GitHub PR; ledger-only commits keep": "merge_main.sh --selftest",
     "The shared corpus, checkpoints, and GPUs on the pod are unchanged": "pod_drift",
     "8×H20, all usable": "pod_drift",
@@ -410,7 +456,10 @@ _MANUAL_RULES = {
         "the surviving process lives in the container and the only record of the dropped tunnel "
         "is a terminal the repo never sees; no_foreground_pod_training catches the launch shape "
         "that produces these orphans, which is the cause, not the post-drop verification",
-    "GPUs": "card ownership is a controller decision, not a file state",
+    "GPUs": "card ownership is a controller decision, not a file state; allocation_reads_the_grant pins the standing-order list theirs_baseline [] (empty since the 2026-09-11 formal-run-on-8 order), while per-card owner notes carry the current gate-run allocation",
+    "The 2026-09-10 disk deletion is recorded in runs/deletion_0911.txt":
+        "the deletion is an operator sequence on the pod; the committed manifest records WHAT was "
+        "deleted, and nothing can verify the operator followed the broadcast/approval sequence",
     "A PID is only meaningful in the namespace that read it.":
         "no artifact records which namespace a pid was read in -- the host and the "
         "container both print bare integers and both are correct. A check would need "
@@ -420,8 +469,9 @@ _MANUAL_RULES = {
         "the rule is an operator sequence -- kill, then read the card, then kill what remains. "
         "lane_respected sees the instant, so it catches an orphan that is holding a card NOW, "
         "but nothing in the repo records whether the reader looked after their own kill",
-    "Lanes: a 7-card training block, and one lane card for everything else":
-        "the lane/block split is allocation policy; lane_respected checks the instant, not the policy",
+    "Lanes: world-6 block 0-5 no lane at launch, temporary pre-launch lane":
+        "the lane/block split is allocation policy; lane_respected checks the instant, not the "
+        "policy; allocation_reads_the_grant pins theirs_baseline []",
     "Small jobs queue on the lane card":
         "queueing is operator behaviour over time; lane_respected catches the instantaneous violation",
     "The lane holds one job at a time": "same: lane_respected sees now, not the queue discipline",
@@ -564,7 +614,7 @@ _MANUAL_RULES = {
 #: and AGENTS.md named only `merge_main.sh <name>`, so a hand-rolled mkdir was the reachable
 #: path and de's waiter cleared the controller's lock mid-commit. Manual by nature: the lock
 #: does not record which command created it.
-_MANUAL_BASELINE = 33
+_MANUAL_BASELINE = 34
 
 
 def _norm_rule(text):
@@ -4002,8 +4052,21 @@ def produced_checkpoint(cmd, run_name):
     """The checkpoint a run's cmd produced, or None. Priority: --out, then --name,
     then a single free ckpt_*.pt in the cmd. INPUTS are excluded: rl_direct resumed
     ckpt_k4 and scored its own output, and crediting k4 with that score is the
-    loudest wrong-attribution bug this ledger had."""
-    inputs = set(re.findall(r"--(?:resume|sft_path|tokenizer|ckpt)\s+(\S+)", cmd))
+    loudest wrong-attribution bug this ledger had.
+
+    An input may be a STEP PATH -- --resume ckpt_x.pt.step16000 / .interrupt.step32
+    -- while CKPT_RE matches only through the bare ckpt_x.pt prefix inside it. The
+    exclusion set therefore stores the input BOTH verbatim and with its step suffix
+    stripped, so the bare core is also treated as an input instead of as this run's
+    free output (2026-09-12: a v41_sft resume of ckpt_v41_gate_0911.pt.step16000 was
+    credited with producing ckpt_v41_gate_0911 and false-FAILed score_matrix_present)."""
+    raw_inputs = re.findall(r"--(?:resume|sft_path|tokenizer|ckpt)\s+(\S+)", cmd)
+    inputs = set(raw_inputs)
+    for path in raw_inputs:
+        base = re.sub(r"\.interrupt\.step\d+$", "", path)
+        base = re.sub(r"\.step\d+$", "", base)
+        if base != path:
+            inputs.add(base)
     m = re.search(r"--out\s+(ckpt_[A-Za-z0-9_.-]+)\.pt", cmd)
     if m:
         return m.group(1)
@@ -4190,6 +4253,68 @@ def _broken_future_started():
     rows[0]["started"] = "2099-01-01 00:00"
     open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
     return d
+
+
+def _broken_stale_expected_end():
+    """A running row UNDER the 24h default but PAST its declared expected_end_utc must FAIL --
+    the deadline field must bind, not merely decorate the row. The positive half (a 30h-old
+    long run whose expected_end is still ahead must PASS) is asserted here before returning the
+    negative world, since the check's own default would otherwise let the long run fail.
+
+    Built with the real exp.py, then dated by hand in UTC.
+    """
+    def world(name, start_ago_h, end_offset_h):
+        d = _tmp_repo()
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, "start",
+             "--name", name, "--cmd", "x"],
+            check=True, capture_output=True)
+        p = os.path.join(d, "runs", "experiments.jsonl")
+        rs = [json.loads(x) for x in open(p, encoding="utf-8") if x.strip()]
+        assert rs and rs[0]["status"] == "running"
+        start_t = time.time() - start_ago_h * 3600
+        rs[0]["started"] = time.strftime("%Y-%m-%d %H:%M", time.gmtime(start_t))
+        rs[0]["expected_end_utc"] = time.strftime(
+            "%Y-%m-%d %H:%M", time.gmtime(start_t + end_offset_h * 3600))
+        open(p, "w").write("".join(json.dumps(x) + "\n" for x in rs))
+        return d
+
+    inside = world("long_ok_run", 30, 60)
+    state, _ = check_no_stale_running(inside)
+    assert state == PASS, f"a run inside its expected_end must PASS, got {state}"
+
+    # TIME-ZONE HALF: exp.py writes UTC (time.gmtime); the read must parse UTC too. The old code
+    # used time.mktime, which on a +8 host read every UTC row 8h older than it was (that was the
+    # first-half trigger for r3). Force the process to a +8 zone and assert the epoch is the UTC
+    # epoch regardless -- this goes red ONLY when the parser consults local time. Restored after.
+    import calendar as _cal
+    old_tz = os.environ.get("TZ")
+    try:
+        os.environ["TZ"] = "Etc/GMT-8"  # tzdb sign: Etc/GMT-8 is local UTC+8
+        time.tzset()
+        sample = "2026-09-13 07:54"
+        got = _exp_utc_epoch(sample)
+        want = _cal.timegm(time.strptime(sample, "%Y-%m-%d %H:%M"))
+        local = time.mktime(time.strptime(sample, "%Y-%m-%d %H:%M"))
+        assert got == want, f"_exp_utc_epoch not zone-independent: got {got} want {want}"
+        assert local != want, "forced +8 zone had no effect; fixture cannot catch local-clock parse"
+        # A row 23h old in UTC with NO declared end must still PASS here; under mktime it reads
+        # 31h and FAILs the 24h default. Build it and strip the deadline so the default applies.
+        near = world("near_default_run", 23, 0)
+        np = os.path.join(near, "runs", "experiments.jsonl")
+        nrs = [json.loads(x) for x in open(np, encoding="utf-8") if x.strip()]
+        del nrs[0]["expected_end_utc"]
+        open(np, "w").write("".join(json.dumps(x) + "\n" for x in nrs))
+        st_near, _ = check_no_stale_running(near)
+        assert st_near == PASS, f"23h-UTC row must be under the 24h default even at forced +8, got {st_near}"
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time.tzset()
+
+    return world("past_end_run", 10, 2)
 
 
 def check_mix_not_unfiltered(root):
@@ -5143,30 +5268,46 @@ def _broken_score_matrix_ckpts():
 def _selftest_score_matrix_alias_resolves():
     """An absent ckpt name whose alias_of names a KEPT file is not a gone row; an absent
     name whose alias names a deletion-CANDIDATE is FAIL-named through the alias. 4c's trap
-    1 (2026-09-09): a name scan that ignores alias_of false-FAILs the 30b row."""
+    1 (2026-09-09): a name scan that ignores alias_of false-FAILs the 30b row.
+
+    SELF-CONTAINED WORLD, NOT A MUTATION OF THE LIVE LISTING. The first version copied all of
+    runs/, took the newest REAL pod_ckpt_candidates_*.txt, pinned its date and then relied on
+    that listing still containing both a kept name and an unkept candidate. It pinned the date
+    but not the listing's CONTENT, which a pod pull is free to change: when the gate run stopped
+    (2026-09-12) its milestone moved kept -> deletion-candidate, the copied listing no longer
+    held the expected partition, and CI went red on main with no code change. This world writes
+    its own listing with exactly one KEEP and one candidate, so it proves the alias resolution
+    regardless of what the live listing says."""
     import shutil
     d = _tmp_repo_shaped()
     runs = os.path.join(d, "runs")
     if os.path.isdir(runs) and not os.path.islink(runs):
         shutil.rmtree(runs)
-    shutil.copytree(os.path.join(ROOT, "runs"), runs)
-    listings = sorted(glob.glob(os.path.join(runs, "pod_ckpt_candidates_*.txt")))
-    lp = listings[-1]
-    # Same FAIL-band pin as _broken_score_matrix_ckpts (6h-24h old): the candidate alias
-    # must be FAIL-named, not WARN-named as grace or stale-window.
-    txt = open(lp, encoding="utf-8").read()
+    os.makedirs(runs, exist_ok=True)
+    # FAIL band (6h-24h old), the same pin _broken_score_matrix_ckpts uses: the candidate
+    # alias must be FAIL-named, not WARN-named as grace or stale-window.
     pinned = (datetime.datetime.now(datetime.timezone.utc)
               - datetime.timedelta(hours=12)).strftime("%Y-%m-%d %H:%MZ")
-    open(lp, "w", encoding="utf-8").write(
-        re.sub(r"listed \d{4}-\d{2}-\d{2} \d{2}:\d{2}Z", f"listed {pinned}", txt, count=1))
+    cand_mtime = (datetime.datetime.now(datetime.timezone.utc)
+                  - datetime.timedelta(hours=12)).strftime("%Y-%m-%d_%H:%M")
+    keep_name = "ckpt_alias_selftest_kept.pt"
+    cand_name = "ckpt_alias_selftest_cand.pt"
+    with open(os.path.join(runs, "pod_ckpt_candidates_selftest.txt"), "w",
+              encoding="utf-8") as fh:
+        fh.write(f"# selftest-only listing, listed {pinned}: one KEEP and one candidate\n")
+        fh.write(f"# KEEP: {keep_name}\n")
+        fh.write(f"{cand_mtime} 1.00 {cand_name}\n")
+    lp = os.path.join(runs, "pod_ckpt_candidates_selftest.txt")
     _date, keep, cands = _parse_ckpt_listing(lp)
-    kept = next(iter(keep))
-    cand = next(n for n in cands if n not in keep)
-    with open(os.path.join(runs, "score_matrix.jsonl"), "a", encoding="utf-8") as fh:
+    assert keep == {keep_name}, f"self-contained KEEP parse wrong: {keep}"
+    assert set(cands) == {cand_name}, f"self-contained candidate parse wrong: {cands}"
+    with open(os.path.join(runs, "score_matrix.jsonl"), "w", encoding="utf-8") as fh:
         fh.write(json.dumps({"ckpt": "ckpt_alias_selftest_kept_alias.pt",
-                             "alias_of": kept, "measured": "2026-09-09", "metrics": {}}) + "\n")
+                             "alias_of": keep_name, "measured": "2026-09-09",
+                             "metrics": {}}) + "\n")
         fh.write(json.dumps({"ckpt": "ckpt_alias_selftest_cand_alias.pt",
-                             "alias_of": cand, "measured": "2026-09-09", "metrics": {}}) + "\n")
+                             "alias_of": cand_name, "measured": "2026-09-09",
+                             "metrics": {}}) + "\n")
     _s, ev = check_score_matrix_ckpts_present(d)
     assert "ckpt_alias_selftest_kept_alias.pt" not in ev, \
         f"an absent name with a KEPT alias was named as gone: {ev}"
@@ -5174,7 +5315,30 @@ def _selftest_score_matrix_alias_resolves():
         f"an absent name with a deletion-candidate alias was not FAIL-named: {ev}"
     shutil.rmtree(d, ignore_errors=True)
     print("  score_matrix_ckpts: absent name with kept alias stays silent; "
-          "candidate alias FAIL-named through the alias")
+          "candidate alias FAIL-named through the alias (self-contained listing)")
+
+
+def _selftest_produced_checkpoint_inputs():
+    """produced_checkpoint must not credit a run with a checkpoint it only RESUMED, even when
+    the input is a step path. CKPT_RE stops at the bare .pt, so --resume X.pt.stepN presents the
+    bare X.pt as a 'free' ckpt unless the suffix is normalised off the input set. 2026-09-12:
+    a v41_sft resume of ckpt_v41_gate_0911.pt.step16000 was credited with producing
+    ckpt_v41_gate_0911 and false-FAILed score_matrix_present."""
+    cmd = "./run_ddp.sh --resume ckpt_v41_gate_0911.pt.step16000 --name v41_sft_0913"
+    assert produced_checkpoint(cmd, "v41_sft_0913") == "ckpt_v41_sft_0913", (
+        "--name decides the produced ckpt; the resumed bare core must not override it")
+    cmd2 = "python3 sft.py --resume ckpt_v41_gate_0911.pt.step16000 some other args"
+    assert produced_checkpoint(cmd2, "r") is None, (
+        "a step-suffixed resume with no --out/--name must not credit the resumed bare core as "
+        "this run's output")
+    cmd3 = "python3 sft.py --resume ckpt_a.pt.interrupt.step32 more args"
+    assert produced_checkpoint(cmd3, "r") is None, (
+        "an .interrupt.stepN resume input must normalise to its bare core too")
+    assert produced_checkpoint(
+        "./run_ddp.sh --resume ckpt_k4.pt --name rld", "rld") == "ckpt_rld"
+    assert produced_checkpoint(
+        "./run_ddp.sh ckpt_newrun.pt --resume ckpt_in.pt.step5", "x") == "ckpt_newrun"
+    print("  produced_checkpoint: step/interrupt-suffixed resume inputs normalize to bare cores")
 
 
 def check_keep_claim_reasons_live(root):
@@ -7205,6 +7369,36 @@ def _broken_merge_keeps_parent_paths():
     return w
 
 
+def _exp_utc_epoch(s):
+    """exp.py writes timestamps with time.gmtime(); parse them back as UTC. time.mktime()
+    interprets the tuple in the MACHINE zone, so on a +8 laptop every UTC row read 8h older
+    than it is (v41_r3_0914, a 21h UTC run, was judged 29h and failed the 24h gate). Both the
+    write and the read must be on the UTC clock.
+    """
+    import calendar
+    return calendar.timegm(time.strptime(str(s), "%Y-%m-%d %H:%M"))
+
+
+def _stale_deadline_h(r):
+    """Hours a running row may stay open: its declared expected_end_utc (as an offset from the
+    row's own start) if present and readable, else None meaning the _STALE_RUNNING_H default.
+
+    Both ends are taken as UTC epochs and differenced, so the allowance is zone-independent --
+    a long pretrain (~48h, v41_r3_0914 38K steps) records an end past its ETA and is not falsely
+    called stale at 24h, while a row whose expected_end has passed still FAILs. A missing or
+    unreadable expected_end falls back to the default rather than silently disabling the check.
+    """
+    e = r.get("expected_end_utc")
+    if not e:
+        return None
+    try:
+        start_t = _exp_utc_epoch(r.get("started", ""))
+        end_t = _exp_utc_epoch(e)
+    except Exception:
+        return None
+    return (end_t - start_t) / 3600
+
+
 def check_no_stale_running(root):
     evs = _exp_events(root)  # folded: an appended close must clear its start row
     if evs is None:
@@ -7213,10 +7407,10 @@ def check_no_stale_running(root):
     for r in evs:
         if r.get("status") != "running":
             continue
-        # The field is `started`, in exp.py's %Y-%m-%d %H:%M format. An unreadable date is
+        # The field is `started`, in exp.py's %Y-%m-%d %H:%M UTC format. An unreadable date is
         # a FAIL: a check that cannot see its subject must not report on it.
         try:
-            t = time.mktime(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
+            t = _exp_utc_epoch(r.get("started", ""))
         except Exception:
             return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
         age_h = (time.time() - t) / 3600
@@ -7225,11 +7419,15 @@ def check_no_stale_running(root):
                 f"row {r.get('name', '?')!r} has a future `started`: {r.get('started')!r} "
                 f"({-age_h:.0f}h in the future) -- its age cannot be determined"
             )
-        if age_h > _STALE_RUNNING_H:
+        deadline_h = _stale_deadline_h(r)
+        if deadline_h is not None and age_h > deadline_h:
+            rows.append(
+                f"{r.get('name', '?')} {age_h:.0f}h past expected_end {r.get('expected_end_utc')!r}")
+        elif deadline_h is None and age_h > _STALE_RUNNING_H:
             rows.append(f"{r.get('name', '?')} {age_h:.0f}h")
     if rows:
         return FAIL, f"{len(rows)} killed mid-run and never closed: {', '.join(rows[:6])}"
-    return PASS, f"{len(evs)} folded row(s) read, none 'running' for over a day"
+    return PASS, f"{len(evs)} folded row(s) read, none past their running deadline"
 
 
 def check_no_ghost_running(root):
@@ -8608,6 +8806,43 @@ QUEUE_EXEMPT = {"fb", "98"}
 # mark remains visible: the tilerl retraction (2026-09-09) was caught because this check
 # kept naming the member.
 QUEUE_UNREACHABLE_STATES = {"exited", "active-session-unknown"}
+
+
+def check_review_pairs_match_roster(root):
+    """The reviewer pairs the CLI enforces are the roster.json pairs, and they are consistent.
+
+    de-102: review_pairs() reads runs/roster.json rather than a code literal, and raises on
+    drift (a pairs key/target that is not a member, an unpaired member). This check runs that
+    validation on the real file every commit, so the two halves cannot disagree: the pre-de-102
+    literal omitted 98/0e/66/ae and still mapped b0<->tilerl while roster.json said otherwise,
+    and review/task commands silently refused live members.
+    """
+    if not os.path.exists(os.path.join(root, "runs", "roster.json")):
+        return SKIP, "no runs/roster.json"
+    try:
+        pairs = review_pairs(root)
+    except RuntimeError as e:
+        return FAIL, str(e)
+    return PASS, (f"review pairs read from roster.json: {len(pairs)} members paired "
+                  f"({', '.join(sorted(pairs))})")
+
+
+def _broken_review_pairs_match_roster():
+    """The real roster with one pairs entry pointed at a non-member. review_pairs must raise.
+
+    Mutates a copy of the committed roster.json, so it exercises the loader's validation rather
+    than a reimplementation. A non-member reviewer is the exact pre-de-102 defect (the literal
+    admitted b0/tilerl after they departed and omitted live members), expressed as file drift.
+    """
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    src = os.path.join(ROOT, "runs", "roster.json")
+    dst = os.path.join(d, "runs", "roster.json")
+    r = json.load(open(src, encoding="utf-8"))
+    first = next(iter(r["pairs"]))
+    r["pairs"][first] = "not-a-member"
+    json.dump(r, open(dst, "w", encoding="utf-8"))
+    return d
 
 
 def check_owner_queue_depth(root):
@@ -10560,6 +10795,14 @@ def _selftest_inline_citations_are_scanned():
         shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
         # The real code directories, so the world FAILs only on the inserted citation and not on
         # every path AGENTS.md legitimately names (the trap _broken_readme_current records).
+        # RUNS/ TOO: AGENTS.md now cites tracked runnable artifacts there (the V4.1 gate
+        # launcher runs/v41_gate_0911.sh); _tmp_repo pre-makes an empty runs/, so remove it and
+        # symlink the real one or every runs/ citation FAILs the real-citation case.
+        if os.path.islink(os.path.join(d, "runs")) or os.path.isfile(os.path.join(d, "runs")):
+            os.remove(os.path.join(d, "runs"))
+        elif os.path.isdir(os.path.join(d, "runs")):
+            shutil.rmtree(os.path.join(d, "runs"))
+        os.symlink(os.path.join(ROOT, "runs"), os.path.join(d, "runs"))
         for name in CMD_PATH_DIRS:
             if name and os.path.isdir(os.path.join(ROOT, name)):
                 os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
@@ -10614,10 +10857,15 @@ def _selftest_inline_citations_are_scanned():
                     f"{ev}")
             else:
                 # THE COUNT IS THE POINT of this change: a PASS that scanned 2 citations reads the
-                # same as one that scanned 64 unless the number is there.
-                assert re.search(r"\b6[0-9] script citation", ev), (
-                    f"{label}: the PASS must state how many citations it resolved, or a collapse "
-                    f"like 3fd80424's is invisible again: {ev}")
+                # same as one that scanned 64 unless the number is there. Assert against the count
+                # the REAL AGENTS.md resolves, not a hard-coded band: the count moves when a
+                # tracked citation is added (it rose to 70 in the V4.1 rewrite), and a band like
+                # 60-69 would silently go stale.
+                _live_n = len(cited_script_paths(
+                    open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read()))
+                assert re.search(rf"\b{_live_n} script citation", ev), (
+                    f"{label}: the PASS must state how many citations it resolved "
+                    f"({_live_n}), or a collapse like 3fd80424's is invisible again: {ev}")
         finally:
             shutil.rmtree(d, ignore_errors=True)
     n = len(cited_script_paths(open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read()))
@@ -10636,10 +10884,10 @@ def _broken_doc_commands():
     shutil.copy(os.path.join(ROOT, "README.md"), os.path.join(d, "README.md"))
     p = os.path.join(d, "README.md")
     s = open(p, encoding="utf-8").read()
-    assert "data/mix_scale_0.2b.json" in s, "real README no longer cites mix_scale_0.2b; update _broken_doc_commands"
-    open(p, "w", encoding="utf-8").write(s.replace("data/mix_scale_0.2b.json", "data/mix_scale_nonexistent.json"))
+    assert "data/mix_v41_gate.json" in s, "real README no longer cites data/mix_v41_gate.json; update _broken_doc_commands"
+    open(p, "w", encoding="utf-8").write(s.replace("data/mix_v41_gate.json", "data/mix_scale_nonexistent.json"))
     os.makedirs(os.path.join(d, "data", "corpus", "sample"), exist_ok=True)
-    for f in ("data/mix_sample.json", "data/mix_30b.json", "data/mix_scale_0.2b.json",
+    for f in ("data/mix_sample.json", "data/mix_v41_gate.json",
               "data/tokenizer.json"):
         open(os.path.join(d, f), "w").write("{}")
     with open(os.path.join(d, "README.md"), "a", encoding="utf-8") as f:
@@ -12603,7 +12851,7 @@ def cmd_review(argv):
     sub = ap.add_subparsers(dest="op", required=True)
     a = sub.add_parser("add")
     a.add_argument("--reviewer", required=True,
-                   help=f"who reviewed; a roster member {sorted(set(REVIEW_PAIRS))}")
+                   help="who reviewed; a roster member with a pair in runs/roster.json")
     a.add_argument("--pr", type=int, default=None, help="the PR number, for a PR review")
     a.add_argument("--task", default=None,
                    help="task id for a task review; for a PR review, what was reviewed")
@@ -12616,8 +12864,9 @@ def cmd_review(argv):
     a.add_argument("--finding", default=None,
                    help="what the review found; absent means no review finding is recorded")
     args = ap.parse_args(argv)
-    if args.reviewer not in REVIEW_PAIRS:
-        print(f"refusing: {args.reviewer} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
+    pairs = review_pairs()
+    if args.reviewer not in pairs:
+        print(f"refusing: {args.reviewer} is not on the roster {sorted(set(pairs))}", file=sys.stderr)
         return 1
     if not args.pr and not args.task:
         print("refusing: a review row names --pr or --task so review_present can match it", file=sys.stderr)
@@ -12719,7 +12968,7 @@ def cmd_task(argv):
     d = sub.add_parser("done")
     d.add_argument("id")
     d.add_argument("--reviewer", required=True,
-                   help=f"who reads this delivery; a roster member other than the owner {sorted(set(REVIEW_PAIRS))}")
+                   help="who reads this delivery; a roster member with a pair in runs/roster.json, other than the owner")
     d.add_argument("--evidence", required=True, help="artifact path, command, or fact id -- not a claim")
     d.add_argument("--commit", required=True,
                    help="the commit that delivers it: must reach main and must touch --evidence")
@@ -12771,8 +13020,9 @@ def cmd_task(argv):
         if args.pair == args.owner:
             print(f"refusing: {args.owner} cannot pair with itself", file=sys.stderr)
             return 1
-        if args.pair not in REVIEW_PAIRS:
-            print(f"refusing: {args.pair} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
+        _pairs = review_pairs()
+        if args.pair not in _pairs:
+            print(f"refusing: {args.pair} is not on the roster {sorted(set(_pairs))}", file=sys.stderr)
             return 1
         # The same cache task went to two people nine minutes apart and both stayed open
         # all night; --pair cannot see it, because each row had one. Nothing compared the
@@ -12830,8 +13080,9 @@ def cmd_task(argv):
         if args.reviewer == owner:
             print(f"refusing: {args.reviewer} owns {args.id}; a delivery needs a second reader", file=sys.stderr)
             return 1
-        if args.reviewer not in REVIEW_PAIRS:
-            print(f"refusing: {args.reviewer} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
+        _pairs = review_pairs()
+        if args.reviewer not in _pairs:
+            print(f"refusing: {args.reviewer} is not on the roster {sorted(set(_pairs))}", file=sys.stderr)
             return 1
         bad = _commit_delivers(args.commit, args.evidence, None, args.id)
         if bad:
@@ -14010,6 +14261,8 @@ def _run_holds_the_block(root):
             return True, str(a.get("note", ""))[:60]
     except (OSError, ValueError):
         pass
+    if not pod_drift.is_pod(root):
+        return False, "no block grant; fresh-log fallback is pod-only, a git tree trusts the grant"
     now = time.time()
     for p in glob.glob(os.path.join(root, "runs", "*.log")):
         try:
@@ -14147,6 +14400,43 @@ def _broken_frozen_paths():
     sp.run(["git", *ident, "commit", "-m", "touch a frozen path"], cwd=d,
            capture_output=True, env=env)
     return d
+
+
+def _selftest_holds_block_log_scope():
+    """A fresh runs/*.log arms _run_holds_the_block ONLY on the pod (no .git).
+
+    Incident: #233's push-event CI failed frozen_paths because a committed run log
+    (v41_smoke_0911{h,i}.log) has checkout-time mtime in a fresh clone, so the mtime
+    fallback armed in a git tree, read the log's `pod code:` banner, and that sha was
+    absent from the shallow push clone. The grant stays the authority in git trees; the
+    log fallback exists only because pod_push skips runs/ (the pod's grant can be stale).
+    """
+    import tempfile
+
+    def world(make_git, grant=None):
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        if make_git:
+            os.makedirs(os.path.join(d, ".git"), exist_ok=True)
+        with open(os.path.join(d, "runs", "x.log"), "w") as f:
+            f.write("fresh\n")  # mtime = now, inside the fresh window
+        if grant is not None:
+            with open(os.path.join(d, "runs", "card_assignment.json"), "w") as f:
+                json.dump(grant, f)
+        return d
+
+    # no grant, fresh log: armed on the pod (no .git), disarmed in a git tree
+    gitd = world(make_git=True)
+    podd = world(make_git=False)
+    g_holds, _ = _run_holds_the_block(gitd)
+    p_holds, _ = _run_holds_the_block(podd)
+    assert not g_holds, "a fresh run log must NOT arm the block predicate in a git tree (CI clone flake)"
+    assert p_holds, "a fresh run log must arm the block predicate on the pod, whose grant can be stale"
+    # the grant arms in BOTH views, so scoping the log arm does not disarm real runs
+    grant = {"launch_block_granted": True, "next_grant": {"blocked_on": "the run itself"}}
+    grant_git = world(make_git=True, grant=grant)
+    holds, _ = _run_holds_the_block(grant_git)
+    assert holds, "a current block grant must arm in a git tree independent of the log fallback"
 
 
 def _cfg_known_names(root):
@@ -15015,6 +15305,67 @@ def _selftest_monitor_close_loses_to_a_human():
             "and a human close carries none")
 
 
+def _selftest_rotate_launch_log():
+    """A fresh launch moves the prior non-empty log aside instead of truncating it.
+
+    Incident 2026-09-11: cmd_launch opened runs/<name>.log with "w", so the world-8 relaunch
+    erased the world-6 run's steps 0-6000 (val history, step lines) the instant it started.
+    The rotation is the property being pinned: old bytes survive under a stamped name and the
+    new log starts empty. Asserted by actually rotating a real file, including the same-second
+    collision suffix.
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="logrotate_")
+    try:
+        runsd = os.path.join(d, "runs")
+        os.makedirs(runsd, exist_ok=True)
+        lp = os.path.join(runsd, "x.log")
+
+        # Absent or empty -> no rotation.
+        assert _rotate_launch_log(lp) is None, "an absent log must not be rotated"
+        open(lp, "w").close()
+        assert _rotate_launch_log(lp) is None, "an empty log must not be rotated"
+        assert os.path.exists(lp), "the empty log must be left in place"
+
+        # Non-empty -> old bytes survive under the stamped name, path freed for a fresh log.
+        old = b"step 0/38146 through step 6000: the world-6 history\n"
+        with open(lp, "wb") as f:
+            f.write(old)
+        dest = _rotate_launch_log(lp)
+        assert dest and dest != lp and dest.startswith(lp + "."), (
+            f"the rotation must return a distinct stamped path, got {dest!r}")
+        assert not os.path.exists(lp), "the live log path must be free for the new launch"
+        assert open(dest, "rb").read() == old, (
+            "the prior run's bytes must survive byte-for-byte under the rotated name")
+
+        # Same-stamp collision: pin the clock (a real second boundary here makes the pre-created
+        # name miss), pre-create the name the rotation will pick, and assert it takes the integer
+        # suffix instead of overwriting the file already sitting there.
+        lp2 = os.path.join(runsd, "y.log")
+        with open(lp2, "wb") as f:
+            f.write(b"new run\n")
+        fixed_stamp = "20000101T000000Z"
+        first_target = f"{lp2}.{fixed_stamp}"
+        with open(first_target, "w") as f:
+            f.write("already here")
+        _real_strftime = time.strftime
+        time.strftime = lambda fmt, *a, **k: fixed_stamp
+        try:
+            dest2 = _rotate_launch_log(lp2)
+        finally:
+            time.strftime = _real_strftime
+        assert dest2 == f"{lp2}.{fixed_stamp}.2", f"expected integer-suffix path, got {dest2!r}"
+        assert open(first_target).read() == "already here", "the earlier rotation was overwritten"
+        assert open(dest2).read() == "new run\n", "the new log's bytes must land at the suffix path"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return ("a non-empty runs/<name>.log is renamed to .log.<UTC stamp> with its bytes intact and "
+            "the live path freed; absent/empty logs are left alone; a same-stamp collision takes "
+            "an integer suffix and overwrites nothing")
+
+
 def _selftest_launch_closes_its_orphaned_row():
     """A launch that dies BEFORE the process exists closes its own row.
 
@@ -15212,6 +15563,119 @@ def _selftest_launch_closes_its_orphaned_row():
               "its row while a fast success (rc 0, no device) does not (de-77)")
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+def _selftest_fatal_close_keys_the_opened_row():
+    """Every FATAL exit of a launched job closes the row the launch OPENED, and leaves none open.
+
+    66-5, fb 2026-09-11. The launch reads back its row's `started` stamp and every automated
+    closer keys on (name, started). A bare-name close is REFUSED by exp.py when two rows of one
+    name are open -- the normal relaunch shape (a crashed launch under a name, then a retry while
+    the monitor has not run yet) -- so the pre-fix monitor/supervisor death close silently wrote
+    nothing and the dead run's row stayed running until no_stale_running refused every commit.
+
+    The world is two genuinely-open rows of one name, exactly what exp.py's refusal describes.
+    The closes are the REAL _close_row (which subprocess-drives the REAL exp.py done), so this
+    exercises the refusal and the --started override end to end:
+      1. a bare fatal close is refused and leaves BOTH rows open -- the defect this fixes;
+      2. the started-keyed close of the OLDER row closes exactly it, the newer live row untouched;
+      3. the started-keyed close of the newer row leaves zero open rows -- the acceptance line;
+      4. _open_row_started names the NEWEST open row, the one a FATAL close must actually close.
+    Static anchors assert every production closer passes the stamp: a new fatal path that drops it
+    passes the ledger world and fails the anchor.
+    """
+    import inspect
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="fatalrows_")
+    name = "fataldup"
+    try:
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        ledger = os.path.join(d, "runs", "experiments.jsonl")
+        # Two START events with distinct stamps. exp.py mints UTC minute stamps, so two real
+        # `start` calls in one minute would collapse to one (name, started) key; the older event
+        # is hand-written with the same fields exp.py uses and a stamp fixed in the PAST, and the
+        # newer one is the real subprocess event.
+        st1 = "2026-09-01 00:00"
+        base = {"name": name, "status": "running", "cmd": "run.sh", "notes": "",
+                "hypothesis": "relaunch shape", "result": "", "finding": "", "decision": "",
+                "ended": "", "commit": ""}
+        with open(ledger, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({**base, "started": st1}) + "\n")
+        r = subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, "start",
+             "--name", name, "--cmd", "run.sh", "--hypothesis", "relaunch shape"],
+            capture_output=True, text=True)
+        # The real start stamps NOW; when the clock lands on a minute other than st2 the hand-written
+        # stamp still differs, which is all the world needs.
+        assert r.returncode == 0, (r.stderr or r.stdout)
+        rows = [json.loads(x) for x in open(ledger, encoding="utf-8") if x.strip()]
+        real_stamps = sorted({x["started"] for x in rows if x.get("started") != st1})
+        assert len(real_stamps) == 1, f"the real start wrote an unexpected stamp set: {real_stamps}"
+        st2 = real_stamps[0]
+        assert st2 != st1
+
+        def open_rows():
+            rows = [json.loads(x) for x in open(ledger, encoding="utf-8") if x.strip()]
+            return {(x["name"], x["started"]) for x in _exp_fold(rows)
+                    if x.get("status") == "running"}
+
+        assert open_rows() == {(name, st1), (name, st2)}, "sanity: both rows must be open"
+
+        # 4. the launch's readback names the newest open row.
+        assert _open_row_started(name, root=d) == st2, (
+            "_open_row_started must name the newest OPEN row via the fold, not a raw running scan")
+
+        # 1. THE DEFECT: a bare fatal close is refused and both rows stay open.
+        assert not _close_row(name, "fail", "exit 137", "monitor: process died",
+                              "check the log", root=d, writer="monitor"), (
+            "a bare close with two open rows MUST be refused (exp.py returns nonzero); a True here "
+            "means the launcher cannot distinguish the rows anymore")
+        assert open_rows() == {(name, st1), (name, st2)}, (
+            "a refused fatal close must write nothing -- both rows must remain open")
+
+        # 2. KEYED CLOSE OF THE OLDER (dead) ROW: the FATAL exit that belongs to st1.
+        assert _close_row(name, "fail", "exit 137 (signal 9)", "monitor: process died",
+                          "check the log", root=d, writer="monitor", started=st1), \
+            "the started-keyed fatal close must succeed"
+        assert open_rows() == {(name, st2)}, (
+            "the fatal close must close ONLY its own row; the newer row is a different run and must "
+            "stay open")
+
+        # 3. THE FATAL EXIT LEAVES NO RUNNING ROW: close the newer one the same way.
+        assert _close_row(name, "fail", "exit 1, startup gate", "gate failed",
+                          "fix the startup issue", root=d, started=st2), \
+            "the second started-keyed fatal close must succeed"
+        assert not open_rows(), (
+            "THE ACCEPTANCE LINE: after every FATAL exit closes the row it opened, zero running "
+            "rows of this name may remain")
+
+        # STATIC ANCHORS. The ledger world proves exp.py's half; these prove every production
+        # closer actually threads the stamp, since a new fatal path that drops it would leave a
+        # refused close while this test stayed green.
+        mon = inspect.getsource(_arm_monitor)
+        assert '"--started", started' in mon, (
+            "the monitor's death close must pass its run's --started, or a relaunch leaves the "
+            "dead row running")
+        sup = inspect.getsource(_supervise)
+        assert sup.count("started=started") >= 5, (
+            "every one of the supervisor's five terminal _close_row calls must key on started: "
+            f"clean exit, kill criterion, resume exhausted, no resume ckpt, env-fp refusal "
+            f"(found {sup.count('started=started')})")
+        launch_after = inspect.getsource(_launch_after_row)
+        assert launch_after.count("started=launch_started") >= 4, (
+            "the drift refusal, startup-gate kill and command-refused closers must all key on the "
+            "read-back stamp (found %d)" % launch_after.count("started=launch_started"))
+        outer = inspect.getsource(cmd_launch)
+        assert "_open_row_started(args.name)" in outer, (
+            "the pre-Popen exception guard must key its close on the row just opened")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    return ("two open rows of one name: a bare fatal close is refused and closes nothing, the "
+            "started-keyed close of each FATAL exits its own row and leaves zero running; "
+            "monitor, all five supervisor paths and the three launch paths thread the stamp")
 
 
 def _selftest_cite_blob_anchor():
@@ -15644,14 +16108,33 @@ def _assert_card_ownership(root):
     #     partition's shape: a note whose subject is another team must not classify as ours. Stated
     #     over the file's own text, so it needs no card number and cannot be satisfied by a
     #     predicate that has stopped discriminating.
+    #
+    #     THE ONE LEGITIMATE EXCEPTION (2026-09-11 gate shape): a baseline-theirs card the other
+    #     team LENT back, INSIDE the lend window. The classifier's own rule returns ours for a
+    #     baseline card with a parseable, currently-open window even though the prose opens with
+    #     the other team's name -- card 6 is exactly that while fb re-extends its daily HumanEval
+    #     window. Treating that as the 09-07 defect made `harness check` red on the real tree for
+    #     the whole gate run. Allow it only when the ours verdict actually came through the expiry
+    #     branch: the card is in the baseline AND a window parses AND is open at the same wall
+    #     clock _aupai_cards used. A tileRL subject that reads ours any other way is still the bug.
     for c, note in sorted(cmap.items()):
         subject = str(note or "").strip()[:24].lower()
         if ("tilerl" in subject or "rl team" in subject) and c in ours:
+            _lent_back = False
+            if c in _theirs_baseline(root) and not isinstance(note, dict):
+                _wopen = _parse_lend_window(str(note))
+                if _wopen is not None:
+                    _now = datetime.datetime.now(datetime.timezone.utc)
+                    _lent_back = _wopen[0] <= _now <= _wopen[1]
+            if _lent_back:
+                continue
             return (f"cards[{c}] opens with {str(note)[:40]!r} -- another team's name is the "
-                    f"SUBJECT of that note -- and the classifier still put card {c} in ours. This "
-                    f"is the 2026-09-07 defect exactly: `\\bRL[ _-]?TEAM\\b` matched neither "
+                    f"SUBJECT of that note -- and the classifier still put card {c} in ours. "
+                    f"This is the 2026-09-07 defect exactly: `\\bRL[ _-]?TEAM\\b` matched neither "
                     f"'tileRL (...)' (no TEAM token) nor even 'tileRL TEAM' (no word boundary "
-                    f"between 'e' and 'R'), so theirs came back empty and every card read as ours")
+                    f"between 'e' and 'R'), so theirs came back empty and every card read as ours. "
+                    f"The sole allowed case is a baseline card inside its open parseable lend "
+                    f"window, which is not this")
     # (4) A CARD THE CONTROLLER PUT IN block_cards CANNOT BE ANOTHER TEAM'S. The block grant and
     #     cards[] are written by the same controller in the same file, so they cannot disagree
     #     about who owns a card; if they do, one of the two reads is wrong and a launcher will act
@@ -15727,42 +16210,54 @@ def _assert_card_ownership(root):
                         f"the cards[] owner")
         finally:
             _sh3.rmtree(_sd, ignore_errors=True)
-    # (6) THE BASELINE IS PINNED TO {0, 6} BY THE 2026-09-06 USER ORDER, and this is the property
-    #     without which the whole expiry mechanism is decorative. _theirs_baseline READS the list
-    #     from the file, which is what lets the controller move a card without editing code -- and
-    #     it is therefore also what lets a lend shrink the baseline instead of expiring. Dropping
-    #     card 6 from theirs_baseline mid-lend makes its note classify by the ordinary rule, which
-    #     returns `theirs` on a tileRL-subject note, so properties (1)-(5) and every agreement
-    #     property still pass while the card has silently stopped being expiry-checked. The
-    #     mechanism cannot detect its own removal; only a pin can.
+    # (6) THE BASELINE IS PINNED TO [] BY THE USER ORDER 2026-09-11 (formal run on 8 cards), and
+    #     this is the property without which the whole expiry mechanism is decorative.
+    #     _theirs_baseline READS the list from the file, which is what lets the controller move a
+    #     card without editing this module -- and it is therefore also what lets an edit quietly
+    #     grow the list back so a lend starts silently expiring. From 2026-09-06 to 09-11 the pin
+    #     was [0, 6]; the 09-11 order, relayed by fb and confirmed by tilerl-a3 (off all H20s,
+    #     card 6 handed back outright), emptied it. The mechanism stays live for a FUTURE
+    #     baseline: the moment a card is added back, a lend note on it is ours only inside its
+    #     window. The pin is what stops the list drifting without a user order; the list itself is
+    #     what a future order changes.
     #
-    #     A USER ORDER IS THE AUTHORITY, so this names the two cards and cites the order rather
-    #     than deriving the list from anything in the repo. That is the one place a card number
-    #     belongs in this function: properties (1)-(5) are deliberately number-free because they
-    #     guard a mechanism, and this one guards a decision only the user can change.
+    #     A USER ORDER IS THE AUTHORITY, so this cites the order rather than deriving the list
+    #     from anything in the repo. That is the one place the standing list belongs in this
+    #     function: properties (1)-(5) are deliberately number-free because they guard a
+    #     mechanism, and this one guards a decision only the user can change.
     #
-    #     THE CITATION IS NOW A LINE IN main, not a conversation (tilerl-0a, reviewing #58).
-    #     AGENTS.md's GPUs bullet states it: "Cards 1,2,3,4,5,7 belong to this repo; cards 0 and 6
-    #     are tileRL's (user order 2026-09-06, '0,6 tileRL'; the earlier all-8 grant of 2026-08-30
-    #     is superseded)." Before aupai #53 landed that line, every trace of the ruling was a
-    #     citation inside a row citing it, while AGENTS.md asserted the opposite ("All 8 cards
-    #     belong to this repo" -- true when written 08-30, superseded without an edit). Cited by
-    #     the bullet's own words rather than by line number: this file is edited constantly and a
-    #     line number in a citation rots on the next unrelated commit (§271's third half).
+    #     THE CITATION IS A LINE IN main, not a conversation (tilerl-0a, reviewing #58).
+    #     AGENTS.md's GPUs bullet states the standing list in its own words, and a pin citing a
+    #     document that has changed under it is the §271 shape: the citation reads as authority
+    #     while the authority has moved. Cited by the bullet's own words rather than by line
+    #     number: this file is edited constantly and a line number rots on the next commit.
     _base = _theirs_baseline(root)
-    if sorted(_base) != [0, 6]:
-        return (f"runs/card_assignment.json theirs_baseline is {sorted(_base)}, not [0, 6]. Cards "
-                f"0 and 6 are tileRL's by USER ORDER 2026-09-06 ('0,6 tileRL'), recorded in "
-                f"AGENTS.md's GPUs bullet; this list is what makes a lend on them EXPIRE, so "
-                f"removing a card from it silently stops the expiry check while every other "
-                f"property still passes -- the mechanism cannot see its own removal. Changing this "
-                f"needs a user order, not an edit")
-    #     AND THE CITED LINE MUST STILL SAY IT. A pin citing a document that has changed under it is
-    #     the §271 shape: the citation reads as authority while the authority has moved. AGENTS.md
-    #     said "All 8 cards belong to this repo" for a week after the 09-06 order superseded it, so
-    #     this is not hypothetical -- it is the state this repo was actually in. Asserted against
-    #     the bullet's own text rather than a line number, and SKIPPED rather than failed when the
-    #     file is absent, because a fixture tree legitimately has no AGENTS.md.
+    # AN ABSENT KEY MUST FAIL EVEN WHEN THE PIN IS []. _theirs_baseline reads a missing key and an
+    # unreadable file alike as [], so without this an editor deleting theirs_baseline is
+    # indistinguishable from the controller writing the empty standing list -- and a deletion is
+    # the permissive act (no card can ever be baseline-theirs), whereas [] is a decision a user
+    # order made. Presence is checked on the parsed file, not on the reader's default.
+    _gp = os.path.join(root, "runs", "card_assignment.json")
+    if os.path.isfile(_gp):
+        try:
+            with open(_gp, encoding="utf-8") as _fh:
+                _grant_obj = json.load(_fh)
+        except ValueError:
+            _grant_obj = None
+        if _grant_obj is not None and "theirs_baseline" not in _grant_obj:
+            return ("runs/card_assignment.json carries no theirs_baseline key. The reader's "
+                    "default is [], which looks identical to the pinned empty standing list, but "
+                    "a deleted key is the permissive direction -- no card can be another team's "
+                    "by standing order and nothing can say so. An empty list is the 2026-09-11 "
+                    "decision; write it explicitly rather than removing the field")
+    if sorted(_base) != []:
+        return (f"runs/card_assignment.json theirs_baseline is {sorted(_base)}, not []. The "
+                f"standing order has been empty since the user's 2026-09-11 formal-run-on-8 "
+                f"ruling (tilerl-a3 handed card 6 back outright and is off all H20s); before "
+                f"that it was [0, 6] under the 2026-09-06 order. theirs_baseline is the "
+                f"standing-order list a LEND on another team's card expires against; adding a "
+                f"card back silently arms expiry while every other property still passes. "
+                f"Changing this list needs a user order, not an edit")
     _ag = os.path.join(root, "AGENTS.md")
     if os.path.isfile(_ag):
         try:
@@ -15770,13 +16265,12 @@ def _assert_card_ownership(root):
                 _agtxt = _fh.read()
         except OSError:
             _agtxt = ""
-        if _agtxt and "cards 0 and 6 are tileRL's" not in _agtxt:
-            return ("AGENTS.md no longer states that cards 0 and 6 are tileRL's, but "
-                    "theirs_baseline still pins [0, 6] and this check still cites that order. One "
-                    "of the two moved: either the user changed the split and the pin is stale, or "
-                    "AGENTS.md lost the line. AGENTS.md asserted 'All 8 cards belong to this repo' "
-                    "for a week after the 2026-09-06 order superseded it, so a pin citing a "
-                    "document that has drifted is the measured failure here, not a hypothetical")
+        if _agtxt and "theirs_baseline []" not in _agtxt:
+            return ("AGENTS.md no longer names theirs_baseline [], but the check still pins "
+                    "that standing order. One of the two moved: either the user changed the "
+                    "standing split and the pin is stale, or AGENTS.md lost the line. The "
+                    "document has lagged card orders before, which is the measured failure "
+                    "here, not a hypothetical")
     # (7) A LEND IS A WINDOW, AND A NOTE CLAIMING ONE WITHOUT A READABLE WINDOW REFUSES. The
     #     natural shortcut is to accept the word "lent" as the grant and read the dates as
     #     decoration; measured on card 6's real note, that shortcut makes a 13-minute loan
@@ -17530,10 +18024,17 @@ CHECKS = [
     ),
     (
         "no_stale_running",
-        "no experiments.jsonl row has been 'running' for over 24h",
+        "no experiments.jsonl row stays 'running' past its deadline (24h, or expected_end_utc if set)",
         "a killed job wrote its checkpoint, never ran its eval, and left the row open",
         check_no_stale_running,
         _broken_stale_run,
+    ),
+    (
+        "no_stale_expected_end",
+        "a running row with expected_end_utc FAILs once that end passes, even inside 24h",
+        "a declared deadline that does not bind leaves a finished run open with no stale signal",
+        check_no_stale_running,
+        _broken_stale_expected_end,
     ),
     (
         "no_future_started",
@@ -17632,6 +18133,13 @@ CHECKS = [
         "the register closed on free text, so a task closed on a path that never existed read as delivered; a whole evening's assignments lived only in chat and none was recoverable",
         check_tasks_closed_by_commit,
         _broken_tasks_closed_by_commit,
+    ),
+    (
+        "review_pairs_match_roster",
+        "the reviewer pairs the CLI enforces are read from runs/roster.json and are symmetric over live members",
+        "a code literal held the pairs and disagreed with roster.json for 19h: it omitted 98/0e/66/ae and kept departed b0/tilerl, so review/task commands refused live members (de-102)",
+        check_review_pairs_match_roster,
+        _broken_review_pairs_match_roster,
     ),
     (
         "owner_queue_depth",
@@ -18204,8 +18712,9 @@ EVIDENCE = {
     "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
     "merge_keeps_parent_paths": "repo",
-    "no_stale_running": "repo", "no_future_started": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
+    "no_stale_running": "repo", "no_stale_expected_end": "repo", "no_future_started": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
     "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
+    "review_pairs_match_roster": "repo",
     "peer_stalled": "repo",
     "one_deliverable_per_owner": "repo",
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
@@ -21903,84 +22412,46 @@ def _selftest_main_in_no_worktree_discriminates():
 
 
 def _selftest_card_lend_expires():
-    """A lend on another team's card is ours ONLY inside its window, and the pin catches its removal.
+    """The lend-expiry mechanism and the property-(6) pin, against the live empty-baseline shape.
 
-    WHY AN EXPLICIT SELFTEST AND NOT A `broken()` WORLD (b0-32). This check's registered world
-    grants block 0-3 and names card 2 as the lane, so it FAILs at case 1 -- long before
-    _assert_card_ownership runs. `--selftest` only demands the world reach the failing tier, so
-    every property below would stay unexercised behind a green selftest, which is the trap the
-    registered world's own docstring records one guard over.
+    WHY AN EXPLICIT SELFTEST AND NOT A `broken()` WORLD (b0-32): this check's registered world
+    grants block 0-3 and names card 2 as the lane, so it FAILs case 1 of check_allocation_reads_
+    the_grant before _assert_card_ownership runs; --selftest only demands the world reach its
+    failing tier, so every ownership property would stay unexercised behind a green selftest.
 
-    THE WORLDS 4c SPECIFIED, and the two that would silently disable the mechanism:
+    LIVE SHAPE AFTER THE USER ORDER 2026-09-11 (formal run on 8 cards): theirs_baseline is [] and
+    cards 6 and 7 are both {owner: aupai} objects on block 0-7. No live card is baseline-theirs.
+    The pin is what makes that true, so any world that grows the baseline FAILs the invariant at
+    property (6) BEFORE the classifier properties run. The expiry mechanism must still work the
+    day a user order puts a card back, so its cases are tested at the layer that owns them --
+    _classify_card_note, _aupai_cards and the --cards launch path on worlds that re-baseline card
+    6 -- while full-invariant PASS/FAIL cases keep baseline [].
 
-      baseline [0, 6]                      -> PASS   (the live shape)
-      baseline [0]                         -> FAIL   a lend can shrink the baseline instead of
-                                                     expiring; every other property still passes,
-                                                     so only the pin sees it
-      baseline [0, 6, 7]                   -> FAIL   card 7's standing GRANTED note is not a lend
-      lend with no readable window         -> FAIL   nothing to expire = a permanent grant
-      unreadable note on a block card      -> PASS   4c's ruling: per-card refusal, never repo-wide
-      block card handed to another team    -> FAIL   the permissive drift (4) exists for
-
-    THE CARD-7 WORLD IS UNREACHABLE TODAY, AND THAT IS A PROPERTY OF PROPERTY (6), NOT OF THE
-    CODE (tilerl-0a's follow-up to PR #58). "card 7 becomes unclassified" cannot happen while
-    (6) pins the baseline to exactly [0, 6]: the pin is what keeps card 7 out of the baseline,
-    so the branch that would misread its standing GRANTED note as a lend is never entered.
-    Recorded because the cost is deferred, not absent -- the day (6) is relaxed to accept a
-    baseline read from the file, this world stops being hypothetical and card 7 starts failing
-    for real. It is kept as a FAIL case so that relaxation has to confront it.
-
-    THE CLOCK IS DERIVED FROM THE NOTE, NOT PINNED (PR #61, and the docstring above said
-    "pinned in every world" until it broke main's CI for four merges -- §274). A verdict
-    depending on the wall clock cannot be tested, but pinning the clock while READING the live
-    note is worse than pinning neither: the pair agreed for three hours, then the controller
-    wrote a second lend at different times and the constant fell outside it, failing in a way
-    that read as a defect in the classifier. So the three clocks are computed from whatever
-    window the note carries -- midpoint inside BY CONSTRUCTION, a day either side outside BY
-    CONSTRUCTION -- which holds for every note that can be written, including the next one.
-    Every other input this function compares against live text is derived the same way, for
-    the same reason: a literal that agreed with the file once is a defect with a delay on it.
+      full invariant, baseline []           -> PASS   all 8 ours, no expiry in play
+      classifier, baseline [6] + open lend  -> ours inside, theirs a day either side;
+                                               _aupai_cards ours; --cards 6 accepted inside
+      classifier, baseline [6] + past lend  -> theirs; --cards 6 refuses
+      full invariant, [] + open lend on 5   -> FAIL   a non-baseline card cannot be lent back
+      classifier, baseline [6], 4c GRANTED  -> ours inside, theirs after, --cards refuses after
+      classifier, claimed lend, no window   -> unclassified, --cards refuses
+      classifier, 25:99 / backwards window  -> unclassified, --cards refuses
+      full invariant, [6] / [0,6,7] / absent-> FAIL; explicit [] PASS -- the pin
+      windowless GRANTED on a baselined 7   -> unclassified, --cards refuses, never theirs
+      AGENTS.md [] citation present / redacted / absent -> PASS / FAIL / PASS
+      unreadable note on a block card       -> invariant PASS, --cards that card refuses
+      {owner: tilerl} object on a block card-> FAIL   property (4) permissive drift
     """
     import copy
     import shutil as _sh
     import tempfile as _tf
 
-    live_p = os.path.join(ROOT, "runs", "card_assignment.json")
+    live_p = os.path.join(ROOT, "runs/card_assignment.json")
     if not os.path.isfile(live_p):
         raise SelftestSkip("no runs/card_assignment.json to derive worlds from")
     with open(live_p, encoding="utf-8") as fh:
         live = json.load(fh)
-    if not _parse_lend_window(str((live.get("cards") or {}).get("6", ""))):
-        raise SelftestSkip("the live file carries no parseable lend to vary the clock on")
 
     utc = datetime.timezone.utc
-    # THE CLOCK IS DERIVED FROM THE NOTE'S OWN WINDOW, NOT WRITTEN AS A CONSTANT. Pinning `now`
-    # made the verdict independent of the wall clock, which was the point -- and I then read the
-    # NOTE from a file that changes, so the pinned clock and the live note drifted apart. The
-    # constants below were 21:33/21:00 on 2026-09-08, inside and before card 6's FIRST lend
-    # (21:32-21:34Z). The controller then wrote a SECOND lend for 00:30-00:45Z, and 21:33 is
-    # outside it: the selftest failed with "expected ours, got theirs" and took main's CI red for
-    # four merges (c175826f, 3121cc24, 4fe54763, 021d59e8), blocking every ledger merge.
-    #
-    # HALF-PINNED IS NOT PINNED. A test whose verdict depends on two inputs is deterministic only
-    # if BOTH are fixed; fixing one and letting the other move is worse than fixing neither,
-    # because it passes for weeks and then fails for a reason that looks like the code.
-    #
-    # So the three clocks are computed from whichever window the note carries: the midpoint is
-    # inside by construction, and a day either side is outside by construction. That holds for
-    # every note the controller can write, including the next one.
-    def _clocks(note):
-        w = _parse_lend_window(note)
-        if w is None:
-            return None
-        return (w[0] + (w[1] - w[0]) / 2,          # inside, by construction
-                w[1] + datetime.timedelta(days=1),  # after, by construction
-                w[0] - datetime.timedelta(days=1))  # before, by construction
-
-    _c6 = _clocks(str((live.get("cards") or {}).get("6", "")))
-    if _c6 is None:
-        raise SelftestSkip("card 6's live note carries no parseable window to derive clocks from")
-    inside, after, before = _c6
 
     def world(mut):
         d = copy.deepcopy(live)
@@ -22006,233 +22477,265 @@ def _selftest_card_lend_expires():
         f"the unmutated live file must PASS or every FAIL below proves nothing: "
         f"{str(verdict(lambda d: None))[:200]}")
 
-    # THE EXPIRY ITSELF, on the controller's own sentence rather than one I wrote.
-    note6 = str(live["cards"]["6"])
-    for label, now, want in (("inside its window", inside, "ours"),
-                             ("after it closed", after, "theirs"),
-                             ("before it opened", before, "theirs")):
-        got = _classify_card_note(note6, baseline_theirs=True, now=now)
-        assert got == want, (
-            f"card 6 {label}: expected {want}, got {got}. A lend that stays ours after its window "
-            f"makes a 13-minute loan permanent; one that is ours before it opens hands the card "
-            f"over while its owner is still running on it")
-    # THE FLAG IS WHAT MAKES THE WINDOW MATTER, asserted so the note's OPENING TOKEN cannot decide
-    # it. The first version asserted `baseline_theirs=False` gives "theirs" at every clock, which
-    # held only while the live note opened with tileRL: once the controller wrote a GRANTED-leading
-    # note, `_OURS_RE` matched and the assertion failed on correct code. Same defect as the pinned
-    # clock above -- a property stated over text the controller rewrites.
-    #
-    # The property that holds for EVERY note form: with the flag off, the verdict does not change
-    # across the window, because no expiry applies to a card that is not baseline-theirs. With the
-    # flag on it does change. That is the flag doing the work, and it needs no assumption about
-    # which vocabulary the note happens to use.
-    _off = {_classify_card_note(note6, baseline_theirs=False, now=t)
-            for t in (before, inside, after)}
-    assert len(_off) == 1, (
-        f"with baseline_theirs=False card 6's verdict CHANGES across the window ({_off}) -- the "
-        f"expiry must be gated on the baseline, or a lend note on any card would expire it")
-    _on = {_classify_card_note(note6, baseline_theirs=True, now=t)
-           for t in (before, inside, after)}
-    assert len(_on) > 1, (
-        f"with baseline_theirs=True the verdict is constant across the window ({_on}) -- the "
-        f"window is being ignored, so nothing expires")
+    # THE LIVE PARTITION IS DERIVED FROM THE LIVE FILE, NEVER TYPED. This asserted "all 8 ours,
+    # none theirs" and named cards 6/7, which pinned the 2026-09-11 world-8 shape; the
+    # 2026-09-12 14:2xZ order hands all eight to tileRL and took main CI red -- the §271 shape
+    # this function warns about. The expected state of EACH card is instead computed from that
+    # card's own cards[] entry: an object's owner (aupai defaults to ours, an observed_block
+    # fails closed to theirs, tilerl is theirs), or the same lend-window parse _aupai_cards uses
+    # for an old-style string. Then the assertion is only "_aupai_cards agrees with that
+    # derivation", which holds for any allocation the controller writes and survives the next.
+    # Property (6) still pins theirs_baseline itself -- that IS a standing user decision.
+    _live_root = world(lambda d: None)
+    try:
+        _live_o, _live_t, _live_map = _aupai_cards(_live_root)
+        _base = set(_theirs_baseline(_live_root))
 
-    # THE NOTE FORM THE CONTROLLER ACTUALLY WROTE, which my first version did not expire at all
-    # (tilerl-0a's review of PR #58). This world is permanent because it is the ONLY lend that has
-    # ever happened and its wording is 4c's, not mine: 4c opened it with GRANTED, gave the date once
-    # and put Z on BOTH times. My expiry branch sat inside `if _NOT_OURS_RE.search(s)`, which that
-    # note misses, so it fell through to _OURS_RE, matched `granted\b` and returned ours -- during
-    # the window and three days after. `harness launch --cards 6` was ACCEPTED on an expired lend.
-    #
-    # THE PROPERTY IS ASSERTED ON THE CLASSIFIER, NOT ON THE CHECK, and that distinction is the
-    # whole lesson: my check DID go red on this note while the classifier said ours, and only the
-    # classifier gates a launch. A red check nobody runs before launching refuses nothing. So the
-    # three asserts below read _classify_card_note directly, and the fourth walks the launch path.
+        def _expected_state(card, entry):
+            if isinstance(entry, dict):
+                _owner = str(entry.get("owner") or "").strip().lower()
+                if _owner == "tilerl":
+                    return "theirs"
+                if _owner == "aupai":
+                    # observed_block is a blocking FACT and fails closed (unmeasured -> theirs),
+                    # the same rule _classify_card_entry applies with probe_holds=None.
+                    return "theirs" if entry.get("observed_block") else "ours"
+                return "unclassified"
+            # Old prose entries: the same baseline-gated classifier _aupai_cards runs.
+            return _classify_card_note(entry, baseline_theirs=(card in _base))
+
+        _exp_o, _exp_t = [], []
+        for _c, _entry in _live_map.items():
+            _k = _expected_state(_c, _entry)
+            (_exp_t if _k == "theirs" else _exp_o).append(_c)
+        _exp_o, _exp_t = sorted(_exp_o), sorted(_exp_t)
+        assert sorted(_live_o) == _exp_o and sorted(_live_t) == _exp_t, (
+            f"_aupai_cards disagrees with the cards[] entries' own owners: expected "
+            f"ours={_exp_o} theirs={_exp_t}, got ours={sorted(_live_o)} theirs={sorted(_live_t)}")
+        assert not _unclassified_cards(_live_root), (
+            f"the live grant leaves cards unclassified: {sorted(_unclassified_cards(_live_root))}")
+    finally:
+        _sh.rmtree(_live_root, ignore_errors=True)
+
+    # EXPIRY STAYS COVERED FOR A FUTURE BASELINE, AT THE CLASSIFIER LAYER. Property (6) makes any
+    # non-empty baseline FAIL the full invariant by design, so the mechanism is exercised on the
+    # three functions the invariant itself calls -- _classify_card_note, _aupai_cards and the
+    # --cards launch path -- against worlds that re-baseline card 6. Clocks derive from each
+    # note's own window (midpoint inside, a day either side outside); a pinned clock against a
+    # note the controller is free to rewrite took CI red for four merges (§274).
+    _now0 = datetime.datetime.now(utc)
+    _d_open = _now0.date()
+    _d_past = (_now0 - datetime.timedelta(days=2)).date()
+    _open_note = (f"tileRL's by a future standing order. Lent to aupai {_d_open:%Y-%m-%d} "
+                  f"00:00-23:59Z, a day-long window open now.")
+    _past_note = (f"tileRL's. Lent to aupai {_d_past:%Y-%m-%d} 10:00-12:00Z, closed.")
+    _win_open = _parse_lend_window(_open_note)
+    assert _win_open is not None, "the open-lend fixture must parse a window"
+    assert _parse_lend_window(_past_note) is not None, "the past-lend fixture must parse a window"
+
+    _mid = _win_open[0] + (_win_open[1] - _win_open[0]) / 2
+    _after = _win_open[1] + datetime.timedelta(days=1)
+    _before = _win_open[0] - datetime.timedelta(days=1)
+    assert _classify_card_note(_open_note, baseline_theirs=True, now=_mid) == "ours"
+    assert _classify_card_note(_open_note, baseline_theirs=True, now=_after) == "theirs"
+    assert _classify_card_note(_open_note, baseline_theirs=True, now=_before) == "theirs"
+    # THE FLAG DOES THE WORK, NOT THE OPENING TOKEN. With the card out of the baseline the window
+    # must not transfer it at any clock, so a lend note on a non-baseline card cannot expire one.
+    assert len({_classify_card_note(_open_note, baseline_theirs=False, now=t)
+                for t in (_before, _mid, _after)}) == 1, (
+        "with baseline_theirs=False the verdict changed across the window -- expiry must be gated "
+        "on the baseline, not on prose")
+
+    _w_open = world(lambda d: (d.__setitem__("theirs_baseline", [6]),
+                               d["cards"].__setitem__("6", _open_note),
+                               d.__setitem__("block_cards", "0-5,7")))
+    try:
+        _oo, _ot, _ = _aupai_cards(_w_open)
+        assert 6 in _oo and 6 not in _ot, (
+            f"an open lend on a baselined card must put it ours, got ours={sorted(_oo)} "
+            f"theirs={sorted(_ot)}")
+        _g, _ref = _validate_explicit_cards("6", root=_w_open)
+        assert not _ref, f"--cards 6 was REFUSED ({_g!r}) inside its open lend window"
+    finally:
+        _sh.rmtree(_w_open, ignore_errors=True)
+    _w_past = world(lambda d: (d.__setitem__("theirs_baseline", [6]),
+                               d["cards"].__setitem__("6", _past_note),
+                               d.__setitem__("block_cards", "0-5,7")))
+    try:
+        _po, _pt, _ = _aupai_cards(_w_past)
+        assert 6 in _pt and 6 not in _po, "a closed lend must fall back to theirs"
+        _g, _ref = _validate_explicit_cards("6", root=_w_past)
+        assert _ref, f"--cards 6 was ACCEPTED ({_g!r}) after its lend closed"
+    finally:
+        _sh.rmtree(_w_past, ignore_errors=True)
+
+    # A LEND NOTE ON A NON-BASELINE CARD CANNOT MAKE IT OURS. Property (3)'s exception is gated on
+    # the baseline, and the classifier assertion above (baseline_theirs=False constant across the
+    # window) already proves the gate. It cannot also be asserted at the invariant layer on a
+    # baseline [] tree: off the baseline a tileRL-subject lend note correctly classifies THEIRS,
+    # which satisfies the invariant rather than failing it -- there is no live card on which a
+    # non-baseline lend could read ours, so the case is exercised at the classifier/launch layer,
+    # where the gate actually decides. (Pre-2026-09-12 this was a full-invariant FAIL because
+    # card 5 was then an owner-aupai object; when the controller handed all cards to tileRL the
+    # premise disappeared, the §271 allocation-vs-mechanism split this whole test now follows.)
+
+    # THE GRANTED-LEADING NOTE FORM THE CONTROLLER ACTUALLY WRITES (tilerl-0a, PR #58): one date,
+    # Z on both times ('21:30Z-21:45Z'); a regex anchored on "lent" or a trailing Z misses it,
+    # and the baseline decides before the opening token is read.
     note_4c = ("GRANTED 2026-09-08 21:30Z-21:45Z -> b0: domain_loss on .step25000/25500/26000. "
                "Card 6 is tileRL's (user order 2026-09-06 '0,6 tileRL'); released after.")
     assert _parse_lend_window(note_4c) is not None, (
-        "4c's own note form parses to NO window. It gives the date once and puts Z on both times "
-        "('21:30Z-21:45Z'); a pattern requiring Z only after the second time fits the example I "
-        "invented rather than the one in the file, and then nothing expires")
+        "4c's own note form parses to NO window -- the parser must accept one date and Z on "
+        "both times")
     for label, now, want in (("inside", datetime.datetime(2026, 9, 8, 21, 35, tzinfo=utc), "ours"),
                              ("3 days later", datetime.datetime(2026, 9, 11, 12, 0, tzinfo=utc),
                               "theirs"),
                              ("before it opens",
                               datetime.datetime(2026, 9, 8, 20, 0, tzinfo=utc), "theirs")):
         got = _classify_card_note(note_4c, baseline_theirs=True, now=now)
-        assert got == want, (
-            f"4c's GRANTED-leading note {label}: expected {want}, got {got}. The baseline must "
-            f"decide before the note's opening token is read -- what the prose begins with cannot "
-            f"be allowed to override a user order, or the expiry covers only the note forms whose "
-            f"first word happens to name the owner")
-    _t4c = world(lambda d: d["cards"].__setitem__("6", note_4c))
+        assert got == want, f"4c's GRANTED note {label}: expected {want}, got {got}"
+    _t4c = world(lambda d: (d.__setitem__("theirs_baseline", [6]),
+                            d["cards"].__setitem__("6", note_4c),
+                            d.__setitem__("block_cards", "0-5,7")))
     try:
         _o4c, _, _ = _aupai_cards(_t4c)
-        assert 6 not in _o4c, (
-            f"card 6 is in ours={_o4c} with 4c's note and the lend long expired -- the classifier "
-            f"is what gates a launch")
+        assert 6 not in _o4c, "card 6 reads ours on 4c's note with the lend long expired"
         _g4c, _r4c = _validate_explicit_cards("6", root=_t4c)
         assert _r4c, (
-            f"--cards 6 was ACCEPTED ({_g4c!r}) on 4c's note with the lend expired. This is the "
-            f"defect tilerl-0a measured: rc=0 through the launch path while the check went red")
+            f"--cards 6 was ACCEPTED ({_g4c!r}) on 4c's note with the lend expired -- the "
+            f"launch path is what gates a card, not the check")
     finally:
         _sh.rmtree(_t4c, ignore_errors=True)
-    # THE HYPOTHETICAL IS NOT A CLAIM. Card 0's live note says "short aupai lane jobs only by
-    # explicit grant while tileRL is not using it" -- a grant would be REQUIRED, not made. My first
-    # widening of the handover vocabulary matched a bare `grant` and turned that into "claims a lend
-    # with no readable window", refusing a card whose note is doing its job. Asserted on the live
-    # text so the next widening cannot re-break it.
-    note0 = str(live["cards"].get("0", ""))
-    if "explicit grant" in note0:
-        assert not _mentions_lend(note0), (
-            f"card 0's note reads as a claimed handover: {note0[:90]!r}. It states that a grant "
-            f"would be required, which is a condition and not an act -- reading it as a claim "
-            f"refuses a card nobody lent")
-        assert _classify_card_note(note0, baseline_theirs=True) == "theirs", (
-            "card 0 must be theirs: it is baseline-theirs and no window was ever written for it")
 
-    # THE PIN. Both directions, because a baseline is as wrong widened as shrunk.
-    assert verdict(lambda d: d.__setitem__("theirs_baseline", [0])) is not None, (
-        "dropping card 6 from theirs_baseline PASSED. That world classifies card 6 by the ordinary "
-        "rule, which returns theirs on a tileRL-subject note, so the partition still looks right "
-        "while the card has silently stopped being expiry-checked -- the mechanism cannot detect "
-        "its own removal and property (6) is the only thing that can")
+    # THE PIN, BOTH DIRECTIONS, THROUGH THE FULL INVARIANT. [] is the standing list; growing it
+    # silently arms expiry on a live card, and an absent key reads as no cards being another
+    # team's -- the permissive direction.
+    assert verdict(lambda d: d.__setitem__("theirs_baseline", [6])) is not None, (
+        "growing theirs_baseline to [6] PASSED -- property (6) pins [] under the 09-11 order; a "
+        "future baseline needs a user order, and an edit that adds one arms expiry on a live card")
     assert verdict(lambda d: d.__setitem__("theirs_baseline", [0, 6, 7])) is not None, (
-        "widening theirs_baseline to include card 7 PASSED -- card 7 carries a standing aupai "
-        "grant, and a baseline naming it would expire a grant that has no window")
-    # AND THE WRONG BASELINE MUST BE FAIL-CLOSED, not merely caught. Since the baseline now decides
-    # before the note's opening token (tilerl-0a's fix), card 7's windowless GRANTED note reads
-    # `unclassified` under that bad baseline rather than staying `ours`. That is the safe direction
-    # and is asserted rather than assumed: the card must NOT land in theirs, and --cards 7 must
-    # refuse. Before the fix a wrong baseline could not move card 7 at all, which sounds safer and
-    # was not -- it meant property (6)'s pin was the only thing standing between a bad baseline and
-    # a launch.
-    _t7 = world(lambda d: d.__setitem__("theirs_baseline", [0, 6, 7]))
+        "widening theirs_baseline to [0,6,7] PASSED -- property (6) pins []")
+    assert verdict(lambda d: d.pop("theirs_baseline")) is not None, (
+        "removing theirs_baseline entirely PASSED -- an absent baseline is the permissive read")
+    assert verdict(lambda d: d.__setitem__("theirs_baseline", [])) is None, (
+        "theirs_baseline [] explicitly set FAILED -- that is the pinned standing list")
+
+    # A WRONG BASELINE MUST BE FAIL-CLOSED, not hand the card to the other team. A windowless
+    # GRANTED note on a card the baseline claims reads UNCLASSIFIED, and --cards refuses.
+    _legacy7 = ("GRANTED 2026-09-09 04:40Z -> de: V4.1 work. Card 7 is aupai's own; no end time, "
+                "no lend window.")
+    assert _parse_lend_window(_legacy7) is None and _mentions_lend(_legacy7), (
+        "the fixture must be a windowless GRANTED note: no window, but claiming a grant")
+    _t7 = world(lambda d: (d.__setitem__("theirs_baseline", [6, 7]),
+                           d["cards"].__setitem__("7", _legacy7)))
     try:
         _o7, _th7, _ = _aupai_cards(_t7)
         assert 7 not in _th7, (
-            f"a wrong baseline handed card 7 to the other team (theirs={_th7}) -- card 7 is aupai's "
-            f"by a standing grant and no baseline edit may transfer it")
+            f"a wrong baseline handed the fixture card to the other team (theirs={_th7}) -- a "
+            f"windowless grant must read unclassified, never theirs")
+        assert 7 not in _o7, (
+            f"the fixture card landed ours={_o7} under a baseline claiming it with no window")
         _g7, _r7 = _validate_explicit_cards("7", root=_t7)
-        assert _r7, (
-            f"--cards 7 was ACCEPTED ({_g7!r}) under a baseline that wrongly claims it. An "
-            f"unreadable ownership state must refuse the card, not grant it")
+        assert _r7, f"--cards 7 was ACCEPTED ({_g7!r}) under a baseline that claims it with no window"
     finally:
         _sh.rmtree(_t7, ignore_errors=True)
-    assert verdict(lambda d: d.pop("theirs_baseline")) is not None, (
-        "removing theirs_baseline entirely PASSED -- an absent baseline reads as no cards being "
-        "another team's, which is the permissive direction")
-    assert verdict(lambda d: d.__setitem__("theirs_baseline", [6, 0])) is None, (
-        "theirs_baseline [6, 0] FAILED -- the pin compares a SET of cards, not a written order")
 
-    # THE PIN'S CITATION MUST STILL HOLD. Three worlds, because the interesting one is the middle.
-    # AGENTS.md asserted "All 8 cards belong to this repo" for a week after the 2026-09-06 order
-    # superseded it, so a pin citing a document that has drifted under it is this repo's measured
-    # state, not a hypothetical. The third world matters for a different reason: a fixture tree
-    # legitimately has no AGENTS.md, and a citation check that FAILs on its absence would refuse
-    # every such tree.
+    # CLAIMED LEND WITHOUT A READABLE WINDOW, and malformed windows: nothing to expire means
+    # unclassified and a launch refusal. Classifier layer, since the worlds need a non-empty
+    # baseline property (6) forbids at the invariant layer.
+    _no_window = ("tileRL (future standing order). Lent once to b0 for domain_loss, released and "
+                  "confirmed 0 MiB.")
+    assert _mentions_lend(_no_window) and _parse_lend_window(_no_window) is None
+    assert _classify_card_note(_no_window, baseline_theirs=True) == "unclassified"
+    _t_nw = world(lambda d: (d.__setitem__("theirs_baseline", [6]),
+                             d["cards"].__setitem__("6", _no_window)))
+    try:
+        _g, _ref = _validate_explicit_cards("6", root=_t_nw)
+        assert _ref, f"--cards 6 ACCEPTED ({_g!r}) on a claimed lend with no window"
+    finally:
+        _sh.rmtree(_t_nw, ignore_errors=True)
+    _live_win = f"{_win_open[0]:%H:%M}Z-{_win_open[1]:%H:%M}Z"
+    if _live_win not in _open_note:
+        _live_win = f"{_win_open[0]:%H:%M}-{_win_open[1]:%H:%M}Z"
+    assert _live_win in _open_note
+    for bad in ("25:99Z-26:88Z", "21:34Z-21:32Z"):
+        _mutated = _open_note.replace(_live_win, bad)
+        assert _mutated != _open_note
+        assert _parse_lend_window(_mutated) is None
+        assert _classify_card_note(_mutated, baseline_theirs=True) == "unclassified", (
+            f"lend window {bad} did not refuse -- an unparseable or backwards window must not "
+            f"fall back to either owner")
+
+    # THE PIN'S CITATION IN main. The anchor literal is exactly what property (6) pins.
+    _PIN_LITERAL = "theirs_baseline []"
     _ag_src = os.path.join(ROOT, "AGENTS.md")
     if os.path.isfile(_ag_src):
         with open(_ag_src, encoding="utf-8") as _fh:
             _ag_txt = _fh.read()
-        assert "cards 0 and 6 are tileRL's" in _ag_txt, (
-            "AGENTS.md does not carry the 09-06 split, so the pin cites nothing in main. Either "
-            "the user changed the split or the line was lost; both need a person")
-
+        assert _PIN_LITERAL in _ag_txt, (
+            "AGENTS.md no longer names theirs_baseline [], so property (6) pins a standing order "
+            "the document does not state")
         _t_ag = world(lambda d: None)
         try:
             with open(os.path.join(_t_ag, "AGENTS.md"), "w") as _fh:
                 _fh.write(_ag_txt)
             assert _assert_card_ownership(_t_ag) is None, (
-                "the world with AGENTS.md's real text FAILED -- the citation assertion must pass "
-                "on the file it cites, or the FAIL below proves nothing")
+                "the world with AGENTS.md's real text FAILED -- the citation must pass on the "
+                "file it cites")
             with open(os.path.join(_t_ag, "AGENTS.md"), "w") as _fh:
-                _fh.write(_ag_txt.replace("cards 0 and 6 are tileRL's",
-                                          "All 8 cards belong to this repo"))
+                _fh.write(_ag_txt.replace(_PIN_LITERAL, "theirs_baseline [REDACTED]"))
             assert _assert_card_ownership(_t_ag) is not None, (
-                "replacing AGENTS.md's split line with the SUPERSEDED 08-30 wording PASSED. That "
-                "is the exact drift that stood for a week: the pin keeps citing an order the "
-                "document no longer states, and the citation reads as authority while the "
-                "authority has moved")
+                "removing every AGENTS.md theirs_baseline [] mention PASSED -- the citation "
+                "would read as authority while the authority moved")
             os.remove(os.path.join(_t_ag, "AGENTS.md"))
             assert _assert_card_ownership(_t_ag) is None, (
-                "a tree with NO AGENTS.md FAILED -- a fixture tree has none, and a citation check "
-                "that refuses on absence refuses every fixture")
+                "a tree with NO AGENTS.md FAILED -- fixture trees have none, so an absent-file "
+                "citation check must skip, not refuse")
         finally:
             _sh.rmtree(_t_ag, ignore_errors=True)
 
-    # A LEND MUST BE A WINDOW. The population is "claims a lend", not "has a parseable window":
-    # my first version quantified over the latter, and all three unparseable worlds passed because
-    # the defect removes the card from the set the property loops over.
-    def no_window(d):
-        d["cards"]["6"] = ("tileRL (user order 2026-09-06, '0,6 tileRL'). Lent once to b0 for "
-                           "domain_loss, released and confirmed 0 MiB.")
-
-    assert verdict(no_window) is not None, (
-        "a lend claimed with NO readable window PASSED -- there is nothing to expire, so the note "
-        "reads as a standing grant on another team's card")
-    # A BAD WINDOW MUST REFUSE, and the mutation is applied to whatever window the note carries
-    # rather than to a literal I typed. The first version did note6.replace("21:32-21:34Z", bad),
-    # a substring of the FIRST lend; once the controller wrote a second lend that substring was
-    # absent, replace() returned the note UNCHANGED, and the world became "the live note with a
-    # valid window" -- which correctly PASSES, so the assertion failed against correct code. A
-    # mutation that does not mutate is the same defect as the truthy-`or` mutant from PR #58's
-    # own history, reached here through a stale literal instead of a truthy expression.
-    #
-    # ASSERTED NON-VACUOUS FIRST: the mutated text must differ from the original, or the world is
-    # not the world the assertion names.
-    _w6 = _parse_lend_window(note6)
-    _live_win = f"{_w6[0]:%H:%M}Z-{_w6[1]:%H:%M}Z"
-    if _live_win not in note6:                     # the controller may write it without the first Z
-        _live_win = f"{_w6[0]:%H:%M}-{_w6[1]:%H:%M}Z"
-    assert _live_win in note6, (
-        f"cannot locate card 6's own window text in its note to mutate it. Parsed "
-        f"{_w6[0]:%H:%M}-{_w6[1]:%H:%M}Z but neither spelling appears in {note6[:110]!r}; a "
-        f"mutation built on a literal that is absent does nothing and the world stays valid")
-    for bad in ("25:99Z-26:88Z", "21:34Z-21:32Z"):
-        _mutated = note6.replace(_live_win, bad)
-        assert _mutated != note6, f"the {bad} mutation left the note unchanged -- it is not a world"
-        assert verdict(lambda d, m=_mutated: d["cards"].__setitem__("6", m)) is not None, (
-            f"lend window {bad} PASSED -- an unparseable or backwards window must refuse, not fall "
-            f"back to either owner")
-
-    # 4c's RULING ON BLAST RADIUS, both halves. Unreadable is per-card; theirs is repo-wide.
+    # 4c's BLAST-RADIUS RULING: unreadable is per-card; theirs is repo-wide.
     def uncl3(d):
         d["cards"]["3"] = "qqq prose no parser can classify"
 
     assert verdict(uncl3) is None, (
-        "an unreadable note on block card 3 FAILED the repo-wide invariant. 4c's ruling "
-        "2026-09-08: a baseline-ours card must classify NOT-THEIRS, and ours or unclassified both "
-        "satisfy that -- an unreadable note is already fail-closed at launch, so blocking every "
-        "commit to report it is the wrong direction to fail in")
+        "an unreadable note on block card 3 FAILED the repo-wide invariant -- ours or "
+        "unclassified both satisfy NOT-THEIRS, and the per-card --cards refusal is the "
+        "fail-closed point")
     t_uncl = world(uncl3)
     try:
         _got, _ref = _validate_explicit_cards("3", root=t_uncl)
-        assert _ref, (f"--cards 3 was ACCEPTED with an unreadable note ({_got!r}) -- the per-card "
-                      f"refusal is what makes the repo-wide PASS above safe, so it is asserted "
-                      f"here rather than assumed")
+        assert _ref, f"--cards 3 was ACCEPTED with an unreadable note ({_got!r})"
     finally:
         _sh.rmtree(t_uncl, ignore_errors=True)
-    assert verdict(lambda d: d["cards"].__setitem__(
-        "2", "tileRL owns this now, 2026-09-08")) is not None, (
-        "a block card whose note hands it to another team PASSED -- this is the permissive drift "
-        "property (4) exists for, and the ruling above narrowed that property, so it is asserted "
-        "here to prove the narrowing did not disable it")
-    assert verdict(lambda d: d.__setitem__("block_cards", "1,2,3,4,5,6,7")) is not None, (
-        "block_cards taking baseline-theirs card 6 PASSED -- the same controller writes both "
-        "fields, so they cannot disagree about the owner")
-    return (f"card lends expire: card 6 ours only inside its OWN window "
-            f"({_w6[0]:%Y-%m-%d %H:%M}-{_w6[1]:%H:%M}Z, read from the live note and not typed here), "
-            f"theirs a day either side, and with baseline_theirs off the verdict does not change "
-            f"across that window at all; 4c's OWN GRANTED-leading note form "
-            "('2026-09-08 21:30Z-21:45Z', Z on both times) parses, reads ours inside and theirs 3 "
-            "days later, and --cards 6 REFUSES on it through the launch path; card 0's 'only by "
-            "explicit grant' is not read as a claimed handover; baseline [0] / [0,6,7] / absent all "
-            "FAIL and [6,0] passes; a lend with no window, 25:99Z or a backwards window all "
-            "refuse; an unreadable note on block card 3 refuses THAT card and passes the invariant "
-            "while a card handed to another team still FAILs; and the pin's citation is verified "
-            "against AGENTS.md's own text -- present PASSes, replaced with the superseded 08-30 "
-            "wording FAILs, absent PASSes")
+    def block2_other(d):
+        d["cards"]["2"] = {"owner": "tilerl", "note": "handed over 2026-09-12"}
+        # property (4) only fires when the SAME controller grants a block that includes the card,
+        # so give this world a block grant naming it; the live tree grants no block today.
+        d["launch_block_granted"] = True
+        d["block_cards"] = "0,1,2,3"
+
+    assert verdict(block2_other) is not None, (
+        "a block card whose object owner is the other team PASSED -- property (4) permissive "
+        "drift")
+
+    return ("card lend expiry: the standing theirs_baseline is pinned [] (user order 2026-09-11; "
+            "property (6) FAILs growing it to [6]/[0,6,7] or removing the key, an explicit [] "
+            "PASSes); the LIVE ours/theirs partition is derived from each cards[] entry's own "
+            "owner object or lend-window parse and _aupai_cards is asserted to agree, with no "
+            "literal card sets -- so an all-ours world-8 block and the 2026-09-12 all-tileRL "
+            "handover both pass without a code edit. The expiry mechanism stays covered for a "
+            "FUTURE baseline at the classifier/launch layer on worlds that re-baseline card 6: "
+            "an open tileRL-subject lend reads ours inside and theirs a day either side, a past "
+            "one theirs and --cards refuses, and a non-baseline card's verdict is constant "
+            "across the window (the baseline flag, not prose, gates the transfer); 4c's "
+            "GRANTED-leading 21:30Z-21:45Z form parses with Z on both times, reads ours "
+            "inside/theirs after and --cards refuses through the launch path; a claimed lend "
+            "with no window, 25:99Z or a backwards window all read unclassified and refuse; a "
+            "windowless GRANTED on a baselined card refuses, never theirs; the AGENTS.md "
+            "'theirs_baseline []' citation PASSes present, FAILs redacted, PASSes absent; an "
+            "unreadable note on block card 3 refuses that card but passes the invariant, while "
+            "an {owner: tilerl} card inside a granted block still FAILs")
 
 
 def _selftest_card_observed_blocks():
@@ -24123,6 +24626,8 @@ def _demo(only=None):
         _selftest_cite_blob_anchor,
         _selftest_cite_multi_target_lists,
         _selftest_launch_closes_its_orphaned_row,
+        _selftest_rotate_launch_log,
+        _selftest_fatal_close_keys_the_opened_row,
         _selftest_monitor_close_loses_to_a_human,
         _selftest_shard_contract_worlds,
         _selftest_cold_cache_refuses,
@@ -24144,6 +24649,7 @@ def _demo(only=None):
         _selftest_auto_resume,
         _selftest_devs_map,
         _selftest_gpu_descendants,
+        _selftest_holds_block_log_scope,
         _selftest_exp_fold,
         _selftest_exp_reclassify_monitor_close,
         _selftest_main_in_no_worktree_discriminates,
@@ -24170,6 +24676,7 @@ def _demo(only=None):
         _selftest_one_deliverable_names_the_fixture,
         _selftest_owner_queue_depth_unreachable_members,
         _selftest_score_matrix_alias_resolves,
+        _selftest_produced_checkpoint_inputs,
         _selftest_review_present_legacy,
         _selftest_inline_citations_are_scanned,
     ):
@@ -24368,6 +24875,7 @@ _FROZEN_KEYS = (
     # mid-run while the loss curve carried a single name.
     "csa", "csa_compress", "csa_topk", "csa_window",
     "csa2", "csa2_m", "csa2_top_k", "csa2_n_win", "csa2_indexer_heads", "csa2_indexer_dim",
+    "csa2_win_flash",
     "csa2_modes", "rope_dims", "n_swa_only_layers",  # V4.1 flat stack (fb, 2026-09-10)
     # b0-17: untie_head acts only at __init__ (model.py:359) -- the arm's weights carry the
     # architecture and a resume silently ignores the flag, which is the drift this set catches.
@@ -25487,6 +25995,7 @@ while True:
             status, result = "fail", "exit %d%s" % (rc, sig)
             finding = "monitor: process exited %d%s" % (rc, sig)
         subprocess.run([sys.executable, exp_py, "done", "--name", name,
+            *(["--started", started] if started else []),
             "--result", result, "--finding", finding, "--writer", "monitor",
             "--decision", "check the log", "--status", status], capture_output=True)
         # RELEASE THE CARDS HERE, beside the row that records the death. cmd_launch cannot:
@@ -25812,6 +26321,28 @@ def _release_cards(name):
 RUN_CLASSES = ("incremental", "confirmatory", "infra-verification")
 
 
+def _rotate_launch_log(log_path):
+    """Rename a non-empty prior runs/<name>.log to runs/<name>.log.<UTC stamp>; return the new path.
+
+    Returns None for an absent or empty log (nothing to preserve). The stamp is second-granular
+    UTC; if a same-second rotation already exists, an integer suffix keeps both instead of
+    overwriting one -- a rotation must never destroy bytes, that is the truncation it replaces.
+    """
+    try:
+        if not os.path.isfile(log_path) or os.path.getsize(log_path) == 0:
+            return None
+    except OSError:
+        return None
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    dest = f"{log_path}.{stamp}"
+    n = 2
+    while os.path.exists(dest):
+        dest = f"{log_path}.{stamp}.{n}"
+        n += 1
+    os.rename(log_path, dest)
+    return dest
+
+
 def cmd_launch(rest):
     """`harness launch <name> [--training] [--hypothesis "..."] -- <cmd>`
 
@@ -26052,7 +26583,8 @@ def cmd_launch(rest):
                    f"launch died before the process existed: {type(_e).__name__}: {_e}"[:400],
                    "the row was opened by exp.py start and no process was ever created, so there "
                    "is no log, pid or rc to close it from -- closed by harness launch itself",
-                   "re-run the launch after fixing the cause named above")
+                   "re-run the launch after fixing the cause named above",
+                   started=_open_row_started(args.name))
         raise
 
 
@@ -26067,21 +26599,7 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
     # normal case, and (name, started) is the row identity everywhere else in this file
     # (_exp_fold, exp.py's own fold). The stamp is exp.py's to mint, so it is read back rather
     # than guessed -- a clock read here can differ from the one in the row by a second.
-    launch_started = ""
-    _p = os.path.join(ROOT, "runs", "experiments.jsonl")
-    try:
-        with open(_p, encoding="utf-8") as _f:
-            for _ln in _f:
-                if not _ln.strip():
-                    continue
-                try:
-                    _r = json.loads(_ln)
-                except ValueError:
-                    continue
-                if _r.get("name") == args.name and _r.get("status") == "running":
-                    launch_started = str(_r.get("started") or "")
-    except OSError:
-        pass
+    launch_started = _open_row_started(args.name)
     if not launch_started:
         # No stamp means the monitor cannot distinguish this run from an older one of the same
         # name. Said out loud rather than silently falling back to name-only matching, which is
@@ -26101,15 +26619,9 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
             )
             if r.returncode != 0:
                 detail = (r.stdout or r.stderr).strip().split("\n")[0][:150]
-                subprocess.run(
-                    [sys.executable, os.path.join(HERE, "exp.py"),
-                     "done", "--name", args.name,
-                     "--result", "refused: training-scope drift",
-                     "--finding", detail,
-                     "--decision", "push the drifted training file or wait for the push to finish",
-                     "--status", "fail"],
-                    capture_output=True,
-                )
+                _close_row(args.name, "fail", "refused: training-scope drift", detail,
+                           "push the drifted training file or wait for the push to finish",
+                           started=launch_started)
                 print(f"REFUSED: {args.name} — training-scope drift: {detail}", file=sys.stderr)
                 return 1
 
@@ -26160,6 +26672,13 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
     # A stale .rc from a previous run of this name would be read as this run's verdict.
     if os.path.exists(rc_path):
         os.unlink(rc_path)
+    # A FRESH LAUNCH MUST NOT TRUNCATE THE PRIOR RUN'S LOG. open(log_path, "w") did, and on
+    # 2026-09-11 the world-8 relaunch erased the world-6 run's steps 0-6000 (val history, step
+    # lines) the instant it started. Move a non-empty prior log aside first; auto-resume below
+    # deliberately appends to the same path, so this runs once, at the fresh launch, not there.
+    rotated = _rotate_launch_log(log_path)
+    if rotated:
+        print(f"  rotated prior log to: {rotated}")
     # The exit code must outlive the process, because the only thing that can read it
     # otherwise is whoever reaped the child. The monitor cannot: it polls a pid, sees it
     # vanish, and has no way to distinguish "finished" from "killed". It wrote status=ok
@@ -26337,15 +26856,11 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
                 os.kill(proc.pid, signal.SIGTERM)
-            subprocess.run(
-                [sys.executable, os.path.join(HERE, "exp.py"),
-                 "done", "--name", args.name,
-                 "--result", f"killed: startup gate {reason}",
-                 "--finding", f"gate failed: {reason}",
-                 "--decision", "fix the startup issue",
-                 "--status", "fail"],
-                capture_output=True,
-            )
+            _close_row(args.name, "fail",
+                       f"killed: startup gate {reason}",
+                       f"gate failed: {reason}",
+                       "fix the startup issue",
+                       started=launch_started)
             print(f"FAILED: {args.name} killed — {reason}", file=sys.stderr)
             _release_cards(claim_name)
             return 1
@@ -26377,16 +26892,12 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
         except OSError:
             _refused_rc = None
     if _refused_rc not in (None, "", "0"):
-        subprocess.run(
-            [sys.executable, os.path.join(HERE, "exp.py"),
-             "done", "--name", args.name,
-             "--result", f"refused: wrapped command exited {_refused_rc} without holding a device",
-             "--finding", f"{os.path.basename(log_path)}: the command exited {_refused_rc} before "
-                          f"any descendant opened a GPU device, so nothing ran under this row",
-             "--decision", "read the log and fix what the command refused on, then relaunch",
-             "--status", "fail"],
-            capture_output=True,
-        )
+        _close_row(args.name, "fail",
+                   f"refused: wrapped command exited {_refused_rc} without holding a device",
+                   f"{os.path.basename(log_path)}: the command exited {_refused_rc} before "
+                   f"any descendant opened a GPU device, so nothing ran under this row",
+                   "read the log and fix what the command refused on, then relaunch",
+                   started=launch_started)
         print(f"REFUSED: {args.name} exited {_refused_rc} without holding a device; the row is "
               f"closed as fail and no monitor was armed. Log: {log_path}", file=sys.stderr)
         _release_cards(claim_name)
@@ -26496,24 +27007,25 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""
         rc = proc.wait()
         if rc == 0:
             _close_row(args.name, "ok", f"exited 0 after {len(resumes)} resume(s)",
-                       "clean exit", "none", root, writer="monitor")
+                       "clean exit", "none", root, writer="monitor", started=started)
             return 0
         if rc == _KILL_CRITERION_EXIT:
             _close_row(args.name, "fail", f"kill criterion (exit {rc}) after {len(resumes)} resume(s)",
                        "deliberate stop: NaN or kill criterion, not a crash",
                        "diagnose the stop; auto-resume does not relaunch it", root,
-                       writer="monitor")
+                       writer="monitor", started=started)
             return rc
         if attempt == args.auto_resume:
             _close_row(args.name, "fail", f"exit {rc}, auto-resume exhausted ({args.auto_resume})",
                        f"crashed {len(resumes) + 1} times; resumed at steps {resumes}",
-                       "investigate the crash before relaunching", root, writer="monitor")
+                       "investigate the crash before relaunching", root, writer="monitor",
+                       started=started)
             return rc
         ckpt, step = _latest_step_ckpt(args.name)
         if ckpt is None:
             _close_row(args.name, "fail", f"exit {rc}, no step checkpoint to resume from",
                        "crashed before the first --save_every save",
-                       "relaunch from scratch", root, writer="monitor")
+                       "relaunch from scratch", root, writer="monitor", started=started)
             return rc
         # The env fingerprint is part of what the checkpoint was trained under. A
         # changed environment makes a resume a different run wearing the same name.
@@ -26522,7 +27034,8 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""
         if fp_now and fp_ckpt and fp_now != fp_ckpt:
             _close_row(args.name, "fail", f"exit {rc}, REFUSING resume: env fingerprint changed",
                        f"checkpoint {fp_ckpt} vs current {fp_now}",
-                       "resume by hand after deciding the environment change is safe", root)
+                       "resume by hand after deciding the environment change is safe", root,
+                       started=started)
             print(f"REFUSING resume: env fingerprint {fp_ckpt} -> {fp_now}", file=sys.stderr)
             return rc
         print(f"auto-resume {attempt + 1}/{args.auto_resume}: exit {rc}, resuming from step {step} in 60s",

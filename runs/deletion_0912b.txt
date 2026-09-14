@@ -1,0 +1,141 @@
+DELETED sweep 1 - standing scavenger 0e, user named order 2026-09-12 14:3xZ
+schema: DELETED <UTC> <path> <size>MB <class>  (full per-line audit)
+Pod disk: avail 426,789MB -> 645,310MB (+218,521MB ~213.4G); used pct 79% -> 68%.
+Actual df freeing (213.4G) is below the du sum (234.6G) because group A dirs carried
+hardlinked bytes shared with the kept _dc dirs; unlinking one link does not free shared blocks.
+Pod detail for all 3715 tmp entries: runs/scav_sweep1_pod.log (committed, this manifest summarizes).
+
+Group totals (pod, du -sm before unlink):
+  A pre-_dc corpus originals : 68892 MB (6 dirs)
+  B non-_dc dup caches        : 73319 MB (6 caches x4 files)
+  C retired-mix caches        : 18720 MB (6 caches x4 files)
+  D 0e ultra scratch          : 15590 MB (5 dirs)
+  TMP root-owned >24h unheld  : 62994 MB (3715 entries; excludes tilerl/tilelang/s300/sglang, /tmp/dev, tmux socket, *.lock)
+  LAPTOP scratch >24h unheld  : 694 MB (11 entries)
+  TOTAL FREED                 : 240209 MB (~234.6G)
+
+Protected and verified present after sweep: all 10 tokens_*_dc.pt caches (8 gate +
+zh_wiki_dc + zh_c4_dc) and their corpus dirs; ckpt_v41_gate_0911.* (steps/milestones/interrupts);
+data/tokenizer*.json; data/sft/*.pt (26); runs/; /mnt/data02/aupai_backup; tilerl /tmp assets.
+HELD_SKIP count: 0. Deletes used ionice idle; every path lsof-checked immediately before unlink.
+
+==== A/B/C/D per-file DELETED lines ====
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code_py_starcoder.pt 30335MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code_py_starcoder.pt.vocab 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code_py_starcoder.pt.srcfp 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code_py_starcoder.pt.seed 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_math_owm_stage2.pt 22389MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_math_owm_stage2.pt.vocab 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_math_owm_stage2.pt.srcfp 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_math_owm_stage2.pt.seed 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code_keep_p1.pt 10027MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code_keep_p1.pt.vocab 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code_keep_p1.pt.srcfp 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code_keep_p1.pt.seed 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_en_c4_stage2.pt 7574MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_en_c4_stage2.pt.vocab 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_en_c4_stage2.pt.srcfp 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_en_c4_stage2.pt.seed 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_cot.pt 1527MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_cot.pt.vocab 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_cot.pt.srcfp 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_cot.pt.seed 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code_py_rp1t.pt 1449MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code_py_rp1t.pt.vocab 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code_py_rp1t.pt.srcfp 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code_py_rp1t.pt.seed 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_textbook.pt 14638MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_textbook.pt.vocab 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_textbook.pt.srcfp 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_textbook.pt.seed 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_wiki.pt 1892MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_wiki.pt.vocab 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_wiki.pt.srcfp 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_wiki.pt.seed 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_en.pt 1386MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_en.pt.vocab 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_en.pt.srcfp 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_en.pt.seed 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_math.pt 310MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_math.pt.vocab 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_math.pt.srcfp 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_math.pt.seed 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code.pt 205MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code.pt.vocab 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code.pt.srcfp 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_code.pt.seed 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_chat.pt 271MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_chat.pt.vocab 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_chat.pt.srcfp 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /data00/tokens_chat.pt.seed 1MB CACHE
+DELETED 2026-09-12T14:57:25Z /work/aupai/data/corpus/code_ultra_l3 7832MB DIR
+DELETED 2026-09-12T14:57:25Z /work/aupai/data/corpus/code_ultra_l2_sample 5466MB DIR
+DELETED 2026-09-12T14:57:25Z /work/aupai/data/corpus/code_ultra_l3_sample 2290MB DIR
+DELETED 2026-09-12T14:57:25Z /work/aupai/data/corpus/code_ultra_l3_noexec 1MB DIR
+DELETED 2026-09-12T14:57:25Z /work/aupai/data/corpus/code_ultra_l2 1MB DIR
+DELETED 2026-09-12T14:57:25Z /work/aupai/data/corpus/code_py_starcoder 28207MB DIR
+DELETED 2026-09-12T14:57:25Z /work/aupai/data/corpus/math_owm_stage2 20556MB DIR
+DELETED 2026-09-12T14:57:25Z /work/aupai/data/corpus/code_keep_p1 9127MB DIR
+DELETED 2026-09-12T14:57:25Z /work/aupai/data/corpus/cot 1265MB DIR
+DELETED 2026-09-12T14:57:25Z /work/aupai/data/corpus/code_py_rp1t 1445MB DIR
+DELETED 2026-09-12T14:57:25Z /work/aupai/data/corpus/en_c4_stage2 8292MB DIR
+
+==== /tmp (3715 DELETED lines; full list in runs/scav_sweep1_pod.log) - largest 40 ====
+DELETED 2026-09-12T15:02:05Z /tmp/enc4_s1 24910MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/proof 2550MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/e2e_9nrp726y 1528MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/e2e__4gdin7f 1528MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/CONTAMINATED_sft_all_lookahead.pt 1466MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/dc_smoke 1343MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/l3py.parquet 1035MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-ek7esxu7 909MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-23y_ak1o 901MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/ssd-bench 809MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-bhj48ia9 793MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/nofp8_p3.pt 787MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/gate_ds_runs.wzmWgu 715MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/control_sft_filtered.jsonl 706MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-egitv7sr 628MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-6oxlv47g 628MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-0udeyq46 628MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-iao9oc2y 555MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-pawhik1f 555MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-m2zaftnp 555MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-d72vss8e 529MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-6wiktn0k 528MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/repro_det.X6GtP1 477MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/repro_ng.POJwyg 477MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/aggmini 400MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/n7_rate_looped.pt 394MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/smoke_p3.pt 394MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/curve_p3.pt 394MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/ck_old.pt 394MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/gp.pt 394MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/n7_t_unlooped.pt 394MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/smoke_p7.pt 394MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/ck_new.pt 394MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/n7_rate_unlooped.pt 394MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/n7_t_looped.pt 394MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/x8.pt 394MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/smoke_loop_only.pt 394MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/rt_1.jsonl 381MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-rij10lv8 350MB TMP
+DELETED 2026-09-12T15:02:05Z /tmp/pip-unpack-fog0zflh 350MB TMP
+
+==== laptop per-file DELETED lines ====
+DELETED 2026-09-12T15:04:09Z /tmp/aupai_de_verify 0MB LAPTOP
+DELETED 2026-09-12T15:04:09Z /tmp/aupai-pod-push 60MB LAPTOP
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/a7c74a4c-f9bd-4a6d-a3e6-c6f3d7289ee2 1MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/7fb18ad1-e33c-487b-a660-81e2f1b4744c 0MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/10a7a8d8-e4d3-4e28-901c-51ac12a4084b 1MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/7e6bd80b-1282-4dda-aef1-7e42e2850e03 625MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/7d05576f-acd1-483f-86ae-7e2265e3780b 0MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/12a3d335-b612-409c-8ea3-f5f450dda250 2MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/8be8d19b-b363-473c-91ec-e1a3b3fff0d6 3MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/76e7b316-366a-467a-9427-847e52c62943 1MB LAPTOP_SESSION
+DELETED 2026-09-12T15:04:09Z /private/tmp/claude-501/-Users-bytedance-code-aupai/5da86c6b-d28e-4e9e-91d8-c8baed6f55ad 1MB LAPTOP_SESSION
+
+HELD FOR CONFIRM (not deleted; unique fb prose, not scratch):
+    /tmp/fb_agentic-coding-throughput-stack-kimi-k2-5.mdx
+    /tmp/fb_kv-router-a-b-testing.md
+    /tmp/fb_qwen3-6-35b-feature-stack.mdx
