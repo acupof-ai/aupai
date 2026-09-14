@@ -1402,6 +1402,11 @@ def main():
         # and that the old reseed-once scheme misaligns si>=1. Both CPU-only, fake models.
         "eval/paired_bootstrap.py",
         "eval/test_sampling_paired.py",
+        # Stage-2 MBPP scorer CLEAN/338 contract (66, 2026-09-14): --selftest builds a
+        # synthetic dataset+manifest and proves clean == dataset - r3_mbpp_union and that
+        # non-complement, malformed id, missing key/file, and stale recorded count refuse.
+        # CPU-only, loads no checkpoint.
+        "eval/mbpp_gen.py",
         # The rate printed on a val_every boundary covers the validation pass, so it is not a
         # training rate. Registered because reading two of them as a ratio does NOT cancel:
         # validation costs two arms different absolute amounts, and sampling steps
