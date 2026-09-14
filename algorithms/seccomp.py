@@ -61,6 +61,14 @@ NR = {"socket": 41, "socketpair": 53, "ptrace": 101, "setsid": 112,
 DENIED = ("socket", "socketpair", "ptrace", "setsid", "connect", "bind", "listen",
           "accept", "accept4", "sendto", "recvfrom")
 
+# Teaching profile (vet_textbooks): socket-family syscalls are ALLOWED. The network
+# namespace the process lives in has only the loopback interface configured, so every
+# socket it can make is loopback or AF_UNIX -- there is no external route to abuse.
+# ptrace and setsid stay denied (process control, nothing a textbook chapter needs).
+TEACHING_DENIED = ("ptrace", "setsid")
+
+PROFILES = {"hardened": DENIED, "teaching": TEACHING_DENIED}
+
 # struct seccomp_data: nr at offset 0, arch at offset 4.
 OFF_NR, OFF_ARCH = 0, 4
 
@@ -165,12 +173,16 @@ import sys
 sys.path.insert(0, "/work")
 import seccomp
 
+PROFILE = os.environ.get("SANDBOX_SECCOMP_PROFILE", "hardened")
 try:
-    seccomp.install()
+    seccomp.install(seccomp.PROFILES[PROFILE])
 except seccomp.Unsupported as e:
     # Loud, and non-zero. A sandbox that silently runs without the layer it claims is worse
     # than one that refuses: the rollout record would say the filter was in force.
     sys.stderr.write(f"sandbox: seccomp filter could not be installed: {e}\n")
+    raise SystemExit(96)
+except KeyError:
+    sys.stderr.write(f"sandbox: unknown seccomp profile {PROFILE!r}\n")
     raise SystemExit(96)
 # The interpreter, re-exec'd with everything after this script's own name. argv[1] is a
 # python FLAG (-I, -m), not a binary, so the binary has to come from sys.executable.
