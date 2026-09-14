@@ -103,16 +103,37 @@ def main():
     ap.add_argument("--c", required=True, help="control mix")
     ap.add_argument("--ckpt", required=True, help="r3 checkpoint to take the cursor from")
     ap.add_argument("--resume-step", type=int, default=None)
+    ap.add_argument("--require-final-step", type=int, default=None,
+                    help="if set (38070 for the r3 FINAL), a cursor at any other step is a "
+                         "BLOCKER, not just a validation run. Use this to certify launch mixes.")
     args = ap.parse_args()
 
     cursor = load_ckpt_cursor(args.ckpt)
     step = args.resume_step if args.resume_step is not None else cursor["step"]
+    R3_FINAL_STEP = 38070
     print("=== v42 stage-2 CPU dry-run (no train, no gpu) ===")
     print(f"ckpt={args.ckpt} step={step} seed={cursor['row_cursor_seed']} "
           f"ckpt_total_steps={cursor['total_steps']}")
     print(f"cursor domains: {sorted(cursor['row_cursor_srcfp'])}")
+    # fb condition 2: the step23000 mixes validate the PLAN only and are NOT the launch mixes.
+    # A launch must regenerate against the r3-final cursor. Without --require-final-step this is
+    # a validation run (banner, still exit 0 on a sound plan); with it, a non-final cursor blocks.
+    launch_ready = (step == R3_FINAL_STEP and cursor["total_steps"] == R3_FINAL_STEP)
+    if not launch_ready:
+        msg = (f"VALIDATION ONLY: cursor is step {step}, not the r3-final {R3_FINAL_STEP}. These "
+               f"mixes are NOT launch-ready; regenerate with write_mix_v42_stage2.py --ckpt <r3 "
+               f"final> and re-run with --require-final-step {R3_FINAL_STEP}.")
+        if args.require_final_step == R3_FINAL_STEP:
+            print("LAUNCH GATE: " + msg)
+        else:
+            print(msg)
 
     blockers = []
+    if args.require_final_step == R3_FINAL_STEP and not launch_ready:
+        blockers.append(f"--require-final-step {R3_FINAL_STEP}: ckpt cursor step {step}/"
+                        f"total {cursor['total_steps']} is not the r3 final; refusing to certify "
+                        "these mixes as launch-ready")
+    arm_rows = {}
     for label, path, expect_textbook in [("T", args.t, True), ("C", args.c, False)]:
         print(f"\n----- arm {label}: {path} -----")
         with open(path, encoding="utf-8") as fh:
@@ -175,6 +196,40 @@ def main():
                                 f"stage-2 domain must start row 0")
             else:
                 print("  textbook cursor: absent in r3 ckpt -> starts row 0 (correct stage-2 form)")
+        arm_rows[label] = seg_by
+
+    # fb condition 3: the T arm is the C arm with the six domains scaled by ONE common factor
+    # (the 0.7001 residual) and the freed 0.2999 given wholly to the textbook. So for every six
+    # domain, T_rows/C_rows must be the SAME ratio; no domain zeroed, no relative weight changed.
+    tb = "textbook_claude_v41_dc"
+    six = [n for n in arm_rows["C"] if n != tb]
+    assert six and set(six) == set(arm_rows["T"]) - {tb}, (
+        f"T and C must name the same six continuation domains: T={sorted(arm_rows['T'])} "
+        f"C={sorted(arm_rows['C'])}")
+    ratios = {n: arm_rows["T"][n] / arm_rows["C"][n] for n in six}
+    r0 = ratios[six[0]]
+    # integer apportionment tolerates a one-row largest-remainder wobble, so compare on rows,
+    # not on exact float equality: each T row must be within 1 of round(C*r0).
+    bad_ratio = []
+    for n in six:
+        expect = round(arm_rows["C"][n] * r0)
+        if arm_rows["T"][n] == 0 or abs(arm_rows["T"][n] - expect) > 1:
+            bad_ratio.append(f"{n}: T {arm_rows['T'][n]} vs C {arm_rows['C'][n]} "
+                             f"(ratio {ratios[n]:.5f}, common {r0:.5f})")
+    print("\n=== six-domain T/C proportionality (must be one common scale) ===")
+    for n in six:
+        print(f"  {n:28s} T={arm_rows['T'][n]:6d} C={arm_rows['C'][n]:6d} "
+              f"T/C={ratios[n]:.5f}")
+    print(f"  common ratio ~ {r0:.5f} (the 0.7001 residual / 1.0; largest-remainder +/-1 row)")
+    if bad_ratio:
+        blockers.append("six-domain T/C ratios are not a common scale: " + "; ".join(bad_ratio)
+                        + " -- the A/B would change more than the textbook share")
+    # the textbook share must equal exactly what the six gave up: C_six_total - T_six_total.
+    tb_rows = arm_rows["T"].get(tb, 0)
+    gave_up = sum(arm_rows["C"].values()) - sum(arm_rows["T"][n] for n in six)
+    if tb_rows != gave_up:
+        blockers.append(f"textbook rows {tb_rows} != rows the six gave up {gave_up}; the arms "
+                        "must differ ONLY by the textbook substitution")
 
     print("\n=== _derived_against triple (built into each mix at write time) ===")
     for path in (args.t, args.c):
@@ -200,8 +255,14 @@ def main():
         for b in blockers:
             print("  -", b)
         return 1
-    print("OK: both plans build, fingerprint/srcfp/seed checks passed, textbook row-0 form correct.")
-    print("(Still confirm the textbook '-> capped' line is absent in the build log above.)")
+    if launch_ready:
+        print("OK and LAUNCH-READY: cursor is the r3 final (step 38070); both plans are 137 "
+              "steps, six-domain T/C is one common scale, triple matched, no cap/stale.")
+    else:
+        print("OK as a PLAN VALIDATION (cursor step "
+              f"{step}, not r3 final): schedule/mix arithmetic is sound, but these mixes are "
+              "NOT launch-ready. Regenerate against the r3-final ckpt and re-run with "
+              "--require-final-step 38070 before any launch.")
     return 0
 
 
