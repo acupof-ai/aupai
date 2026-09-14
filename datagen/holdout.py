@@ -433,6 +433,24 @@ def _iter_question_rows(path):
             yield json.loads(line)
 
 
+def question_hashes_for(name, entry, path):
+    """The set of qhashes one registry file contributes, and the rows with no question field.
+
+    One extraction used by BOTH the writer (main) and the body-coverage half of check(), so the
+    check recomputes exactly what generation put in. A row with none of the declared fields is a
+    count, not a skip-in-silence; the caller decides whether zero hashes is fatal.
+    """
+    fields = entry["question_field"]
+    hashes, miss = set(), 0
+    for row in _iter_question_rows(path):
+        val = next((row[f] for f in fields if f in row), None)
+        if val is None:
+            miss += 1
+            continue
+        hashes.add(qhash(val))
+    return hashes, miss
+
+
 def main():
     hs = set()
     # PER-ENTRY FIELDS, not a hardcoded "instruction". The old loop read
@@ -453,14 +471,9 @@ def main():
         if not os.path.exists(path):
             print(f"  missing (skipped): {e['path']}")
             continue
-        n, miss = 0, 0
-        for row in _iter_question_rows(path):
-            val = next((row[f] for f in fields if f in row), None)
-            if val is None:
-                miss += 1
-                continue
-            hs.add(qhash(val))
-            n += 1
+        qs, miss = question_hashes_for(name, e, path)
+        hs |= qs
+        n = len(qs)
         # A registered file contributing ZERO hashes is the failure this fixes; say so loudly
         # rather than printing a 0 among the counts.
         if n == 0:
@@ -773,6 +786,36 @@ def _selftest_check():
             n += 1
         finally:
             g["load"] = saved_load
+
+        # 5. HEADER BUMPED, BODY NOT REGENERATED -> D must FAIL. The #338 shape: B passes
+        #    (header == derived), C passes (every file's raw sha1 matches), but the body omits
+        #    one present file's question hashes, so is_holdout() leaks that file. load() is
+        #    patched to return the real set MINUS one present file's questions -- header and
+        #    file bytes are untouched, so only D can catch it.
+        victim5 = next((nm for nm in sorted(saved_reg)
+                        if saved_reg[nm].get("question_field") is not None
+                        and os.path.isfile(os.path.join(ROOT, saved_reg[nm]["path"]))), None)
+        if victim5 is None:
+            print("  (world 5 skipped: no question-bearing registry file resolves here)")
+        else:
+            vp = os.path.join(ROOT, saved_reg[victim5]["path"])
+            vqs, _vm = question_hashes_for(victim5, saved_reg[victim5], vp)
+            assert vqs, f"{victim5} yielded no question hashes for the D world"
+            real = load()
+            try:
+                g["load"] = lambda: real - vqs
+                try:
+                    check()
+                    raise AssertionError(
+                        f"body missing all of {victim5}'s {len(vqs)} question hashes left "
+                        f"check() GREEN: a header-only fp bump is trusted and is_holdout() "
+                        f"leaks that file")
+                except RuntimeError as e:
+                    m5 = str(e)
+                    assert victim5 in m5 and "header-only" in m5, f"wrong D refusal: {m5[:200]}"
+                n += 1
+            finally:
+                g["load"] = saved_load
     finally:
         REGISTRY, REGISTRY_SHA1 = saved_reg, saved_sha
     return n
@@ -848,6 +891,38 @@ def check():
             f"hash set does not describe the files on this machine:\n  " + "\n  ".join(wrong)
             + "\nIf the change is intended, regenerate on the pod and update REGISTRY_SHA1 in "
               "the same commit. If it is not, this machine's copy is corrupt or stale.")
+
+    # D. THE COMMITTED BODY COVERS EVERY PRESENT FILE'S QUESTIONS, not just the fp header.
+    # B compares the header to a value derived from REGISTRY_SHA1, and C compares raw file
+    # bytes; neither opens the body to confirm the questions are actually in it. So a change can
+    # hand-bump the header + REGISTRY_SHA1 and be green while the body still omits the newly
+    # registered file's questions -- is_holdout() then passes that file's questions as clean, the
+    # exact leak the registry exists to stop (#338: header bumped, main() never run, mbpp/phi
+    # questions absent from a green body). Recomputing each present file's questions with the
+    # SAME extractor main() uses and requiring a subset closes it. Absent files stay not
+    # checkable here (the committed body is trusted on partial machines, same as B/C).
+    uncovered = []
+    for name in sorted(REGISTRY):
+        e = REGISTRY[name]
+        if e.get("question_field") is None:
+            continue
+        p = os.path.join(ROOT, e["path"])
+        if not os.path.isfile(p):
+            continue
+        qs, _miss = question_hashes_for(name, e, p)
+        missing_here = qs - got
+        if missing_here:
+            uncovered.append(
+                f"{name}: {len(missing_here)}/{len(qs)} of its question hashes are NOT in "
+                f"{os.path.basename(HASH_PATH)} (header is {committed} but the body was not "
+                f"regenerated from this registry)")
+    if uncovered:
+        raise RuntimeError(
+            f"holdout body does not cover the registry's questions on {len(uncovered)} "
+            f"file(s):\n  " + "\n  ".join(uncovered[:6])
+            + "\nThis is a header-only update: the fp was bumped without regenerating the "
+              "question set, so is_holdout() misses these. Regenerate on the pod with "
+              "`python datagen/holdout.py`.")
 
     print(f"holdout guard loads: {len(got)} hashes, {len(present)} of {len(EVAL_FILES)} registry "
           f"files present here"
