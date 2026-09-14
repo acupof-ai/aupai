@@ -68,14 +68,18 @@ def _h(*a):
 signal.signal(signal.SIGALRM, _h)
 
 
-def judge(prob, completion):
+def judge(prob, completion, prompt_text=None):
     """prompt + completion + test + check(entry_point); pass iff clean exit.
 
     Verbatim from _humaneval_run.py: in-process exec with a 6s SIGALRM ceiling.
     NOT the chroot sandbox -- the baseline was scored this way, and the SFT
     comparison is only valid on the same scorer.
-    """
-    src = prob["prompt"] + completion + "\n" + prob["test"] + f"\ncheck({prob['entry_point']})\n"
+
+    prompt_text overrides prob["prompt"] for the --rstrip_nl arm: that arm feeds
+    the model prompt.rstrip("\\n") and must judge the same bytes it fed, otherwise
+    the exec source would reintroduce the very newline the arm removes."""
+    prompt_src = prob["prompt"] if prompt_text is None else prompt_text
+    src = prompt_src + completion + "\n" + prob["test"] + f"\ncheck({prob['entry_point']})\n"
     g = {"__name__": "__main__"}
     signal.alarm(6)
     try:
@@ -398,6 +402,12 @@ def main():
                     help="post-SFT arm: wrap the prompt with loader.format_prompt, stop on "
                          "<|im_end|>, and score the complete function extracted BY NAME "
                          "(3b-22 pack trains signature-repeated complete functions)")
+    ap.add_argument("--rstrip_nl", action="store_true",
+                    help="base continuation arm: feed prompt.rstrip(newline) so the model "
+                         "emits the newline+indent token itself. The canonical prompt ends in a "
+                         "bare newline that the tokenizer never places before an indented body, "
+                         "so the standard prompt signals a column-0 line; rstrip is the "
+                         "in-distribution continuation (gate column from 2026-09-14). Non-chatml.")
     ap.add_argument("--preds", default=None,
                     help="score an existing preds jsonl (pass/empty/repetition) and exit; "
                          "no model, cardless")
@@ -405,6 +415,8 @@ def main():
 
     if args.chatml and (args.strip_docstrings or args.strip_doctests):
         ap.error("--chatml is a prompt/scoring arm and cannot combine with the strip arms")
+    if args.rstrip_nl and args.chatml:
+        ap.error("--rstrip_nl is a base docstring-continuation arm, not a ChatML arm")
 
     if args.preds:
         with open(args.preds, encoding="utf-8") as fh:
@@ -425,7 +437,8 @@ def main():
     probs = [json.loads(l) for l in open(args.data, encoding="utf-8") if l.strip()]
     arm = ("chatml" if args.chatml else
            "sig-only" if args.strip_docstrings else
-           "no-doctest" if args.strip_doctests else "standard")
+           "no-doctest" if args.strip_doctests else "rstrip-nl" if args.rstrip_nl else
+           "standard")
     print(f"HumanEval: {len(probs)} problems ({arm} arm)"
           f"{f' scoring first {args.first}' if args.first else ''}", flush=True)
     def _prompt(p):
@@ -436,7 +449,8 @@ def main():
             return strip_docstring(p["prompt"])
         if args.strip_doctests:
             return strip_doctests(p["prompt"])
-        return p["prompt"]
+        pr = p["prompt"]
+        return pr.rstrip("\n") if args.rstrip_nl else pr
     prompts = [_prompt(p) for p in probs]
     if args.chatml:
         run_control_chatml(probs)
@@ -512,6 +526,7 @@ def main():
         f"preds_humaneval_{os.path.basename(str(args.ckpt).rstrip('/'))}"
         + (".chatml" if args.chatml else "")
         + (".nodoc" if args.strip_docstrings else "")
+        + (".rstripnl" if args.rstrip_nl else "")
         + ".jsonl")
     t0 = time.time()
     npass = nempty = neos = nstop = nrep = nimend = 0
@@ -523,6 +538,7 @@ def main():
             "data": os.path.basename(args.data),
             "strip_docstrings": args.strip_docstrings,
             "strip_doctests": args.strip_doctests,
+            "rstrip_nl": args.rstrip_nl,
             "chatml": args.chatml,
             "first_n": args.first,
             "device": str(args.device),
@@ -541,7 +557,7 @@ def main():
             else:
                 fn = None
                 c = truncate(raw, p["entry_point"])
-                ok = judge(p, c)
+                ok = judge(p, c, prompt if args.rstrip_nl else None)
             empty = not c.strip()
             # The two-column split (prereg amendment 1): an empty completion is
             # eos_first (model ended the turn) or stop_at_0 (a STOPS string at
