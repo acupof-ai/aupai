@@ -16,7 +16,7 @@ eval/sampling.py's task-seeded RNG, so T and C checkpoints draw identical
 choices per task_id (paired stage-2 protocol). CPU or CUDA.
 
   python3 eval/mbpp_gen.py --data data/eval/sanitized-mbpp.json \
-      --ckpt <ckpt> --device cpu --rstrip_nl --n 10 --temperature 0.2 \
+      --ckpt <ckpt> --device cpu --n 10 --temperature 0.2 \
       --run eT_mbpp_n10temp02
 """
 import argparse
