@@ -45,6 +45,11 @@ ALLOWED = [
     "data/train_cite_baseline.json",
     "data/raw/*_manifest.txt",
     "data/sft/*.py",
+    # Gate exclude manifests (phi_l3_stub_holdout_manifest / <domain>.gate_exclude_manifest):
+    # one row per excluded doc (url + content sha1), kilobytes, consumed by
+    # scripts/pretokenize_domains.py --exclude-manifest. Text contract, not corpus bytes.
+    "data/sft/*.gate_exclude_manifest.jsonl",
+    "data/sft/phi_l3_stub_holdout_manifest.jsonl",
     "data/t2s_table.json",
     "data/REBUILD_PLAN_*.md",
     "data/rl/*",
@@ -2932,6 +2937,36 @@ def _selftest():
         rc, out = run(d, "pre-commit", {"GIT_REFLOG_ACTION": "merge e1"})
         if "REFUSING: this is the integration tree" in out:
             fails.append("world 4: GIT_REFLOG_ACTION=merge was refused")
+
+        # WORLD 4b (gate data/ allow-list, must ALLOW the manifest / REFUSE other data):
+        # the gate exclude manifests admitted in ALLOWED (data/sft/*.gate_exclude_manifest.jsonl,
+        # PR #325) are small text contracts consumed by pretokenize_domains --exclude-manifest,
+        # not corpus blobs; the fnmatch glob must let them through while an unlisted data/*.jsonl
+        # is still refused. Runs in the non-main SIBLING worktree so the integration-tree guard
+        # passes and the blob+allow-list gate is what answers. Both files are one byte, under MAX.
+        sib = os.path.join(d, "..", os.path.basename(d) + "_sib")
+
+        def _sib_commit(relpath, hookname):
+            full = os.path.join(sib, relpath)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w") as fh:
+                fh.write("x\n")
+            subprocess.run(["git", "add", relpath], cwd=sib, capture_output=True, env=clean)
+            return run(sib, hookname, {})
+
+        rc_ok, out_ok = _sib_commit(
+            os.path.join("data", "sft", "code_x.gate_exclude_manifest.jsonl"),
+            "pre-commit-allow-manifest")
+        if rc_ok != 0 or "new data/ path not in the allow-list" in out_ok:
+            fails.append("world 4b: data/sft/*.gate_exclude_manifest.jsonl was refused though "
+                         f"ALLOWED admits it (rc={rc_ok}, {out_ok[-160:]})")
+
+        rc_bad, out_bad = _sib_commit(
+            os.path.join("data", "sft", "random_other.jsonl"),
+            "pre-commit-refuse-data")
+        if rc_bad == 0 or "new data/ path not in the allow-list" not in out_bad:
+            fails.append("world 4b: an unlisted data/sft/random_other.jsonl was NOT refused by "
+                         "the data/ allow-list -- the manifest glob must stay narrow")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
