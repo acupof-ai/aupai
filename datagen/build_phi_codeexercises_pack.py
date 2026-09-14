@@ -262,7 +262,20 @@ def main():
         pack_and_save(pairs, tok, eos, path, SEQ, sources=sources, split_encode=True,
                       extra_stats={"seed": SEED, "seq": SEQ, "column": tag,
                                    "examples": len(pairs), "supervised_body_tokens": sup_tok,
-                                   "split_rule": f"sha1(_norm(content)) mod100 < {HOLD_PCT}"})
+                                   # The PACK membership gate is the manifest COLUMN, not the
+                                   # source-holdout hash split. in_sft_pack is True exactly for
+                                   # column in {primary, doctest} (0 exceptions over the manifest);
+                                   # column 'dropped' (decon/holdout/toolong fail or primary target
+                                   # cap) and 'unusable' are excluded. Verified 2026-09-14 against
+                                   # phi_l3_stub_holdout_manifest.jsonl. The sha mod100 rule below
+                                   # is a DIFFERENT split: which stub-domain docs formed the 2%
+                                   # holdout SOURCE before any pack gate. Do not read it as the
+                                   # pack gate -- applying it to the manifest misclassifies rows.
+                                   "pack_gate": "manifest column in {primary, doctest}; "
+                                                "in_sft_pack == (column not in {dropped, unusable})",
+                                   "source_holdout_rule": f"sha1(_norm(content)) mod100 < {HOLD_PCT} "
+                                                          "(selects the 2% held SOURCE slice, "
+                                                          "not pack membership)"})
         print(f"[pack] {tag}: {len(pairs)} examples, {sup_tok} supervised body tokens -> {path}",
               flush=True)
         return len(pairs), sup_tok

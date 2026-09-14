@@ -443,6 +443,41 @@ def _iter_questions(path, fields, fmt):
         yield next((row[f] for f in fields if f in row), None)
 
 
+def _body_coverage_problems(reg, root, got):
+    """Names of PRESENT question-bearing files whose questions are not all in the body set.
+
+    The '# n:<count>' header and the raw-file sha1 prove the body is INTERNALLY CONSISTENT with
+    its declared size and that the eval files did not change; neither proves the body contains
+    THIS registry's questions. A body can carry the right count and a matching fp over a partial
+    or copied population (a HOLDOUT_ALLOW_PARTIAL regen, or a file swapped by hand with its
+    neighbours), and length/sha1 stay green while is_holdout() silently passes one file's
+    questions -- the 2026-09-14 false-green, one level deeper than the count header. This
+    recomputes each present file's question subset (the SAME extractor main() uses) and requires
+    it to be contained in the committed body.
+
+    Only files PRESENT under root are examined, so on a data-less CI checkout this proves
+    nothing and returns [] (it does not fail); the synthetic-fixture selftest covers the
+    failure there, independent of the real eval data.
+    """
+    problems = []
+    for name in sorted(reg):
+        e = reg[name]
+        fields = e.get("question_field")
+        if fields is None:
+            continue
+        p = os.path.join(root, e["path"])
+        if not os.path.isfile(p):
+            continue
+        expected = {qhash(v) for v in _iter_questions(p, fields, e.get("format", "jsonl"))
+                    if v is not None}
+        missing = expected - got
+        if missing:
+            problems.append(f"{name}: {len(missing)}/{len(expected)} of its question hashes are "
+                            f"not in {os.path.basename(HASH_PATH)} (count/fp can agree while the "
+                            f"population is wrong)")
+    return problems
+
+
 def main():
     hs = set()
     # PER-ENTRY FIELDS, not a hardcoded "instruction". The old loop read
@@ -534,6 +569,55 @@ def main():
     print(f"{len(body)} unique holdout hashes (fp {_fingerprint()}) -> {HASH_PATH}")
 
 
+def _selftest_coverage():
+    """Assertion D on a SYNTHETIC temp tree, so it fails even on a data-less CI checkout.
+
+    The real-data half of D (check on the pod) proves nothing when no registry file resolves,
+    and a guard whose broken world can only be built where the 16 eval files live is untested in
+    CI -- exactly the slot the 2026-09-14 false-green slipped through. This world writes tiny
+    jsonl/array question files into a temp dir and checks the predicate directly:
+      covered body -> []; one file's questions dropped -> that file is named; an absent file and
+      a question_field-None entry are both skipped (D speaks only to present question files).
+    No global REGISTRY/ROOT/HASH_PATH is mutated, so nothing here can corrupt the committed guard.
+    """
+    import tempfile
+
+    reg = {
+        "x_jsonl": {"path": "data/eval/x.jsonl", "question_field": ["prompt"]},
+        "x_array": {"path": "data/eval/y.json", "question_field": ["prompt"], "format": "array"},
+        "x_absent": {"path": "data/eval/missing.jsonl", "question_field": ["prompt"]},
+        "x_none": {"path": "data/eval/nonq.jsonl", "question_field": None},
+    }
+    with tempfile.TemporaryDirectory() as d:
+        os.makedirs(os.path.join(d, "data/eval"))
+        with open(os.path.join(d, "data/eval/x.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"prompt": "alpha question"}) + "\n")
+            f.write(json.dumps({"prompt": "beta question"}) + "\n")
+        with open(os.path.join(d, "data/eval/y.json"), "w", encoding="utf-8") as f:
+            json.dump([{"prompt": "gamma array q"}, {"prompt": "delta array q"}], f)
+        with open(os.path.join(d, "data/eval/nonq.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({"url": "not-a-question"}) + "\n")
+
+        def qset(*prompts):
+            return {qhash(p) for p in prompts}
+
+        # 1. Fully covered (jsonl + array both present) -> no problem.
+        full = qset("alpha question", "beta question", "gamma array q", "delta array q")
+        assert _body_coverage_problems(reg, d, full) == [], "full coverage reported a problem"
+        # 2. The ARRAY file's questions dropped, count can still match elsewhere -> it is named.
+        #    This is the exact shape: right-length body, wrong population.
+        no_array = qset("alpha question", "beta question")
+        p2 = _body_coverage_problems(reg, d, no_array)
+        assert any(s.startswith("x_array:") for s in p2), f"missing array file not named: {p2}"
+        assert not any(s.startswith("x_jsonl:") for s in p2), f"covered file flagged: {p2}"
+        # 3. The absent file and the question_field-None file are never flagged.
+        assert not any("x_absent" in s or "x_none" in s for s in p2), p2
+        # 4. Empty body flags every present question file, not just one.
+        p4 = _body_coverage_problems(reg, d, set())
+        assert {s.split(":", 1)[0] for s in p4} == {"x_jsonl", "x_array"}, p4
+    return 4
+
+
 def _selftest():
     """The two machine-dependence guards, on a REAL registry file made absent.
 
@@ -554,9 +638,15 @@ def _selftest():
     printing OK -- a selftest that corrupts the artifact it guards is worse than none."""
     import shutil
 
+    # D runs FIRST and unconditionally: it needs no real eval data (synthetic temp tree), so it
+    # is the only half of the content-coverage guard that can be exercised on a data-less CI
+    # runner. It must not be behind the `if not present: return SKIP` gate below.
+    n_cover = _selftest_coverage()
+
     present, absent = _fp_inputs()
     if not present:
-        print("holdout selftest SKIP: no registry file resolves here to hide")
+        print(f"holdout selftest: content-coverage assertion D passed on {n_cover} synthetic "
+              "world(s); machine-dependence worlds SKIP (no registry file resolves here)")
         return 0
     victim = present[0]
     stash = victim + ".selftest_hidden"
@@ -615,9 +705,9 @@ def _selftest():
                     f"the holdout guard.")
     assert _fingerprint() == fp_all, "the selftest did not restore the file it hid"
     n_chk = _selftest_check()
-    print(f"holdout selftest OK: hiding {os.path.basename(victim)} moves the fp "
-          f"({fp_all} -> {fp_minus}), regeneration refuses and names it, load() still loads; "
-          f"--check correct on {n_chk} worlds")
+    print(f"holdout selftest OK: content-coverage D on {n_cover} synthetic world(s); hiding "
+          f"{os.path.basename(victim)} moves the fp ({fp_all} -> {fp_minus}), regeneration "
+          f"refuses and names it, load() still loads; --check correct on {n_chk} worlds")
     return 0
 
 
@@ -911,6 +1001,18 @@ def check():
             f"hash set does not describe the files on this machine:\n  " + "\n  ".join(wrong)
             + "\nIf the change is intended, regenerate on the pod and update REGISTRY_SHA1 in "
               "the same commit. If it is not, this machine's copy is corrupt or stale.")
+
+    # D. CONTENT COVERAGE, beyond the count header. Every PRESENT question-bearing file's
+    # question hashes must actually be in the body -- a count-consistent, sha1-consistent body
+    # over a wrong/partial population must FAIL. Absent files are not examined here (CI has no
+    # data); the synthetic-fixture selftest world proves D fires regardless.
+    coverage = _body_coverage_problems(REGISTRY, ROOT, got)
+    if coverage:
+        raise RuntimeError(
+            f"{HASH_PATH} is count/fp-consistent but does not cover the registry's questions on "
+            f"{len(coverage)} file(s) present here:\n  " + "\n  ".join(coverage[:6])
+            + "\nThis is a header-only or partial body: the right count over the wrong "
+              "population. Regenerate on the pod with `python datagen/holdout.py`.")
 
     print(f"holdout guard loads: {len(got)} hashes, {len(present)} of {len(EVAL_FILES)} registry "
           f"files present here"
