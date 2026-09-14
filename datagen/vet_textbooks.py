@@ -8,6 +8,7 @@ import os
 import random
 import re
 import sys
+import time
 from collections import defaultdict
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -24,8 +25,27 @@ OUT_DIR = os.path.join(DATA, "corpus", "textbooks_claude_v41_vetted")
 TOK = os.path.join(DATA, "tokenizer.json")
 HANDREAD = os.path.join(ROOT, "runs", "textbooks_claude_handread.jsonl")
 MIN_TOK, MAX_TOK = 800, 6000
-EXEC_TIMEOUT = 10
+EXEC_TIMEOUT = 30
 SEED = 20260913
+# Sandbox teaching profile (fb 2026-09-14): chapters may use threads, spawn
+# multiprocessing, python subprocesses, /tmp writes and loopback/AF_UNIX; the
+# network namespace still has no external route. NPROC and CPU caps are raised
+# off the 64-process / 5-CPU-second limits that killed legitimate teaching
+# chapters (a pure-python Ed25519 comparison deterministically needs ~10 wall
+# seconds); the wall timeout still bounds a runaway.
+SANDBOX_PROFILE = "teaching"
+SANDBOX_NPROC = 4096
+SANDBOX_CPU_SECS = 60
+# A host failure to even START the sandbox: setpriv could not exec the
+# interpreter (fork/exec EAGAIN under a full machine). Retry with backoff
+# instead of dropping; if it still cannot start, abort the whole run non-zero so
+# a capacity outage can never overwrite the vetted directory (fb 2026-09-14:
+# 3,543 rows were mis-dropped this way). NOTE: a bare "unshare: sigprocmask
+# unblock failed" is NOT this class — it is the CPU rlimit killing the chapter
+# (the self-check while-true case produces the identical line), so it must stay
+# a chapter result, not an infra retry.
+INFRA_MAX_TRIES = 3
+INFRA_BACKOFF = 5
 # Supersede rule (fb 2026-09-14): for one (seed_topic,lens) key, the longest
 # exec-passing version at/above this word count wins; shorter duplicates of that
 # key drop as "superseded" (a first-shipped-short dedup bug; genA_0020 rows
@@ -86,7 +106,7 @@ _ENV_ERR = (
     "unable to start watchdog thread", "Resource temporarily unavailable",
     "Cannot allocate memory", "Memory allocation still failed",
     "Too many open files", "Name or service not known", "gaierror",
-    "sigprocmask", "unshare:", "Connection refused", "Network is unreachable",
+    "Connection refused", "Network is unreachable",
 )
 _ENV_PREFIX = ("ModuleNotFoundError:", "ImportError:")  # third-party absent from chroot
 
@@ -111,11 +131,37 @@ def add_fail(failures, r, source, gate, extra=None):
     failures.append(rec)
 
 
+class InfraError(RuntimeError):
+    """The sandbox itself could not start (host fork/exec EAGAIN), not a chapter result."""
+
+
+# Text that proves the failure was OUTSIDE the chapter: the sandbox could not
+# exec the interpreter at all. "setpriv: failed to execute ... Resource
+# temporarily unavailable" is host fork/exec capacity. A bare "unshare:
+# sigprocmask unblock failed" is NOT here — it is the CPU rlimit killing a
+# chapter that ran too long and must remain its own result.
+_INFRA_ERR = ("failed to execute", "setpriv: failed")
+
+
+def is_infra_error(err):
+    return any(t in err for t in _INFRA_ERR)
+
 def run_chapter(code):
     from sandbox_exec import run_sandboxed
     program = "\n\n".join(code)
-    rc, _out, err = run_sandboxed(program, timeout=EXEC_TIMEOUT)
-    return rc == 0, ("" if rc == 0 else first_error(err))
+    last = ""
+    for attempt in range(INFRA_MAX_TRIES):
+        rc, _out, err = run_sandboxed(
+            program, timeout=EXEC_TIMEOUT,
+            profile=SANDBOX_PROFILE, nproc=SANDBOX_NPROC,
+            cpu_secs=SANDBOX_CPU_SECS, loopback=True)
+        if rc == 0:
+            return True, ""
+        last = first_error(err)
+        if not is_infra_error(last):
+            return False, last
+        time.sleep(INFRA_BACKOFF * (attempt + 1))
+    raise InfraError(f"sandbox could not start after {INFRA_MAX_TRIES} tries: {last}")
 
 
 def prose_norm(text):
@@ -225,7 +271,14 @@ def main():
         if args.no_exec:
             ok, err = True, ""
         else:
-            ok, err = run_chapter(code)
+            try:
+                ok, err = run_chapter(code)
+            except InfraError as e:
+                # Host capacity failure. Abort BEFORE writing anything: a partial
+                # vetted dir from a sandbox outage must never replace the last good one.
+                print(f"[abort] infrastructure failure at row {idx} ({source}): {e}",
+                      file=sys.stderr, flush=True)
+                sys.exit(3)
         if not ok:
             stats["exec_fail"] += 1
             ss["exec_fail"] += 1
