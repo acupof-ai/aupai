@@ -6,13 +6,12 @@
 # the floor; temperature sampling at n=10 is ~n times serial work with this scorer.
 #
 # Usage (after run end, on the granted lane card):
-#   CARD=1 bash runs/stage2_timing_calib.sh <ckpt>
+#   CUDA_VISIBLE_DEVICES=1 bash runs/stage2_timing_calib.sh <ckpt>
 set -u
 CKPT=${1:?"usage: stage2_timing_calib.sh <ckpt>"}
-CARD=${CARD:?set CARD to the granted lane index}
-export CUDA_VISIBLE_DEVICES=$CARD
-
 cd "$(dirname "$0")/.."
+source eval/_devs.sh 1
+CARD=${_DEVS[0]}
 echo "=== HumanEval 164 greedy rstrip (1 card GPU $CARD) ==="
 python3 eval/humaneval_gen.py --ckpt "$CKPT" --device cuda:0 --rstrip_nl \
     --run timing_he_greedy_1card --force
