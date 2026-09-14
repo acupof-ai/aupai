@@ -1361,6 +1361,54 @@
    "uncertainty": "Full population for exec/decon/dup. Handread n=60 (30/source). exec margin 2.6pt over 90%. gen-A correctness 3.90 is 0.10 below the bar with 9/30 <=3, so the FAIL is not sampling noise at the margin. 113 env_unsandboxable are environment refusals.",
    "status": "measured",
    "boundary": "4419-row/10.15M snapshot. Production cache BLOCKED: handread FAIL on gen-A correctness 3.90 and exec margin down to 1.0pt. Re-handread required after gen-A prompt remediation."
+  },
+  {
+   "id": "dq.textbooks_mutation_selection_gate_failed_0914",
+   "value": {
+    "question": "Does a deterministic mutation-testing gate SELECT chapters humans grade higher (ship-by-filter, zero generation, fb plan-B 2026-09-14)?",
+    "verdict": "NO — gate carries no positive signal for human correctness; its preferred subset grades LOWER. Do not use as a weighting/selection signal.",
+    "gate": "for every top-level non-void function whose result is asserted, a fixed mutant bank (early-return-None, comparison flip, numeric-constant +/-1) must make a chapter assertion fail; a mutant that stays green = 'caught' (non-discriminating); every mutant killed = gate-PASS ('clean'). execution via shared aupai_safe_exec.run_path_safe (pgroup kill, 2GB RSS, 15s).",
+    "pool": "round=round3 rows in the teaching-sandbox-vetted dir only (fb/de rule; genA_0000-0016 and anneal_excluded* omitted); 294 rows, all claude-gen-A — gen-B current rows carry executor tags, not round=round3, so gen-B count in this pool is 0.",
+    "pool_gate_verdicts": "clean 103-105 / caught 142 / no_asserted_func 44 / base_fails 3-5 across two equivalent runs",
+    "gate_pass_subset": "103 rows at the graded draw, 489018 gate tokens (458526 len//4 proxy), 251262 words; a later selector-tightened run gave 105 rows / 256143 words",
+    "blind_grade_design": "one rubric, source/generator hidden, <=12 agents/batch. 30 fixed-seed(20260914) chapters from gate-PASS ('clean') vs 15 from 'caught'; both scored for content truth 1-5.",
+    "gate_PASS_30_correctness_mean": 3.5,
+    "gate_PASS_30_se": 0.104,
+    "gate_PASS_30_le3": 16,
+    "gate_PASS_30_labels": {
+     "keep": 9,
+     "fix": 21,
+     "drop": 0
+    },
+    "caught_15_correctness_mean": 3.8,
+    "caught_15_se": 0.175,
+    "caught_15_le3": 5,
+    "caught_15_labels": {
+     "keep": 9,
+     "fix": 6,
+     "drop": 0
+    },
+    "pass_minus_caught": -0.3,
+    "se_of_gap": 0.2,
+    "interpretation": "negative sign: mutation-clean subset grades below the mutant-surviving subset; SE 0.20 makes the magnitude noisy but the direction refutes selection. mutation testing measures only whether asserts kill impl mutants, orthogonal/anti-correlated to the dominant correctness defects.",
+    "root_cause": "the c3 mass is prose/factuality, not test execution: printed/layout numbers stated inversely to the shown code, upper bounds/constants called 'measured' when only bounded/asserted, mechanism sentences misattributing control flow — all pass a mutation gate. denser-tested chapters are more often flagged caught and tend to be better explained, giving the negative edge.",
+    "implication": "the >=4.0 gap is closed neither by a verify AGENT (A/B/C blind: gen-B claude-db 3.53 / gen-A round3 3.67 / gen-B relay 3.55 — model+flow parity) nor by a deterministic mutation filter; a corrective pass must target prose/factuality semantics (each numeric/mechanism sentence vs the shown code; 'measured' only when printed)."
+   },
+   "unit": "correctness 1-5 mean +/- SE; rows/gate-tokens for pool",
+   "measured": "2026-09-14",
+   "source": "~/aupai-textgen/3b-vet: mutation_gate.py, gate_pool.py, textbook_handread_workflow.js; gate_shipfilter_grades.jsonl (45 rows); r3pool(294)+r3_gatepass+r3_gatecaught; pod teaching-sandbox vetted dir",
+   "config": {
+    "seed": 20260914,
+    "blind_batches_max_concurrent": 12,
+    "pool": "round=round3 teaching-vetted, anneal_excluded omitted",
+    "mutants_per_func_cap": 10,
+    "safe_exec": "aupai_safe_exec.run_path_safe 2GB/15s pgroup",
+    "related_facts": [
+     "dq.textbooks_claude_v41_vet_0913"
+    ]
+   },
+   "uncertainty": "n=30 vs n=15, SE of gap 0.20 so the exact -0.3 is noisy; robust claim is no POSITIVE gate->human-quality correlation (point estimate negative). two arms used adjacent rubric iterations (exec then no-exec); both grade content truth the same and the no-exec change was an infra fix, not a scoring change.",
+   "status": "measured"
   }
  ]
 }
