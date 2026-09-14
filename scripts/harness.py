@@ -4282,6 +4282,38 @@ def _broken_stale_expected_end():
     inside = world("long_ok_run", 30, 60)
     state, _ = check_no_stale_running(inside)
     assert state == PASS, f"a run inside its expected_end must PASS, got {state}"
+
+    # TIME-ZONE HALF: exp.py writes UTC (time.gmtime); the read must parse UTC too. The old code
+    # used time.mktime, which on a +8 host read every UTC row 8h older than it was (that was the
+    # first-half trigger for r3). Force the process to a +8 zone and assert the epoch is the UTC
+    # epoch regardless -- this goes red ONLY when the parser consults local time. Restored after.
+    import calendar as _cal
+    old_tz = os.environ.get("TZ")
+    try:
+        os.environ["TZ"] = "Etc/GMT-8"  # tzdb sign: Etc/GMT-8 is local UTC+8
+        time.tzset()
+        sample = "2026-09-13 07:54"
+        got = _exp_utc_epoch(sample)
+        want = _cal.timegm(time.strptime(sample, "%Y-%m-%d %H:%M"))
+        local = time.mktime(time.strptime(sample, "%Y-%m-%d %H:%M"))
+        assert got == want, f"_exp_utc_epoch not zone-independent: got {got} want {want}"
+        assert local != want, "forced +8 zone had no effect; fixture cannot catch local-clock parse"
+        # A row 23h old in UTC with NO declared end must still PASS here; under mktime it reads
+        # 31h and FAILs the 24h default. Build it and strip the deadline so the default applies.
+        near = world("near_default_run", 23, 0)
+        np = os.path.join(near, "runs", "experiments.jsonl")
+        nrs = [json.loads(x) for x in open(np, encoding="utf-8") if x.strip()]
+        del nrs[0]["expected_end_utc"]
+        open(np, "w").write("".join(json.dumps(x) + "\n" for x in nrs))
+        st_near, _ = check_no_stale_running(near)
+        assert st_near == PASS, f"23h-UTC row must be under the 24h default even at forced +8, got {st_near}"
+    finally:
+        if old_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = old_tz
+        time.tzset()
+
     return world("past_end_run", 10, 2)
 
 
@@ -7337,6 +7369,16 @@ def _broken_merge_keeps_parent_paths():
     return w
 
 
+def _exp_utc_epoch(s):
+    """exp.py writes timestamps with time.gmtime(); parse them back as UTC. time.mktime()
+    interprets the tuple in the MACHINE zone, so on a +8 laptop every UTC row read 8h older
+    than it is (v41_r3_0914, a 21h UTC run, was judged 29h and failed the 24h gate). Both the
+    write and the read must be on the UTC clock.
+    """
+    import calendar
+    return calendar.timegm(time.strptime(str(s), "%Y-%m-%d %H:%M"))
+
+
 def _stale_deadline_h(r):
     """Hours a running row may stay open: its declared expected_end_utc (as an offset from the
     row's own start) if present and readable, else None meaning the _STALE_RUNNING_H default.
@@ -7350,9 +7392,8 @@ def _stale_deadline_h(r):
     if not e:
         return None
     try:
-        import calendar
-        start_t = calendar.timegm(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
-        end_t = calendar.timegm(time.strptime(str(e), "%Y-%m-%d %H:%M"))
+        start_t = _exp_utc_epoch(r.get("started", ""))
+        end_t = _exp_utc_epoch(e)
     except Exception:
         return None
     return (end_t - start_t) / 3600
@@ -7366,10 +7407,10 @@ def check_no_stale_running(root):
     for r in evs:
         if r.get("status") != "running":
             continue
-        # The field is `started`, in exp.py's %Y-%m-%d %H:%M format. An unreadable date is
+        # The field is `started`, in exp.py's %Y-%m-%d %H:%M UTC format. An unreadable date is
         # a FAIL: a check that cannot see its subject must not report on it.
         try:
-            t = time.mktime(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
+            t = _exp_utc_epoch(r.get("started", ""))
         except Exception:
             return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
         age_h = (time.time() - t) / 3600
