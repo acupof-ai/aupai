@@ -28,6 +28,17 @@ import tempfile
 
 _SETUP = r"""set -e
 ROOT="$1"
+# Bring loopback up inside THIS network namespace (no `ip` binary in the image;
+# SIOCSIFFLAGS on lo from a raw ioctl). The fresh netns has no routes and no
+# external interfaces, so lo is the only thing a socket can reach. Done while
+# still in the host rootfs so the interpreter is the host's, before chroot.
+if [ "$LOOPBACK" = "1" ]; then
+  "$(readlink -f /usr/bin/python3)" - <<'PYEOF'
+import fcntl, socket, struct
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+fcntl.ioctl(s, 0x8914, struct.pack("16sH22s", b"lo", 0x1, b""))  # IFF_UP, struct ifreq is 40B
+PYEOF
+fi
 mount --make-rprivate /
 # The chroot root must be TRAVERSABLE by the unprivileged uid the test drops to. mkdtemp
 # creates it 0700 root-owned, and the failure that causes is completely misdirected:
@@ -83,6 +94,12 @@ ln -s /proc/self/fd/2 "$ROOT/dev/stderr"
   echo "sandbox: /dev/null is missing or not writable in the chroot" >&2; exit 97; }
 mount -t proc proc "$ROOT/proc"
 mount -t tmpfs -o size=64m tmpfs "$ROOT/tmp"
+# Private /dev/shm: multiprocessing spawn needs POSIX semaphores for its Queue, and
+# without it the child dies on FileNotFoundError('/dev/shm/sem....'). A fresh tmpfs
+# mounted here shadows the host's /dev/shm inside the chroot, so the chapter sees an
+# empty 64m shm of its own, never other jobs' semaphores.
+mkdir -p "$ROOT/dev/shm"
+mount -t tmpfs -o size=64m,mode=1777 tmpfs "$ROOT/dev/shm"
 # /work is the per-run mkdtemp with code.py already written by the runner;
 # a tmpfs here would shadow it. chroot confines visibility to this tree.
 #
@@ -90,7 +107,7 @@ mount -t tmpfs -o size=64m tmpfs "$ROOT/tmp"
 # they are owned by root because the runner created them. 65534 is the kernel's own
 # overflow uid, present on every Linux, so it needs no /etc/passwd inside the chroot.
 chown -R 65534:65534 "$ROOT/work" "$ROOT/tmp"
-ulimit -t 5 -v 2097152 -c 0
+ulimit -t "${CPUSECS:-5}" -v 2097152 -c 0
 # -f caps FILE SIZE. MEASURED MISSING, not reasoned about -- a test writing 600 MB in 1 MiB
 # chunks through this sandbox returned rc=0 on 2026-09-03, while the four other axes (network,
 # filesystem, uid, nproc) were all provoked and held. The chroot lives on the container's
@@ -107,7 +124,7 @@ ulimit -f 262144 2>/dev/null || true   # 262144 x 1024 = 256 MiB
 # nproc caps the fork bomb, and ONLY WORKS ON A NON-ROOT UID: RLIMIT_NPROC is not
 # enforced for uid 0 (fb, survey A.3). It is set here, in the shell that is about to
 # setuid, because a limit set after the drop cannot be raised back.
-ulimit -u 64 2>/dev/null || true
+ulimit -u "${NPROC:-64}" 2>/dev/null || true
 # /usr/bin/python3 is a symlink through /etc/alternatives, which the chroot
 # deliberately does not contain; resolve to the real binary on the host.
 PY=$(readlink -f /usr/bin/python3)
@@ -146,7 +163,7 @@ exec chroot "$ROOT" /usr/bin/env -i -C /work PATH=/usr/bin:/bin PYTHONIOENCODING
 
 
 def run_sandboxed(code, timeout=10, stdin=None, files=None, argv=None, site=False,
-                  seccomp=True):
+                  seccomp=True, profile="hardened", nproc=64, cpu_secs=5, loopback=False):
     """Run code in the sandbox. Returns (rc, stdout, stderr_tail).
 
     code:   written to /work/code.py and executed. Pass None with `files`+`argv` to run
@@ -204,6 +221,11 @@ def run_sandboxed(code, timeout=10, stdin=None, files=None, argv=None, site=Fals
             except ImportError:
                 pass
         setup = _SETUP.replace('shift\n', 'shift\nSITE=""\nBOOT=""\n', 1)
+        setup = setup.replace('set -e\n',
+                              f'set -e\nLOOPBACK="{1 if loopback else 0}"\nNPROC="{int(nproc)}"\n'
+                              f'CPUSECS="{int(cpu_secs)}"\n', 1)
+        setup = setup.replace("PYTHONDONTWRITEBYTECODE=1 \\",
+                              f"PYTHONDONTWRITEBYTECODE=1 SANDBOX_SECCOMP_PROFILE={profile} \\")
         if seccomp_ok:
             setup = setup.replace('BOOT=""', 'BOOT="/work/_boot.py"')
         if site:
@@ -222,12 +244,22 @@ def run_sandboxed(code, timeout=10, stdin=None, files=None, argv=None, site=Fals
                     f'mount --bind {sp} "$ROOT{sp}"\n'
                     f'mount -o remount,ro,bind "$ROOT{sp}"',
                 ).replace('SITE=""', f'SITE="{sp}"')
+        def _clear_sigmask():
+            # util-linux unshare forks and calls sigprocmask(SIG_UNBLOCK) on a fixed set
+            # in the child; it returns EINVAL ("sigprocmask unblock failed") when it
+            # inherits a polluted mask from a long-running parent (the vet process, after
+            # hundreds of chapters). Start unshare from a fully-unblocked mask so the host
+            # tool never depends on the caller's signal state. In a forked preexec there
+            # is one thread, so pthread_sigmask is equivalent to the process-wide mask.
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, signal.valid_signals())
+
         p = subprocess.Popen(
             ["unshare", "-nmp", "--fork", "bash", "-c", setup, "bash", root] + list(argv or []),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.PIPE if stdin is not None else None,
             start_new_session=True,
+            preexec_fn=_clear_sigmask,
         )
         try:
             stdout, stderr = p.communicate(
