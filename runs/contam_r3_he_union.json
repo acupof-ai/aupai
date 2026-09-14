@@ -1,0 +1,114 @@
+{
+ "r3_domains": [
+  "code_ultra_l3_noexec_dc",
+  "code_keep_p1_dc",
+  "code_ultra_l2_dc",
+  "math_owm_stage2_dc",
+  "en_c4_stage2_dc",
+  "cot_dc"
+ ],
+ "r3_humaneval_union": [
+  "HumanEval/105",
+  "HumanEval/123",
+  "HumanEval/129",
+  "HumanEval/156",
+  "HumanEval/19",
+  "HumanEval/66",
+  "HumanEval/71",
+  "HumanEval/78"
+ ],
+ "r3_union_n": 8,
+ "nonr3_domains": [
+  "code_py_starcoder_dc",
+  "code_py_rp1t_dc"
+ ],
+ "per_domain": {
+  "code_ultra_l3_noexec_dc": {
+   "docs": 15308313,
+   "shards": 940,
+   "rows": 46,
+   "humaneval_problems": [
+    "HumanEval/123",
+    "HumanEval/129",
+    "HumanEval/66",
+    "HumanEval/71",
+    "HumanEval/78"
+   ],
+   "mbpp_problems": 7
+  },
+  "code_keep_p1_dc": {
+   "docs": 3059135,
+   "shards": 685,
+   "rows": 21,
+   "humaneval_problems": [
+    "HumanEval/123",
+    "HumanEval/78"
+   ],
+   "mbpp_problems": 10
+  },
+  "code_ultra_l2_dc": {
+   "docs": 16359418,
+   "shards": 554,
+   "rows": 260,
+   "humaneval_problems": [
+    "HumanEval/105",
+    "HumanEval/156",
+    "HumanEval/19",
+    "HumanEval/71",
+    "HumanEval/78"
+   ],
+   "mbpp_problems": 46
+  },
+  "math_owm_stage2_dc": {
+   "docs": 4132693,
+   "shards": 206,
+   "rows": 64,
+   "humaneval_problems": [
+    "HumanEval/78"
+   ],
+   "mbpp_problems": 30
+  },
+  "en_c4_stage2_dc": {
+   "docs": 3887752,
+   "shards": 83,
+   "rows": 0,
+   "humaneval_problems": [],
+   "mbpp_problems": 0
+  },
+  "cot_dc": {
+   "docs": 851661,
+   "shards": 13,
+   "rows": 0,
+   "humaneval_problems": [],
+   "mbpp_problems": 0
+  },
+  "code_py_starcoder_dc": {
+   "docs": 6178621,
+   "shards": 284,
+   "rows": 23,
+   "humaneval_problems": [
+    "HumanEval/123",
+    "HumanEval/78"
+   ],
+   "mbpp_problems": 11
+  },
+  "code_py_rp1t_dc": {
+   "docs": 209659,
+   "shards": 16,
+   "rows": 0,
+   "humaneval_problems": [],
+   "mbpp_problems": 0
+  },
+  "code_ultra_l3_stub_dc": {
+   "docs": 13682629,
+   "shards": 201,
+   "rows": 0,
+   "humaneval_problems": [],
+   "mbpp_problems": 0,
+   "gate": "NEW whitespace-13-gram (fp 0aefe6a2aa5e130f), full scan 2026-09-14",
+   "rows_source": "0 hits across transformed last-top-func+folded-docstring stub corpus; 46/46 prior rows match noexec_dc keys (pod runs/rev_stub_gate_hits.jsonl + rev_stub_gate_full.log)"
+  }
+ },
+ "total_rows": 414,
+ "stub_note": "code_ultra_l3_stub_dc transformed corpus has 0 gate hits; empty exclude manifest -> build_excluded_cache drops 0 and stamps .srcfp exclude=<msha>:0. The 46 rows stay keyed to code_ultra_l3_noexec_dc only."
+}

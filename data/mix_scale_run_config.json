@@ -46,6 +46,7 @@
   "csa_topk": 8,
   "csa_window": 256,
   "csa2": false,
+  "csa2_win_flash": false,
   "csa2_m": 8,
   "csa2_top_k": 64,
   "csa2_n_win": 128,
