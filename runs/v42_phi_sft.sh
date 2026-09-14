@@ -1,24 +1,30 @@
 #!/bin/bash
-# v42 phi-1-route post-r3 SFT launcher (DRAFT, de prereg companion). Shell only; does not
-# modify train.py/sft_math.py. Restarts from the finished r3 checkpoint and SFTs on the
-# phi code-exercises pack in CONTINUATION format, then scores HumanEval through the rstrip
-# continuation gate (NOT ChatML).
+# v42 phi-1-route post-r3 SFT launcher (de prereg companion). Shell only; does not modify
+# train.py/sft_math.py. Loads the finished r3 checkpoint and SFTs on the phi code-exercises
+# pack in CONTINUATION format, then scores HumanEval through the rstrip continuation gate
+# (NOT ChatML).
 #
-# restartable: mid-run saves carry optimizer state (--save_every), so an interrupted run
-# resumes on one LR curve; an interrupt only costs the current partial epoch.
+# PRE-LAUNCH CHECKLIST — this job is NOT checkpointable:
+#   * 738 steps/epoch x N=6 = 4,428 steps, ~2.4-3.0 h of continuous 8-card hold (exact
+#     steps read from the built pack: 23,637 rows -> min 2,954/rank -> //4).
+#   * Confirm an unbroken 8-card GPU window for the whole run BEFORE launch.
+#   * Launch detached the r3 way: pod-side launch file under `setsid nohup ... </dev/null &`
+#     so it survives the session (pod foreground dies with the tn tunnel).
+#   * An interrupt restarts the ENTIRE run from the r3 (ET) base at epoch 0. sft_math.py
+#     has no resume-from-output path: --resume loads pretrained weights with a FRESH
+#     optimizer, the loop starts at step 0 with a fresh per-epoch randperm, and the
+#     --save_every mid-run saves cannot be continued.
+#
+# PACK: data/sft/sft_phi_codeexercises_v42_65m_0914.pt — 23,637 rows, 63.97M supervised
+# tokens, vocab f1f860970d15d623 (matches r3). NOT the 14,846-row 40M 0913 pack.
 #
 # warmup pitfall (do NOT "fix" in train/sft code): sft_math.py has no --warmup CLI, so the
-# run inherits the resumed r3 cfg Cfg.warmup = 500. total_steps =
-# epochs * (per_rank_rows // batch); DDP shards the pack X[rank::world] and trims to the
-# min rank multiple (ddp_even_len). Current pack sft_phi_codeexercises_0913.pt = 14,846
-# rows: world 8 -> min 1,855 rows/rank; batch 4/rank -> 463 steps/epoch.
-#   N=1: 463  steps, warmup 463/463 = 100% (the whole run is ramping -- unusable)
-#   N=2: 926  steps, warmup 500 = 54%
-#   N=3: 1389 steps, warmup 500 = 36%
-#   N=4: 1852 steps, warmup 500 = 27%
-#   N=6: 2778 steps, warmup 500 = 18%   <- first N with total comfortably > 500
-#   N=8: 3704 steps, warmup 500 = 14%
-# With a 40M-token pack, N>=6 is required for total >> 500 (warmup <= ~20%). Default 6.
+# run inherits the resumed r3 cfg Cfg.warmup = 500 and Cfg.warmdown = 0.65 (cosine decay
+# starts at total - 0.65*total = step ~1,550 of 4,428).
+#   N=1: 738  steps, warmup 100% (the whole run ramps -- unusable)
+#   N=4: 2952 steps, warmup 17%
+#   N=6: 4428 steps, warmup 11%   <- default
+#   N=8: 5904 steps, warmup 8.5%
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,8 +32,10 @@ NAME=v42_phi_sft
 # r3-final checkpoint. Training finishes to this base name; override with RESUME= for a
 # specific .stepN while r3 is still running.
 RESUME=${RESUME:-ckpt_v41_r3_0914.pt}
-PACK=data/sft/sft_phi_codeexercises_0913.pt
-OUT=ckpt_${NAME}.pt
+PACK=data/sft/sft_phi_codeexercises_v42_65m_0914.pt
+# Timestamped so an interrupted-then-rerun job can never silently overwrite a completed
+# run's checkpoint.
+TS=$(date -u +%Y%m%dT%H%M%SZ)
 # Devices come from the CALLER via CUDA_VISIBLE_DEVICES; never hard-code physical
 # indices here (a script that writes them escapes any lane the caller confined it to).
 # Default to the 8-card block only if the caller set nothing.
@@ -36,10 +44,11 @@ export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}
 source eval/_devs.sh 8   # validates >=8 visible devices; populates ${_DEVS[@]}
 CARDS=$(IFS=,; echo "${_DEVS[*]}")
 NGPU=${#_DEVS[@]}
-EPOCHS=${EPOCHS:-6}          # 463 steps/epoch -> 2778 total at N=6, warmup 500 = 18%
+EPOCHS=${EPOCHS:-6}          # 738 steps/epoch -> 4428 total at N=6, warmup 500 = 11%
 BATCH=${BATCH:-4}            # per-rank microbatch; effective = 4 x 8 = 32 rows/step
 LR_SCALE=${LR_SCALE:-0.1}
 SAVE_EVERY=${SAVE_EVERY:-200}
+OUT=${OUT:-ckpt_v42_phisft_n${EPOCHS}_${TS}.pt}
 # fp8 is ON by default in sft_math.py (only --no_fp8 disables it); grad_ckpt stays ON
 # (FP8 backward NaNs without it).
 
@@ -79,7 +88,7 @@ print(f"{n} rows, {sup/1e6:.2f}M supervised tokens, vocab_id {d['vocab_id']}")
 PY
 )
 python3 scripts/exp.py start --name "$NAME" \
-  --cmd "torchrun x8 sft_math.py --resume $RESUME --sft_path $PACK --epochs $EPOCHS --batch $BATCH --lr_scale $LR_SCALE --save_every $SAVE_EVERY (fp8, cards $CARDS); eval/humaneval_gen.py --rstrip_nl" \
+  --cmd "torchrun x8 sft_math.py --resume $RESUME --sft_path $PACK --out $OUT --epochs $EPOCHS --batch $BATCH --lr_scale $LR_SCALE --save_every $SAVE_EVERY (fp8, cards $CARDS); eval/humaneval_gen.py --rstrip_nl" \
   --hypothesis "$HYPOTHESIS" --notes "$NOTES" >/dev/null
 
 python3 scripts/card_claim.py acquire --name "$NAME" --cards "$CARDS" \
