@@ -478,6 +478,130 @@ def _check_no_plan_world_refuses(bad, tmp):
             print(f"  no plan world : WORLD_SIZE={env_world} -> {state}")
 
 
+def _w1_cursor(tmp, sizes, world, as_of, tag):
+    """Drive the REAL save_checkpoint at batch=accum=1 on `world` ranks; return its cursor.
+
+    batch/accum are pinned to 1 so the plan length is just as_of*world -- the property is about
+    repartitioning, not batch shape. The full plan is per-domain contiguous (sizes sum to
+    as_of*world); save_checkpoint bincounts its prefix to produce the cursor. randperm only
+    reorders columns, so a contiguous plan reads back the same per-domain counts a shuffled one
+    would, and the cursor is read back from the checkpoint rather than assumed.
+    """
+    import train
+
+    full = torch.cat([torch.full((s,), i, dtype=torch.int8) for i, s in enumerate(sizes)])
+    assert len(full) == as_of * world
+    cfg = FakeCfg()
+    cfg.batch, cfg.accum = 1, 1
+    cfg._plan_domains_full = full
+    cfg._plan_domains = _stripe(full, 0, world)
+    cfg._plan_world = world
+    cfg._plan_names = list(NAMES)
+    cfg._plan_step_origin = 0
+    cfg._row_cursor = {n: 0 for n in NAMES}
+    cfg._row_cursor_srcfp = {n: "fp" for n in NAMES}
+    cfg._row_cursor_base = {}
+    cfg._cursor_discarded = []
+    cfg._total_steps = as_of + 100
+    p = os.path.join(tmp, f"ck_wc_{tag}.pt")
+    prev = os.environ.get("WORLD_SIZE")
+    os.environ["WORLD_SIZE"] = str(world)
+    try:
+        train.save_checkpoint(p, {"w": torch.zeros(2)}, cfg, "vocab", step=as_of)
+    finally:
+        if prev is None:
+            os.environ.pop("WORLD_SIZE", None)
+        else:
+            os.environ["WORLD_SIZE"] = prev
+    ck = torch.load(p, map_location="cpu", weights_only=False)
+    return [int(ck["row_cursor"][n]) for n in NAMES]
+
+
+def _continuation(cursor, pools):
+    """Mirror build_mix's per-domain resume slice: (domain,row) pairs from cursor[d] to pool."""
+    parts = []
+    for i in range(len(NAMES)):
+        idx = torch.arange(cursor[i], pools[i])
+        parts.append(torch.stack([torch.full_like(idx, i), idx]))
+    return torch.cat(parts, dim=1) if parts else torch.empty((2, 0), dtype=torch.int64)
+
+
+def _stripe_columns(plan, world):
+    """Mirror build_mix's stripe: trim to a multiple of world, then rank r takes r::world."""
+    n = (plan.shape[1] // world) * world
+    return {r: plan[:, :n][:, r::world] for r in range(world)}, n
+
+
+def _pair_set(stripes, world):
+    return {(int(stripes[r][0, j]), int(stripes[r][1, j]))
+            for r in range(world) for j in range(stripes[r].shape[1])}
+
+
+def _check_world_change_restripe(bad, tmp):
+    """A resume that changes world size visits each corpus row once across the join.
+
+    The 2026-09-12 gate switch resumes a world-6 run at .step6000 on world 8. The cursor is
+    ABSOLUTE per-domain row counts (world-independent); build_mix resumes every domain at its
+    per-domain `torch.arange(used[name], used[name] + want)` slice then partitions the plan
+    across the CURRENT world with `mine = plan[:, :n][:, rank::world]` after
+    `n = (plan.shape[1] // world) * world`. World changes only
+    which rank holds a column, never which (domain,row) pairs the run reads: the pools' row order
+    is fixed by the pinned sample_seed and randperm only reorders within the plan.
+
+    Drives the REAL save_checkpoint at world W1 for the cursor -- the part historically buggy --
+    and mirrors the two build_mix arithmetic lines for the W2 stripe. No rank spawn: the stripe
+    is a tensor slice and the property is set membership. The continuation length is not a
+    multiple of W2, so the trim-to-multiple is exercised rather than passed by construction.
+    """
+    W1, W2, K = 2, 3, 5
+    pools = [8, 6, 6]             # per-domain pool rows; sum 20
+    sizes = [3, 3, 4]             # W1 prefix per domain, sums to K*W1 = 10
+    cursor = _w1_cursor(tmp, sizes, W1, K, "w1")
+    if cursor != sizes:
+        bad.append(f"world {W1} cursor read back {cursor}, expected {sizes}")
+        return
+
+    cont = _continuation(cursor, pools)
+    N2 = cont.shape[1]            # 10: (8-3)+(6-3)+(6-4) = 5+3+2; 10 % 3 = 1, not aligned
+    if N2 % W2 == 0:
+        bad.append(f"continuation is {N2} rows, a multiple of world {W2}; choose pools so the "
+                   f"trim is exercised")
+        return
+    stripes2, n2 = _stripe_columns(cont, W2)
+
+    # Columns 0..n2-1 assigned exactly once across W2 ranks (the rank::world bijection).
+    cols = sorted(c for r in range(W2) for c in range(r, n2, W2))
+    if cols != list(range(n2)):
+        bad.append(f"world {W2} ranks do not bijectively cover columns 0..{n2-1}: a rank "
+                   f"re-reads or skips a continuation column")
+    rows2 = _pair_set(stripes2, W2)
+    if len(rows2) != n2:
+        bad.append(f"{n2 - len(rows2)} continuation pairs are assigned to multiple world-{W2} "
+                   f"ranks -- a duplicate read after the world change")
+
+    # Across the join: the continuation never re-reads a row below the domain's W1 cursor, and
+    # each continued domain resumes exactly AT its cursor (no gap opened by the repartition).
+    overlap = [(d, i) for (d, i) in rows2 if i < cursor[d]]
+    if overlap:
+        bad.append(f"{len(overlap)} world-{W2} rows sit below the world-{W1} cursor (e.g. "
+                   f"{sorted(overlap)[:3]}) -- resuming on world {W2} re-reads consumed rows")
+    for d, nm in enumerate(NAMES):
+        first = min((i for (dd, i) in rows2 if dd == d), default=None)
+        if first is not None and first != cursor[d]:
+            bad.append(f"domain {nm} resumes at row {first}, cursor says {cursor[d]} -- the "
+                       f"world change opened a gap or a repeat at the boundary")
+
+    # CANARY: the overlap predicate must have teeth. A resume that ignored the cursor and
+    # restarted at row 0 MUST be caught as an overlap with the consumed prefix.
+    bad_rows = _pair_set(_stripe_columns(_continuation([0, 0, 0], pools), W2)[0], W2)
+    if not [p for p in bad_rows if p[1] < cursor[p[0]]]:
+        bad.append("the world-change overlap predicate is inert: a cursor-less restart at row 0 "
+                   "was not detected")
+
+    print(f"  world change  : W{W1} cursor {cursor} -> W{W2} continuation {N2} rows, trim "
+          f"{N2 - n2}, {len(rows2)} rows each read once, zero overlap with the prefix")
+
+
 def main():
     bad = []
     tmp = tempfile.mkdtemp()
@@ -548,6 +672,7 @@ def main():
     _check_no_full_plan_refuses(bad, tmp)
     _check_no_plan_world_refuses(bad, tmp)
     _check_world_source(bad, tmp)
+    _check_world_change_restripe(bad, tmp)
 
     print()
     if bad:

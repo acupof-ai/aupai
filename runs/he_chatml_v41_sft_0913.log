@@ -1,0 +1,18 @@
+HumanEval: 164 problems (chatml arm)
+CONTROL chatml by-name canonical = 164/164 (must be ~164)
+CONTROL chatml by-name wrong/missing -> FAIL/None (must)
+[card_claim] claimed 7 for humaneval_gen
+  20/164  pass@1 = 1/20 = 5.00%   (149s)
+  40/164  pass@1 = 6/40 = 15.00%   (314s)
+  60/164  pass@1 = 10/60 = 16.67%   (491s)
+  80/164  pass@1 = 11/80 = 13.75%   (732s)
+  100/164  pass@1 = 11/100 = 11.00%   (948s)
+  120/164  pass@1 = 11/120 = 9.17%   (1179s)
+  140/164  pass@1 = 11/140 = 7.86%   (1424s)
+  160/164  pass@1 = 11/160 = 6.88%   (1680s)
+  164/164  pass@1 = 11/164 = 6.71%   (1724s)
+
+HUMANEVAL pass@1 (greedy) = 11/164 = 6.71%
+empty-completion split: eos_first 0/164, stop_at_0 0/164 (total empty 28/164 = 17.1%), im_end_no_func 0
+repetitive non-empty (last 200 chars, >=3 consecutive equal lines or tokens): 13/136 = 9.6% of non-empty
+preds saved: /work/aupai/data/eval/preds_humaneval_ckpt_v41_sft_0913.pt.chatml.v41_sft_0913.jsonl

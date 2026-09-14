@@ -469,6 +469,16 @@ The rule: a value's basis is bound to the instrument that produced it. Quoted in
 
 - §301: 4c's 128-perm retraction, 2026-09-10.
 
+## R22. A hardlink is the same file; a staged "copy" you then write in place mutates the source
+
+1 incident (2026-09-13). `manual:` — no check distinguishes a read-only hardlink assembly (assemble_keep_p1 links 685 shards by design and never mutates them) from a hardlink into a directory a build step opens for writing. Checkable slice: a staging tool could require distinct inodes (`os.stat(...).st_ino`) between source and any path it is about to truncate.
+
+Staging a train-shaped smoke domain, the operator linked vetted corpus files with `ln -f` ("zero bytes") and then ran a converter that opened the link with Python `"w"` mode. The hardlink shares the inode; `"w"` truncates the inode before writing, so the vetted originals became 0 bytes. Every step succeeded — the link, the write — and nothing raised; the only pre-write witness is `ls -li` showing one inode under two names.
+
+The rule: hardlinks are safe for read-only assembly and fatal the moment a writer opens one name in truncating mode. When staging corpus bytes that will be mutated — renamed into the shard convention, key-converted, reformatted — copy them (`cp`), or write to a temp file and `os.replace`; verify source and stage have different inodes before the first write.
+
+- §302: 98's vetted-textbook smoke staging truncated both vetted files (inodes 86488687/86488702); 3b re-vet rebuilt from the raw corpus, training untouched, 2026-09-13.
+
 ## Design cause: integration happens in a shared writable working tree
 
 User ruling 2026-09-05: analyse to the root, not the surface. The incidents below are ONE cause with surfaces; a shape that names the operator's slip (a timeout wrapper, a cp -r, a stash) as the cause is the surface reading, and this section exists so the doc says so.

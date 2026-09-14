@@ -1,0 +1,55 @@
+{
+ "total_tokens": 30000000000,
+ "domains": {
+  "code_ultra_l3_stub_dc": {
+   "weight": 0.47,
+   "epochs": 3,
+   "anneal": 0.45,
+   "fingerprint": "12ec3cd220b8fe13",
+   "epochs_pool_measured": true,
+   "cache_exclude": "56d12083dc30bdf2",
+   "epochs_pool_source": "98's holdout-excluded cache on the pod (2026-09-13): /data00/tokens_code_ultra_l3_stub_dc.excl56d12083dc30bdf2.pt, packed pool 4,894,050,865 tokens = 1,194,545 rows x 4097, 19.58GB, sha256 9d649f2cfa70df24, .vocab f1f860970d15d623 seed 42; .srcfp '12ec3cd220b8fe13|exclude=56d12083dc30bdf2:273879' (273,879/13,682,629 = 2.00% dropped per data/sft/phi_l3_stub_holdout_manifest.jsonl, built by runs/pretok_exclude_scratch.py). Source domain code_ultra_l3_stub_dc (full 4.994B, fp 12ec3cd220b8fe13, cs.code_ultra_l3_stub_dc_landed_0913). Draw 0.47*27B + 0.45*3B = 14.04B vs cap 4.894050865B*3 = 14.682B (2.87 epochs, ratio 0.956). LOADER PREREQUISITE PROVEN 2026-09-13 (ae, CPU dry read): train.py:2135 _domain_cache_path resolves ONLY tokens_<domain>.pt and no mix override exists, so today this entry would read the FULL stub cache and train on the SFT holdout; the 'cache_exclude' field here is the proposed contract (path gains .excl<id>, same_source matches the fp prefix of the composite srcfp) pending a small train.py change assigned by fb. Until that lands and a matching data/corpus dir or exclusion contract exists, this domain stays non-launchable."
+  },
+  "code_keep_p1_dc": {
+   "weight": 0.264,
+   "epochs": 3,
+   "anneal": 0.25,
+   "fingerprint": "d7b4f3a09c5707b0",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_keep_p1_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=2626977570. Draw 0.264*27B + 0.25*3B = 7.128+0.75 = 7.878B vs cap 2.627B*3 = 7.881B (99.97% of the 3-epoch pool). fb 2026-09-13 06:1xZ ordered the dropped textbooks .10/.10 to keep_p1 (.25->.30, anneal .20->.25) and L2 (.07->.12); the literal .30 main is infeasible (0.30*27+0.25*3=8.85B > 7.881B) and her anneal reallocation summed to .95, so keep_p1 is set to the LARGEST main share the measured cap allows at anneal .25 (0.264) and L2 absorbs the residual."
+  },
+  "code_ultra_l2_dc": {
+   "weight": 0.12,
+   "epochs": 1,
+   "anneal": 0.18,
+   "fingerprint": "adf2ff20698dae8a",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_ultra_l2_dc.pt on the pod (vocab f1f860970d15d623); measured_pool_tokens=15340876449. fb 2026-09-13 06:1xZ explicitly set L2 main .07->.12 when reallocating the dropped textbooks share; this is her latest explicit ruling and it supersedes the earlier '<=10% natural code' line for r3 (flagged to her). Anneal .13->.18 absorbs the textbooks anneal share keep_p1 could not take. Draw 3.24+0.54 = 3.78B, one epoch."
+  },
+  "math_owm_stage2_dc": {
+   "weight": 0.086,
+   "epochs": 1,
+   "anneal": 0.05,
+   "fingerprint": "4b1469bfe4667706",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_math_owm_stage2_dc.pt on the pod (vocab f1f860970d15d623); measured_pool_tokens=5857969755. Main .05->.086 absorbs the residual 0.036 of the dropped textbooks main share after keep_p1 hit its measured 3-epoch cap (cot cannot: .05 main over-draws its 1.2B cap; L2 was already at fb's explicit .12). Draw 2.322+0.15 = 2.472B, one epoch."
+  },
+  "en_c4_stage2_dc": {
+   "weight": 0.03,
+   "epochs": 1,
+   "anneal": 0.02,
+   "fingerprint": "c59c2e4227d875ec",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_en_c4_stage2_dc.pt on the pod (vocab f1f860970d15d623); measured_pool_tokens=1985211248. English capped at 3% per the phi-1 route. Draw 0.81+0.06 = 0.87B, one epoch."
+  },
+  "cot_dc": {
+   "weight": 0.03,
+   "epochs": 3,
+   "anneal": 0.05,
+   "fingerprint": "0d9f495913438657",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_cot_dc.pt on the pod (vocab f1f860970d15d623); measured_pool_tokens=399994717. Draw 0.81+0.15 = 0.96B vs cap 0.400B*3 = 1.200B (2.40 epochs); 3% main is the largest share that stays at the epochs<=3 ruling through both phases."
+  }
+ },
+ "_comment": "DRAFT ROUND-3 MIX (ae-9, USER DECISION 2026-09-13 03:4xZ; amended 06:1xZ for immediate relaunch): phi-1 route -- a ~8-9B unique set repeated ~3 epochs over 30B; data/mix_v41_r2.json is SHELVED and textbooks_v41 is REMOVED FROM THIS MIX (off-GPU Claude generation will not finish by launch; textbooks enter stage 2, data/mix_v41_r3_anneal.json). Main 27B / anneal 3B, anneal_frac 0.10. weights and anneal each sum to 1.00000 across the SIX domains. Repeated core: code_ultra_l3_stub_r3_dc 4.894B (98% of the 4.994B HumanEval-shaped stub domain after the 273,879-row/2.00% SFT holdout, 98's measured .excl cache) and code_keep_p1_dc 2.627B (filtered-Stack keep set) = 7.52B unique at ~3 epochs. Single-epoch/small: natural L2 12% (fb's explicit .12 supersedes the earlier <=10% line; flagged), math 8.6%, English 3%; CoT 3% at epochs 3. Total draws: stub 14.04B / keep_p1 7.878B / L2 3.78B / math 2.472B / cot 0.96B / en_c4 0.87B = 30.00B. Anneal = stub 45 + keep_p1 25 + L2 18 + cot 5 + math 5 + en_c4 2: prompt/spec->body shapes are 70% of the final 3B. keep_p1 main is 0.264, not the 0.30 fb first named: 0.30 main + 0.25 anneal draws 8.85B > the 3*2.627B=7.881B measured cap, and her anneal reallocation summed to .95; 0.264 is the largest main share the cap allows at anneal .25 (7.878/7.881B, 99.97%), L2 is her explicit .12/.18, and the remaining .036 main goes to math (.05->.086; cot at .05 main over-draws its own 1.2B cap). EPOCH CAP PREMISE VERIFIED IN CODE: train.py:2839 want per phase, train.py:2841 cap=int(len(pool)*epochs)-used, used accumulates across both phases, so the cap binds TOTAL draw -- pool*epochs. STUB CACHE PREREQUISITE: 98 built the holdout-excluded cache tokens_code_ultra_l3_stub_dc.excl56d12083dc30bdf2.pt (4,894,050,865 packed tokens; .srcfp 12ec3cd220b8fe13|exclude=56d12083dc30bdf2:273879; sha256 9d649f2cfa70df24), but a CPU dry read proved train.py:2135 _domain_cache_path resolves ONLY tokens_<domain>.pt with no mix override, so without the de-118 loader change this mix would read the FULL stub cache and silently train on the SFT holdout. The 'cache_exclude' field in the stub entry is the drafted contract (de-118): path gains .excl<id> and same_source matches the fp prefix of the composite .srcfp. Until de-118 merges this mix is non-launchable and launch_gate names the stub; that refusal is intended."
+}

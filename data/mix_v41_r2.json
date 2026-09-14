@@ -1,0 +1,86 @@
+{
+ "total_tokens": 30000000000,
+ "domains": {
+  "code_ultra_l2_dc": {
+   "weight": 0.5,
+   "epochs": 1,
+   "anneal": 0.3,
+   "fingerprint": "adf2ff20698dae8a",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_ultra_l2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=15340876449"
+  },
+  "code_py_starcoder_dc": {
+   "weight": 0.13,
+   "epochs": 1,
+   "anneal": 0.115,
+   "fingerprint": "390a13a56b6472b3",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_py_starcoder_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=7948925654"
+  },
+  "math_owm_stage2_dc": {
+   "weight": 0.08,
+   "epochs": 1,
+   "anneal": 0.08,
+   "fingerprint": "4b1469bfe4667706",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_math_owm_stage2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=5857969755"
+  },
+  "code_keep_p1_dc": {
+   "weight": 0.03,
+   "epochs": 1,
+   "anneal": 0.02,
+   "fingerprint": "d7b4f3a09c5707b0",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_keep_p1_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=2626977570"
+  },
+  "en_c4_stage2_dc": {
+   "weight": 0.045,
+   "epochs": 1,
+   "anneal": 0.03,
+   "fingerprint": "c59c2e4227d875ec",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_en_c4_stage2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=1985211248"
+  },
+  "cot_dc": {
+   "weight": 0.04,
+   "epochs": 3,
+   "anneal": 0.039,
+   "fingerprint": "0d9f495913438657",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_cot_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=399994717. DRAFT CONSTRAINT (ae-8): 5% main weight was requested but is infeasible at the epochs<=3 cap -- main draw alone is 0.05*27B=1.35B > 3*0.39999B=1.20B cap; required epochs = ceil((0.05*27 + anneal*3)/0.39999) = 4 even at anneal 0. This draft uses 4% main + 0.039 anneal = 1.08B + 0.117B = 1.197B <= the 1.19998B 3-epoch pool (anneal 0.04 would over-draw the exact cap by 15,849 tokens and trigger silent capping in build_mix, so it is 0.039). Raising cot to 5% needs epochs 4 (forbidden by the cap ruling) or >=0.15B additional decontaminated CoT supply."
+  },
+  "code_py_rp1t_dc": {
+   "weight": 0.01,
+   "epochs": 1,
+   "anneal": 0.011,
+   "fingerprint": "af4988f92dea1261",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_py_rp1t_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=379600071"
+  },
+  "code_ultra_l3_noexec_dc": {
+   "weight": 0.12,
+   "epochs": 1,
+   "anneal": 0.20,
+   "fingerprint": "63a3b0e64b97e589",
+   "epochs_pool_measured": true,
+   "epochs_pool_source": "full-load of tokens_code_ultra_l3_noexec_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint 63a3b0e64b97e589); measured_pool_tokens=26697332099"
+  },
+  "code_ultra_l3_stub_dc": {
+   "weight": 0.04,
+   "epochs": 1,
+   "anneal": 0.2,
+   "fingerprint": "UNBUILT_TODO_0E8",
+   "epochs_pool_measured": false,
+   "epochs_pool_source": "UNBUILT placeholder (0e-8): L3 reshaped to stub + docstring -> body. No data/corpus dir, no cache, no fingerprint yet. Launch gates (train.py _assert_mix_domains and scripts/launch_gate.py gate_corpora/gate_epochs_measured) are expected to FAIL on this domain until 0e-8 lands shards+stamp+measured cache; that refusal is the intended guard, not something to waive. Required supply at this draft: 0.04*27B main + 0.20*3B anneal = 1.68B tokens at epochs 1; 0e-8's source is the same ~26.7B L3 aggregate, so the supply exists (fb 2026-09-12)."
+  },
+  "code_doctest_gen": {
+   "weight": 0.005,
+   "epochs": 3,
+   "anneal": 0.005,
+   "fingerprint": "UNBUILT_TODO_DE115",
+   "epochs_pool_measured": false,
+   "epochs_pool_source": "UNBUILT placeholder (de-115): generated doctest-bearing complete functions, a doctest-FORMAT SLICE, not a corpus -- target supply 30-60M tokens. No data/corpus dir, no cache, no fingerprint yet; launch gates are expected to FAIL on this domain until de-115 lands shards+stamp+measured cache. Weight is 0.5% main + 0.5% anneal (fb correction 2026-09-12, was 4%/13.5% which needed 1.485B, ~25-50x the planned supply): draw = 0.005*27B + 0.005*3B = 0.150B, which at epochs 3 requires a >=50M-token pool -- de-115 lands at the top of its 30-60M target band; if it lands below 50M, either weight or epochs must fall (0.5% is already below the 'few percent' framing, so this draft takes the supply as the binding constraint rather than inventing corpus de-115 does not produce)."
+  }
+ },
+ "_comment": "DRAFT ROUND-2 MIX (ae-8, fb order 2026-09-12), NOT a launch file. Same 30B budget as data/mix_v41_gate.json (main 27B / anneal 3B, anneal_frac 0.10) and the same eight decontaminated domains, plus TWO PLACEHOLDER DOMAINS that are unbuilt and intentionally fail the launch gates until 0e-8 (code_ultra_l3_stub_dc) and de-115 (code_doctest_gen) land. Changes vs the gate mix: (1) code_ultra_l3_noexec_dc main weight 0.30 -> 0.12 (anneal 0.40 -> 0.20): step12000 generations re-declare the target function, matching the L3 problem->solution shape (96.3% of L3 docs, facts/data_quality.json#dq.func_shape.code_ultra_l3_noexec_dc), so 12% main already covers the form; the freed main share goes to raw open-body code L2 0.45 -> 0.48 and starcoder 0.07 -> 0.115, within measured one-epoch supply (L2 draws 13.71B of 15.341B pool incl anneal; starcoder 3.405B of 7.949B). (2) cot_dc 0.015 -> 0.04 main (anneal 0.07 -> 0.039): the requested 5% is infeasible at epochs<=3, see the domain field for the arithmetic; 4%/0.039 fills the 3-epoch cap to within 3M tokens. (3) placeholder shaping after fb correction 2026-09-12: code_ultra_l3_stub_dc at 0.04 main / 0.20 anneal (supply backed by the ~26.7B L3 source, 1.68B draw); code_doctest_gen is a doctest-FORMAT SLICE with de-115 target supply only 30-60M tokens, so it sits at 0.005 main / 0.005 anneal with epochs 3 (0.150B draw, needs a >=50M pool -- the top of de-115's target band), not 4%/13.5% which would require 1.485B (25-50x the planned supply). The 0.035 main freed moved to L2 (0.48->0.50) and starcoder (0.115->0.13); the 0.130 anneal freed moved to L2 (.25->.30), L3-stub (.135->.20) and starcoder (.10->.115). Anneal still tilts to prompt->body shapes (L3 20 + stub 20 + doctest 0.5). Main composition: code 83.5% (L2 50 / starcoder 13 / L3 12 / stub 4 / keep_p1 3 / doctest 0.5 / rp1t 1), math 8%, English 4.5%, CoT 4%. Anneal composition: L2 30 / L3 20 / stub 20 / starcoder 11.5 / math 8 / CoT 3.9 / en_c4 3 / keep_p1 2 / rp1t 1.1 / doctest 0.5. Every built domain's main+anneal draw is <= its measured pool x epochs (see PR supply table). weights sum 1.00000; anneal sums 1.00000. NO LAUNCH: the placeholders make this mix unlaunchable until both builds land and their TODO fingerprints are replaced by measured fp_dir values from decontaminated aggregates with gate-vocab caches."
+}

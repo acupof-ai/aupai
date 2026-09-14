@@ -45,6 +45,11 @@ ALLOWED = [
     "data/train_cite_baseline.json",
     "data/raw/*_manifest.txt",
     "data/sft/*.py",
+    # Gate exclude manifests (phi_l3_stub_holdout_manifest / <domain>.gate_exclude_manifest):
+    # one row per excluded doc (url + content sha1), kilobytes, consumed by
+    # scripts/pretokenize_domains.py --exclude-manifest. Text contract, not corpus bytes.
+    "data/sft/*.gate_exclude_manifest.jsonl",
+    "data/sft/phi_l3_stub_holdout_manifest.jsonl",
     "data/t2s_table.json",
     "data/REBUILD_PLAN_*.md",
     "data/rl/*",
@@ -662,11 +667,20 @@ def main():
     # cheap early-out -- an up-to-date tree needs no diff at all.
     _clash = _main_touched_staged(_staged_all) if behind and not _ledger_only and not merging else []
     if _clash and os.environ.get("AUPAI_BEHIND_MAIN_OK") != "1":
+        # THE STAGED-OVERLAP CASE CANNOT USE A BARE `git merge`: it refuses with "your local
+        # changes would be overwritten", git stash is forbidden (shared stack), and the only move
+        # the old message printed was that bare merge -- the exact loop de-113 measured. Point at
+        # the flag-free escape for code: merge_main.sh's staged carry commits the index to
+        # refs/wip/<branch>, clears it, merges (exempt here), and three-way restores the work.
         print(
             f"REFUSING: main has changed {len(_clash)} file(s) this commit stages, and this "
             f"tree is {behind} commit(s) behind it: {', '.join(_clash[:4])}\n"
-            f"Merge first:\n"
-            f"  git merge --no-edit main\n"
+            f"Get current first:\n"
+            f"  - nothing staged:      git merge --no-edit main\n"
+            f"  - staged code here:    scripts/merge_main.sh <branch>   # carries the staged\n"
+            f"                         index through the merge with no flag (refs/wip carry),\n"
+            f"                         then restores it; a bare 'git merge' here refuses with\n"
+            f"                         'local changes would be overwritten' and stash is banned\n"
             f"Committing here writes on top of code main has already moved past, and "
             f"any check you ran said nothing about which version it tested.\n"
             f"Being behind main is NOT itself a refusal: main moving on files you do not "
@@ -1020,6 +1034,33 @@ def main():
         # sleeping hang not TIMEOUT, an empty solution kept) would ship rows silently. The
         # selftest is the known-answer PASS/FAIL/TIMEOUT/empty world.
         "datagen/ud_solution_exec.py",
+        # Gate-mix 13-gram contamination audit vs HumanEval/MBPP (ae-6). Registered because a
+        # false-negative detector silently lets the gate test into the training mix: the first
+        # version guarded on len(gram_set) < N and missed a 15-token doc that does span a
+        # 13-gram. The selftest pins planted solution+prompt grams as hits.
+        "scripts/audit_gate_contamination.py",
+        # The production 13-gram DROP module shared by the five non-Ultra filter runs and 0e's
+        # UltraData aggregate (ae-7). Registered because a false negative ships a gate answer
+        # into the mix and a false positive silently drops rows: the selftest pins planted
+        # solution-only, prompt(docstring)-only and test-only rows as hits and unrelated code,
+        # short and empty rows as keeps, and asserts the ONE normaliser is symmetric and the
+        # split is whitespace (a literal " ".split re-introduced an empty token on a whitespace
+        # run and broke the word-token assertion). Runs synthetic-only here; the real
+        # HumanEval/55 control runs where the gitignored benchmark files exist.
+        "filters/decontam_ngram.py",
+        # The ae-7 _dc production writer. Registered because its stamp is what train.py
+        # _assert_mix_domains checks at launch: the first stamps omitted "fingerprint" and
+        # the launch would have refused every _dc domain. The selftest builds a real gate +
+        # corpus, runs filter_domain, asserts the drops, and runs the ACTUAL train.py launch
+        # guard on the stamped output (accept, then refuse after a stamp mutation).
+        "scripts/filter_gate_domains.py",
+        # The 23:00Z L3-shortfall reweight (fb ruling 2026-09-11). Registered because the
+        # whole risk is over-reading L3/L2 supply: the selftest pins full-L3 no-op,
+        # zero-L3 and 6B cases on known answers, and the script refuses --apply if any
+        # non-cot scheduled main+anneal exceeds supply. A sign error in the anneal shift
+        # (the first version scheduled 17.4B of a 16.57B L2) would rewrite the launch
+        # mix silently without the known-answer cases.
+        "scripts/reweight_l3_shortfall.py",
         "scripts/corpus_snapshot.py",
         # The exact token counter behind cs.code_rp1t_landed and cs.code_dedup08_landed.
         # Registered because it is the instrument that CORRECTS a measurement-basis defect:
@@ -1352,6 +1393,15 @@ def main():
         # asserts they stay >0.02 apart so a relabel remains detectable; another asserts that
         # pairing at matched STEPS instead of matched tokens reverses the sign.
         "eval/equal_token_gap.py",
+        # Stage-2 paired sampling (66, 2026-09-14). paired_bootstrap.py carries --selftest:
+        # its refusal is the pairing contract -- preds whose per-task sample_idx sets differ
+        # (or one file greedy n=1, the other n=10) must be refused, not yield a mislabeled CI;
+        # the selftest builds missing-si / shifted-si / greedy-vs-n worlds. test_sampling_paired
+        # takes no arguments and ignores --selftest: it proves eval/sampling.py's per-
+        # (task_id, sample_idx) reseed aligns T/C first-draws after differing sample-0 lengths,
+        # and that the old reseed-once scheme misaligns si>=1. Both CPU-only, fake models.
+        "eval/paired_bootstrap.py",
+        "eval/test_sampling_paired.py",
         # The rate printed on a val_every boundary covers the validation pass, so it is not a
         # training rate. Registered because reading two of them as a ratio does NOT cancel:
         # validation costs two arms different absolute amounts, and sampling steps
@@ -2539,6 +2589,8 @@ def main():
         # without touching harness.py. 0.5s. (harness.py itself is deliberately absent from this
         # map: it is excluded from the hook's selftests for cost, recorded at check_selftests_are_gated.)
         "scripts/board.py": {"scripts/test_integration_tree_guard.py"},
+        # Stage-2 sampler (66): editing the shared RNG contract must run the pairing test.
+        "eval/sampling.py": {"eval/test_sampling_paired.py"},
     }
     _subject_tests = set()
     for _subj in staged("AM"):
@@ -2896,6 +2948,36 @@ def _selftest():
         rc, out = run(d, "pre-commit", {"GIT_REFLOG_ACTION": "merge e1"})
         if "REFUSING: this is the integration tree" in out:
             fails.append("world 4: GIT_REFLOG_ACTION=merge was refused")
+
+        # WORLD 4b (gate data/ allow-list, must ALLOW the manifest / REFUSE other data):
+        # the gate exclude manifests admitted in ALLOWED (data/sft/*.gate_exclude_manifest.jsonl,
+        # PR #325) are small text contracts consumed by pretokenize_domains --exclude-manifest,
+        # not corpus blobs; the fnmatch glob must let them through while an unlisted data/*.jsonl
+        # is still refused. Runs in the non-main SIBLING worktree so the integration-tree guard
+        # passes and the blob+allow-list gate is what answers. Both files are one byte, under MAX.
+        sib = os.path.join(d, "..", os.path.basename(d) + "_sib")
+
+        def _sib_commit(relpath, hookname):
+            full = os.path.join(sib, relpath)
+            os.makedirs(os.path.dirname(full), exist_ok=True)
+            with open(full, "w") as fh:
+                fh.write("x\n")
+            subprocess.run(["git", "add", relpath], cwd=sib, capture_output=True, env=clean)
+            return run(sib, hookname, {})
+
+        rc_ok, out_ok = _sib_commit(
+            os.path.join("data", "sft", "code_x.gate_exclude_manifest.jsonl"),
+            "pre-commit-allow-manifest")
+        if rc_ok != 0 or "new data/ path not in the allow-list" in out_ok:
+            fails.append("world 4b: data/sft/*.gate_exclude_manifest.jsonl was refused though "
+                         f"ALLOWED admits it (rc={rc_ok}, {out_ok[-160:]})")
+
+        rc_bad, out_bad = _sib_commit(
+            os.path.join("data", "sft", "random_other.jsonl"),
+            "pre-commit-refuse-data")
+        if rc_bad == 0 or "new data/ path not in the allow-list" not in out_bad:
+            fails.append("world 4b: an unlisted data/sft/random_other.jsonl was NOT refused by "
+                         "the data/ allow-list -- the manifest glob must stay narrow")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
