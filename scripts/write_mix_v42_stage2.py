@@ -174,7 +174,8 @@ def build_mixes(cur):
             w, p = TB_W, 4  # fb pinned 0.2999; 0.29988 also ints to 7,888 but 0.2999 is the ruling
             domains[TB_NAME] = domain_entry(
                 TB_NAME, tb_rows, 0, 4, w, p,
-                "TREATMENT: rebuilt Claude Python textbook (0e 1938-row keep pool); exactly 4 "
+                "TREATMENT: rebuilt Claude Python textbook (0e keep list; 1,938 source docs, "
+                "1,972-row trainable pool after the 103-row val holdout); exactly 4 "
                 "trainable-pool epochs (7,888 rows), starts row 0 (no r3 cursor)", None)
         check_sum = tb_rows if arm == "T" else 0
         for name, _prop in props:
