@@ -4255,6 +4255,36 @@ def _broken_future_started():
     return d
 
 
+def _broken_stale_expected_end():
+    """A running row UNDER the 24h default but PAST its declared expected_end_utc must FAIL --
+    the deadline field must bind, not merely decorate the row. The positive half (a 30h-old
+    long run whose expected_end is still ahead must PASS) is asserted here before returning the
+    negative world, since the check's own default would otherwise let the long run fail.
+
+    Built with the real exp.py, then dated by hand in UTC.
+    """
+    def world(name, start_ago_h, end_offset_h):
+        d = _tmp_repo()
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, "start",
+             "--name", name, "--cmd", "x"],
+            check=True, capture_output=True)
+        p = os.path.join(d, "runs", "experiments.jsonl")
+        rs = [json.loads(x) for x in open(p, encoding="utf-8") if x.strip()]
+        assert rs and rs[0]["status"] == "running"
+        start_t = time.time() - start_ago_h * 3600
+        rs[0]["started"] = time.strftime("%Y-%m-%d %H:%M", time.gmtime(start_t))
+        rs[0]["expected_end_utc"] = time.strftime(
+            "%Y-%m-%d %H:%M", time.gmtime(start_t + end_offset_h * 3600))
+        open(p, "w").write("".join(json.dumps(x) + "\n" for x in rs))
+        return d
+
+    inside = world("long_ok_run", 30, 60)
+    state, _ = check_no_stale_running(inside)
+    assert state == PASS, f"a run inside its expected_end must PASS, got {state}"
+    return world("past_end_run", 10, 2)
+
+
 def check_mix_not_unfiltered(root):
     doms, err = read_mix(os.path.join(root, cfg_default("mix")))
     if err:
@@ -7307,6 +7337,27 @@ def _broken_merge_keeps_parent_paths():
     return w
 
 
+def _stale_deadline_h(r):
+    """Hours a running row may stay open: its declared expected_end_utc (as an offset from the
+    row's own start) if present and readable, else None meaning the _STALE_RUNNING_H default.
+
+    Both ends are taken as UTC epochs and differenced, so the allowance is zone-independent --
+    a long pretrain (~48h, v41_r3_0914 38K steps) records an end past its ETA and is not falsely
+    called stale at 24h, while a row whose expected_end has passed still FAILs. A missing or
+    unreadable expected_end falls back to the default rather than silently disabling the check.
+    """
+    e = r.get("expected_end_utc")
+    if not e:
+        return None
+    try:
+        import calendar
+        start_t = calendar.timegm(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
+        end_t = calendar.timegm(time.strptime(str(e), "%Y-%m-%d %H:%M"))
+    except Exception:
+        return None
+    return (end_t - start_t) / 3600
+
+
 def check_no_stale_running(root):
     evs = _exp_events(root)  # folded: an appended close must clear its start row
     if evs is None:
@@ -7327,11 +7378,15 @@ def check_no_stale_running(root):
                 f"row {r.get('name', '?')!r} has a future `started`: {r.get('started')!r} "
                 f"({-age_h:.0f}h in the future) -- its age cannot be determined"
             )
-        if age_h > _STALE_RUNNING_H:
+        deadline_h = _stale_deadline_h(r)
+        if deadline_h is not None and age_h > deadline_h:
+            rows.append(
+                f"{r.get('name', '?')} {age_h:.0f}h past expected_end {r.get('expected_end_utc')!r}")
+        elif deadline_h is None and age_h > _STALE_RUNNING_H:
             rows.append(f"{r.get('name', '?')} {age_h:.0f}h")
     if rows:
         return FAIL, f"{len(rows)} killed mid-run and never closed: {', '.join(rows[:6])}"
-    return PASS, f"{len(evs)} folded row(s) read, none 'running' for over a day"
+    return PASS, f"{len(evs)} folded row(s) read, none past their running deadline"
 
 
 def check_no_ghost_running(root):
@@ -17928,10 +17983,17 @@ CHECKS = [
     ),
     (
         "no_stale_running",
-        "no experiments.jsonl row has been 'running' for over 24h",
+        "no experiments.jsonl row stays 'running' past its deadline (24h, or expected_end_utc if set)",
         "a killed job wrote its checkpoint, never ran its eval, and left the row open",
         check_no_stale_running,
         _broken_stale_run,
+    ),
+    (
+        "no_stale_expected_end",
+        "a running row with expected_end_utc FAILs once that end passes, even inside 24h",
+        "a declared deadline that does not bind leaves a finished run open with no stale signal",
+        check_no_stale_running,
+        _broken_stale_expected_end,
     ),
     (
         "no_future_started",
@@ -18609,7 +18671,7 @@ EVIDENCE = {
     "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
     "merge_keeps_parent_paths": "repo",
-    "no_stale_running": "repo", "no_future_started": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
+    "no_stale_running": "repo", "no_stale_expected_end": "repo", "no_future_started": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
     "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
     "review_pairs_match_roster": "repo",
     "peer_stalled": "repo",
