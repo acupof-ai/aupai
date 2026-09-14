@@ -8,6 +8,7 @@ import os
 import random
 import re
 import sys
+import time
 from collections import defaultdict
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -16,7 +17,7 @@ sys.path.insert(0, _HERE)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "filters"))
 
-from decontam_ngram import Decontaminator  # noqa: E402
+from decontam_ngram import HUMANEVAL, MBPP, Decontaminator, decontam_fp  # noqa: E402,I001
 
 DATA = os.path.join(ROOT, "data")
 SRC_DIR = os.path.join(DATA, "corpus", "textbooks_claude_v41")
@@ -24,8 +25,32 @@ OUT_DIR = os.path.join(DATA, "corpus", "textbooks_claude_v41_vetted")
 TOK = os.path.join(DATA, "tokenizer.json")
 HANDREAD = os.path.join(ROOT, "runs", "textbooks_claude_handread.jsonl")
 MIN_TOK, MAX_TOK = 800, 6000
-EXEC_TIMEOUT = 10
+EXEC_TIMEOUT = 30
 SEED = 20260913
+# Sandbox teaching profile (fb 2026-09-14): chapters may use threads, spawn
+# multiprocessing, python subprocesses, /tmp writes and loopback/AF_UNIX; the
+# network namespace still has no external route. NPROC and CPU caps are raised
+# off the 64-process / 5-CPU-second limits that killed legitimate teaching
+# chapters (a pure-python Ed25519 comparison deterministically needs ~10 wall
+# seconds); the wall timeout still bounds a runaway.
+SANDBOX_PROFILE = "teaching"
+SANDBOX_NPROC = 4096
+SANDBOX_CPU_SECS = 60
+# A host failure to even START the sandbox: setpriv could not exec the
+# interpreter (fork/exec EAGAIN under a full machine). Retry with backoff
+# instead of dropping; if it still cannot start, abort the whole run non-zero so
+# a capacity outage can never overwrite the vetted directory (fb 2026-09-14:
+# 3,543 rows were mis-dropped this way). NOTE: a bare "unshare: sigprocmask
+# unblock failed" is NOT this class — it is the CPU rlimit killing the chapter
+# (the self-check while-true case produces the identical line), so it must stay
+# a chapter result, not an infra retry.
+INFRA_MAX_TRIES = 3
+INFRA_BACKOFF = 5
+# Supersede rule (fb 2026-09-14): for one (seed_topic,lens) key, the longest
+# exec-passing version at/above this word count wins; shorter duplicates of that
+# key drop as "superseded" (a first-shipped-short dedup bug; genA_0020 rows
+# carry an explicit supersedes field).
+MIN_SUPERSEDE_WORDS = 1500
 NEAR_THRESHOLD = 0.8
 GROUP_NEAR_THRESHOLD = 0.5
 SHINGLE = 5
@@ -56,9 +81,7 @@ def truncated(text):
         return True
     if lines[-1].lstrip().startswith('#'):
         return True
-    if text.count('```') % 2:
-        return True
-    return False
+    return bool(text.count('```') % 2)
 
 
 def first_error(err):
@@ -71,11 +94,30 @@ def first_error(err):
 _OS_NET = ("mkfifo", "socket", "websocket", "bind(", "listen(", "connect(", "os.fork",
            "subprocess", "requests.", "http")
 
+# Sandbox refusals, not chapter defects. The chroot/namespaces have no network,
+# RLIMIT_NPROC=64 (thread/process chapters: "can't start new thread",
+# BlockingIOError on fork), a 2GB AS cap, a tiny /dev, and only stdlib, so a
+# chapter that spins threads, forks, imports a third-party module or resolves a
+# host fails because of the environment. Classify these from the error text
+# directly; requiring an os/network token in the source let threading-only
+# chapters be miscounted as code (536/698 "code" fails on 2026-09-14 were this).
+_ENV_ERR = (
+    "TIMEOUT", "Operation not permitted", "start new thread",
+    "unable to start watchdog thread", "Resource temporarily unavailable",
+    "Cannot allocate memory", "Memory allocation still failed",
+    "Too many open files", "Name or service not known", "gaierror",
+    "Connection refused", "Network is unreachable",
+)
+_ENV_PREFIX = ("ModuleNotFoundError:", "ImportError:")  # third-party absent from chroot
+
 
 def fail_class(code, err):
     joined = "\n".join(code)
-    if ("TIMEOUT" in err or "PermissionError" in err
-            or "Operation not permitted" in err) and any(t in joined for t in _OS_NET):
+    if any(t in err for t in _ENV_ERR):
+        return "env_unsandboxable"
+    if any(err.lstrip().startswith(p) for p in _ENV_PREFIX):
+        return "env_unsandboxable"
+    if ("PermissionError" in err) and any(t in joined for t in _OS_NET):
         return "env_unsandboxable"
     if "header.payload" in joined and "is not defined" in err:
         return "prose_in_python_fence"
@@ -89,11 +131,37 @@ def add_fail(failures, r, source, gate, extra=None):
     failures.append(rec)
 
 
+class InfraError(RuntimeError):
+    """The sandbox itself could not start (host fork/exec EAGAIN), not a chapter result."""
+
+
+# Text that proves the failure was OUTSIDE the chapter: the sandbox could not
+# exec the interpreter at all. "setpriv: failed to execute ... Resource
+# temporarily unavailable" is host fork/exec capacity. A bare "unshare:
+# sigprocmask unblock failed" is NOT here — it is the CPU rlimit killing a
+# chapter that ran too long and must remain its own result.
+_INFRA_ERR = ("failed to execute", "setpriv: failed")
+
+
+def is_infra_error(err):
+    return any(t in err for t in _INFRA_ERR)
+
 def run_chapter(code):
     from sandbox_exec import run_sandboxed
     program = "\n\n".join(code)
-    rc, _out, err = run_sandboxed(program, timeout=EXEC_TIMEOUT)
-    return rc == 0, ("" if rc == 0 else first_error(err))
+    last = ""
+    for attempt in range(INFRA_MAX_TRIES):
+        rc, _out, err = run_sandboxed(
+            program, timeout=EXEC_TIMEOUT,
+            profile=SANDBOX_PROFILE, nproc=SANDBOX_NPROC,
+            cpu_secs=SANDBOX_CPU_SECS, loopback=True)
+        if rc == 0:
+            return True, ""
+        last = first_error(err)
+        if not is_infra_error(last):
+            return False, last
+        time.sleep(INFRA_BACKOFF * (attempt + 1))
+    raise InfraError(f"sandbox could not start after {INFRA_MAX_TRIES} tries: {last}")
 
 
 def prose_norm(text):
@@ -138,10 +206,12 @@ def main():
     n_in = len(rows)
     print(f"[load] {n_in} chapters from {len(files)} file(s)", flush=True)
 
-    stats = {"rows_in": n_in, "exec_pass": 0, "exec_fail": 0, "exec_fail_class": {},
+    stats = {"rows_in": n_in, "decontam_fp": decontam_fp(HUMANEVAL, MBPP),
+             "exec_pass": 0, "exec_fail": 0, "exec_fail_class": {},
              "exec_skipped_blocks": 0,
              "decon_drop": 0, "exact_dup_drop": 0, "near_dup_drop": 0,
              "group_near_dup_drop": 0,
+             "superseded_drop": 0,
              "length_drop": 0, "no_code_blocks": 0, "rows_out": 0, "tokens_out": 0}
     stats_by_source = {}
 
@@ -149,19 +219,20 @@ def main():
         s = stats_by_source.setdefault(source, {
             "rows_in": 0, "exec_pass": 0, "exec_fail": 0, "exec_fail_class": {},
             "decon_drop": 0, "exact_dup_drop": 0, "near_dup_drop": 0,
-            "group_near_dup_drop": 0, "length_drop": 0, "no_code_blocks": 0,
+            "group_near_dup_drop": 0, "superseded_drop": 0,
+            "length_drop": 0, "no_code_blocks": 0,
             "rows_out": 0, "tokens_out": 0})
         return s
 
     failures = []
 
     seen_exact = set()
-    kept = []
-    kept_shingles = []
-    index = defaultdict(list)
-    group_index = defaultdict(list)
+    passed = []   # (r, ntok, source, exact, sh) rows that clear every hard gate
 
-    for r in rows:
+    # ---- Stage A: per-row hard gates (trunc/length/decon/exact/exec) ----
+    for idx, r in enumerate(rows):
+        if idx % 250 == 0:
+            print(f"[progress] {idx}/{n_in} chapters gated", flush=True)
         text = r.get("text") or ""
         source = r.get("source", "unknown")
         ss = _src(source)
@@ -200,7 +271,14 @@ def main():
         if args.no_exec:
             ok, err = True, ""
         else:
-            ok, err = run_chapter(code)
+            try:
+                ok, err = run_chapter(code)
+            except InfraError as e:
+                # Host capacity failure. Abort BEFORE writing anything: a partial
+                # vetted dir from a sandbox outage must never replace the last good one.
+                print(f"[abort] infrastructure failure at row {idx} ({source}): {e}",
+                      file=sys.stderr, flush=True)
+                sys.exit(3)
         if not ok:
             stats["exec_fail"] += 1
             ss["exec_fail"] += 1
@@ -211,11 +289,46 @@ def main():
             continue
         stats["exec_pass"] += 1
         ss["exec_pass"] += 1
+        seen_exact.add(exact)
+        passed.append((r, ntok, source, exact, shingles(text)))
 
-        sh = shingles(text)
+    # ---- Stage B: supersede winners, then near/group duplicates ----
+    # Pick, per (source, seed_topic, lens), the LONGEST exec-passing version at
+    # or above MIN_SUPERSEDE_WORDS. Rows with a null seed_topic have no key and
+    # are never superseded. Tie-break: longer words, then later source-file order
+    # (the superseding delivery), deterministic.
+    stats["superseded_drop"] = 0
+    best = {}   # key -> (words, stage-order index into passed)
+    for k, (r, _ntok2, src2, _ex, _sh) in enumerate(passed):
+        seed = r.get("seed_topic")
+        if not seed:
+            continue
+        key = (src2, seed, r.get("lens"))
+        words = len((r.get("text") or "").split())
+        cur = best.get(key)
+        if cur is None or (words, k) > (cur[0], cur[1]):
+            best[key] = (words, k)
+    # Only keys whose longest passing version clears the word floor retire
+    # shorter versions; a key with no >=floor version is left untouched.
+    winning = {key: idx for key, (words, idx) in best.items()
+               if words >= MIN_SUPERSEDE_WORDS}
+
+    kept = []
+    kept_shingles = []
+    index = defaultdict(list)
+    group_index = defaultdict(list)
+    for k, (r, ntok, source, _exact, sh) in enumerate(passed):
+        ss = _src(source)
+        seed = r.get("seed_topic")
+        key = (source, seed, r.get("lens")) if seed else None
+        if key in winning and k != winning[key]:
+            stats["superseded_drop"] += 1
+            ss["superseded_drop"] = ss.get("superseded_drop", 0) + 1
+            add_fail(failures, r, source, "superseded",
+                     {"seed_topic": seed, "lens": r.get("lens")})
+            continue
         cands = {j for s in sh for j in index.get(s, ())}
-        near = any(jaccard(sh, kept_shingles[j]) >= NEAR_THRESHOLD for j in cands)
-        if near:
+        if any(jaccard(sh, kept_shingles[j]) >= NEAR_THRESHOLD for j in cands):
             stats["near_dup_drop"] += 1
             ss["near_dup_drop"] += 1
             add_fail(failures, r, source, "near_dup")
@@ -223,15 +336,13 @@ def main():
 
         group = r.get("seed_topic")
         gcands = {j for s in sh for j in group_index.get((group, s), ())} if group else set()
-        gnear = any(jaccard(sh, kept_shingles[j]) >= GROUP_NEAR_THRESHOLD for j in gcands)
-        if gnear:
+        if any(jaccard(sh, kept_shingles[j]) >= GROUP_NEAR_THRESHOLD for j in gcands):
             stats["group_near_dup_drop"] += 1
             ss["group_near_dup_drop"] += 1
             add_fail(failures, r, source, "group_near_dup", {"seed_topic": group})
             continue
 
         j = len(kept)
-        seen_exact.add(exact)
         for s in sh:
             index[s].append(j)
             if group:
@@ -241,26 +352,75 @@ def main():
 
     os.makedirs(args.out, exist_ok=True)
     by_source = defaultdict(list)
-    for r, ntok, source in kept:
+    # Normalise the row's own n field to len(text)//4 on EVERY kept row. Some
+    # delivered batches wrote a chapter id / 0 into n; the vetted output is the
+    # stage-2 input and must carry the spec value so a downstream sum of n is a
+    # character-derived token proxy, not corrupted source data.
+    n_recomputed = 0
+    n_src_sum = defaultdict(int)
+    for r, _ntok, source in kept:
+        n_src_sum[source] += r.get("n", 0)
+        want = len(r.get("text") or "") // 4
+        if r.get("n") != want:
+            r["n"] = want
+            n_recomputed += 1
         by_source[source].append(r)
-        stats["tokens_out"] += ntok
-        ss = stats_by_source[source]
-        ss["rows_out"] += 1
-        ss["tokens_out"] += ntok
+    stats["n_recomputed_rows"] = n_recomputed
+    stats["n_field_sum_source_corrupted"] = sum(n_src_sum.values())
     for source, recs in by_source.items():
         path = os.path.join(args.out, f"{source}.jsonl")
         with open(path, "w", encoding="utf-8") as fh:
             for r in recs:
                 fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-    stats["rows_out"] = len(kept)
-    denom = stats["exec_pass"] + stats["exec_fail"]
-    stats["exec_pass_rate"] = round(stats["exec_pass"] / denom, 4) if denom else None
+    # Stats are recomputed from the files ON DISK after writing, so they describe
+    # the vetted directory itself. tokens = gate-tokenizer count (the real number
+    # to read); n_field_sum = sum of the normalised n (len(text)//4) on output;
+    # n_field_sum_source_corrupted keeps what the delivered source summed to.
+    disk = {}
+    for source in by_source:
+        path = os.path.join(args.out, f"{source}.jsonl")
+        dtok = dn = drows = 0
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                rr = json.loads(line)
+                dtok += len(tok.encode(rr.get("text") or "").ids)
+                dn += rr.get("n", 0)
+                drows += 1
+        disk[source] = {"rows": drows, "tokens": dtok, "n_field_sum": dn}
+    for source, d in disk.items():
+        ss = stats_by_source[source]
+        ss["rows_out"] = d["rows"]
+        ss["tokens_out"] = d["tokens"]
+        ss["n_field_sum"] = d["n_field_sum"]
+        ss["n_field_sum_source_corrupted"] = n_src_sum[source]
+    stats["rows_out"] = sum(d["rows"] for d in disk.values())
+    stats["tokens_out"] = sum(d["tokens"] for d in disk.values())
+    stats["n_field_sum"] = sum(d["n_field_sum"] for d in disk.values())
+    for ss in stats_by_source.values():
+        ss.setdefault("n_field_sum", 0)
+
+    env_total = stats["exec_fail_class"].get("env_unsandboxable", 0)
+    denom_all = stats["exec_pass"] + stats["exec_fail"]
+    # Code-only denominator: env_unsandboxable (thread/fork/network/third-party
+    # refusals from the chroot) are not chapter defects and must not fail a batch
+    # for writing code the sandbox cannot run. Keep the all-failures rate too so
+    # the two readings stay comparable and a sandbox regression is visible.
+    denom_code = stats["exec_pass"] + stats["exec_fail"] - env_total
+    stats["exec_pass_rate_all_failures"] = (
+        round(stats["exec_pass"] / denom_all, 4) if denom_all else None)
+    stats["exec_pass_rate"] = (
+        round(stats["exec_pass"] / denom_code, 4) if denom_code else None)
     stats["length_bounds_tokens"] = [MIN_TOK, MAX_TOK]
     stats["near_dup_jaccard"] = NEAR_THRESHOLD
     stats["group_near_dup_jaccard"] = GROUP_NEAR_THRESHOLD
     for ss in stats_by_source.values():
-        d = ss["exec_pass"] + ss["exec_fail"]
-        ss["exec_pass_rate"] = round(ss["exec_pass"] / d, 4) if d else None
+        env_s = ss["exec_fail_class"].get("env_unsandboxable", 0)
+        da = ss["exec_pass"] + ss["exec_fail"]
+        dc = da - env_s
+        ss["exec_pass_rate_all_failures"] = round(ss["exec_pass"] / da, 4) if da else None
+        ss["exec_pass_rate"] = round(ss["exec_pass"] / dc, 4) if dc else None
     stats["by_source"] = stats_by_source
 
     with open(os.path.join(args.out, "vet_textbooks_stats.json"), "w", encoding="utf-8") as fh:
@@ -273,15 +433,59 @@ def main():
     by_source_kept = defaultdict(list)
     for item in kept:
         by_source_kept[item[2]].append(item)
-    with open(args.handread, "w", encoding="utf-8") as fh:
-        for source in sorted(by_source_kept):
-            pool = by_source_kept[source]
-            sample = rng.sample(pool, min(args.handread_n, len(pool)))
-            for r, ntok, src in sample:
-                fh.write(json.dumps({"topic": r.get("topic"), "source": src,
-                                     "tokens": ntok, "text": r.get("text"),
-                                     "correctness_1_5": None, "pedagogy_1_5": None,
-                                     "reviewer_note": None}, ensure_ascii=False) + "\n")
+
+    # If a scored handread file already exists at args.handread, keep it and fold
+    # the scores into stats. Otherwise emit a fresh blank sample of handread_n
+    # per source.
+    handread_rows = []
+    if os.path.exists(args.handread):
+        with open(args.handread, encoding="utf-8") as fh:
+            handread_rows = [json.loads(l) for l in fh if l.strip()]
+    scored = [r for r in handread_rows
+              if r.get("correctness_1_5") is not None and r.get("pedagogy_1_5") is not None]
+    if not scored:
+        with open(args.handread, "w", encoding="utf-8") as fh:
+            for source in sorted(by_source_kept):
+                pool = by_source_kept[source]
+                sample = rng.sample(pool, min(args.handread_n, len(pool)))
+                for r, ntok, src in sample:
+                    fh.write(json.dumps({"topic": r.get("topic"), "source": src,
+                                         "tokens": ntok, "text": r.get("text"),
+                                         "correctness_1_5": None, "pedagogy_1_5": None,
+                                         "reviewer_note": None}, ensure_ascii=False) + "\n")
+    else:
+        def _mean(xs, k):
+            return round(sum(x[k] for x in xs) / len(xs), 3) if xs else None
+
+        hr = {"n": len(scored),
+              "correctness_mean": _mean(scored, "correctness_1_5"),
+              "pedagogy_mean": _mean(scored, "pedagogy_1_5"),
+              "bar": 4.0,
+              "by_source": {}}
+        for source in sorted({r.get("source") for r in scored}):
+            sub = [r for r in scored if r.get("source") == source]
+            sc = _mean(sub, "correctness_1_5")
+            sp = _mean(sub, "pedagogy_1_5")
+            hr["by_source"][source] = {
+                "n": len(sub),
+                "correctness_mean": sc,
+                "pedagogy_mean": sp,
+                "passes_bar": sc is not None and sp is not None and sc >= 4 and sp >= 4,
+            }
+        c = hr["correctness_mean"]
+        p = hr["pedagogy_mean"]
+        hr["overall_mean"] = round((c + p) / 2, 3)
+        # Certification is PER GENERATOR: every source with a sample must clear
+        # both axes. A pooled mean can hide one weak source (gen-A 3.9 under a
+        # 4.117 pooled correctness on 2026-09-13), so the overall flag is the
+        # conjunction of the per-source flags, not a test of the pooled mean.
+        hr["passes_bar"] = bool(hr["by_source"]) and all(
+            v["passes_bar"] for v in hr["by_source"].values()
+        )
+        stats["handread"] = hr
+        # rewrite stats now that handread is folded in
+        with open(os.path.join(args.out, "vet_textbooks_stats.json"), "w", encoding="utf-8") as fh:
+            json.dump(stats, fh, indent=2)
 
     print("VET_STATS " + json.dumps(stats), flush=True)
     print(f"[out] {len(kept)} chapters -> {args.out}; {len(failures)} failures logged; "
