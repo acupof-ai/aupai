@@ -4,11 +4,19 @@ fb order 2026-09-14).
 E0/ET/EC checkpoints are scored on HumanEval and MBPP with n=10 samples at
 temperature 0.2 per task. To make a paired T-vs-C comparison valid, the two
 checkpoints must draw the SAME random choices for the same task_id and sample
-index. We force that deterministically: before drawing the n samples for a
-task we reseed torch's CPU/CUDA RNG with a stable hash of the task_id. Two
-runs over the same task_id (any checkpoint, either benchmark scorer) then walk
-the identical random stream sample-by-sample. This is per-task pairing, not
-HE-to-MBPP pairing (those are different task spaces).
+index. We force that deterministically: each of the n draws for a task reseeds
+torch's CPU/CUDA RNG with a stable hash of (task_id, sample_idx). Two runs over
+the same (task_id, si) then walk the identical random stream step-for-step.
+
+Reseed PER SAMPLE, not once per task: T and C are different checkpoints, so
+sample 0 almost always emits a different number of tokens and consumes a
+different number of multinomial scalars; a single task-level seed leaves sample
+1's stream offset diverged between the two runs, and 9 of 10 draws would be
+unpaired (3b, pod-reproduced 2026-09-14). Each sample starts from a fresh
+seeded state in both runs, and one multinomial per step keeps the streams
+aligned regardless of differing logits or lengths.
+
+This is per-task pairing, not HE-to-MBPP pairing (different task spaces).
 
 Decoding stops at eos (tid 1) or max_new; benchmark-specific truncation and
 judgement are applied by the caller after sampling, identically for every
@@ -42,12 +50,12 @@ def sample_completions(model, tok, prompt_ids, task_id, n, temperature, max_new,
     base = torch.tensor([prompt_ids], device=dev)
     if temperature <= 0:
         return [_decode(tok, _greedy(model, base, max_new, seq_window), prompt_ids)] * n
-    seed = task_seed(task_id)
-    torch.manual_seed(seed)
-    if dev.type == "cuda":
-        torch.cuda.manual_seed_all(seed)
     out = []
-    for _ in range(n):
+    for si in range(n):
+        seed = task_seed(f"{task_id}:{si}")
+        torch.manual_seed(seed)
+        if dev.type == "cuda":
+            torch.cuda.manual_seed_all(seed)
         x = base
         for _step in range(max_new):
             logits = model(x[:, -seq_window:])[0][:, -1]
