@@ -1348,12 +1348,45 @@
    "value": "HumanEval sampled pass@1 on ckpt_format_sft_0909.pt (format SFT from ckpt_1.5b-a0.2b-e48_30b.milestone_keep_fb_step34000.pt): 1.68% (estimator sum(c/n)/164 = 2.75/164; 55 correct of 3,280 samples), n=20, temp 0.2, top_p 0.95, seed 1337. The greedy arm in the SAME run reproduces 3/164 = 1.83% with 72/164 empty -- the script's hard gate (expected 3/72) passed, so the sampled arm ran on a verified judge. Full curve from the stored samples: pass@2 2.68%, pass@5 3.96%, pass@10 4.53%, pass@20 4.88% (unbiased estimator 1-C(n-c,k)/C(n,k)). The sampled empty-completion rate is 1,437/3,280 = 43.8%, statistically identical to greedy's 72/164 = 43.9%: the format failure the 0/164 baseline showed (160/164 empty) survives sampling unchanged, so sampling neither hides it nor repairs it -- the empty rate is a property of the checkpoint at this temperature, not of the decoder.",
    "measured": "2026-09-10",
    "source": "data/eval/preds_humaneval_sample_ckpt_format_sft_0909.pt.p1_sample_0909.jsonl on the pod (sha256 63709c6adb4c776428a0eb0e1de6500516bfdd3afe7042d8d28c6729ab7382f9, 591,399 bytes, 329 rows, attested 2026-09-09 16:09Z in runs/artifact_refs.jsonl); run 2026-09-09 13:13Z on the pod, read out 2026-09-10 by 66 (66-1). The run completed and attested on 2026-09-09 but no number was recorded in runs/ until this entry -- the instrument had produced its first number and nobody had read it.",
-   "config": {"runner": "eval/humaneval_sample.py @2026-09-09 stamp (pre-PR-#207)", "n": 20, "temp": 0.2, "top_p": 0.95, "seed": 1337, "max_new": 280, "eos_tid": 1, "stop_check_every": 16, "stops": "10-string list shared with eval/humaneval_gen.py", "judge": "in-process exec + 6s SIGALRM over prompt+completion+test+check(entry_point)", "autocast": "bf16", "problems": 164, "set": "official HumanEval-164 (facts/base_eval.json#be.humaneval_pass1_step34000 set_identity)"},
+   "config": {
+    "runner": "eval/humaneval_sample.py @2026-09-09 stamp (pre-PR-#207)",
+    "n": 20,
+    "temp": 0.2,
+    "top_p": 0.95,
+    "seed": 1337,
+    "max_new": 280,
+    "eos_tid": 1,
+    "stop_check_every": 16,
+    "stops": "10-string list shared with eval/humaneval_gen.py",
+    "judge": "in-process exec + 6s SIGALRM over prompt+completion+test+check(entry_point)",
+    "autocast": "bf16",
+    "problems": 164,
+    "set": "official HumanEval-164 (facts/base_eval.json#be.humaneval_pass1_step34000 set_identity)"
+   },
    "control": "canonical_solution 164/164 = 100.0% through the shared judge (run_control, pod, 2026-09-10, stamped code f463299f); constant-False on HumanEval/0 fails; empty/newline/pass score 0/164 each. The in-phase sampled control (PR #207, merged 2026-09-10) postdates this artifact but is the same deterministic judge call on the same problems, so the control applies to this reading.",
    "uncertainty": "Per-sample binomial: 55/3,280, SE 0.22pt. Per-problem pass@1 has n=164, 95% half-width ~1.7pt at this rate, so the 1.68-vs-1.83 greedy gap is noise: sampling at temp 0.2 neither helps nor hurts pass@1 at this scale (consistent with degen_t08: t=0.8 code accuracy 1.0% vs greedy 2.2%). One seed; the empty-rate comparison is the stronger signal (43.8% vs 43.9%, denominators 3,280 and 164).",
    "boundary": "One checkpoint, one seed, one temperature. The gate this instrument serves is HumanEval pass@1 >= 30% at 350M on the p1 corpus (docs/standards/p1_data_recipe.md:256); this 1.5B MoE format-SFT checkpoint is not a gate candidate and the number's job is instrument validation. pass@k for k>1 is computed from the same stored samples and is exact for this seed, not a resampling estimate.",
    "artifact_sha256": "63709c6adb4c776428a0eb0e1de6500516bfdd3afe7042d8d28c6729ab7382f9",
    "status": "measured"
+  },
+  {
+   "id": "be.humaneval_rstrip_tokenizer_artifact",
+   "value": "HumanEval greedy pass@1 on a base model depends on whether the prompt ends with the dataset's trailing newline. The tokenizer merges newline+indent into one token after a docstring (docstring close, newline+3-4 spaces, then the body token); the canonical HumanEval prompt ends in a bare newline token that in training only precedes a column-0 line, so it tells the model to dedent and start a new top-level def. Appending four spaces is equally out of distribution (newline+four-spaces is not the trained merge). The compliant continuation is prompt.rstrip(chr(10)): the model itself emits newline+indent. Measured on ckpt_v41_r3_0914, CPU greedy, 164 problems: standard prompt (tail newline) reads 0/164 at step6000 and 1/164 at steps 12000/13000; rstrip reads 15/164 (6k), 11/164 (12k), 12/164 (13k) with 0 empty completions at every point (standard had 82/164 empty at 6k, 63/164 at 12k: 40/40 probed stop_at_0 empties emitted a column-0 top-level def, no entry body). rstrip is the gate column from 2026-09-14; standard stays for continuity. Indent+4 diagnostic at 13k: 1/164, empty 129/164 all stop_at_0, confirming the escape to column 0 persists even with the first line forced. Synchronous control run1 (ckpt_v41_gate_0911) 12k: rstrip 12/164 vs r3 11/164.",
+   "measured": "2026-09-14",
+   "source": "eval/humaneval_gen.py (the scorer); rstrip/indent variants and probes ran on the pod 2026-09-13/14 (pod-only runner scripts not in repo). Greedy preds in data/eval/preds_humaneval_ckpt_v41_r3_0914.milestone_he6k_step6000.pt.v41r3_he6000_rstrip_cpu.jsonl, ...he12k_step12000.pt.v41r3_he12000_rstrip_cpu.jsonl, ...he13k_step13000.pt.v41r3_he13000_rstrip_cpu.jsonl, and data/eval/preds_humaneval_ckpt_v41_gate_0911.milestone_he12k_step12000.pt.v41gate_he12k_rstrip_cpu.jsonl (sha in artifact_sha256).",
+   "config": {
+    "variant": "standard=canonical prompt ending in newline; rstrip=prompt.rstrip(newline); indent=prompt plus four literal spaces; all greedy, max_new=280, CPU, same truncate/STOPS/judge",
+    "checkpoints": "ckpt_v41_r3_0914 milestone he6k/he12k/he13k; ckpt_v41_gate_0911 milestone_he12k",
+    "clean_basis": "r3_humaneval_union 8 problems (19,66,71,78,105,123,129,156), CLEAN denominator 156; all rstrip passing tasks at 12k/13k were outside the union"
+   },
+   "uncertainty": "single greedy sample over 164: per-task resolution 0.61pp (FULL) / 0.64pp (CLEAN/156), roughly plus/minus 3-4 problems; the 6k-vs-13k rstrip difference (15 vs 12) and r3-vs-run1 at 12k (11 vs 12) are inside that noise. teacher-forced gold BPB and greedy pass@1 separate here: BPB says 13k beats 6k (0.4645 vs 0.4869 byte-weighted), rstrip pass@1 says it does not (12/164 vs 15/164). tokenizer merge claim verified by fb from tokenizer encodings, not re-derived here.",
+   "status": "measured",
+   "artifact_sha256": {
+    "preds_humaneval_ckpt_v41_r3_0914.milestone_he6k_step6000.pt.v41r3_he6000_rstrip_cpu.jsonl": "655f4e7b9bf1f9e261746352fc75ed3099598f1ba250284f5b0e35e18c3ac329",
+    "preds_humaneval_ckpt_v41_r3_0914.milestone_he12k_step12000.pt.v41r3_he12000_rstrip_cpu.jsonl": "436f34847eae5607fcad069bec03d21732d8ec9ea35b7673bd3a07f5aca989a2",
+    "preds_humaneval_ckpt_v41_r3_0914.milestone_he13k_step13000.pt.v41r3_he13000_rstrip_cpu.jsonl": "90608b102440a787cafe59c52a9e553c814fd48d38d22393241c8a83afa233dd",
+    "preds_humaneval_ckpt_v41_gate_0911.milestone_he12k_step12000.pt.v41gate_he12k_rstrip_cpu.jsonl": "3ebfe2953739c410df8138652ecf25ad463ad6cc7f54cc78908c28d23162291d"
+   }
   }
  ]
 }
