@@ -161,7 +161,15 @@ def main():
     ap.add_argument("--out_primary", default=OUT_PRIMARY)
     ap.add_argument("--out_doctest", default=OUT_DOCTEST)
     ap.add_argument("--handread", default=HANDREAD)
+    ap.add_argument("--force", action="store_true",
+                    help="overwrite an existing output pack/manifest/handread instead of refusing")
     args = ap.parse_args()
+
+    # Refuse to clobber an existing pack unless --force is explicit: the default output names
+    # are the shipped 0913 packs, so a no-arg rerun must not silently overwrite them.
+    for p in (args.out_primary, args.out_doctest, args.manifest, args.handread):
+        if os.path.exists(p) and not args.force:
+            ap.error(f"refusing to overwrite existing {p}; pass --force to replace it")
 
     tok = Tokenizer.from_file(TOK)
     eos = tok.token_to_id("<eos>")
