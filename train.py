@@ -362,6 +362,7 @@ class Cfg:
     # gate-run wiring; until then these are code-only fields.
     # csa2_n_win is shared with PureSWA (0e-2): one field, both readers.
     csa2 = False
+    csa2_win_flash = False
     csa2_m = 8                # tokens per learned entry
     csa2_top_k = 64           # entries selected per query
     csa2_n_win = 128          # SWA window width in tokens; CSA2 and PureSWA (0e) share this one width
@@ -2131,12 +2132,24 @@ def _token_cache_dir():
     return os.path.dirname(TOKEN_CACHE)
 
 
+_CACHE_EXCLUDE = {}
+
+
 def _domain_cache_path(domain):
     """Token cache path. --fone is part of the NAME, not just the freshness check: it changes the
     token stream while leaving the vocabulary fingerprint identical. Reuse across the flag is
     silent both ways -- a plain cache read as FoNE dies 40 minutes in unpacking `ids, vals`, and a
     FoNE cache read as plain gives len(data)==2, i.e. zero rows, and trains on nothing."""
-    return os.path.join(_token_cache_dir(), f"tokens_{domain}{'_fone' if Cfg.fone else ''}.pt")
+    excl = _CACHE_EXCLUDE.get(domain)
+    return os.path.join(_token_cache_dir(),
+                        f"tokens_{domain}{'_fone' if Cfg.fone else ''}{'.excl' + excl if excl else ''}.pt")
+
+
+def _same_source(srcfp_text, live_fp, excl):
+    if not excl:
+        return srcfp_text == live_fp
+    base, sep, rest = srcfp_text.partition("|exclude=")
+    return sep == "|exclude=" and base == live_fp and rest.split(":", 1)[0] == excl
 
 
 def val_split_n(name, n_rows, mix):
@@ -2220,7 +2233,8 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
     # 2026-09-02: eval/ppl.py was two minutes from retokenizing the 20B run's nine caches).
     same_vocab = bool(VOCAB_ID) and os.path.exists(stamp) and open(stamp).read().strip() == VOCAB_ID
     live_fp = _corpus_fp(os.path.join(DATA, "corpus", domain))
-    same_source = os.path.exists(srcfp) and open(srcfp).read().strip() == live_fp
+    same_source = os.path.exists(srcfp) and _same_source(open(srcfp).read().strip(), live_fp,
+                                                         _CACHE_EXCLUDE.get(domain))
     # An unstamped cache REBUILDS. The 17 caches that predate this stamp were written
     # explicitly by scripts/stamp_cache_seeds.py after auditing what each was actually
     # shuffled at (all 42: the ladder caches predate the seed-1/2/3 arms, and every
@@ -2237,6 +2251,11 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
         and same_seed
         and os.path.getmtime(cache) >= max(os.path.getmtime(p) for p in shards)
     )
+    if not fresh and _CACHE_EXCLUDE.get(domain):
+        raise SystemExit(f"mix: {domain} names cache_exclude {_CACHE_EXCLUDE[domain]} but {cache} is "
+                         f"absent or stale (exists={os.path.exists(cache)} vocab={same_vocab} "
+                         f"source={same_source} seed={same_seed}); build it with "
+                         f"scripts/pretokenize_domains.py --exclude-manifest, never here")
     if is_main and not fresh and os.path.exists(cache) and not same_vocab:
         print(f"mix: {domain} cache was built by another vocabulary, retokenizing", flush=True)
     if is_main and not fresh and os.path.exists(cache) and not same_source:
@@ -2685,6 +2704,9 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     phases = [(1 - anneal_frac, "weight"), (anneal_frac, "anneal")]
     g = torch.Generator().manual_seed(Cfg.seed)
     names = list(mix["domains"])
+    _CACHE_EXCLUDE.clear()
+    _CACHE_EXCLUDE.update({n: str(mix["domains"][n]["cache_exclude"]) for n in names
+                           if mix["domains"][n].get("cache_exclude")})
     pools, val, used = {}, [], {}
     # Which domains had their cursor thrown away, and why. Published on Cfg because the
     # cursor-sum equality asserted at save time is only exact when nothing was discarded:
@@ -3051,6 +3073,7 @@ def main():
         "mem_sparse": "sparse memory: nn.Embedding(sparse=True) COO grads (--no-mem_sparse forces a dense grad on the whole table)",
         "csa": "CSA attention arm in GatedMLA (required by --csa2)",
         "csa2": "V4.1 CSA2: learned entries + indexer + one softmax over entries and SWA",
+        "csa2_win_flash": "CSA2: flash SWA window with dense entries, fp32 LSE split combine (default materialized)",
     }.items():
         parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
                             default=None, required=name in RECIPE_REQUIRED, help=help_)

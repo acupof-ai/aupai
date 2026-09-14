@@ -1,0 +1,58 @@
+DELETED candidates for user named approval — 2026-09-12 (0e-5)
+schema: KIND | path | nominal | freeable_if_deleted | last_reader | recommendation
+delete NOTHING here; this is the manifest the user names entries against.
+All sizes measured on pod 2026-09-12 (du -sh + inode-link analysis). Gate mix = data/mix_v41_gate.json
+(8 domains, all _dc): code_ultra_l2_dc code_py_starcoder_dc math_owm_stage2_dc
+code_keep_p1_dc en_c4_stage2_dc cot_dc code_py_rp1t_dc code_ultra_l3_noexec_dc.
+All /data00 caches are stamped vocab f1f860970d15d623 (NEW gate vocab) — there are NO
+old-vocab caches under /data00; the ~150G premise is redundant NEW-vocab copies, not old vocab.
+
+==== A. pre-_dc corpus originals (superseded by the _dc the gate reads) ====
+CORPUS | /work/aupai/data/corpus/code_py_starcoder   | 29.6G | 29.47G | NOT in mix (mix names code_py_starcoder_dc); only historical/one-off scripts (eval_load_cost.py, tokenizer_report.py, b0 probes) | DELETE — full copy, _dc complete and mix-cited; biggest single win
+CORPUS | /work/aupai/data/corpus/math_owm_stage2    | 21.6G | 21.55G | NOT in mix (math_owm_stage2_dc); one-off probes only | DELETE — full copy, _dc complete
+CORPUS | /work/aupai/data/corpus/code_keep_p1        | 9.6G  | 6.95G  | NOT in mix (code_keep_p1_dc); assemble_keep_p1.py wrote it, _dc is the gate dir; 2.62G is hardlinked into _dc (freeing 0) | DELETE dir; frees 6.95G, hardlinked bytes stay via _dc
+CORPUS | /work/aupai/data/corpus/cot                 | 1.3G  | 1.33G  | NOT in mix (cot_dc); historical | DELETE — full copy, _dc complete
+CORPUS | /work/aupai/data/corpus/code_py_rp1t        | 1.5G  | 0.94G  | NOT in mix (code_py_rp1t_dc); historical; 0.57G hardlinked | DELETE dir; frees 0.94G
+CORPUS | /work/aupai/data/corpus/en_c4_stage2        | 8.7G  | 0.73G  | NOT in mix (en_c4_stage2_dc); 7.96G hardlinked into _dc | DELETE dir; frees only 0.73G (rest shared via _dc); low value
+A subtotal: 61.0G freeable (nominal 72.3G; rest hardlinked into the kept _dc dirs).
+CAVEAT on A: the pre-_dc NAMES are still cited by the retired ladder mix files
+(mix_1.5b-a0.2b*, mix_200m_4b_*, mix_15b_stage1) — those 0830v1 runs are superseded by
+V4.1 and not re-launched, but deleting the pre dirs makes those legacy mix CONFIGS
+non-replayable (the bytes differ: _dc is post-13-gram/dedup). The gate mix names only _dc.
+Recommend DELETE A only if replayability of retired 0830v1 mixes is not wanted; else KEEP.
+
+==== B. redundant NEW-vocab caches under /data00 (gate reads only the _dc caches) ====
+CACHE | /data00/tokens_code_py_starcoder.pt   | 31.81G | 31.81G | gate reads tokens_code_py_starcoder_dc.pt; non-_dc not in any gate mix | DELETE
+CACHE | /data00/tokens_math_owm_stage2.pt    | 23.48G | 23.48G | gate reads ..._dc.pt | DELETE
+CACHE | /data00/tokens_code_keep_p1.pt       | 10.51G | 10.51G | gate reads ..._dc.pt | DELETE
+CACHE | /data00/tokens_en_c4_stage2.pt       | 7.94G  | 7.94G  | gate reads ..._dc.pt | DELETE
+CACHE | /data00/tokens_cot.pt                | 1.60G  | 1.60G  | gate reads ..._dc.pt | DELETE
+CACHE | /data00/tokens_code_py_rp1t.pt       | 1.52G  | 1.52G  | gate reads ..._dc.pt | DELETE
+B subtotal: 76.9G freeable — the 6 non-_dc duplicates of gate domains.
+
+==== C. retired-mix-domain caches (domains dropped from the 30B gate mix) ====
+CACHE | /data00/tokens_textbook.pt | 15.35G | 15.35G | textbook/textbook_30b not in gate mix; SFT-era domain | DELETE (re-fetch/rebuild if a later mix wants it)
+CACHE | /data00/tokens_wiki.pt     | 1.98G  | 1.98G  | wiki not in gate mix (wiki_chat dropped) | DELETE
+CACHE | /data00/tokens_en.pt       | 1.45G  | 1.45G  | en is a sample/alias, not a gate domain | DELETE
+CACHE | /data00/tokens_math.pt     | 0.32G  | 0.32G  | math is a sample/alias | DELETE
+CACHE | /data00/tokens_code.pt     | 0.21G  | 0.21G  | code alias, not a gate domain | DELETE
+CACHE | /data00/tokens_chat.pt     | 0.28G  | 0.28G  | chat not in gate mix | DELETE
+C subtotal: 19.6G freeable.
+
+==== D. UltraData leftovers (0e scratch/samples, NOT gate input) ====
+CORPUS | /work/aupai/data/corpus/code_ultra_l3      | 7.7G | 7.7G | killed exec-run partial jsonls (0 SHARD_OK); exec arm retained only as concept, files unverified; gate uses code_ultra_l3_noexec_dc | DELETE — no verified row, superseded
+CORPUS | /work/aupai/data/corpus/code_ultra_l2_sample | 5.4G | 5.4G | 3-shard dev sample, not in mix (smoke-only) | DELETE (gitignored dev artifact)
+CORPUS | /work/aupai/data/corpus/code_ultra_l3_sample | 2.3G | 2.3G | 3-shard dev sample, not in mix | DELETE
+CORPUS | /work/aupai/data/corpus/code_ultra_l3_noexec | 896K | 896K | post-aggregate leftover (stats/empties); _dc is the output | DELETE
+CORPUS | /work/aupai/data/corpus/code_ultra_l2      | 140K | 140K | post-aggregate leftover; _dc is the output | DELETE
+D subtotal: ~15.4G freeable.
+
+==== E. kept (do NOT delete) ====
+KEEP the eight *_dc corpus dirs and their eight /data00/tokens_*_dc.pt caches — named by data/mix_v41_gate.json, fingerprint/stamp verified; these ARE the gate run.
+KEEP /work/aupai/data/corpus/sample (8.7M) — committed 2k-doc checkout sample, gate guard fixture.
+KEEP /data00/aupai_raw (149G) is a separate named decision (refetchable, but not on this list).
+
+TOTAL if A+B+C+D all named-deleted: 61.0 + 76.9 + 19.6 + 15.4 = 172.9G.
+Recommended immediate, lowest-risk: B+C (96.5G redundant caches, gate cannot read them) + D ultra scratch (15.4G) = 111.9G.
+A (61.0G pre-_dc corpus) deletes safely only if no later A/B wants the pre-decon/pre-dedup originals; _dc dirs fully reproduce the gate.
+DELETED 0 entries 0 GiB

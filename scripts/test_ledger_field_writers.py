@@ -50,6 +50,23 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 
+def _live_reviewer():
+    """A roster member OTHER than the task owner ('de'), read from the live runs/roster.json.
+
+    task done --reviewer / task add --pair validate the name against the roster, so a hardcoded
+    reviewer goes stale the moment that session exits (44 left post-b0-exit and this selftest
+    went red repo-wide). Reading the live roster keeps the world valid as membership changes;
+    excluding 'de' preserves the reviewer-is-not-the-owner rule under test.
+    """
+    roster = json.load(open(os.path.join(ROOT, "runs", "roster.json"), encoding="utf-8"))
+    names = [m["name"] for m in roster.get("members", []) if m.get("name") and m["name"] != "de"]
+    assert names, "roster.json lists no reviewer other than 'de'; the field-writer world has no subject"
+    return names[0]
+
+
+REVIEWER = _live_reviewer()
+
+
 def _run(argv, cwd=ROOT):
     return subprocess.run([sys.executable] + argv, capture_output=True, text=True, timeout=180,
                           cwd=cwd)
@@ -194,7 +211,7 @@ def main():
                 # Adding them would encode a wrong cause in the fixture.
                 harness._append_task({"id": "t1", "state": "open", "owner": "de",
                                       "deliverable": "x", "opened": "2026-09-05 00:00"})
-                argv = ["done", "t1", "--evidence", ev_path, "--reviewer", "44",
+                argv = ["done", "t1", "--evidence", ev_path, "--reviewer", REVIEWER,
                         "--commit", sha] + extra
                 rc = harness.cmd_task(argv)
                 rows = _rows(harness.TASKS_PATH)
@@ -243,7 +260,7 @@ def main():
                 os.makedirs(os.path.join(d, "runs"))
                 _point_tasks_at(harness, os.path.join(d, "runs", "tasks.jsonl"))
                 argv = ["add", "--owner", "de", "--socket", "uds:/tmp/x.sock", "--task", "t",
-                        "--why", "w", "--pair", "44", "--prior", "defect-fix"] + extra
+                        "--why", "w", "--pair", REVIEWER, "--prior", "defect-fix"] + extra
                 rc = harness.cmd_task(argv)
                 rows = _rows(harness.TASKS_PATH)
                 if rc != want_rc:
