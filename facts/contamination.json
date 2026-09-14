@@ -1842,6 +1842,66 @@
    },
    "uncertainty": "FP baseline validates the solution (code) key; the prompt key is natural English and has no code baseline. 18 prompt-only problems are docstring/prose-text matches, not solution leakage; scoring denominators keep CLEAN=338 for either key.",
    "status": "measured"
+  },
+  {
+   "id": "cont.r3_evalset_leak_screen_0914",
+   "value": {
+    "screen": "whitespace-13 word grams (normaliser fp 0aefe6a2aa5e130f) of every registered generative/MC holdout vs all r3 _dc domains + anneal textbook + zh domains; 31,111 problems x 12 domains (660 s), plus MMLU 14,042; each raw hit problem hand-adjudicated by an example shared gram; 0 CJK shared grams across all raw hit problems",
+    "scoring_denominators": {
+     "humaneval": "156/164 (8 union)",
+     "mbpp427": "338/427 (89 union)",
+     "code_holdout_500": "500 (65 raw hits collapse to 3 canonical idioms: Euclid gcd x37, sqrt/**0.5 primality loop x28; generator boilerplate, 0 Chinese instructions)",
+     "code_holdout_v2_500": "500 (43 raw = canonical pair-loop idiom + coincidental sorted-number test vectors in unrelated sort docs; Counter problems 317/115 match an unrelated count_sort_dict doc)",
+     "math_test_500": "500 (2 latex solution-step collisions)",
+     "math_hard_eval_v2": "1080 (0)",
+     "gsm8k_zh": "7473 (0)",
+     "lambada_en": "5153 (3235 generic-sentence FP; 360 verbatim mask prefix truncating before target driving, answer absent)",
+     "ceval": "1050 (0)",
+     "cmmlu": "11582 (2 latex matrix-row collisions)",
+     "arc_easy": "2221/2241 (20 distinct science questions verbatim: 19 math_owm/26 rows, 1 en_c4; no answer key)",
+     "mmlu": "13564/14042 (478 raw, full-excluded, auxiliary metric)"
+    },
+    "mmlu_detail": "425 distinct shared grams; concentrated high_school_statistics 108/216=50%, high_school_physics 62/151=41%, high_school_mathematics 90/270=33%, plus history source passages (us 38/world 21/european 12); 52/478 carry a >=13-word correct answer in the SAME doc (answer-bearing textbook factoids); 60 problems repeat in >=10 corpus docs (textbook), 276 are single-row (famous public passages mixed with isolated questions, not subdivided). MC choices are usually <13 words so a correct-choice 13-gram is mechanically absent; the 52 long-choice co-occurrences are the answer-bearing subset. Conservative full exclusion, not split by source, because MMLU is a chance-level auxiliary and a 3.4% manual split was not worth a round.",
+    "primary_criterion": "HE rstrip CLEAN 156 is primary, MBPP 338 secondary; arc 2221 and MMLU 13564 are auxiliary denominators, not in the 30% gate",
+    "mmlu_source": "cais/mmlu all test; data/eval/mmlu_test.jsonl artifact_sha256 d9c4079e4e04aec3ffcb0e636a77f43ab5f5f022 (sha1 of the jsonl; the source parquet is sha256 74a41822ce7d3def56e1682f958469c04642a5336a5ce912fa375fdb90fb25d7); pod outbound to HF dead 2026-09-14, fetched on laptop from huggingface.co and tn-pushed; eval/mmlu.py asserts the screened jsonl sha1 directly, NOT added to datagen holdout registry (regeneration would push data/eval/holdout_hashes.txt from 4.94 to 5.17 MiB over the 5 MiB tracked-blob cap; fb option B, no cap widening)"
+   },
+   "measured": "2026-09-14",
+   "source": "runs/contam_evalscreen_r3_final.json (per-set raw/flagged/excluded/scoring_clean ids + per-domain rows), runs/contam_mmlu_r3_final.json (478 excluded, 52 answer-bearing, subject breakdown), runs/evalscreen_examples.json, runs/he_evalleak_coverage_0914.md; scanner re-runnable on the pod via a shard-level fork pool reusing the whitespace gram extractor in scripts/audit_gate_contamination.py, 660 s for the ten sets + 664 s MMLU",
+   "config": {
+    "n": 13,
+    "tokens": "whitespace word tokens, punctuation unsplit, whitespace-collapse normaliser (filters/decontam_ngram.py fp 0aefe6a2aa5e130f)",
+    "domains": [
+     "code_ultra_l3_noexec_dc",
+     "code_ultra_l3_stub_dc",
+     "code_keep_p1_dc",
+     "code_ultra_l2_dc",
+     "code_py_starcoder_dc",
+     "code_py_rp1t_dc",
+     "math_owm_stage2_dc",
+     "en_c4_stage2_dc",
+     "cot_dc",
+     "textbook_claude_v41_dc",
+     "zh_c4_dc",
+     "zh_wiki_dc"
+    ],
+    "raw_rows": {
+     "l3_noexec": 2548,
+     "l3_stub": 531,
+     "keep_p1": 28,
+     "l2": 877,
+     "starcoder": 40,
+     "rp1t": 1,
+     "math_owm": 70,
+     "en_c4": 2,
+     "cot": 3,
+     "textbook_v41": 0,
+     "zh_c4": 0,
+     "zh_wiki": 0
+    }
+   },
+   "uncertainty": "idiom vs real-copy adjudication is by example shared gram and subject/row-multiplicity, not per-gram exhaustive hand-read; the conservative direction (exclude the uncertain MMLU/arc question) is taken, so retained denominators (code/math 500) only stay when every hit collapses to a few generic idioms with 0 CJK",
+   "status": "measured",
+   "artifact_sha256": "d190959183ab5d86057dd93dfb159a6e32224f0a370cab30080cb767a949d068"
   }
  ]
 }
