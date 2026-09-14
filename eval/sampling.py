@@ -1,0 +1,74 @@
+"""Shared temperature sampling for base-model continuation evals (stage-2 prereg,
+fb order 2026-09-14).
+
+E0/ET/EC checkpoints are scored on HumanEval and MBPP with n=10 samples at
+temperature 0.2 per task. To make a paired T-vs-C comparison valid, the two
+checkpoints must draw the SAME random choices for the same task_id and sample
+index. We force that deterministically: before drawing the n samples for a
+task we reseed torch's CPU/CUDA RNG with a stable hash of the task_id. Two
+runs over the same task_id (any checkpoint, either benchmark scorer) then walk
+the identical random stream sample-by-sample. This is per-task pairing, not
+HE-to-MBPP pairing (those are different task spaces).
+
+Decoding stops at eos (tid 1) or max_new; benchmark-specific truncation and
+judgement are applied by the caller after sampling, identically for every
+sample. No repetition/STOPS early-stop here: T and C must be compared on raw
+equal-budget draws, and post-hoc truncation is deterministic given the text.
+"""
+import hashlib
+
+import torch
+
+EOS_TID = 1
+
+
+def task_seed(task_id):
+    """Stable non-negative int seed from a task id (same across runs/benchmarks)."""
+    h = hashlib.sha256(str(task_id).encode("utf-8")).digest()
+    return int.from_bytes(h[:8], "big") % (2**31)
+
+
+@torch.no_grad()
+def sample_completions(model, tok, prompt_ids, task_id, n, temperature, max_new,
+                       device, seq_window):
+    """Return n sampled raw decoded strings for one prompt (list of token ids).
+
+    Greedy when temperature<=0 (n identical draws, by construction). Otherwise
+    n stochastic draws under a task-seeded RNG so paired T/C runs reproduce the
+    same decision sequence. Sampling is one sequence at a time (n is small, 10);
+    a batched path can replace this without changing the seed contract.
+    """
+    dev = torch.device(device)
+    base = torch.tensor([prompt_ids], device=dev)
+    if temperature <= 0:
+        return [_decode(tok, _greedy(model, base, max_new, seq_window), prompt_ids)] * n
+    seed = task_seed(task_id)
+    torch.manual_seed(seed)
+    if dev.type == "cuda":
+        torch.cuda.manual_seed_all(seed)
+    out = []
+    for _ in range(n):
+        x = base
+        for _step in range(max_new):
+            logits = model(x[:, -seq_window:])[0][:, -1]
+            nxt = torch.multinomial(torch.softmax(logits.float() / temperature, dim=-1), 1)
+            if nxt.item() == EOS_TID:
+                break
+            x = torch.cat([x, nxt], 1)
+        out.append(_decode(tok, x, prompt_ids))
+    return out
+
+
+@torch.no_grad()
+def _greedy(model, x, max_new, seq_window):
+    for _step in range(max_new):
+        logits = model(x[:, -seq_window:])[0][:, -1]
+        nxt = logits.argmax(-1, keepdim=True)
+        if nxt.item() == EOS_TID:
+            break
+        x = torch.cat([x, nxt], 1)
+    return x
+
+
+def _decode(tok, x, prompt_ids):
+    return tok.decode(x[0, len(prompt_ids):].tolist())
