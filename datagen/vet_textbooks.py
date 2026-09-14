@@ -55,24 +55,63 @@ NEAR_THRESHOLD = 0.8
 GROUP_NEAR_THRESHOLD = 0.5
 SHINGLE = 5
 
-FENCE = re.compile(r"```([^\n`]*)?\n(.*?)```", re.S)
+# Fence markers are LINE-ANCHORED (CommonMark), byte-for-byte the same opener
+# semantics as the harvester/agent exec gate shared/gate_chapter.py: an opener is
+# a line that starts in column 0 with three+ backticks followed by exactly the
+# language tag (no leading spaces — gate_chapter rejects an indented opener), and
+# a closer is a whole line of three+ backticks. Only the `python`/`py` tags are
+# executable code. A BARE fence (no tag) is NOT assumed to be python — across the
+# corpus its closed bodies are mostly tables/hex/math/pseudocode (169/224 fail
+# to parse), so treating it as python both mis-segments blocks and injects
+# non-code into execution. A triple-backtick in the MIDDLE of a line (inline
+# literal, or a ```text demo of e.g. a JWT segment) never opens or closes a
+# fence. The old non-greedy body regex closed early on those inline ticks and
+# mis-segmented 53 chapters (45 live / ~159K gate tokens) on 2026-09-14.
+FENCE = re.compile(r"```")
+_FENCE_OPEN = re.compile(r"^`{3,}(?P<lang>[A-Za-z0-9_+\-]*)\s*$")
+_FENCE_CLOSE = re.compile(r"^`{3,}\s*$")
+_PY_LANGS = ("python", "py")
 
 
 def code_blocks(text):
     code, skipped = [], []
-    for m in FENCE.finditer(text):
-        lang = (m.group(1) or "").strip().lower()
-        body = m.group(2)
-        if lang and lang not in ("python", "py", "python3"):
-            skipped.append({"lang": lang, "kind": "non_python"})
+    lang, buf = None, []
+    for line in text.split("\n"):
+        if lang is None:
+            m = _FENCE_OPEN.match(line)
+            if m:
+                lang = (m.group("lang") or "").strip().lower()
+                buf = []
             continue
-        try:
-            ast.parse(body)
-        except SyntaxError:
-            skipped.append({"lang": lang, "kind": "not_toplevel_python"})
-            continue
-        code.append(body)
+        if _FENCE_CLOSE.match(line):
+            body = "\n".join(buf)
+            if lang not in _PY_LANGS:
+                skipped.append({"lang": lang or "bare", "kind": "non_python"})
+            else:
+                try:
+                    ast.parse(body)
+                except SyntaxError:
+                    skipped.append({"lang": lang, "kind": "not_toplevel_python"})
+                else:
+                    code.append(body)
+            lang, buf = None, []
+        else:
+            buf.append(line)
     return code, skipped
+
+
+def _fence_lines_open(text):
+    """True when the line-anchored fence scan ends inside an open fence (an opener
+    with no matching whole-line close). Inline triple-backticks do not count, so a
+    code line containing ``` does not look like an unterminated fence."""
+    open_ = False
+    for line in text.split("\n"):
+        if not open_:
+            if _FENCE_OPEN.match(line):
+                open_ = True
+        elif _FENCE_CLOSE.match(line):
+            open_ = False
+    return open_
 
 
 def truncated(text):
@@ -81,7 +120,7 @@ def truncated(text):
         return True
     if lines[-1].lstrip().startswith('#'):
         return True
-    return bool(text.count('```') % 2)
+    return _fence_lines_open(text)
 
 
 def first_error(err):
