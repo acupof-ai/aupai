@@ -190,20 +190,26 @@ def build_mixes(cur):
             check_sum += int(R * w)
         assert check_sum == R, (arm, check_sum, R)
         total_rows = sum(spent[n] for n, _ in props) + R
+        join_step = cur["step"]
+        warmdown = round(SEG / (join_step + SEG), 6)
+        total_after = join_step + SEG
         return {
             "_comment": (
-                f"v42 stage-2 {arm} arm, derived against {cur['ckpt_name'] if 'ckpt_name' in cur else 'the r3 resume ckpt'} "
-                f"(step {cur['step']}). Single-phase {SEG}-step segment = {R} plan rows "
-                f"({WORLD}x{BATCH}x{ACCUM}/step), anneal_frac 0; total_steps is 38070+{SEG}=38207 "
-                f"and warmdown {SEG}/38207=0.003586 (set --warmdown on the launch line). Plain "
-                f"*_dc caches, NO cache_exclude. Regenerate with "
-                f"scripts/write_mix_v42_stage2.py --ckpt <final r3 ckpt> before launch."),
+                f"v42 stage-2 {arm} arm, derived against {cur.get('ckpt_name', 'the r3 resume ckpt')} "
+                f"(step {join_step}). Single-phase {SEG}-step segment = {R} plan rows "
+                f"({WORLD}x{BATCH}x{ACCUM}/step), anneal_frac 0; total_steps is "
+                f"{join_step}+{SEG}={total_after} and warmdown {SEG}/{total_after}={warmdown} "
+                f"(set --warmdown on the launch line). Plain *_dc caches, NO cache_exclude. "
+                f"Regenerate with scripts/write_mix_v42_stage2.py --ckpt <final r3 ckpt> before "
+                f"launch; the dry-run asserts this warmdown against the ckpt it is run with."),
             "total_tokens": total_rows * SEQ,
             "total_rows": total_rows,
             "seq": SEQ,
             "anneal_frac": 0.0,
             "segment_steps": SEG,
             "segment_plan_rows": R,
+            "join_step": join_step,
+            "warmdown": warmdown,
             "domains": domains,
             "_derived_against": {
                 "row_cursor": {n: spent[n] for n, _ in props},
@@ -224,6 +230,10 @@ def validate(path):
     R = SEG * ROWS_PER_STEP
     assert m["anneal_frac"] == 0.0, path
     assert m["segment_plan_rows"] == R
+    # warmdown must be present and equal SEG/(join_step+SEG) for the join_step the mix records.
+    join = int(m["join_step"])
+    assert abs(float(m["warmdown"]) - round(SEG / (join + SEG), 6)) < 5e-7, (
+        path, m.get("warmdown"), join)
     doms = m["domains"]
     assert "cache_exclude" not in json.dumps(doms), f"{path}: cache_exclude leaked into a domain"
     total = 0
