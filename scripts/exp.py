@@ -11,6 +11,7 @@ EXPERIMENTS.md (newest first) so the table is reviewable in the repo.
 """
 
 import argparse
+import calendar
 import json
 import os
 import subprocess
@@ -400,6 +401,20 @@ def main():
     s.add_argument("--cards", default="",
                    help="the cards this run holds, CSV (e.g. 5 or 0,1,2,3,4,5,6). Empty means "
                         "unstated -- for a CPU/corpus job pass 'none' rather than leaving it blank")
+    s.add_argument(
+        "--expected_hours", type=float, default=0.0,
+        help="planned wall-clock length. Records expected_end_utc = started + expected_hours*1.2 "
+             "(20% reboot/stall allowance); no_stale_running then waits for that end instead of "
+             "the 24h default. 0 (default) leaves the 24h rule in force.")
+    e = sub.add_parser(
+        "expect",
+        help="append expected_end_utc to an already-RUNNING row (backfill for a pre-fix run)")
+    e.add_argument("--name", required=True)
+    e.add_argument("--started", default=None, help="which open row (its 'started'); required if ambiguous")
+    e.add_argument("--expected_hours", type=float, default=0.0,
+                   help="set expected_end = the row's started + expected_hours*1.2")
+    e.add_argument("--end_utc", default="",
+                   help="explicit expected_end_utc 'YYYY-MM-DD HH:MM' (UTC); overrides expected_hours")
     d = sub.add_parser("done")
     d.add_argument("--name", required=True)
     d.add_argument("--result", default="")
@@ -491,30 +506,54 @@ def main():
         set_root(a.root)
 
     if a.action == "start":
-        append(
-            {
-                "started": now(),
-                "name": a.name,
-                "status": "running",
-                "cmd": a.cmd,
-                "notes": a.notes,
-                "hypothesis": a.hypothesis,
-                # Only when given: absent means unstated (every row before 2026-09-05), "" would
-                # be indistinguishable from it, and a metric must be able to tell "nobody said"
-                # from "said nothing". harness launch always supplies one.
-                **({"class": a.run_class} if a.run_class else {}),
-                # Same absent-vs-empty rule: no key means unstated (every row before 2026-09-05),
-                # and a CPU job passes "none" so that "no cards" is a stated answer rather than a
-                # gap. harness launch always supplies one.
-                **({"cards": a.cards} if a.cards else {}),
-                "result": "",
-                "finding": "",
-                "decision": "",
-                "ended": "",
-                "commit": git_commit(),
-            }
-        )
+        _row = {
+            "started": now(),
+            "name": a.name,
+            "status": "running",
+            "cmd": a.cmd,
+            "notes": a.notes,
+            "hypothesis": a.hypothesis,
+            # Only when given: absent means unstated (every row before 2026-09-05), "" would
+            # be indistinguishable from it, and a metric must be able to tell "nobody said"
+            # from "said nothing". harness launch always supplies one.
+            **({"class": a.run_class} if a.run_class else {}),
+            # Same absent-vs-empty rule: no key means unstated (every row before 2026-09-05),
+            # and a CPU job passes "none" so that "no cards" is a stated answer rather than a
+            # gap. harness launch always supplies one.
+            **({"cards": a.cards} if a.cards else {}),
+            "result": "",
+            "finding": "",
+            "decision": "",
+            "ended": "",
+            "commit": git_commit(),
+        }
+        # A run that declares its planned length gets expected_end_utc = started +
+        # expected_hours*1.2 (20% reboot/stall allowance); no_stale_running then waits for that
+        # end instead of the 24h default, so a ~48h pretrain (v41_r3_0914, 38K steps) is not
+        # falsely called stale. started is UTC; the gmtime() must stay on the strftime line for
+        # check_timestamps_are_utc.
+        if a.expected_hours and a.expected_hours > 0:
+            _start = calendar.timegm(time.strptime(_row["started"], "%Y-%m-%d %H:%M"))
+            _row["expected_end_utc"] = time.strftime("%Y-%m-%d %H:%M", time.gmtime(_start + a.expected_hours * 1.2 * 3600))
+        append(_row)
         print(f"logged start: {a.name}")
+    elif a.action == "expect":
+        # Backfill the deadline on a run started before this field existed. Append (never
+        # rewrite) a still-running event on the same (name, started) key; the fold keeps the
+        # latest event, so expected_end_utc becomes visible while status stays running.
+        open_row = pick_open_row(a.name, a.started, "expect")
+        if a.end_utc:
+            end = a.end_utc
+            time.strptime(end, "%Y-%m-%d %H:%M")  # validate, raises on garbage
+        elif a.expected_hours and a.expected_hours > 0:
+            _start = calendar.timegm(time.strptime(str(open_row.get("started")), "%Y-%m-%d %H:%M"))
+            end = time.strftime("%Y-%m-%d %H:%M", time.gmtime(_start + a.expected_hours * 1.2 * 3600))
+        else:
+            sys.exit("expect requires --end_utc or a positive --expected_hours")
+        _upd = dict(open_row)
+        _upd["expected_end_utc"] = end
+        append(_upd)
+        print(f"logged expected_end_utc={end} for {a.name} ({open_row.get('started')})")
     elif a.action == "done":
         # APPEND the closing event; never rewrite the start row. runs/*.jsonl merges
         # by union, so a rewrite means two branches closing two different runs keep
