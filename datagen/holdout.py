@@ -409,6 +409,30 @@ def is_holdout(q):
     return qhash(q) in _CACHE
 
 
+def _iter_question_rows(path):
+    """Yield question-bearing records as dicts from either a JSON array or JSONL.
+
+    Upstream ships sanitized-mbpp.json as a single 427-element JSON ARRAY, not JSONL; the
+    line reader parsed the whole array as one row and hashed nothing. The raw-byte registry
+    fingerprint is unchanged by this (it hashes file bytes), only the question extraction
+    gains the array form. A JSONL file still goes through the line reader (one object/line).
+    """
+    with open(path, encoding="utf-8") as fh:
+        text = fh.read()
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError:
+        obj = None
+    if isinstance(obj, list):
+        for row in obj:
+            if isinstance(row, dict):
+                yield row
+        return
+    for line in text.splitlines():
+        if line.strip():
+            yield json.loads(line)
+
+
 def main():
     hs = set()
     # PER-ENTRY FIELDS, not a hardcoded "instruction". The old loop read
@@ -430,17 +454,13 @@ def main():
             print(f"  missing (skipped): {e['path']}")
             continue
         n, miss = 0, 0
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                val = next((row[f] for f in fields if f in row), None)
-                if val is None:
-                    miss += 1
-                    continue
-                hs.add(qhash(val))
-                n += 1
+        for row in _iter_question_rows(path):
+            val = next((row[f] for f in fields if f in row), None)
+            if val is None:
+                miss += 1
+                continue
+            hs.add(qhash(val))
+            n += 1
         # A registered file contributing ZERO hashes is the failure this fixes; say so loudly
         # rather than printing a 0 among the counts.
         if n == 0:
