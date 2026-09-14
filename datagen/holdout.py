@@ -110,6 +110,32 @@ REGISTRY = {
                "an explicit check_no_eval_leak for it, so the SFT path was guarded and no "
                "corpus builder was -- the guarded-in-one-place case",
     },
+    "mbpp_sanitized_427": {
+        "path": "data/eval/sanitized-mbpp.json",
+        "kind": "gold",
+        "question_field": ["prompt"],
+        "added": "2026-09-14",
+        "why": "MBPP sanitized, 427 rows (task_id/prompt/code/test_imports/test_list); stage-2 "
+               "E0/ET/EC paired MBPP metric source (eval/mbpp_gen.py). Upstream "
+               "google-research/google-research mbpp/sanitized-mbpp.json, fetched 2026-09-14",
+    },
+    "mbpp_holdouts_974": {
+        "path": "data/eval/mbpp_holdouts.jsonl",
+        "kind": "heldout",
+        "question_field": ["text"],
+        "added": "2026-09-14",
+        "why": "974-row mbpp-train holdout, the MBPP population for "
+               "scripts/audit_gate_contamination.py 13-gram audits; distinct id scheme from "
+               "sanitized-427, kept as the contamination baseline",
+    },
+    "phi_l3_stub_holdout_manifest": {
+        "path": "data/sft/phi_l3_stub_holdout_manifest.jsonl",
+        "kind": "heldout",
+        "question_field": ["url"],
+        "added": "2026-09-14",
+        "why": "273879-row holdout manifest for datagen/build_phi_codeexercises_pack.py; "
+               "excluded from the phi SFT pack (owner 3b, registered by 66 to close the registry gap)",
+    },
     "gsm8k_zh_holdout": {
         "path": "data/eval/gsm8k_zh_holdout.jsonl",
         "kind": "heldout",
@@ -306,6 +332,9 @@ REGISTRY_SHA1 = {
     "control_sft_text_heldout": "b3c97dd749d24f4b9c9eb1e67d8912b5cd5e4ea7",
     "gsm8k_zh_holdout": "8ccbf8b2314f9f7b12874b86af931fe2bba41307",
     "humaneval_164": "95af0d86fac5e937e23d880780081765e81afc01",
+    "mbpp_sanitized_427": "8e6b6c0a1d746e060a492df8efcd5ee2270ace13",
+    "mbpp_holdouts_974": "2ecb41e8ef475f509a7ccc2f606d075d4c38a3e0",
+    "phi_l3_stub_holdout_manifest": "fc86175871b6ff6bfbec70859fed48f19241e1b0",
     "lambada_en": "7cf46a68e4e2d89b0fbcf98cef843b00cc8a221c",
     "lambada_zh": "52771e5909a032393447278c51017dba302aef5c",
     "lambada_zh_src": "930bc8d5e6ea9c16be0b1e90ef6bd6dac77da7a3",
