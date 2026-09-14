@@ -114,6 +114,7 @@ REGISTRY = {
         "path": "data/eval/sanitized-mbpp.json",
         "kind": "gold",
         "question_field": ["prompt"],
+        "format": "array",
         "added": "2026-09-14",
         "why": "MBPP sanitized, 427 rows (task_id/prompt/code/test_imports/test_list); stage-2 "
                "E0/ET/EC paired MBPP metric source (eval/mbpp_gen.py). Upstream "
@@ -381,6 +382,18 @@ def load():
             f"{HASH_PATH} has no fingerprint (old format) -- the guard may be stale. "
             "Run `python datagen/holdout.py` to regenerate."
         )
+    declared = next((int(l[4:]) for l in lines if l.startswith("# n:")), None)
+    n_body = sum(1 for l in lines if not l.startswith("#"))
+    if declared is None:
+        raise RuntimeError(
+            f"{HASH_PATH} has no '# n:<count>' header -- a guard whose body size is not "
+            "declared can be truncated with nothing noticing. Run `python datagen/holdout.py` "
+            "to regenerate.")
+    if declared != n_body:
+        raise RuntimeError(
+            f"{HASH_PATH} header declares {declared} hashes but the body holds {n_body} -- "
+            "the file was truncated or hand-edited. A header-only change cannot fix a guard; "
+            "run `python datagen/holdout.py` where every registry source resolves.")
     present, absent = _fp_inputs()
     if absent:
         # NOT VERIFIABLE HERE, so do not pretend either way. Recomputing would hash a
@@ -409,6 +422,27 @@ def is_holdout(q):
     return qhash(q) in _CACHE
 
 
+def _iter_questions(path, fields, fmt):
+    """Yield question values from one registry file.
+
+    fmt "jsonl" (default): one JSON object per line. fmt "array": a single JSON
+    array of objects (sanitized-mbpp.json is one physical line, so line-wise
+    json.loads sees the whole array as one row with no question field).
+    """
+    if fmt == "array":
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, list):
+            raise RuntimeError(
+                f"{path}: format=array but top level is {type(data).__name__}, not list")
+        rows = data
+    else:
+        with open(path, encoding="utf-8") as fh:
+            rows = [json.loads(line) for line in fh if line.strip()]
+    for row in rows:
+        yield next((row[f] for f in fields if f in row), None)
+
+
 def main():
     hs = set()
     # PER-ENTRY FIELDS, not a hardcoded "instruction". The old loop read
@@ -430,17 +464,12 @@ def main():
             print(f"  missing (skipped): {e['path']}")
             continue
         n, miss = 0, 0
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                if not line.strip():
-                    continue
-                row = json.loads(line)
-                val = next((row[f] for f in fields if f in row), None)
-                if val is None:
-                    miss += 1
-                    continue
-                hs.add(qhash(val))
-                n += 1
+        for val in _iter_questions(path, fields, e.get("format", "jsonl")):
+            if val is None:
+                miss += 1
+                continue
+            hs.add(qhash(val))
+            n += 1
         # A registered file contributing ZERO hashes is the failure this fixes; say so loudly
         # rather than printing a 0 among the counts.
         if n == 0:
@@ -497,10 +526,12 @@ def main():
             f"questions than the registry claims."
         )
     os.makedirs(os.path.dirname(HASH_PATH), exist_ok=True)
+    body = sorted(hs)
     with open(HASH_PATH, "w", encoding="utf-8") as f:
         f.write(f"# fp:{_fingerprint()}\n")
-        f.write("\n".join(sorted(hs)) + "\n")
-    print(f"{len(hs)} unique holdout hashes (fp {_fingerprint()}) -> {HASH_PATH}")
+        f.write(f"# n:{len(body)}\n")
+        f.write("\n".join(body) + "\n")
+    print(f"{len(body)} unique holdout hashes (fp {_fingerprint()}) -> {HASH_PATH}")
 
 
 def _selftest():
@@ -565,7 +596,7 @@ def _selftest():
         # produce -- if load() recomputes, it must raise.
         if _hash_saved is not None:
             with open(HASH_PATH, "w", encoding="utf-8") as f:
-                f.write("# fp:" + "f" * 16 + "\n0000000000000000\n")
+                f.write("# fp:" + "f" * 16 + "\n# n:1\n0000000000000000\n")
             hs = load()
             assert hs == {"0000000000000000"}, (
                 f"load() returned {hs} rather than the committed set -- it recomputed "
@@ -753,6 +784,58 @@ def _selftest_check():
             n += 1
         finally:
             g["load"] = saved_load
+
+        # 5. FORMAT DISPATCH: a single-line JSON ARRAY source (sanitized-mbpp.json is one
+        #    physical line) must yield every object's question via format="array", while
+        #    jsonl yields one per line. The defect this fixes (2026-09-14): line-wise
+        #    json.loads read the whole 427-row array as one row with no prompt key and the
+        #    regenerate died on "1 rows had none", so the new sources contributed zero hashes
+        #    while the hand-bumped fp header read green.
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            arr = os.path.join(td, "arr.json")
+            with open(arr, "w", encoding="utf-8") as fh:
+                json.dump([{"prompt": "p0"}, {"prompt": "p1"}, {"x": 0}], fh)
+            assert list(_iter_questions(arr, ["prompt"], "array")) == ["p0", "p1", None]
+            jl = os.path.join(td, "rows.jsonl")
+            with open(jl, "w", encoding="utf-8") as fh:
+                fh.write('{"text": "t0"}\n{"text": "t1"}\n')
+            assert list(_iter_questions(jl, ["text"], "jsonl")) == ["t0", "t1"]
+            notlist = os.path.join(td, "obj.json")
+            with open(notlist, "w", encoding="utf-8") as fh:
+                json.dump({"prompt": "p"}, fh)
+            try:
+                list(_iter_questions(notlist, ["prompt"], "array"))
+                raise AssertionError(
+                    "format=array on a non-list top level must raise, not hash zero rows")
+            except RuntimeError as e:
+                assert "not list" in str(e), f"wrong refusal: {str(e)[:120]}"
+        n += 1
+
+        # 6. HEADER/BODY MISMATCH MUST FAIL load(), regardless of fp verifiability. This is the
+        #    false-green 2026-09-14: a hand-edited fp header over an UNCHANGED 29,923-line body
+        #    passed check() while the three newly registered sources contributed nothing. The
+        #    test runs against a temp HASH_PATH with _fp_inputs faked to "all absent" so the fp
+        #    is trusted by design and the count assertion is the only thing that can fire.
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            tmp_hash = os.path.join(td, "holdout_hashes.txt")
+            with open(tmp_hash, "w", encoding="utf-8") as fh:
+                fh.write("# fp:" + "f" * 16 + "\n# n:2\n0000000000000000\n")
+            gg = globals()
+            sv_hash, sv_inputs = gg["HASH_PATH"], gg["_fp_inputs"]
+            gg["HASH_PATH"] = tmp_hash
+            gg["_fp_inputs"] = lambda: ([], ["fake-absent"])
+            try:
+                load()
+                raise AssertionError(
+                    "load() accepted a guard whose # n: header disagrees with its body -- a "
+                    "hand-bumped header over a stale body would again read green")
+            except RuntimeError as e:
+                assert "declares 2" in str(e) and "holds 1" in str(e), str(e)[:160]
+            finally:
+                gg["HASH_PATH"], gg["_fp_inputs"] = sv_hash, sv_inputs
+        n += 1
     finally:
         REGISTRY, REGISTRY_SHA1 = saved_reg, saved_sha
     return n
