@@ -4,6 +4,7 @@
 score the log-likelihood of each continuation letter, pick argmax.
 """
 import sys
+import os
 from collections import defaultdict
 
 import torch
@@ -14,9 +15,29 @@ from scripts.loader import load_checkpoint, load_tokenizer
 LETTERS = ["A", "B", "C", "D"]
 
 
+MMLU_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "data", "eval", "mmlu_test.jsonl")
+# cais/mmlu "all" test split, 14,042 rows, 13-whitespace-gram screened against every r3 _dc
+# domain 2026-09-14 (runs/contam_mmlu_r3.json). Auxiliary metric, deliberately NOT in the
+# datagen holdout registry: that path forces the 5MiB holdout_hashes.txt over the tracked-blob
+# cap (fb ruling 2026-09-14, option B), and the SFT pool is decontaminated independently.
+MMLU_SHA1 = "d9c4079e4e04aec3ffcb0e636a77f43ab5f5f022"
+
+
 def load_dataset():
-    from datasets import load_dataset
-    return load_dataset("cais/mmlu", "all", split="test")
+    import hashlib
+    import json
+
+    with open(MMLU_PATH, "rb") as fh:
+        raw = fh.read()
+    got = hashlib.sha1(raw).hexdigest()
+    if got != MMLU_SHA1:
+        raise RuntimeError(
+            f"{MMLU_PATH} sha1 {got} != screened {MMLU_SHA1}; refusing to score an "
+            "unscreened MMLU copy. Rebuild from cais/mmlu 'all' test and rerun the 13-gram "
+            "audit before changing MMLU_SHA1")
+    return [json.loads(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
 
 
 @torch.no_grad()
