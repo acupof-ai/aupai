@@ -79,6 +79,29 @@ def assert_sample_aligned(sa, sb, tasks):
             "contract)")
 
 
+def load_clean_task_ids(path):
+    """Int task_ids from an MBPP contam manifest's r3_mbpp_clean list.
+
+    Preds carry the bare sanitized int task_id; the manifest names them
+    mbpp427:<num>. Refuses a missing file/key or a non-MBPP id.
+    """
+    import re
+    if not path:
+        return None
+    with open(path, encoding="utf-8") as fh:
+        u = json.load(fh)
+    v = u.get("r3_mbpp_clean")
+    if not isinstance(v, list) or not v:
+        raise SystemExit(f"{path}: r3_mbpp_clean missing or not a non-empty list")
+    out = set()
+    for s in v:
+        m = re.fullmatch(r"mbpp427:(\d+)", str(s))
+        if not m:
+            raise SystemExit(f"{path}: clean id {s!r} is not mbpp427:<num>")
+        out.add(int(m.group(1)))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--a", required=True, help="treatment preds (e.g. ET)")
@@ -88,7 +111,11 @@ def main():
     ap.add_argument("--boot", type=int, default=10000)
     ap.add_argument("--seed", type=int, default=20260914)
     ap.add_argument("--alpha", type=float, default=0.05, help="one-sided tail")
+    ap.add_argument("--clean", default=None,
+                    help="MBPP contam manifest; restrict the paired unit to r3_mbpp_clean")
     args = ap.parse_args()
+
+    clean_ids = load_clean_task_ids(args.clean)
 
     ra, na, sa = load_task_rates(args.a)
     rb, nb, sb = load_task_rates(args.b)
@@ -101,6 +128,14 @@ def main():
     if not tasks:
         raise SystemExit("no shared task_ids between the two files")
     assert_sample_aligned(sa, sb, tasks)
+    if clean_ids is not None:
+        before = len(tasks)
+        tasks = [t for t in tasks if t in clean_ids]
+        if not tasks:
+            raise SystemExit("no CLEAN task_ids survive the --clean filter")
+        if len(tasks) != before:
+            print(f"CLEAN: pairing restricted to {len(tasks)} of {before} tasks "
+                  f"(r3 six-domain union excluded)")
     assert na[tasks[0]] == nb[tasks[0]], (na[tasks[0]], nb[tasks[0]])
     n = na[tasks[0]]
 

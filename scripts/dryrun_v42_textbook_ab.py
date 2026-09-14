@@ -104,35 +104,38 @@ def main():
     ap.add_argument("--ckpt", required=True, help="r3 checkpoint to take the cursor from")
     ap.add_argument("--resume-step", type=int, default=None)
     ap.add_argument("--require-final-step", type=int, default=None,
-                    help="if set (38070 for the r3 FINAL), a cursor at any other step is a "
-                         "BLOCKER, not just a validation run. Use this to certify launch mixes.")
+                    help="if set, the ckpt's actual step MUST equal this value or the dry-run "
+                         "exits 1 (prints actual vs expected). Set 38070 to certify launch mixes "
+                         "against the r3 FINAL; omit for a plan-validation dry-run on an early ckpt.")
     args = ap.parse_args()
 
     cursor = load_ckpt_cursor(args.ckpt)
     step = args.resume_step if args.resume_step is not None else cursor["step"]
     R3_FINAL_STEP = 38070
+    SEG = 137
+    # The launch warmdown is SEG/(join_step+SEG), derived from the ACTUAL resume step, not a
+    # hand constant. The writer bakes this same value into each mix; the dry-run asserts the two
+    # agree so a mix built for one cursor cannot silently carry another join's warmdown.
+    implied_warmdown = round(SEG / (step + SEG), 6)
     print("=== v42 stage-2 CPU dry-run (no train, no gpu) ===")
     print(f"ckpt={args.ckpt} step={step} seed={cursor['row_cursor_seed']} "
-          f"ckpt_total_steps={cursor['total_steps']}")
+          f"ckpt_total_steps={cursor['total_steps']}  implied_warmdown={implied_warmdown}")
     print(f"cursor domains: {sorted(cursor['row_cursor_srcfp'])}")
-    # fb condition 2: the step23000 mixes validate the PLAN only and are NOT the launch mixes.
-    # A launch must regenerate against the r3-final cursor. Without --require-final-step this is
-    # a validation run (banner, still exit 0 on a sound plan); with it, a non-final cursor blocks.
+    # Without --require-final-step this is a plan VALIDATION (banner, exit 0 on a sound plan).
+    # With it, a ckpt at any other step is a hard blocker that names actual vs expected.
     launch_ready = (step == R3_FINAL_STEP and cursor["total_steps"] == R3_FINAL_STEP)
-    if not launch_ready:
-        msg = (f"VALIDATION ONLY: cursor is step {step}, not the r3-final {R3_FINAL_STEP}. These "
-               f"mixes are NOT launch-ready; regenerate with write_mix_v42_stage2.py --ckpt <r3 "
-               f"final> and re-run with --require-final-step {R3_FINAL_STEP}.")
-        if args.require_final_step == R3_FINAL_STEP:
-            print("LAUNCH GATE: " + msg)
-        else:
-            print(msg)
+    if args.require_final_step is not None and step != args.require_final_step:
+        print(f"LAUNCH GATE FAIL: ckpt step is {step} but --require-final-step asked for "
+              f"{args.require_final_step}.")
+    elif not launch_ready:
+        print(f"VALIDATION ONLY: cursor is step {step}, not the r3-final {R3_FINAL_STEP}. These "
+              f"mixes are NOT launch-ready; regenerate with write_mix_v42_stage2.py --ckpt <r3 "
+              f"final> and re-run with --require-final-step {R3_FINAL_STEP}.")
 
     blockers = []
-    if args.require_final_step == R3_FINAL_STEP and not launch_ready:
-        blockers.append(f"--require-final-step {R3_FINAL_STEP}: ckpt cursor step {step}/"
-                        f"total {cursor['total_steps']} is not the r3 final; refusing to certify "
-                        "these mixes as launch-ready")
+    if args.require_final_step is not None and step != args.require_final_step:
+        blockers.append(f"--require-final-step {args.require_final_step}: ckpt cursor step is "
+                        f"{step} (total {cursor['total_steps']}); refusing to certify these mixes")
     arm_rows = {}
     for label, path, expect_textbook in [("T", args.t, True), ("C", args.c, False)]:
         print(f"\n----- arm {label}: {path} -----")
@@ -237,6 +240,18 @@ def main():
             m = json.load(fh)
         da = m.get("_derived_against")
         print(f"{os.path.basename(path)}: _derived_against present={bool(da)}")
+        # fb condition 3b: the warmdown baked into the mix must equal SEG/(actual join step+SEG).
+        # At the r3 final that is 137/38207=0.003586; a mix regenerated against one cursor but run
+        # against another would carry a silently wrong warmdown. Accept a small rounding tolerance.
+        mw = m.get("warmdown")
+        if mw is None:
+            blockers.append(f"{os.path.basename(path)}: mix carries no 'warmdown' field; the "
+                            "writer must bake SEG/(join_step+SEG) into it")
+        elif abs(float(mw) - implied_warmdown) > 5e-7:
+            blockers.append(f"{os.path.basename(path)}: mix warmdown {mw} != SEG/(step+SEG)="
+                            f"{implied_warmdown} at ckpt step {step}")
+        else:
+            print(f"  warmdown {mw} == SEG/(step+SEG)={implied_warmdown} OK")
         if da:
             want_rows = {k: int(v) for k, v in (da.get("row_cursor") or {}).items()}
             got_rows = {k: int(v) for k, v in cursor["row_cursor"].items()}
