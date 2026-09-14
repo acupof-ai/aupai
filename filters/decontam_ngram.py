@@ -14,10 +14,19 @@ What is keyed per benchmark:
   which are then part of the code key.
 
 Normalisation is ONE function applied identically to the benchmark side and the
-corpus side (de review): full-line comments are stripped, whitespace runs
-collapsed, then a fixed word-level split -- not the BPE tokenizer, so the
-decontam fingerprint never depends on a vocabulary. n-grams are word tokens:
-the gate is a verbatim TEXT property that must survive a vocabulary rebuild.
+corpus side: whitespace runs are collapsed, then a fixed word-level split -- not
+the BPE tokenizer, so the decontam fingerprint never depends on a vocabulary.
+n-grams are word tokens: the gate is a verbatim TEXT property that must survive
+a vocabulary rebuild.
+
+Comment lines are NOT stripped. In code that is conservative (comments are
+text like any other), and in markdown corpora stripping `# ...` deletes
+headings and prose: the gate problems' prompt n-grams then cannot match a
+textbook chapter that quotes them in a heading (measured miss: 28 HumanEval
+hits in code_ultra_l2_dc, runs/contam_l2_humaneval.json). This keeps the
+normaliser identical to scripts/audit_gate_contamination._grams, under which
+the CPython-Lib false-positive baseline is 0/2608
+(runs/contam_fp_baseline.json).
 
 Performance for the aggregate stream (0e): build the gram set ONCE
 (Decontaminator.load_default()), then per row it is set membership over the row's
@@ -37,24 +46,24 @@ MBPP = os.path.join(ROOT, "data", "eval", "mbpp_holdouts.jsonl")
 N = 13
 
 _WS = re.compile(r"\s+")
-# a full-line code comment (Python # and // for the few non-py shards); inline
-# trailing comments are left in place so code structure is not rewritten.
-_COMMENT_LINE = re.compile(r"^\s*(?:#|//)\s?.*$", re.M)
 
 
 # ONE normalisation applied identically to the benchmark side and the corpus side
-# before shingling (de review 2026-09-11): strip full-line comments, collapse all
-# whitespace runs, then split ON WHITESPACE into word tokens. This is a fixed,
-# vocabulary-independent split (not the BPE tokenizer), so the decontam fingerprint
-# never depends on a vocab. We deliberately do NOT split punctuation into its own
-# tokens: that makes "13 tokens" span only 4-9 whitespace tokens of code (x=[1,2,3]
-# is 17 punct-tokens vs 9 whitespace tokens) and over-fires on generic idioms
-# (measured: py_rp1t 3709 rows / 184 generic problems vs 7 / 9 under whitespace) --
-# the no-allowlist gate must drop verbatim GATE ANSWERS, not every short idiom.
+# before shingling: collapse all whitespace runs, then split ON WHITESPACE into
+# word tokens. No line stripping: `#` opens a markdown heading and `//` can be
+# prose, so removing such lines in a mixed text/code corpus deletes gate-bearing
+# text (28 missed HumanEval hits, runs/contam_l2_humaneval.json). Whitespace-only
+# normalisation matches scripts/audit_gate_contamination._grams, whose CPython-Lib
+# false-positive baseline is 0. This is a fixed, vocabulary-independent split (not
+# the BPE tokenizer), so the decontam fingerprint never depends on a vocab. We
+# deliberately do NOT split punctuation into its own tokens: that makes
+# "13 tokens" span only 4-9 whitespace tokens of code (x=[1,2,3] is 17
+# punct-tokens vs 9 whitespace tokens) and over-fires on generic idioms
+# (measured: py_rp1t 3709 rows / 184 generic problems vs 7 / 9 under whitespace)
+# -- the no-allowlist gate must drop verbatim GATE ANSWERS, not every short idiom.
 def normalise(s):
-    """The single normaliser: full-line comment strip, whitespace collapse."""
-    s = _COMMENT_LINE.sub("", s or "")
-    return _WS.sub(" ", s).strip()
+    """The single normaliser: whitespace collapse only."""
+    return _WS.sub(" ", s or "").strip()
 
 
 def tokenize(s):
@@ -195,8 +204,10 @@ def _selftest():
              "        return dict(line.strip().split('=') for line in fh if '=' in line)")
     assert d.keeps(clean), "unrelated code must keep"
     assert d.keeps("x = 1") and d.keeps("")
-    # ONE normalisation on both sides: stripping a full-line comment cannot create a match
-    assert ngrams("# a comment line here\nx y z w\n") == ngrams("x y z w")
+    # ONE normalisation on both sides, whitespace-only: heading/prose lines are
+    # text and must survive (markdown `#` is not a comment); only whitespace moves.
+    assert ngrams("# a b c d e f g h i j k l m\n") != set()
+    assert normalise("# heading\nx  =  1\n") == "# heading x = 1"
     # word split is on whitespace (punctuation stays attached to its word)
     assert tokenize("a, b\nc  d") == ["a,", "b", "c", "d"]
     assert keeps(clean, d) and not keeps("def fib(n):\n" + sol, d)

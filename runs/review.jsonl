@@ -552,3 +552,9 @@
 {"ts": "2026-09-13T07:07Z", "reviewer": "3b", "task": "fb per-domain cache_exclude holdout-minus token cache", "artifact": "train.py", "verdict": "approved", "pr": 318}
 {"ts": "2026-09-13T07:44Z", "reviewer": "3b", "task": "fb r3 mix stub domain rename matches corpus/excluded cache", "artifact": "data/mix_v41_r3.json", "verdict": "approved", "pr": 321}
 {"ts": "2026-09-13T08:01Z", "reviewer": "3b", "task": "98 round-3 stub holdout-excluded cache fact", "artifact": "facts/corpus_supply.json", "verdict": "approved", "pr": 320}
+{"ts": "2026-09-13T14:43Z", "reviewer": "3b", "task": "deletion manifest verification", "artifact": "runs/deletion_laptop_0913.txt", "verdict": "approved", "pr": 322}
+{"ts": "2026-09-13T15:13Z", "reviewer": "ae", "task": "PR #323", "artifact": "datagen/vet_textbooks.py", "verdict": "approved", "pr": 323}
+{"ts": "2026-09-13T15:57Z", "reviewer": "ae", "task": "PR #324", "artifact": "filters/decontam_ngram.py", "verdict": "approved", "pr": 324}
+{"ts": "2026-09-14T06:08Z", "reviewer": "3b", "task": "3b-26", "artifact": "scripts/harness.py check_no_stale_running + scripts/exp.py expected_end_utc; both broken-worlds FAIL, forced-GMT-8 UTC half red, E2E +48h correct", "verdict": "approved", "pr": 332}
+{"ts": "2026-09-14T06:08Z", "reviewer": "3b", "task": "3b-26", "artifact": "scripts/test_ledger_field_writers.py _live_reviewer; selftest passes with live roster reviewer", "verdict": "approved", "pr": 333}
+{"ts": "2026-09-14T06:51Z", "reviewer": "3b", "task": "3b-26", "artifact": "scripts/build_textbook_domain.py; manifest shape + decon paths verified on pod, A&B key collisions 0/2015, keep-list hook for mutation gate", "verdict": "approved", "pr": 334}
