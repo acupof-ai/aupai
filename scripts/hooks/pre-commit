@@ -1585,6 +1585,7 @@ def main():
         "algorithms/test_rlvr_reward_suite.py",
         "datagen/test_near_dedup_known.py",
         "datagen/test_parallel_exact_identity.py",
+        "datagen/test_fence_extraction.py",
         "eval/test_l1_fewshot_2x2.py",
         "scripts/test_e1_28_matched.py",
         "scripts/test_e1_29_floor_by_class.py",
