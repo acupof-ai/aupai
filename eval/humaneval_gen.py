@@ -408,6 +408,14 @@ def main():
                          "bare newline that the tokenizer never places before an indented body, "
                          "so the standard prompt signals a column-0 line; rstrip is the "
                          "in-distribution continuation (gate column from 2026-09-14). Non-chatml.")
+    ap.add_argument("--n", type=int, default=1,
+                    help="samples per task. 1 = the existing single greedy/temp draw; "
+                         ">1 writes one preds row per sample (sample_idx 0..n-1) under a "
+                         "task_id-seeded RNG, so paired T/C runs reproduce identical draws. "
+                         "Base continuation arms only (no --chatml).")
+    ap.add_argument("--temperature", type=float, default=0.0,
+                    help="sampling temperature; 0 (default) is greedy. Use 0.2 with --n 10 "
+                         "for the stage-2 E0/ET/EC paired protocol")
     ap.add_argument("--preds", default=None,
                     help="score an existing preds jsonl (pass/empty/repetition) and exit; "
                          "no model, cardless")
@@ -417,6 +425,11 @@ def main():
         ap.error("--chatml is a prompt/scoring arm and cannot combine with the strip arms")
     if args.rstrip_nl and args.chatml:
         ap.error("--rstrip_nl is a base docstring-continuation arm, not a ChatML arm")
+    if args.n > 1 and args.chatml:
+        ap.error("--n multi-sample is defined for base continuation arms, not --chatml")
+    if args.n > 1 and args.temperature <= 0:
+        ap.error(f"--n {args.n} at temperature 0 draws {args.n} identical greedy answers; "
+                 "pass --temperature (stage-2 uses 0.2)")
 
     if args.preds:
         with open(args.preds, encoding="utf-8") as fh:
@@ -527,6 +540,7 @@ def main():
         + (".chatml" if args.chatml else "")
         + (".nodoc" if args.strip_docstrings else "")
         + (".rstripnl" if args.rstrip_nl else "")
+        + (f".n{args.n}temp{args.temperature:g}" if args.n > 1 else "")
         + ".jsonl")
     t0 = time.time()
     npass = nempty = neos = nstop = nrep = nimend = 0
@@ -544,11 +558,39 @@ def main():
             "device": str(args.device),
             "cpu_threads": (args.threads if is_cpu else None),
             "max_new": args.max_new,
+            "n": args.n,
+            "temperature": args.temperature,
             "stops": STOPS,
             "n_problems": len(probs),
             "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, ensure_ascii=False) + "\n")
         for i, (p, prompt) in enumerate(zip(probs, prompts), 1):
+            if args.n > 1:
+                # Stage-2 paired protocol: n task-seeded stochastic draws. Each sample is
+                # truncated/judged exactly like the single greedy continuation; the same
+                # task_seed(task_id) makes T and C checkpoints draw identical decisions.
+                from eval.sampling import sample_completions
+                ids = tok.encode(prompt).ids
+                raws = sample_completions(model, tok, ids, p["task_id"], args.n,
+                                          args.temperature, args.max_new, args.device,
+                                          cfg.seq)
+                oks = []
+                for si, raw in enumerate(raws):
+                    c = truncate(raw, p["entry_point"])
+                    ok = judge(p, c, prompt if args.rstrip_nl else None)
+                    oks.append(ok)
+                    fout.write(json.dumps({
+                        "task_id": p["task_id"], "sample_idx": si, "gen": c,
+                        "ok": ok, "empty": not c.strip(), "n": args.n,
+                        "temperature": args.temperature}, ensure_ascii=False) + "\n")
+                npass += sum(oks)
+                fout.flush()
+                if i % 20 == 0 or i == len(probs):
+                    done_tasks = i
+                    print(f"  {done_tasks}/{len(probs)} tasks, "
+                          f"c={npass}/{done_tasks * args.n} samples "
+                          f"({100 * npass / (done_tasks * args.n):.2f}%)", flush=True)
+                continue
             raw, stop_reason = gen(prompt, p["entry_point"])
             if args.chatml:
                 fn = extract_by_name(raw, p["entry_point"])
@@ -594,6 +636,12 @@ def main():
                       f"{100 * npass / i:.2f}%   ({time.time() - t0:.0f}s)", flush=True)
 
     attest(out_path)
+    if args.n > 1:
+        ntask = len(probs)
+        print(f"\nHUMANEVAL n={args.n} T={args.temperature}: sample pass rate "
+              f"c={npass}/{ntask * args.n} = {100 * npass / (ntask * args.n):.2f}%", flush=True)
+        print(f"preds saved: {out_path}", flush=True)
+        return
     n_nonempty = len(probs) - nempty
     print(f"\nHUMANEVAL pass@1 (greedy) = {npass}/{len(probs)} = "
           f"{100 * npass / len(probs):.2f}%", flush=True)
