@@ -1,11 +1,13 @@
 {
- "_comment": "v42 stage-2 T arm, derived against ckpt_v41_r3_0914.pt.step23000 (step 23000). Single-phase 137-step segment = 26304 plan rows (8x4x6/step), anneal_frac 0; total_steps is 38070+137=38207 and warmdown 137/38207=0.003586 (set --warmdown on the launch line). Plain *_dc caches, NO cache_exclude. Regenerate with scripts/write_mix_v42_stage2.py --ckpt <final r3 ckpt> before launch.",
- "total_tokens": 18195677184,
- "total_rows": 4442304,
+ "_comment": "v42 stage-2 T arm, derived against ckpt_v41_r3_0914.pt.step24000 (step 24000). Single-phase 137-step segment = 26304 plan rows (8x4x6/step), anneal_frac 0; total_steps is 24000+137=24137 and warmdown 137/24137=0.005676 (set --warmdown on the launch line). Plain *_dc caches, NO cache_exclude. Regenerate with scripts/write_mix_v42_stage2.py --ckpt <final r3 ckpt> before launch; the dry-run asserts this warmdown against the ckpt it is run with.",
+ "total_tokens": 18982109184,
+ "total_rows": 4634304,
  "seq": 4096,
  "anneal_frac": 0.0,
  "segment_steps": 137,
  "segment_plan_rows": 26304,
+ "join_step": 24000,
+ "warmdown": 0.005676,
  "domains": {
   "textbook_claude_v41_dc": {
    "weight": 0.2999,
@@ -19,7 +21,7 @@
    "cumulative_epochs_on_pool": 4.0,
    "weight_decimals": 4,
    "rows_from_weight_at_runtime": 7888,
-   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over the live plain /data00/tokens_<domain>.pt (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623."
+   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over each live plain domain token cache via train._domain_cache_path (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623."
   },
   "code_ultra_l3_stub_dc": {
    "weight": 0.31505,
@@ -28,12 +30,12 @@
    "fingerprint": "12ec3cd220b8fe13",
    "role": "continuation domain shared with the C arm; six-domain T share is the r3 anneal proportion over the residual",
    "pool_rows": 1213934,
-   "cursor_used_rows": 2075833,
+   "cursor_used_rows": 2165736,
    "segment_rows": 8287,
-   "cumulative_epochs_on_pool": 1.7168,
+   "cumulative_epochs_on_pool": 1.7909,
    "weight_decimals": 5,
    "rows_from_weight_at_runtime": 8287,
-   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over the live plain /data00/tokens_<domain>.pt (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623.",
+   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over each live plain domain token cache via train._domain_cache_path (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623.",
    "cursor_srcfp": "12ec3cd220b8fe13"
   },
   "code_keep_p1_dc": {
@@ -43,12 +45,12 @@
    "fingerprint": "d7b4f3a09c5707b0",
    "role": "continuation domain shared with the C arm; six-domain T share is the r3 anneal proportion over the residual",
    "pool_rows": 636195,
-   "cursor_used_rows": 1165874,
+   "cursor_used_rows": 1216559,
    "segment_rows": 4604,
-   "cumulative_epochs_on_pool": 1.8398,
+   "cumulative_epochs_on_pool": 1.9195,
    "weight_decimals": 9,
    "rows_from_weight_at_runtime": 4604,
-   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over the live plain /data00/tokens_<domain>.pt (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623.",
+   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over each live plain domain token cache via train._domain_cache_path (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623.",
    "cursor_srcfp": "d7b4f3a09c5707b0"
   },
   "code_ultra_l2_dc": {
@@ -58,12 +60,12 @@
    "fingerprint": "adf2ff20698dae8a",
    "role": "continuation domain shared with the C arm; six-domain T share is the r3 anneal proportion over the residual",
    "pool_rows": 3739417,
-   "cursor_used_rows": 529836,
+   "cursor_used_rows": 553044,
    "segment_rows": 3315,
-   "cumulative_epochs_on_pool": 0.1426,
+   "cumulative_epochs_on_pool": 0.1488,
    "weight_decimals": 5,
    "rows_from_weight_at_runtime": 3315,
-   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over the live plain /data00/tokens_<domain>.pt (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623.",
+   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over each live plain domain token cache via train._domain_cache_path (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623.",
    "cursor_srcfp": "adf2ff20698dae8a"
   },
   "math_owm_stage2_dc": {
@@ -73,12 +75,12 @@
    "fingerprint": "4b1469bfe4667706",
    "role": "continuation domain shared with the C arm; six-domain T share is the r3 anneal proportion over the residual",
    "pool_rows": 1424819,
-   "cursor_used_rows": 379511,
+   "cursor_used_rows": 396148,
    "segment_rows": 921,
-   "cumulative_epochs_on_pool": 0.267,
+   "cumulative_epochs_on_pool": 0.2787,
    "weight_decimals": 6,
    "rows_from_weight_at_runtime": 921,
-   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over the live plain /data00/tokens_<domain>.pt (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623.",
+   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over each live plain domain token cache via train._domain_cache_path (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623.",
    "cursor_srcfp": "4b1469bfe4667706"
   },
   "en_c4_stage2_dc": {
@@ -88,12 +90,12 @@
    "fingerprint": "c59c2e4227d875ec",
    "role": "continuation domain shared with the C arm; six-domain T share is the r3 anneal proportion over the residual",
    "pool_rows": 479552,
-   "cursor_used_rows": 132487,
+   "cursor_used_rows": 138178,
    "segment_rows": 368,
-   "cumulative_epochs_on_pool": 0.277,
+   "cumulative_epochs_on_pool": 0.2889,
    "weight_decimals": 7,
    "rows_from_weight_at_runtime": 368,
-   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over the live plain /data00/tokens_<domain>.pt (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623.",
+   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over each live plain domain token cache via train._domain_cache_path (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623.",
    "cursor_srcfp": "c59c2e4227d875ec"
   },
   "cot_dc": {
@@ -103,23 +105,23 @@
    "fingerprint": "0d9f495913438657",
    "role": "continuation domain shared with the C arm; six-domain T share is the r3 anneal proportion over the residual",
    "pool_rows": 92750,
-   "cursor_used_rows": 132459,
+   "cursor_used_rows": 138335,
    "segment_rows": 921,
-   "cumulative_epochs_on_pool": 1.4381,
+   "cumulative_epochs_on_pool": 1.5014,
    "weight_decimals": 6,
    "rows_from_weight_at_runtime": 921,
-   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over the live plain /data00/tokens_<domain>.pt (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623.",
+   "epochs_pool_source": "trainable pool rows measured on the pod 2026-09-14 via train._domain_seqs + train.val_split_n over each live plain domain token cache via train._domain_cache_path (packed seq-rows minus the domain val split); vocab stamp f1f860970d15d623.",
    "cursor_srcfp": "0d9f495913438657"
   }
  },
  "_derived_against": {
   "row_cursor": {
-   "code_ultra_l3_stub_dc": 2075833,
-   "code_keep_p1_dc": 1165874,
-   "code_ultra_l2_dc": 529836,
-   "math_owm_stage2_dc": 379511,
-   "en_c4_stage2_dc": 132487,
-   "cot_dc": 132459
+   "code_ultra_l3_stub_dc": 2165736,
+   "code_keep_p1_dc": 1216559,
+   "code_ultra_l2_dc": 553044,
+   "math_owm_stage2_dc": 396148,
+   "en_c4_stage2_dc": 138178,
+   "cot_dc": 138335
   },
   "row_cursor_srcfp": {
    "code_ultra_l3_stub_dc": "12ec3cd220b8fe13",
@@ -130,6 +132,6 @@
    "cot_dc": "0d9f495913438657"
   },
   "row_cursor_seed": 42,
-  "_note": "r3 resume cursor at step 23000 (six domains). textbook_claude_v41_dc is deliberately absent: a new stage-2 domain starting at row 0. epochs are TOTALS = cursor rows + this segment."
+  "_note": "r3 resume cursor at step 24000 (six domains). textbook_claude_v41_dc is deliberately absent: a new stage-2 domain starting at row 0. epochs are TOTALS = cursor rows + this segment."
  }
 }
