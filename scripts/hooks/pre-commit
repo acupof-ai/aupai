@@ -662,11 +662,20 @@ def main():
     # cheap early-out -- an up-to-date tree needs no diff at all.
     _clash = _main_touched_staged(_staged_all) if behind and not _ledger_only and not merging else []
     if _clash and os.environ.get("AUPAI_BEHIND_MAIN_OK") != "1":
+        # THE STAGED-OVERLAP CASE CANNOT USE A BARE `git merge`: it refuses with "your local
+        # changes would be overwritten", git stash is forbidden (shared stack), and the only move
+        # the old message printed was that bare merge -- the exact loop de-113 measured. Point at
+        # the flag-free escape for code: merge_main.sh's staged carry commits the index to
+        # refs/wip/<branch>, clears it, merges (exempt here), and three-way restores the work.
         print(
             f"REFUSING: main has changed {len(_clash)} file(s) this commit stages, and this "
             f"tree is {behind} commit(s) behind it: {', '.join(_clash[:4])}\n"
-            f"Merge first:\n"
-            f"  git merge --no-edit main\n"
+            f"Get current first:\n"
+            f"  - nothing staged:      git merge --no-edit main\n"
+            f"  - staged code here:    scripts/merge_main.sh <branch>   # carries the staged\n"
+            f"                         index through the merge with no flag (refs/wip carry),\n"
+            f"                         then restores it; a bare 'git merge' here refuses with\n"
+            f"                         'local changes would be overwritten' and stash is banned\n"
             f"Committing here writes on top of code main has already moved past, and "
             f"any check you ran said nothing about which version it tested.\n"
             f"Being behind main is NOT itself a refusal: main moving on files you do not "
@@ -1040,6 +1049,13 @@ def main():
         # corpus, runs filter_domain, asserts the drops, and runs the ACTUAL train.py launch
         # guard on the stamped output (accept, then refuse after a stamp mutation).
         "scripts/filter_gate_domains.py",
+        # The 23:00Z L3-shortfall reweight (fb ruling 2026-09-11). Registered because the
+        # whole risk is over-reading L3/L2 supply: the selftest pins full-L3 no-op,
+        # zero-L3 and 6B cases on known answers, and the script refuses --apply if any
+        # non-cot scheduled main+anneal exceeds supply. A sign error in the anneal shift
+        # (the first version scheduled 17.4B of a 16.57B L2) would rewrite the launch
+        # mix silently without the known-answer cases.
+        "scripts/reweight_l3_shortfall.py",
         "scripts/corpus_snapshot.py",
         # The exact token counter behind cs.code_rp1t_landed and cs.code_dedup08_landed.
         # Registered because it is the instrument that CORRECTS a measurement-basis defect:

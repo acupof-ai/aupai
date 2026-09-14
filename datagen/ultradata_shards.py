@@ -49,7 +49,11 @@ class ShardWriter:
         self.bytes = 0
 
     def write(self, rec):
-        line = json.dumps(rec, ensure_ascii=False) + "\n"
+        self.write_raw(json.dumps(rec, ensure_ascii=False) + "\n")
+
+    def write_raw(self, line):
+        if not line.endswith("\n"):
+            line += "\n"
         size = len(line.encode())
         if self.fh is None or self.bytes + size > self.limit:
             if self.fh:
@@ -100,13 +104,20 @@ def main():
                     help="aggregate: emit final decontaminated shards here instead of out")
     ap.add_argument("--agg-workers", type=int, default=8,
                     help="aggregate: parallel 13-gram shard workers")
+    ap.add_argument("--release-intermediates", action="store_true",
+                    help="aggregate: delete each tagged shard after 13-gram "
+                         "classification and each .clean after dedup (disk-bound; "
+                         "raw parquets must be retained)")
+    ap.add_argument("--no-exec", action="store_true",
+                    help="L3 static-only: keep on nontrivial() floor + decontam + "
+                         "exact dedup, no solution sandbox exec (user order 2026-09-11)")
     args = ap.parse_args()
     out = args.out or f"data/corpus/code_ultra_{args.level.lower()}"
     prefix = os.path.basename(out.rstrip("/"))
 
     if args.aggregate:
         aggregate(out, args.aggregate, prefix, args.tokenizer, args.level,
-                  args.final_out, args.agg_workers)
+                  args.final_out, args.agg_workers, args.release_intermediates)
         return
 
     tag = f"_{args.tag}" if args.tag else ""
@@ -128,7 +139,8 @@ def main():
     kept_tokens = 0
     total = 0
     writer = ShardWriter(out, prefix, tag=tag)
-    exec_pool = ThreadPoolExecutor(max_workers=args.exec_workers) if args.level == "L3" else None
+    exec_pool = ThreadPoolExecutor(max_workers=args.exec_workers) \
+        if args.level == "L3" and not args.no_exec else None
 
     for i in range(args.first, args.last + 1):
         path = os.path.join(args.raw, shard_name(args.level, i))
@@ -163,6 +175,10 @@ def main():
             if exec_pool is not None and survivors:
                 pairs = [(cols["solution"][r], cols["test"][r]) for r in survivors]
                 verdicts = list(exec_pool.map(_exec_pair, pairs))
+            elif args.level == "L3" and args.no_exec:
+                # Static-only arm (user order 2026-09-11): the AST floor alone,
+                # no solution sandbox. nt from the SOLUTION column, same floor.
+                verdicts = [(PASS, nontrivial(cols["solution"][r])) for r in survivors]
             else:
                 verdicts = [(PASS, True)] * len(survivors)
             for r, (verdict, nt) in zip(survivors, verdicts, strict=True):
@@ -209,10 +225,12 @@ def main():
         "tokens_status": "measured",
         "tokens_config": f"{args.tokenizer}, exact per-doc ids + one <eos> per doc "
                          "(code_rp1t convention)",
-        "filters": ("decontam(humaneval,mbpp)+exact-dedup+exec-pass+non-triviality"
+        "filters": ("decontam(humaneval,mbpp)+exact-dedup+non-triviality(NO EXEC)"
+                    if (args.level == "L3" and args.no_exec)
+                    else "decontam(humaneval,mbpp)+exact-dedup+exec-pass+non-triviality"
                     if args.level == "L3"
                     else "decontam(humaneval,mbpp)+exact-dedup+drop-CONFIG,TEST"),
-        "workers": args.exec_workers if args.level == "L3" else 1,
+        "workers": (args.exec_workers if args.level == "L3" and not args.no_exec else 1),
         "n_shards": writer.n,
         "filters_fp": fp_of(__file__, sys.modules["datagen.gen_exercises"].__file__,
                             sys.modules["datagen.ud_solution_exec"].__file__),
@@ -238,19 +256,45 @@ def _agg_worker_init(root):
 
 def _ngram_classify_shard(args):
     """Forked per tagged shard: split lines into ngram-clean / ngram-hit temp
-    files. The expensive pass; parallel across shards.
+    files and a .clean.sigs sidecar (one sha1 of normalized content per clean
+    line, aligned with .clean line order) so the phase-2 dedup driver never
+    hashes/parses a line. Parallel across shards. Resumable: if all three
+    outputs already exist and line counts agree, skip the decon rescan.
     """
     shard, root = args
     if root not in _AGG_DECON:
         _agg_worker_init(root)
     decon = _AGG_DECON[root]
-    clean_p, drop_p = shard + ".clean", shard + ".ngdrop"
+    clean_p, drop_p, sig_p = shard + ".clean", shard + ".ngdrop", shard + ".clean.sigs"
     n = ng = 0
     parts = {}
     problems = set()
+
+    def _done():
+        return {"rows": n, "ngram_drop": ng, "parts": parts, "problems": sorted(problems),
+                "clean": clean_p, "drop": drop_p}
+
+    if os.path.exists(clean_p) and os.path.exists(drop_p):
+        cc = sum(1 for _ in open(clean_p, encoding="utf-8"))
+        dc = sum(1 for _ in open(drop_p, encoding="utf-8"))
+        if not os.path.exists(sig_p) or sum(
+                1 for _ in open(sig_p, encoding="utf-8")) != cc:
+            with open(clean_p, encoding="utf-8") as fc, \
+                    open(sig_p, "w", encoding="utf-8") as fs:
+                for line in fc:
+                    fs.write(hashlib.sha1(
+                        _norm(json.loads(line)["content"]).encode()).hexdigest() + "\n")
+        # Source released (release mode post-classify) or complete on disk: rows
+        # are already fully classified, reuse.
+        if not os.path.exists(shard) or (
+                os.path.exists(shard) and cc + dc
+                == sum(1 for _ in open(shard, encoding="utf-8"))):
+            n, ng = cc + dc, dc
+            return _done()
     with open(shard, encoding="utf-8") as fi, \
             open(clean_p, "w", encoding="utf-8") as fc, \
-            open(drop_p, "w", encoding="utf-8") as fd:
+            open(drop_p, "w", encoding="utf-8") as fd, \
+            open(sig_p, "w", encoding="utf-8") as fs:
         for line in fi:
             n += 1
             rec = json.loads(line)
@@ -263,11 +307,12 @@ def _ngram_classify_shard(args):
                 parts[part] = parts.get(part, 0) + 1
             else:
                 fc.write(line)
-    return {"rows": n, "ngram_drop": ng, "parts": parts, "problems": sorted(problems),
-            "clean": clean_p, "drop": drop_p}
+                fs.write(hashlib.sha1(_norm(rec["content"]).encode()).hexdigest() + "\n")
+    return _done()
 
 
-def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_workers=8):
+def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_workers=8,
+              release_intermediates=False):
     """Sum group stats, then: (1) ae's 13-gram solution-body decontamination
     against HE+MBPP prompts+solutions+tests, (2) the GLOBAL exact-dedup pass
     groups cannot do. Tagged intermediates are read from `out`; final
@@ -305,6 +350,13 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_wor
     tagged = sorted(
         p for tag in tags
         for p in glob.glob(os.path.join(out, f"{prefix}_{tag}_*.jsonl")))
+    # Resume after --release-intermediates: classified .clean/.ngdrop can survive
+    # a killed aggregate even after their tagged source was released. Reconstruct
+    # the shard list from every .clean whose tag is in scope; the worker rebuilds
+    # a missing .sigs and returns early when the source is gone.
+    clean_existing = {c[:-len(".clean")]
+                      for c in glob.glob(os.path.join(out, f"{prefix}_*.jsonl.clean"))}
+    tagged = sorted(set(tagged) | clean_existing)
     if not tagged:
         raise SystemExit(f"aggregate: no tagged shards for tags {tags} in {out}")
     # Phase 1: 13-gram classification, parallel across tagged shards.
@@ -316,8 +368,8 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_wor
     clean_files, drop_files = [], []
     try:
         with ProcessPoolExecutor(max_workers=agg_workers) as ex:
-            for res in ex.map(_ngram_classify_shard,
-                              ((s, root) for s in tagged), chunksize=1):
+            for tagged_p, res in zip(tagged, ex.map(
+                    _ngram_classify_shard, ((s, root) for s in tagged), chunksize=1)):
                 scanned += res["rows"]
                 ngram_drop += res["ngram_drop"]
                 for k, v in res["parts"].items():
@@ -325,10 +377,19 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_wor
                 ngram_problems.update(res["problems"])
                 clean_files.append(res["clean"])
                 drop_files.append(res["drop"])
+                # Disk-saving (L3 static, raw parquets retained): the classified
+                # .clean/.ngdrop now hold every row, so release the tagged source.
+                if release_intermediates:
+                    try:
+                        os.remove(tagged_p)
+                    except FileNotFoundError:
+                        pass  # resumed shard: source released by the earlier run
         assert scanned == group_kept, (
             f"tagged shards hold {scanned} rows, group stats say kept {group_kept}")
 
-        # Phase 2: global exact dedup in tagged order; finals to fout.
+        # Phase 2: global exact dedup in tagged order; finals to fout. Sig is
+        # precomputed per clean line, so the driver only does set membership and
+        # raw line copy -- no json parse / _norm / sha1 in this serial loop.
         seen = set()
         kept = 0
         kept_chars = 0
@@ -339,19 +400,22 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_wor
         writer = ShardWriter(fout, prefix, tag="")
         with open(xdrop_p, "w", encoding="utf-8") as fxd:
             for cf in clean_files:
-                for line in open(cf, encoding="utf-8"):
-                    rec = json.loads(line)
-                    sig = hashlib.sha1(_norm(rec["content"]).encode()).hexdigest()
-                    if sig in seen:
-                        cross_dup += 1
-                        fxd.write(line)
-                        continue
-                    seen.add(sig)
-                    writer.write(rec)
-                    kept += 1
-                    kept_chars += len(rec["content"])
+                with open(cf, encoding="utf-8") as fcl, \
+                        open(cf + ".sigs", encoding="utf-8") as fsig:
+                            for line, sig in zip(fcl, fsig):
+                                sig = sig.rstrip("\n")
+                                if sig in seen:
+                                    cross_dup += 1
+                                    fxd.write(line)
+                                    continue
+                                seen.add(sig)
+                                writer.write_raw(line)
+                                kept += 1
+                if release_intermediates:
+                    os.remove(cf)
         writer.close()
         drop_files.append(xdrop_p)
+        # kept_chars derived by subtraction after phase 3 counts dropped chars.
 
         # Phase 3: exact kept_tokens by subtraction; encode only dropped rows.
         # Group stats already exact-counted every input row's tokens; eos is
@@ -378,17 +442,19 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_wor
         assert dropped_docs == ngram_drop + cross_dup, (
             f"dropped docs {dropped_docs} != ngram {ngram_drop} + xdup {cross_dup}")
         kept_tokens = group_kept_tokens - dropped_tokens
-        assert kept_chars == group_kept_chars - dropped_chars, (
-            f"chars {kept_chars} != {group_kept_chars} - {dropped_chars}")
+        kept_chars = group_kept_chars - dropped_chars
         assert kept + ngram_drop + cross_dup == group_kept
     finally:
-        for p in clean_files + drop_files:
+        for p in clean_files + [c + ".sigs" for c in clean_files] + drop_files:
             try:
                 os.remove(p)
             except OSError:
                 pass
     for shard in tagged:
-        os.remove(shard)
+        try:
+            os.remove(shard)
+        except OSError:
+            pass  # already released when release_intermediates is set
 
     # Partition invariant: final kept + rejects + cross-group dup + ngram drop
     # == total input rows.
@@ -401,8 +467,9 @@ def aggregate(out, pattern, prefix, tokenizer_path, level, final_out="", agg_wor
             os.path.join(root, "data", "eval", "mbpp_holdouts.jsonl"))
     except (AttributeError, NameError):
         ngram_fp = None
-    fprefix = os.path.basename(fout.rstrip("/"))
-    final_shards = sorted(glob.glob(os.path.join(fout, f"{fprefix}_[0-9]*.jsonl")))
+    # Final shards carry the INTERMEDIATE prefix (code_ultra_l2_NNN), matching the
+    # six existing _dc dirs' <base>_NNN naming; fout has the _dc suffix.
+    final_shards = sorted(glob.glob(os.path.join(fout, f"{prefix}_[0-9]*.jsonl")))
     # train.py's corpus_fp_matches guard recomputes corpus_fingerprint.fp_dir
     # (sorted shard-lines: name,size,head/tail sha256, sha1) and compares it to
     # stats["fingerprint"]. Stamping our own full-byte hash here would fail that
