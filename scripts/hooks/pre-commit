@@ -2170,6 +2170,14 @@ def main():
         # experiments.jsonl been inside the 7, nothing here would have fired while 71 ledgers
         # went unread, which is why the ledger count is printed on every listing.
         "scripts/deletion_candidates.py",
+        # The r3 anneal crash watcher (98). Registered because its whole job is to not cry
+        # wolf at the anneal-head mix switch: adjacent [main]/[anneal] lines are different
+        # domain batches and swing ~1.0 (two false CRASH pages at step 34300/34310 on
+        # 2026-09-14 came from comparing across the phase tag). The selftest pins the
+        # discrimination on seven known-answer lines: cross-phase jump silent, same-phase
+        # jump alerts, NaN unconditional, gnorm 5x-median alerts, a 4x wobble silent, and
+        # the val running-min two-point behaviour unchanged.
+        "scripts/r3_anneal_watch.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
