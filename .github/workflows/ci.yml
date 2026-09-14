@@ -19,6 +19,7 @@ jobs:
       - run: python scripts/pod_drift.py --selftest
       - run: python scripts/loader.py selftest
       - run: python scripts/test_sft_pack.py
+      - run: python scripts/test_eval_base_prompt_format.py --selftest
       - run: python scripts/test_fewshot_demos.py
       - run: python scripts/test_fewshot_stop.py
       - run: python scripts/test_pod_ps_judge.py
