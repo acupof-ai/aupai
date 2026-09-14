@@ -19,12 +19,16 @@
 # tokens, vocab f1f860970d15d623 (matches r3). NOT the 14,846-row 40M 0913 pack.
 #
 # warmup pitfall (do NOT "fix" in train/sft code): sft_math.py has no --warmup CLI, so the
-# run inherits the resumed r3 cfg Cfg.warmup = 500 and Cfg.warmdown = 0.65 (cosine decay
-# starts at total - 0.65*total = step ~1,550 of 4,428).
-#   N=1: 738  steps, warmup 100% (the whole run ramps -- unusable)
-#   N=4: 2952 steps, warmup 17%
-#   N=6: 4428 steps, warmup 11%   <- default
-#   N=8: 5904 steps, warmup 8.5%
+# run inherits the resumed r3 cfg Cfg.warmup = 500 and Cfg.warmdown = 0.65. lr_mult
+# (train.py:2962) tests warmup FIRST: while step < 500 the multiplier ramps (step+1)/500
+# regardless of warmdown, so the effective cosine start is max(500, wd_start), where
+# wd_start = total - 0.65*total.
+#   N=1: 738  steps, wd_start 259 < warmup 500 (warmup 68%). Ramps to peak at step 499,
+#         then step 500 drops from mult 1.0 to ~0.52 and cosines to final_lr_frac 0.05 --
+#         no plateau, unusable.
+#   N=4: 2952 steps, wd_start 1034, warmup 17% (clean ramp -> plateau -> cosine)
+#   N=6: 4428 steps, wd_start 1550, warmup 11%   <- default
+#   N=8: 5904 steps, wd_start 2067, warmup 8.5%
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
