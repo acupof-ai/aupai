@@ -1804,6 +1804,44 @@
    },
    "uncertainty": "HumanEval l2 rows individually verified; full 414-row production-class rerun not repeated (de's 28/28+0/2608 acceptance on the same 28 rows and module equivalence stands in for the class)",
    "status": "measured"
+  },
+  {
+   "id": "cont.r3_mbpp427_union_0914",
+   "value": {
+    "mbpp427_union": "89 of 427 sanitized MBPP problems have a whitespace-13-gram hit in at least one r3 training domain; machine-readable CLEAN set = 338 problem ids in runs/contam_r3_mbpp_union.json#r3_mbpp_clean",
+    "solution_union": "71 problems (key = code + '\\n'.join(test_list))",
+    "prompt_union": "24 problems (key = prompt text); 18 prompt-only, 6 overlapping solution",
+    "per_domain_rows": {
+     "code_ultra_l3_noexec_dc": "3968 rows / 48 problems",
+     "code_ultra_l2_dc": "508 / 50",
+     "math_owm_stage2_dc": "59 / 20",
+     "code_keep_p1_dc": "35 / 13",
+     "cot_dc": "3 / 1",
+     "en_c4_stage2_dc": "0 / 0"
+    },
+    "humaneval_companion": "r3 HumanEval union 8 problems, CLEAN 156 (runs/contam_r3_he_union.json#r3_humaneval_clean)",
+    "false_positive_control": "0 hits over 5000 CPython Lib functions (>=13 whitespace words, union-set intersection, 0.22s; runs/fp_mbpp427_5000.json on pod)"
+   },
+   "measured": "2026-09-14",
+   "source": "scripts/audit_gate_contamination.py full six-domain scan; runs/contam_r3_mbpp_union.json (per-domain problem counts + machine-readable CLEAN sets); 4573-row detail scan and FP control runs/fp_mbpp427_5000.json (5000 CPython Lib functions, 0 hits)",
+   "config": {
+    "n": 13,
+    "tokens": "whitespace word tokens, punctuation unsplit; whitespace-collapse normaliser; filters/decontam_ngram.py fp 0aefe6a2aa5e130f",
+    "benchmark": "data/eval/sanitized-mbpp.json, 427 sanitized problems",
+    "solution_key": "code + newline-joined test_list",
+    "prompt_key": "prompt text",
+    "r3_domains": [
+     "code_ultra_l3_noexec_dc",
+     "code_keep_p1_dc",
+     "code_ultra_l2_dc",
+     "math_owm_stage2_dc",
+     "en_c4_stage2_dc",
+     "cot_dc"
+    ],
+    "fp_baseline": "runs/fp_mbpp427_5000.json: 0/5000 CPython Lib functions (union-set intersection, 0.22s)"
+   },
+   "uncertainty": "FP baseline validates the solution (code) key; the prompt key is natural English and has no code baseline. 18 prompt-only problems are docstring/prose-text matches, not solution leakage; scoring denominators keep CLEAN=338 for either key.",
+   "status": "measured"
   }
  ]
 }
