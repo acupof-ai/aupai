@@ -351,5 +351,8 @@ as of #183, which carries review and re-run provenance.
 
 experiments.jsonl rows: `classifier_pilot_1k`, `classifier_pilot_5k`,
 `classifier_labels_100k`, `classifier_ablation_0910`. The yield prediction is
-preregistered (amended once, 2026-09-09: per-domain byte keep x per-domain
-bytes): `runs/prereg.jsonl#p1_keep_yield_0909@amended_1`.
+preregistered and READ OUT 2026-09-09: all three predictions missed, the stop
+rule in (2) executed, and the keep set counts 2.8116B tokens post-deletion. The
+authoritative quantity is the measured per-domain byte keep 0.1536, not a
+doc-weighted rate divided by one corpus ratio:
+`runs/prereg.jsonl#p1_keep_yield_0909@amended_2`.
