@@ -28,6 +28,17 @@ def select(items, shard_i, shard_n):
     return [(i, x) for i, x in enumerate(items) if i % shard_n == shard_i]
 
 
+def runs_full_control(shard_i, shard_n):
+    """Whether THIS process runs the full-dataset canonical/known-answer control.
+
+    The control is a whole-set judge gate that hard-indexes a specific task
+    (e.g. HumanEval/0), so it cannot run on a subset. It runs on an unsharded
+    process and on shard 0 only; shards 1..n-1 skip it. Shard 0 covers the gate
+    once, before any model load (the control is pure execution).
+    """
+    return shard_n is None or shard_i == 0
+
+
 def label(shard_i, shard_n):
     """Filename tag for a shard run; '' for an unsharded run."""
     return f".shard{shard_i}of{shard_n}" if shard_n is not None else ""
@@ -54,6 +65,12 @@ def _selftest():
             continue
         raise AssertionError(f"validate accepted {bad}")
     assert label(3, 8) == ".shard3of8" and label(None, None) == ""
+    # Full-set control runs unsharded and on shard 0 only; every other shard skips,
+    # so a hard-indexed full-set control never sees a subset without its key task.
+    assert runs_full_control(None, None)
+    assert runs_full_control(0, 8)
+    assert not runs_full_control(1, 8)
+    assert not runs_full_control(7, 8)
     print("shard selftest OK: 156/164/338/427 over 8 are an exact disjoint cover")
 
 
