@@ -48,6 +48,7 @@ import torch  # noqa: E402
 from eval_artifacts import attest, open_artifact  # noqa: E402
 
 from eval.shard import label as shard_label
+from eval.shard import runs_full_control
 from eval.shard import select as shard_select
 from eval.shard import validate as shard_validate
 
@@ -457,6 +458,21 @@ def main():
         return
 
     probs_all = [json.loads(l) for l in open(args.data, encoding="utf-8") if l.strip()]
+    # The canonical/known-answer controls are a FULL-set judge gate and hard-index
+    # HumanEval/0, so run them over probs_all BEFORE sharding, and only once: unsharded,
+    # or shard 0 of a sharded run. Shards 1..n hold only their fixed-position subset
+    # (HumanEval/0 lands on shard 0), so they SKIP. control needs no model (it runs before
+    # load_checkpoint); a control failure fails shard 0 and the launcher's wait refuses
+    # to merge.
+    if not runs_full_control(args.shard_i, args.shard_n):
+        print(f"CONTROL skipped on shard {args.shard_i}/{args.shard_n} "
+              "(full-set canonical gate runs on shard 0 only)", flush=True)
+    elif args.chatml:
+        run_control_chatml(probs_all)
+    else:
+        run_control(probs_all)
+    if args.control:
+        return
     shard_validate(args.shard_i, args.shard_n)
     probs = [p for _, p in shard_select(probs_all, args.shard_i, args.shard_n)]
     arm = ("chatml" if args.chatml else
@@ -477,12 +493,6 @@ def main():
         pr = p["prompt"]
         return pr.rstrip("\n") if args.rstrip_nl else pr
     prompts = [_prompt(p) for p in probs]
-    if args.chatml:
-        run_control_chatml(probs)
-    else:
-        run_control(probs)
-    if args.control:
-        return
     if args.first:
         probs = probs[:args.first]
         prompts = prompts[:args.first]
