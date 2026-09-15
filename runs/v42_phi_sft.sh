@@ -68,6 +68,13 @@ CUDA_VISIBLE_DEVICES= python3 sft_math.py \
   --resume "$RESUME" --sft_path "$PACK" --check_pack
 
 echo "== live-claim gate on cards $CARDS =="
+# Read-only preflight: refuse while another job holds a live claim on these cards. The
+# launcher does NOT acquire here: an acquire --wait-for-device run before torchrun has no
+# GPU-holding descendant to resolve, so it polls the empty process tree for its deadline and
+# the script exits having never trained (measured 2026-09-15). sft_math claims its own cards
+# per rank via load_checkpoint -> claim_my_cards (loader.py:87) as each rank opens its
+# device; those claims are keyed to the rank pids and lapse when they exit, so no shell-side
+# acquire or release trap is needed.
 python3 - "$CARDS" <<'PY'
 import sys
 sys.path.insert(0, "scripts")
@@ -95,14 +102,8 @@ python3 scripts/exp.py start --name "$NAME" \
   --cmd "torchrun x8 sft_math.py --resume $RESUME --sft_path $PACK --out $OUT --epochs $EPOCHS --batch $BATCH --lr_scale $LR_SCALE --save_every $SAVE_EVERY (fp8, cards $CARDS); eval/humaneval_gen.py --rstrip_nl" \
   --hypothesis "$HYPOTHESIS" --notes "$NOTES" >/dev/null
 
-python3 scripts/card_claim.py acquire --name "$NAME" --cards "$CARDS" \
-  --note "post-r3 phi continuation SFT $PACK" --wait 0 --wait-for-device 300 || {
-  echo "REFUSING to launch: card_claim acquire refused on $CARDS"
-  python3 scripts/exp.py done --name "$NAME" --status fail --result "card claim refused"
-  exit 1
-}
-trap 'python3 scripts/card_claim.py release --name "$NAME" >/dev/null 2>&1 || true' EXIT
-
+# No shell-side card_claim acquire: see the live-claim gate note above. sft_math ranks
+# self-claim through claim_my_cards as they open their devices; claims lapse on rank exit.
 set +e
 torchrun --nproc_per_node="$NGPU" \
   --master_port="${PORT:-29540}" \
