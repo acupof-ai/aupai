@@ -30,7 +30,7 @@ source: pod /data00 token caches + stamps, ckpt_v41_r3_0914.pt FINAL (sha256[:8]
 | 3 | `corpus/textbook_claude_v41_dc/` | 1,938 docs，13-gram 0 hit | rows_final 1938，distinct_problems_hit 0，decontam_fp 0aefe6a2 | READY |
 | 4 | SEG137 可训池 | 2,075 − 5% val 103 = 1,972；4ep=7,888 行 | 算术一致；val 切分在 build_mix 启动时发生，go 时 dry-run 再确认 | READY（结构性） |
 | 5 | 六 anneal 域 cache srcfp | == r3 final cursor 六值 | stub 12ec3cd2 / keep d7b4f3a0 / l2 adf2ff20 / math 4b1469b / en c59c2e42 / cot 0d9f4959，六/六匹配 final ckpt，vocab 全 f1f8 | READY |
-| 6 | r3 cache_exclude 链路 | mix 带 56d → loader 读 `.excl` cache | **直接证据（final 闭环）**：final ckpt cfg mix=`data/mix_v41_r3.json`（stub 带 cache_exclude 56d）；r3 启动日志 cache read stub=**18.23 GiB** == excl 文件 19,576,220,099 B/1024³=18.232 GiB（plain 18.60 GiB，排除）；日志计划 `3,427,733 rows = 2.88 epochs` == (excl packed 1,194,545 − val cap 5,000)=1,189,545×2.88，plain 同算为 3,496,130 不符。r3 吃的确定是 `.excl56d…` | READY（直接证据） |
+| 6 | r3 cache_exclude 链路 | mix 带 56d → loader 读 `.excl` cache | **直接证据（final 闭环）**：final ckpt cfg mix=`data/mix_v41_r3.json`（stub 带 cache_exclude 56d）；r3 启动日志 cache read stub=**18.23 GiB** == excl 文件 19,576,220,099 B/1024³=18.232 GiB（plain 18.60 GiB，排除）；日志计划 `3,427,733 rows = 2.88 epochs`；3,427,733/excl 可训池 1,189,545（实测 packed 1,194,545，取自 mix epochs_pool_source 记的 4,894,050,865 tok/4097，减 val cap 5,000）=**2.8815→显示 2.88**，与 excl 自洽。r3 吃的确定是 `.excl56d…` | READY（直接证据） |
 | 7 | SFT 包存在/形状 | 23,637 rows × 4097 | 在，774,729,109 B，input_ids (23637,4097) | READY |
 | 8 | SFT 包 vocab_id | f1f860970d15d623 | 匹配 r3 **final** ckpt vocab_id | READY |
 | 9 | SFT 包 holdout_fp | == live eval holdout 10d9c13f | 精确匹配 | READY |
@@ -39,7 +39,7 @@ source: pod /data00 token caches + stamps, ckpt_v41_r3_0914.pt FINAL (sha256[:8]
 | 12 | 包体 token 口径 | — | build_stats supervised_body **63,703,751（63.70M）**；labels!=-100 独立算 63.97M；名义"65.72M"在文件内无对应字段 | 见 W1，不进任何门 |
 | 13 | r3 final ckpt | `ckpt_v41_r3_0914.pt` step 38,070 | **已落盘**：sha256[:8] f76ddeb9，step=total=38070，mix mix_v41_r3，vocab f1f8，cursor as_of 38070 full_plan_prefix，六 srcfp 与 step38000 一致；SFT RESUME 默认名存在，launcher `[ -f ]` 门通过 | READY |
 
-**注 A 已闭环（2026-09-15 01:1x UTC）。** 初版只有静态推断（ckpt 存的 stub srcfp 是裸 `12ec3cd2`，当时读不到 r3 活进程 fd）。final 落盘后改用两处启动期直接证据，不再依赖推断：(1) `runs/v41_r3_0914.log` 的 cache-read 块打印 stub 占 **18.23 GiB**，与磁盘上 `.excl56d…pt`（19,576,220,099 B = 18.232 GiB）逐位吻合，plain 是 18.60 GiB；(2) 同一日志 mix 计划 `code_ultra_l3_stub_dc 3427733 rows = 2.88 epochs`，等于 excl 可训池（1,194,545 packed − 5,000 val cap = 1,189,545）×2.88，而 plain 可训池（1,218,934−5,000）×2.88=3,496,130，不吻合。ckpt cursor 存裸 srcfp 仍非反证：`fps[name]=_corpus_fp(ddir)` 恒为裸 corpus 目录 fp（train.py:2428），复合 `|exclude=` 后缀只存在于 cache `.srcfp` stamp 与 `_same_source` 比对。结论：r3 全程消费排除版 cache，phi SFT 的 273,879-doc 目标切片确定未进 r3 预训练。
+**注 A 已闭环（2026-09-15 01:1x UTC）。** 初版只有静态推断（ckpt 存的 stub srcfp 是裸 `12ec3cd2`，当时读不到 r3 活进程 fd）。final 落盘后改用两处启动期直接证据，不再依赖推断：(1) `runs/v41_r3_0914.log` 的 cache-read 块打印 stub 占 **18.23 GiB**，与磁盘上 `.excl56d…pt`（19,576,220,099 B = 18.232 GiB）逐位吻合，plain 是 18.60 GiB；(2) 同一日志 mix 计划 `code_ultra_l3_stub_dc 3427733 rows = 2.88 epochs`，对 excl 可训池（byte/4/4097=1,194,546 packed，减 5,000 val cap = 1,189,546）比值为 2.8815→两位显示 2.88；对 plain 可训池（1,218,934−5,000=1,213,934）比值为 2.8237→会显示 2.82。大小与 epoch 显示两个独立口径都只吻合 excl。ckpt cursor 存裸 srcfp 仍非反证：`fps[name]=_corpus_fp(ddir)` 恒为裸 corpus 目录 fp（train.py:2428），复合 `|exclude=` 后缀只存在于 cache `.srcfp` stamp 与 `_same_source` 比对。结论：r3 全程消费排除版 cache，phi SFT 的 273,879-doc 目标切片确定未进 r3 预训练。
 
 ## 异常 / 需关注（无阻断项）
 
