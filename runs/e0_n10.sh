@@ -29,7 +29,9 @@ TAG=${2:?"usage: e0_n10.sh <ckpt> <tag>  (e0 | et | ec)"}
 N=10
 TEMP=0.2
 SHARDS=${SHARDS:-8}
-CK_BASE=$(basename "$CKPT" .pt)
+# Keep the ".pt": humaneval_gen/mbpp_gen name files with os.path.basename(ckpt)
+# un-stripped, so stripping here made every merge glob miss (pod-measured 2026-09-15).
+CK_BASE=$(basename "$CKPT")
 
 [ -f "$CKPT" ] || { echo "REFUSING: ckpt $CKPT not present"; exit 2; }
 # Resolve granted devices through _devs.sh: never write a physical index. Caller
@@ -66,8 +68,12 @@ for pid in "${pids[@]}"; do
 done
 [ "$fail" -eq 0 ] || { echo "REFUSING to merge: one or more shards failed; see runs/${TAG}_shard*.log"; exit 1; }
 
-HE_GLOB="data/eval/preds_humaneval_${CK_BASE}.rstripnl.n${N}temp${TEMP}.shard*of${SHARDS}.jsonl"
-MB_GLOB="data/eval/preds_mbpp_${CK_BASE}.${TAG}_mbpp_n10_s*.n${N}temp${TEMP}.shard*of${SHARDS}.jsonl"
+# open_artifact(run=) inserts the run tag as ".<run>" before .jsonl, so the shard
+# files are ...shard{i}ofN.<TAG>_..._s{i}.jsonl. The glob must include that segment
+# (pinned to TAG so it stays arm-isolated across e0/et/ec); ending shard*ofN.jsonl
+# matched zero (pod-measured 2026-09-15, E0 merge).
+HE_GLOB="data/eval/preds_humaneval_${CK_BASE}.rstripnl.n${N}temp${TEMP}.shard*of${SHARDS}.${TAG}_he_n10_s*.jsonl"
+MB_GLOB="data/eval/preds_mbpp_${CK_BASE}.${TAG}_mbpp_n10_s*.n${N}temp${TEMP}.shard*of${SHARDS}.${TAG}_mbpp_n10_s*.jsonl"
 RESULT="runs/e0_${TAG}_result.json"
 
 python3 eval/e0_merge_score.py --bench humaneval --glob "$HE_GLOB" --n "$N" \
