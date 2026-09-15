@@ -11,15 +11,16 @@ from collections import defaultdict
 
 import torch
 
-sys.path.insert(0, "/work/aupai")
-from scripts.loader import load_checkpoint, load_tokenizer
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# loader/torch import is DEFERRED to the inference __main__ branch, not module top: importing
+# scripts.loader pulls torch and its card-claim side effect, which would make the registered
+# --selftest fail off the pod (no /work/aupai, no CUDA_VISIBLE_DEVICES). Other scorers
+# (math_hard/ppl) resolve ROOT from __file__ for the same reason.
 
 LETTERS = ["A", "B", "C", "D"]
 
 
-MMLU_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "data", "eval", "mmlu_test.jsonl")
+MMLU_PATH = os.path.join(ROOT, "data", "eval", "mmlu_test.jsonl")
 # cais/mmlu "all" test split, 14,042 rows, 13-whitespace-gram screened against every r3 _dc
 # domain 2026-09-14 (runs/contam_mmlu_r3.json). Auxiliary metric, deliberately NOT in the
 # datagen holdout registry: that path forces the 5MiB holdout_hashes.txt over the tracked-blob
@@ -28,9 +29,7 @@ MMLU_SHA1 = "d9c4079e4e04aec3ffcb0e636a77f43ab5f5f022"
 # 13-gram exclusion manifest: 478 verbatim-question row ids over the 14,042-row base,
 # leaving the 13,564 screened questions. Tracked (runs/ is pod-synced), unlike the
 # per-domain audit runs/contam_mmlu_r3.json which is not in git.
-EXCLUDE_MANIFEST = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "runs", "contam_mmlu_r3_final.json")
+EXCLUDE_MANIFEST = os.path.join(ROOT, "runs", "contam_mmlu_r3_final.json")
 RAW_N = 14042
 EXCLUDED_N = 478
 CLEAN_N = RAW_N - EXCLUDED_N  # 13564
@@ -51,9 +50,14 @@ def _excluded_indices():
 
 
 def load_dataset(screened=True):
-    """Parse the PHYSICAL lines (question/choices contain embedded newlines, so
-    splitlines() fragments 1127 rows into unparseable pieces), sha1-gate the raw
-    file, then default-exclude the 478 contam row indices -> 13,564 questions.
+    """Parse one JSON record per PHYSICAL line, sha1-gate the raw file, then default-exclude
+    the 478 contam row indices -> 13,564 questions.
+
+    Physical-line iteration (not splitlines()) is robust if a question/choice ever embeds a
+    raw newline or a \\r that splitlines also treats as a boundary. On the CURRENT sha1-gated
+    file the JSON newlines are escaped, so every physical line already parses and splitlines
+    differs by only 2 \\r fragments; the substantive bug fixed here is that the scorer never
+    applied the 478-row exclusion at all and silently scored all 14,042.
     """
     import hashlib
     import json
@@ -66,9 +70,8 @@ def load_dataset(screened=True):
             f"{MMLU_PATH} sha1 {got} != screened {MMLU_SHA1}; refusing to score an "
             "unscreened MMLU copy. Rebuild from cais/mmlu 'all' test and rerun the 13-gram "
             "audit before changing MMLU_SHA1")
-    # Iterate physical file lines, NOT splitlines(): 1127 question/choice strings
-    # contain embedded newlines, and splitlines() fragments those rows (the original
-    # JSONDecodeError). A jsonl physical line is exactly one record here.
+    # One jsonl record per physical line. splitlines() would additionally split on \r etc.;
+    # iterate the file object so an embedded line boundary cannot split one record.
     rows = []
     with open(MMLU_PATH, encoding="utf-8") as fh:
         for line in fh:
@@ -205,6 +208,9 @@ if __name__ == "__main__":
     if _args.selftest:
         _selftest()
     else:
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        sys.path.insert(0, ROOT)
+        from scripts.loader import load_checkpoint, load_tokenizer
         model, cfg = load_checkpoint("ckpt_sft.pt", device="cuda")
         model = model.to(torch.bfloat16)
         tok = load_tokenizer("data/tokenizer.json", cfg)
