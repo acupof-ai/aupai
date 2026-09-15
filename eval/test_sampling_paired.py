@@ -8,6 +8,7 @@ misaligns si>=1.
 
   python3 eval/test_sampling_paired.py   # from repo root: python eval/test...
 """
+import ast
 import os
 import sys
 
@@ -36,12 +37,37 @@ class FakeModel:
 
     def __call__(self, x):
         gen = x.shape[1] - len(PROMPT)
-        logits = torch.full((1, x.shape[1], V), -1e9)
+        logits = torch.full((x.shape[0], x.shape[1], V), -1e9)
         col = logits[:, -1]
         if gen >= self.stop_after:
             col[:, sampling.EOS_TID] = 100.0
         else:
             col[:, 2:] = 0.0
+        return (logits,)
+
+
+class TokenHistoryModel:
+    """Per-row early EOS whose timing depends on that row's own draws, plus
+    logits that depend on that row's generated history. Rows therefore finish at
+    different steps and keep decoding after others stopped: a finished row's EOS
+    filler leaking into another row, or a draw taken after a row stopped, would
+    move its tokens and break batched==serial.
+
+    Rule: deterministic soft peak that moves with the running token-id sum and
+    step (so each row sees a distinct, history-dependent distribution); draw token
+    id 2 acts as a per-row early stop (prob raised with step so most rows stop
+    before max_new at different times).
+    """
+
+    def __call__(self, x):
+        b, t = x.shape
+        gen = t - len(PROMPT)
+        own_sum = x[:, len(PROMPT):].sum(dim=1)  # per-row, excludes shared prompt
+        logits = torch.full((b, t, V), -20.0)
+        center = 2 + ((own_sum * 7 + gen * 13) % (V - 4))
+        logits[torch.arange(b), -1, center] = 3.0
+        logits[:, -1, 2] = -2.0 + gen * 1.2   # early-stop token, rising each step
+        logits[:, -1, sampling.EOS_TID] = 12.0 if gen >= MAX_NEW - 1 else -20.0
         return (logits,)
 
 
@@ -113,8 +139,36 @@ def main():
     # 3. Distinct si seed differently: first draws are not all one token.
     assert len(set(t)) > 1, "all si drew the same token -- seeds not distinct"
 
+    # 4. BATCHED == SERIAL, per sample_idx. The batched path must reproduce the
+    #    serial global-RNG stream for every si (per-row Generators), not just the
+    #    same distribution. Decode via FakeTok (str(list(ids))) so a mismatch shows
+    #    the exact token-id divergence.
+    for model, label in ((FakeModel(stop_after=3), "uniform"),
+                         (TokenHistoryModel(), "history-dependent")):
+        ser = sampling.sample_completions(
+            model, FakeTok(), PROMPT, TASK, N, TEMPERATURE, MAX_NEW, "cpu", 64,
+            batched=False)
+        bat = sampling.sample_completions(
+            model, FakeTok(), PROMPT, TASK, N, TEMPERATURE, MAX_NEW, "cpu", 64,
+            batched=True)
+        assert bat == ser, f"batched != serial ({label}):\n bat={bat}\n ser={ser}"
+
+    # 5. BATCHED keeps the pairing across T/C despite differing stop lengths: each
+    #    si reseeds from (id, si), so the two runs draw the same first token even
+    #    when rows finish early at different steps in the packed path.
+    def first_token_batched(stop_after):
+        out = sampling.sample_completions(
+            FakeModel(stop_after), FakeTok(), PROMPT, TASK, N,
+            TEMPERATURE, MAX_NEW, "cpu", 64, batched=True)
+        return [ast.literal_eval(s)[0] for s in out]
+
+    tb = first_token_batched(2)
+    cb = first_token_batched(1)
+    assert tb == cb, f"batched per-si pairing broke: T={tb} C={cb}"
+
     print(f"sampling pairing OK: per-si T={t} == C={c}; reseed-once misaligns "
-          f"si>=1 (T={t0}, C={c0})")
+          f"si>=1 (T={t0}, C={c0}); batched==serial per-si on uniform and "
+          f"history-dependent models; batched pairing T={tb}==C={cb}")
     return 0
 
 
