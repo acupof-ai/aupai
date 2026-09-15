@@ -69,12 +69,9 @@ CUDA_VISIBLE_DEVICES= python3 sft_math.py \
 
 echo "== live-claim gate on cards $CARDS =="
 # Read-only preflight: refuse while another job holds a live claim on these cards. The
-# launcher does NOT acquire here: an acquire --wait-for-device run before torchrun has no
-# GPU-holding descendant to resolve, so it polls the empty process tree for its deadline and
-# the script exits having never trained (measured 2026-09-15). sft_math claims its own cards
-# per rank via load_checkpoint -> claim_my_cards (loader.py:87) as each rank opens its
-# device; those claims are keyed to the rank pids and lapse when they exit, so no shell-side
-# acquire or release trap is needed.
+# launcher does NOT acquire before torchrun (that pre-launch acquire had no GPU-holding
+# descendant and dead-waited; see the post-launch claim note below). This gate only reads
+# current claims; the live 8-card claim is bound to the torchrun pid after it is on device.
 python3 - "$CARDS" <<'PY'
 import sys
 sys.path.insert(0, "scripts")
@@ -102,8 +99,17 @@ python3 scripts/exp.py start --name "$NAME" \
   --cmd "torchrun x8 sft_math.py --resume $RESUME --sft_path $PACK --out $OUT --epochs $EPOCHS --batch $BATCH --lr_scale $LR_SCALE --save_every $SAVE_EVERY (fp8, cards $CARDS); eval/humaneval_gen.py --rstrip_nl" \
   --hypothesis "$HYPOTHESIS" --notes "$NOTES" >/dev/null
 
-# No shell-side card_claim acquire: see the live-claim gate note above. sft_math ranks
-# self-claim through claim_my_cards as they open their devices; claims lapse on rank exit.
+# Cards are claimed AFTER torchrun is up and holds a device, not before it starts. An
+# acquire --wait-for-device run on the launcher BEFORE torchrun has no GPU-holding
+# descendant, polls the empty tree for its deadline, and exits without training (the bug
+# this launcher shipped 2026-09-15). sft_math does NOT self-claim: it torch.loads on CPU
+# and builds the model itself, so it never enters loader.load_checkpoint's claim branch
+# (and cannot claim one card per rank -- every torchrun rank inherits the SAME
+# CUDA_VISIBLE_DEVICES 0..7, which card_claim's exec-time CVD check refuses for a single
+# card). The supported 8-card block claim is the torchrun PARENT process, which holds
+# nvidia fds itself and whose CVD is exactly 0..7: poll acquire --pid torchrun
+# --require-device until a device fd appears (the same manual bind fb used for the live
+# run). The claim lapses when torchrun exits; the trap also releases it by name+cards.
 set +e
 torchrun --nproc_per_node="$NGPU" \
   --master_port="${PORT:-29540}" \
@@ -111,6 +117,29 @@ torchrun --nproc_per_node="$NGPU" \
   --epochs "$EPOCHS" --batch "$BATCH" --lr_scale "$LR_SCALE" \
   --save_every "$SAVE_EVERY" &
 TORCH_PID=$!
+
+CLAIMED=0
+for _ in $(seq 1 90); do   # ~180s startup window; a device fd appears ~seconds in
+  if ! kill -0 "$TORCH_PID" 2>/dev/null; then break; fi   # torchrun died very early
+  if python3 scripts/card_claim.py acquire --name "$NAME" --cards "$CARDS" \
+       --pid "$TORCH_PID" --require-device \
+       --note "post-r3 phi continuation SFT $PACK (torchrun)"; then
+    CLAIMED=1
+    break
+  fi
+  sleep 2
+done
+trap 'if [ "$CLAIMED" -eq 1 ]; then python3 scripts/card_claim.py release \
+        --name "$NAME" --cards "$CARDS" >/dev/null 2>&1 || true; fi' EXIT
+if [ "$CLAIMED" -ne 1 ]; then
+  echo "REFUSING: could not bind an 8-card live claim to torchrun pid $TORCH_PID "
+  echo "(no device fd before the startup window, or torchrun exited). Training stopped to "
+  echo "avoid running unclaimed. See card_claim.py status."
+  kill "$TORCH_PID" 2>/dev/null || true
+  python3 scripts/exp.py done --name "$NAME" --status fail --result "post-launch card claim failed"
+  exit 1
+fi
+
 wait "$TORCH_PID"
 TRAIN_RC=$?
 set -e
