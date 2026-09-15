@@ -111,10 +111,22 @@ provenance reserve; usable only outside the holdout exclusion and with the same 
 
 Boundary: pools are a packed stream, not recomputed per-primitive; the unconsumed share of L3
 noexec is static-filtered (no execute() solution filter, user order 2026-09-11), so its
-exercise quality distribution is measured but its primitive balance is not. Primitive-targeted
-coverage over these pools is the open analysis (genB ab_coverage currently covers the textbook
-pool only); the conservative move is to reweight toward L2 (natural code) + keep_p1 + math,
-which carry the control-flow/number-theory primitives, and treat L3 noexec as volume.
+exercise quality distribution is measured but its primitive balance is not. Per-domain build
+funnels (0e, pod-measured 2026-09-15, kept/scanned docs): L2 16.36M/29.38M (44% dropped),
+L3-noexec 15.31M/20.75M, starcoder 6.18M (188 decon hits, drop 0.025%), math_owm 4.13M,
+keep_p1 3.06M; the five code pools total 53.0B packed (math 5.86B is separate).
+
+Primitive-targeted coverage over these pools is the open analysis. `scripts/ab_coverage.py`
+(pod, 58 lines; product `runs/coverage_anchor.json`) counts 14 primitive regex sets over
+title/body of the 1,938-row textbook pool. It extends to the code domains as a body-keyword
+screening pass only, with four measured limits (0e): (a) its vocabulary is algorithmic-kata
+primitives with unknown precision on natural/library code (starcoder/rp1t); (b) body
+co-occurrence has no AST and overstates semantic coverage; (c) the title and per-row token
+fields exist only in the textbook pool — other domains give title=0 and need live encoding;
+(d) it loads fully in memory, so the 15M-row L3 pool needs a streaming rewrite. It is a
+screening signal, not a coverage metric. The conservative mix move is to reweight toward L2
+(natural code) + keep_p1 + math, which carry the control-flow/number-theory primitives, and
+treat L3 noexec as volume.
 
 ---
 
@@ -138,11 +150,16 @@ share 60% is up from gate's 86% code composition but every token is co-present w
 the general-ability retention signal is LAMBADA-EN ≥ 21 (r3 baseline 21.93) at the half point.
 
 - **Epochs: 1.** All these rows are unseen by r3; a second epoch is a separate decision.
-- Decontamination: pools already carry the 13-gram HE/MBPP exclusion at gate build. Before
-  mixing, re-run the union-set guard against `runs/contam_r3_{he,mbpp}_union.json` and the
-  holdout `data/eval/holdout_hashes.txt` (same D5 gate as the phi pack,
-  `filters/decontam_ngram.py` normaliser fp 0aefe6a2). Any new domain goes through
-  `scripts/filter_gate_domains.py` first. No new generator in this tier.
+- Decontamination is two complementary gates (0e), both required when a source could contain
+  eval text verbatim: (1) `filters/decontam_ngram.py` whitespace-13-gram (normaliser fp
+  0aefe6a2) against HE-164 and **`data/eval/mbpp_holdouts.jsonl`** — note the decon gate uses
+  the holdouts file, not the sanitized-427 we score against; (2) sha1(normalised content)[:16]
+  against the 305,007-entry holdout registry/manifest for exact documents (the 273,879-excluded
+  channel). Engine is vocab-independent and carries decontam_fp so a changed gate file forces a
+  rebuild. Whole-domain path: `scripts/filter_gate_domains.py --domains a,b` (measured non-ultra
+  drop ~0.025%, CPU-cheap); ultra domains decontaminate inside `datagen/ultradata_shards.py
+  --aggregate`. A new eval set must first enter `datagen/holdout.py` REGISTRY
+  (`check_eval_registry_complete` gates it). The phi pack D5 scan is the pack-slice template.
 
 ### 3.2 Tier B — generation required, +100B
 
