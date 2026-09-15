@@ -23,6 +23,7 @@ judgement are applied by the caller after sampling, identically for every
 sample. No repetition/STOPS early-stop here: T and C must be compared on raw
 equal-budget draws, and post-hoc truncation is deterministic given the text.
 """
+import contextlib
 import hashlib
 
 import torch
@@ -48,22 +49,27 @@ def sample_completions(model, tok, prompt_ids, task_id, n, temperature, max_new,
     """
     dev = torch.device(device)
     base = torch.tensor([prompt_ids], device=dev)
-    if temperature <= 0:
-        return [_decode(tok, _greedy(model, base, max_new, seq_window), prompt_ids)] * n
-    out = []
-    for si in range(n):
-        seed = task_seed(f"{task_id}:{si}")
-        torch.manual_seed(seed)
-        if dev.type == "cuda":
-            torch.cuda.manual_seed_all(seed)
-        x = base
-        for _step in range(max_new):
-            logits = model(x[:, -seq_window:])[0][:, -1]
-            nxt = torch.multinomial(torch.softmax(logits.float() / temperature, dim=-1), 1)
-            if nxt.item() == EOS_TID:
-                break
-            x = torch.cat([x, nxt], 1)
-        out.append(_decode(tok, x, prompt_ids))
+    # bf16 autocast, matching humaneval_gen and the training dtype: without it rms_norm returns
+    # fp32 and the CSA2 sliding-window flash kernel (which accepts only fp16/bf16/fp8) asserts.
+    ctx = (torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+           if dev.type == "cuda" else contextlib.nullcontext())
+    with ctx:
+        if temperature <= 0:
+            return [_decode(tok, _greedy(model, base, max_new, seq_window), prompt_ids)] * n
+        out = []
+        for si in range(n):
+            seed = task_seed(f"{task_id}:{si}")
+            torch.manual_seed(seed)
+            if dev.type == "cuda":
+                torch.cuda.manual_seed_all(seed)
+            x = base
+            for _step in range(max_new):
+                logits = model(x[:, -seq_window:])[0][:, -1]
+                nxt = torch.multinomial(torch.softmax(logits.float() / temperature, dim=-1), 1)
+                if nxt.item() == EOS_TID:
+                    break
+                x = torch.cat([x, nxt], 1)
+            out.append(_decode(tok, x, prompt_ids))
     return out
 
 
