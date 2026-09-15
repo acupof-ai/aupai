@@ -1,0 +1,28 @@
+{
+  "humaneval": {
+    "benchmark": "humaneval",
+    "n": 10,
+    "tasks_total": 164,
+    "full_pass": 322,
+    "full_denom": 1640,
+    "full_rate": 0.196341,
+    "clean_pass": 319,
+    "clean_denom": 1560,
+    "clean_rate": 0.204487,
+    "empty": 0,
+    "shards": 8
+  },
+  "mbpp": {
+    "benchmark": "mbpp",
+    "n": 10,
+    "tasks_total": 427,
+    "full_pass": 1061,
+    "full_denom": 4270,
+    "full_rate": 0.248478,
+    "clean_pass": 866,
+    "clean_denom": 3380,
+    "clean_rate": 0.256213,
+    "empty": 0,
+    "shards": 8
+  }
+}
