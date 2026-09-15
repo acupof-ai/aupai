@@ -60,16 +60,22 @@ def _build_tree(claim_dir):
                os.path.join(d, "data/sft/sft_phi_codeexercises_v42_65m_0914.pt"))
     open(os.path.join(d, "ckpt_v41_r3_0914.pt"), "w").close()
 
-    # check_pack gate (called directly by the launcher) and exp accounting are no-ops.
+    # check_pack gate (called directly by the launcher) is a no-op; exp records its argv so a
+    # test can assert it was closed as fail after an early torchrun death.
     open(os.path.join(d, "sft_math.py"), "w").write("import sys\nsys.exit(0)\n")
-    open(os.path.join(d, "scripts", "exp.py"), "w").write("import sys\nsys.exit(0)\n")
+    open(os.path.join(d, "scripts", "exp.py"), "w").write(
+        "import os, sys\n"
+        "p=os.environ.get('EXP_LOG')\n"
+        "open(p,'a').write(' '.join(sys.argv[1:])+chr(10)) if p else None\n"
+        "sys.exit(0)\n")
     # Post-training humaneval step is absent; launcher exits non-zero there but the claim
     # trap still fires -- that path is not under test, so provide a harmless acceptor.
     os.makedirs(os.path.join(d, "eval"), exist_ok=True)
     open(os.path.join(d, "eval", "humaneval_gen.py"), "w").write("import sys\nsys.exit(0)\n")
 
     # torchrun = a NON-SHELL python process (a bash stub is refused as a shell holder). It
-    # records argv, blocks until a die file appears, and exits with TORCHRUN_RC.
+    # records argv, then either blocks until a die file appears (happy path) or exits
+    # immediately non-zero (early-death world), per TORCHRUN_BEHAVIOR.
     ready = os.path.join(d, "torchrun_ready")
     die = os.path.join(d, "torchrun_die")
     tr = os.path.join(d, "bin", "torchrun")
@@ -80,6 +86,8 @@ def _build_tree(claim_dir):
             f"open({ready!r}, 'w').close()\n"
             "with open(os.path.join(os.path.dirname(__file__), '..', 'torchrun_argv'), 'w') as a:\n"
             "    a.write(' '.join(sys.argv[1:]))\n"
+            "if os.environ.get('TORCHRUN_BEHAVIOR') == 'die':\n"
+            "    sys.exit(7)\n"
             f"while not os.path.exists({die!r}):\n"
             "    time.sleep(0.05)\n"
             "sys.exit(int(os.environ.get('TORCHRUN_RC', '0')))\n")
@@ -97,7 +105,8 @@ def _run(d, claim_dir, env_extra=None):
                AUPAI_CLAIM_DIR=claim_dir,
                HYPOTHESIS="selftest world",
                CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7",
-               TORCHRUN_RC="0")
+               TORCHRUN_RC="0",
+               EXP_LOG=os.path.join(d, "exp_calls.log"))
     if env_extra:
         env.update(env_extra)
     return subprocess.Popen(["bash", os.path.join(d, "runs", "v42_phi_sft.sh")],
@@ -150,6 +159,29 @@ def main():
             open(die, "w").close()
             proc.kill()
         shutil.rmtree(d, ignore_errors=True)
+
+    # EARLY-DEATH world (fb condition 2): torchrun exits non-zero before any claim binds.
+    # The launcher must refuse non-zero, close the exp row as fail, and leave NO claim file.
+    d2, ready2, die2 = _build_tree(claim_dir2 := tempfile.mkdtemp(prefix="phisft_dieclaims_"))
+    proc2 = _run(d2, claim_dir2, {"TORCHRUN_BEHAVIOR": "die"})
+    try:
+        for _ in range(200):
+            if os.path.exists(ready2):
+                break
+            time.sleep(0.05)
+        out2, _ = proc2.communicate(timeout=60)
+        assert proc2.returncode != 0, "launcher succeeded though torchrun died pre-claim"
+        assert not _live_claim_files(claim_dir2), (
+            "early torchrun death left a half-built claim:\n" + out2.decode()[-600:])
+        exp_log = open(os.path.join(d2, "exp_calls.log")).read()
+        assert "done" in exp_log and "--status" in exp_log and "fail" in exp_log, (
+            "early death was not recorded as exp fail:\n" + exp_log)
+    finally:
+        if proc2.poll() is None:
+            open(die2, "w").close()
+            proc2.kill()
+        shutil.rmtree(d2, ignore_errors=True)
+        shutil.rmtree(claim_dir2, ignore_errors=True)
 
     # 4. NEGATIVE CONTROL: the ORIGINAL pre-launch acquire launcher must never reach torchrun.
     old = subprocess.run(["git", "show", "origin/main:runs/v42_phi_sft.sh"],
