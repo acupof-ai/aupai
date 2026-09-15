@@ -39,13 +39,21 @@ def task_seed(task_id):
 
 @torch.no_grad()
 def sample_completions(model, tok, prompt_ids, task_id, n, temperature, max_new,
-                       device, seq_window):
+                       device, seq_window, batched=False):
     """Return n sampled raw decoded strings for one prompt (list of token ids).
 
     Greedy when temperature<=0 (n identical draws, by construction). Otherwise
     n stochastic draws under a task-seeded RNG so paired T/C runs reproduce the
-    same decision sequence. Sampling is one sequence at a time (n is small, 10);
-    a batched path can replace this without changing the seed contract.
+    same decision sequence.
+
+    batched=False (default, the path E0 already ran): one sequence at a time,
+    reseeding the GLOBAL RNG per sample. batched=True decodes all n rows in one
+    forward pass but keeps the SAME per-(task_id, si) random stream: each row has
+    its own fresh Generator seeded with task_seed("id:si") and draws one
+    single-row multinomial per step, so its scalar sequence is the serial one's.
+    Finished rows stay in the packed tensor on an EOS filler (rows are causally
+    independent, so a filler never changes another row's logits) but stop
+    drawing, exactly as the serial loop stops calling multinomial for them.
     """
     dev = torch.device(device)
     base = torch.tensor([prompt_ids], device=dev)
@@ -56,6 +64,9 @@ def sample_completions(model, tok, prompt_ids, task_id, n, temperature, max_new,
     with ctx:
         if temperature <= 0:
             return [_decode(tok, _greedy(model, base, max_new, seq_window), prompt_ids)] * n
+        if batched:
+            return _sample_batched(
+                model, tok, base, task_id, n, temperature, max_new, seq_window, dev)
         out = []
         for si in range(n):
             seed = task_seed(f"{task_id}:{si}")
@@ -71,6 +82,43 @@ def sample_completions(model, tok, prompt_ids, task_id, n, temperature, max_new,
                 x = torch.cat([x, nxt], 1)
             out.append(_decode(tok, x, prompt_ids))
     return out
+
+
+@torch.no_grad()
+def _sample_batched(model, tok, base, task_id, n, temperature, max_new, seq_window, dev):
+    """n rows in one forward pass per step, each on its own task-seeded Generator.
+
+    One single-row multinomial per ACTIVE row per step, never one n-row draw from
+    a shared generator: a shared batched draw reorders the Philox scalar stream
+    across rows and breaks the (task_id, si) pairing contract. Per-row fresh
+    generators make row si's scalar stream identical to the serial path's global
+    RNG freshly seeded with the same seed (asserted in test_sampling_paired).
+    """
+    x = base.expand(n, -1).contiguous()
+    gens = []
+    for si in range(n):
+        g = torch.Generator(device=dev) if dev.type == "cuda" else torch.Generator()
+        gens.append(g.manual_seed(task_seed(f"{task_id}:{si}")))
+    active = [True] * n
+    rows = [[] for _ in range(n)]
+    for _step in range(max_new):
+        if not any(active):
+            break
+        logits = model(x[:, -seq_window:])[0][:, -1]
+        probs = torch.softmax(logits.float() / temperature, dim=-1)
+        nxt = torch.full((n, 1), EOS_TID, dtype=torch.long, device=dev)
+        for si in range(n):
+            if active[si]:
+                nxt[si, 0] = torch.multinomial(probs[si:si + 1], 1, generator=gens[si])[0, 0]
+        for si in range(n):
+            if active[si]:
+                tid = int(nxt[si, 0])
+                if tid == EOS_TID:
+                    active[si] = False  # EOS is appended only as the packed filler, not decoded
+                else:
+                    rows[si].append(tid)
+        x = torch.cat([x, nxt], 1)
+    return [tok.decode(ids) for ids in rows]
 
 
 @torch.no_grad()
