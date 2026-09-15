@@ -1414,6 +1414,10 @@ def main():
         # CLEAN/3380 at n=10, and that a missing shard, a duplicated (task,sample_idx), and a
         # short sample count all refuse rather than score a gap. CPU-only, no checkpoint.
         "eval/e0_merge_score.py",
+        # The position-modulo shard the merger and both generators rely on: --selftest proves
+        # idx % 8 over the real 156/164/338/427 populations is an exact disjoint cover and that
+        # half-set / out-of-range / shard_n<1 flags refuse. CPU-only, no data or checkpoint.
+        "eval/shard.py",
         # The rate printed on a val_every boundary covers the validation pass, so it is not a
         # training rate. Registered because reading two of them as a ratio does NOT cancel:
         # validation costs two arms different absolute amounts, and sampling steps
