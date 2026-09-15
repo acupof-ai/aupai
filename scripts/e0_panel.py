@@ -75,7 +75,13 @@ def rate(c, n, tasks):
     return s, d, s / d if d else float("nan")
 
 
-def panel(merged_path, greedy_path):
+def panel(merged_path, greedy_path, expect_n=10):
+    """Read-only readout over one merged n=10 preds file.
+
+    n is pinned to the stage-2 protocol (10): an n!=10 file is a different draw budget whose
+    FULL/CLEAN rates are not the E0/ET/EC gate numbers, so it refuses rather than print a
+    plausible-looking panel. expect_n exists only for the known-answer selftest.
+    """
     header, rows = read_rows(merged_path)
     bench = bench_of(rows)
     excl = excluded_set(bench)
@@ -83,6 +89,24 @@ def panel(merged_path, greedy_path):
     bad_n = sorted(t for t, k in n_seen.items() if k != n)
     if bad_n:
         raise SystemExit(f"{len(bad_n)} tasks with n!={n}, e.g. {bad_n[:3]}")
+    if n != expect_n:
+        raise SystemExit(f"merged file has n={n}, this panel requires n={expect_n} "
+                         f"(stage-2 E0/ET/EC draw budget). Refusing to label a different "
+                         f"budget as the gate readout.")
+    # CROSS-CHECK THE MERGER'S OWN HEADER rather than trust only a recomputation. The merger
+    # (e0_merge_score) writes authoritative n/full_denom/full_pass/clean_denom/clean_pass;
+    # if this independent recomputation disagrees, the rows and the header describe different
+    # things and the readout must not pick one silently.
+    if isinstance(header, dict):
+        checks = [("n", n), ("full_denom", len(c) * n), ("full_pass",
+                  sum(c[t] for t in c)),
+                  ("clean_denom", len([t for t in c if t not in excl]) * n),
+                  ("clean_pass",
+                   sum(c[t] for t in c if t not in excl))]
+        for key, got in checks:
+            if key in header and int(header[key]) != int(got):
+                raise SystemExit(f"recomputed {key}={got} != merger header {key}="
+                                 f"{header[key]}; rows and header disagree")
     tasks = sorted(c, key=str)
     full = set(tasks)
     clean = [t for t in tasks if t not in excl]
@@ -165,37 +189,69 @@ def render(p):
 
 def _selftest():
     import tempfile
+
+    def write_merged(path, n, task_ok, header, empties=()):
+        """task_ok: {task_id: list(ok)}; header is the merger header dict (or None)."""
+        with open(path, "w", encoding="utf-8") as fh:
+            if header is not None:
+                fh.write(json.dumps(header) + "\n")
+            for tid, oks in task_ok.items():
+                for si, ok in enumerate(oks):
+                    fh.write(json.dumps({"task_id": tid, "sample_idx": si, "ok": int(ok),
+                                         "empty": tid in empties and not ok, "n": n}) + "\n")
+
     with tempfile.TemporaryDirectory() as td:
         m = os.path.join(td, "m.jsonl")
-        with open(m, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps({"_header": 1, "n": 3}) + "\n")
-            # task 0: c=2/3; task 1: c=0/3 all empty; task 2: c=3/3
-            for si, ok in enumerate([1, 1, 0]):
-                fh.write(json.dumps({"task_id": "HumanEval/0", "sample_idx": si, "ok": ok,
-                                     "empty": False, "n": 3}) + "\n")
-            for si in range(3):
-                fh.write(json.dumps({"task_id": "HumanEval/1", "sample_idx": si, "ok": 0,
-                                     "empty": True, "n": 3}) + "\n")
-            for si in range(3):
-                fh.write(json.dumps({"task_id": "HumanEval/2", "sample_idx": si, "ok": 1,
-                                     "empty": False, "n": 3}) + "\n")
+        # n=10, three HE tasks (ids 0,1,2 are NOT in the 8-id r3 union): task0 c=7/10,
+        # task1 c=0 all empty, task2 c=10/10. Header matches the recomputation exactly.
+        write_merged(m, 10,
+                     {"HumanEval/0": [1] * 7 + [0] * 3,
+                      "HumanEval/1": [0] * 10,
+                      "HumanEval/2": [1] * 10},
+                     {"_header": 1, "benchmark": "humaneval", "n": 10, "tasks_total": 3,
+                      "full_pass": 17, "full_denom": 30, "clean_pass": 17, "clean_denom": 30},
+                     empties={"HumanEval/1"})
         g = os.path.join(td, "g.jsonl")
         with open(g, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps({"_header": 1, "n_problems": 3}) + "\n")
-            for tid, ok in [("HumanEval/0", 0), ("HumanEval/1", 0), ("HumanEval/2", 0)]:
-                fh.write(json.dumps({"task_id": tid, "ok": ok, "empty": False}) + "\n")
+            fh.write(json.dumps({"_header": 1, "n": 1}) + "\n")
+            for tid in ("HumanEval/0", "HumanEval/1", "HumanEval/2"):
+                fh.write(json.dumps({"task_id": tid, "ok": 0, "empty": False}) + "\n")
         p = panel(m, g)
-        assert p["FULL"]["pass"] == 5 and p["FULL"]["samples"] == 9, p
+        assert p["n"] == 10
+        assert p["FULL"]["pass"] == 17 and p["FULL"]["samples"] == 30, p
         assert p["FULL"]["task_c_ge_1"] == 2 and p["FULL"]["task_c_ge_1_rate"] == round(2 / 3, 4), p
-        assert p["empty_samples"] == 3 and p["all_empty_tasks"] == 1, p
-        assert p["ci_histogram"][0] == 1 and p["ci_histogram"][2] == 1 and p["ci_histogram"][3] == 1
+        assert p["empty_samples"] == 10 and p["all_empty_tasks"] == 1, p
+        assert p["ci_histogram"][0] == 1 and p["ci_histogram"][7] == 1 and p["ci_histogram"][10] == 1
         q = p["vs_greedy"]
         assert q["fail_greedy_pass_ge1_n10"] == ["HumanEval/0", "HumanEval/2"], q
         assert q["fail_greedy_all10_pass"] == ["HumanEval/2"], q
         assert q["pass_greedy_zero_n10"] == [], q
         txt = render(p)
-        assert "sample solve 5/9" in txt and "c= 3" in txt and "pass@10-like" in txt
-    print("e0_panel selftest ok")
+        assert "sample solve 17/30" in txt and "c=10" in txt and "pass@10-like" in txt
+
+        # n!=10 (here n=3) is REFUSED: a different draw budget is not the gate readout.
+        badn = os.path.join(td, "badn.jsonl")
+        write_merged(badn, 3,
+                     {"HumanEval/0": [1, 1, 0], "HumanEval/1": [0, 0, 0]},
+                     {"_header": 1, "n": 3})
+        try:
+            panel(badn, None)
+            raise AssertionError("n!=10 merged file was accepted")
+        except SystemExit as e:
+            assert "requires n=10" in str(e), str(e)
+
+        # A merger header that LIES about the rows (n=10 rows, wrong full_pass) is refused.
+        lie = os.path.join(td, "lie.jsonl")
+        write_merged(lie, 10,
+                     {"HumanEval/0": [1] * 7 + [0] * 3},
+                     {"_header": 1, "n": 10, "full_pass": 99, "full_denom": 10})
+        try:
+            panel(lie, None)
+            raise AssertionError("header/rows disagreement was accepted")
+        except SystemExit as e:
+            assert "rows and header disagree" in str(e), str(e)
+    print("e0_panel selftest ok: n=10 gate (n!=10 refused), FULL/CLEAN recomputed and "
+          "cross-checked against the merger header, flips, empties, histogram")
 
 
 def main():
