@@ -132,10 +132,12 @@ micro-sample n=6,396):
 - same-uuid token overlap is tiny: the stub text is a literal substring of the full solution
   only **5.95%** of pairs (whitespace-normalised 11.5%), so r3 did **not** read these tokens.
 - of the 23.6B, **51.3% of full solutions fail `ast.parse` as a single module** (stub fails
-  0.0%). This is not garbage: a 1,200-row sample is 0.4% markdown-fenced, 4.7% REPL, and 28%
-  contain ≥2 def/class (median 5,190 chars) — English spec + full multi-function/script
-  solutions. On the both-parse-ok 48.7%, the stub AST node-set is a subset of the full
-  solution **99.99%** of the time, so the parse-ok half (~11.5B) mostly re-contains the seen
+  0.0%). This is not garbage: an unbiased hash-sample of all parse-fail rows (n=5,102) is
+  0.82% markdown-fenced, 3.51% REPL, and 25.9% contain ≥2 def/class (median 5,239 chars,
+  p10 3,199 / p90 9,397; 19.8% carry imports, 0.02% `__main__`) — English spec + full
+  multi-function/script solutions. On the both-parse-ok 48.7%, the stub AST node-set is a
+  subset of the full solution **99.99%** of the time (exact conditional counts in
+  `runs/indep_overlap_66b.log`), so the parse-ok half (~11.5B) mostly re-contains the seen
   short def (lowest marginal novelty), while the parse-fail half (~12.1B) carries new
   function-external orchestration / multi-function context.
 
