@@ -301,12 +301,15 @@ def main():
 @torch.no_grad()
 def _greedy(model, tok, prompt_ids, max_new, device, seq_window):
     x = torch.tensor([prompt_ids], device=torch.device(device))
-    for _ in range(max_new):
-        lg = model(x[:, -seq_window:])[0][:, -1]
-        nxt = lg.argmax(-1, keepdim=True)
-        if nxt.item() == 1:
-            break
-        x = torch.cat([x, nxt], 1)
+    is_cuda = str(device).startswith("cuda")
+    ctx = torch.autocast(device_type="cuda", dtype=torch.bfloat16) if is_cuda else contextlib.nullcontext()
+    with ctx:
+        for _ in range(max_new):
+            lg = model(x[:, -seq_window:])[0][:, -1]
+            nxt = lg.argmax(-1, keepdim=True)
+            if nxt.item() == 1:
+                break
+            x = torch.cat([x, nxt], 1)
     return tok.decode(x[0, len(prompt_ids):].tolist())
 
 
