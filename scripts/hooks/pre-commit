@@ -1536,6 +1536,10 @@ def main():
         # the launcher command and the escape. torchrun is stubbed so "did it launch" is observable
         # rather than inferred from the exit code.
         "scripts/test_run_ddp_launcher.py",
+        # v42 phi SFT launcher (de): runs the launcher with torchrun stubbed; asserts it reaches
+        # training without a pre-torchrun card_claim acquire (old acquire --wait-for-device had
+        # no GPU descendant and exited before training). Keyed to runs/v42_phi_sft.sh.
+        "scripts/test_phisft_launcher.py",
         # The ALLOW_DIRECT_RUN population is an ALLOWLIST, not a count (4c, de-60): three scripts
         # take the escape and each carries its reason both here and at its call site, so a fourth
         # exporter FAILs until somebody writes down why. Case 4 is what keeps the other three from
@@ -2617,6 +2621,10 @@ def main():
         "scripts/board.py": {"scripts/test_integration_tree_guard.py"},
         # Stage-2 sampler (66): editing the shared RNG contract must run the pairing test.
         "eval/sampling.py": {"eval/test_sampling_paired.py"},
+        # v42 phi SFT launcher (de): a pre-training card_claim acquire has no GPU-holding
+        # descendant to resolve, waits the deadline and exits before torchrun. The test runs
+        # the launcher with torchrun stubbed and asserts training is reached with no acquire.
+        "runs/v42_phi_sft.sh": {"scripts/test_phisft_launcher.py"},
     }
     _subject_tests = set()
     for _subj in staged("AM"):
