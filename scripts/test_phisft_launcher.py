@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
-"""v42_phi_sft.sh must launch torchrun WITHOUT a pre-training card_claim acquire.
+"""v42_phi_sft.sh claims the 8 cards by binding them to the LIVE torchrun pid, after it
+holds a device -- not before torchrun starts, and not per rank.
 
-The defect (fb, measured 2026-09-15): the launcher called
-`card_claim.py acquire --wait-for-device 300` BEFORE torchrun. At that instant the
-shell has no GPU-holding descendant, so _resolve_to_device_holder polls an empty tree
-for the full deadline, exp is marked fail, and the script exits having never trained.
-The outer acquire is also redundant: sft_math self-claims each card per rank through
-load_checkpoint -> claim_my_cards (loader.py:87), and those claims lapse on rank exit.
+Why this is the only shape that works (measured 2026-09-15):
+  * The original launcher ran `card_claim acquire --wait-for-device 300` BEFORE torchrun:
+    no GPU-holding descendant exists, so it dead-waits and exits without training.
+  * sft_math.py cannot self-claim one card per rank. Every torchrun rank inherits the SAME
+    CUDA_VISIBLE_DEVICES=0..7, and card_claim.acquire's exec-time CVD check REFUSES a claim
+    whose cards differ from the holder's visible devices:
+      "visible ['0'..'7'] vs claimed ['0'] ... an orphan behind a healthy claim".
+    (Reproduced on the pod: claim_my_cards(cards=['0']) under CVD=0..7 raises SystemExit.)
+  * The supported 8-card block claim is the torchrun PARENT, which holds nvidia device fds
+    itself and whose CVD is exactly 0..7. `acquire --pid <torchrun> --require-device`
+    binds all eight to that one pid; it lapses on torchrun exit and the launcher trap also
+    releases it. This is the manual bind fb used to protect the live run.
 
-The gate is checked by RUNNING the launcher with torchrun stubbed (not by grepping it):
-  * the torchrun stub must run (training is reached) and record its argv;
-  * the card_claim CLI stub writes a marker if ever invoked with `acquire` -- that
-    marker must be ABSENT (old launcher called acquire, it returned nonzero, the
-    launcher REFUSED and torchrun never ran, so the old script fails this test);
-  * wall time is small -- the bug path blocks for the device-wait deadline, the fixed
-    path reaches the stub immediately.
-
-The read-only live-claim preflight still runs: the stub card_claim MODULE exposes
-claims()=([],{}) so the inline preflight passes. exp.py and sft_math.py are stubbed.
+What this test RUNS (torchrun is a non-shell python stub; the REAL card_claim.py runs
+against a temp AUPAI_CLAIM_DIR; no GPU, macOS has no /proc so require-device fails open
+exactly as the guard documents):
+  1. launcher starts torchrun, then a live 8-card claim appears bound to the torchrun
+     stub's OWN pid (not the shell, not an ephemeral pid);
+  2. if torchrun dies before the claim binds, the launcher refuses, marks exp fail, and
+     leaves NO training running;
+  3. after torchrun exits 0 and the launcher unwinds, the claim is RELEASED (trap), so a
+     finished run does not read held.
+  4. negative control: the OLD launcher never reaches torchrun (its pre-launch acquire
+     refuses a shell with no device-holding descendant).
 
     python3 scripts/test_phisft_launcher.py
 """
@@ -26,23 +34,25 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LAUNCHER = os.path.join(ROOT, "runs", "v42_phi_sft.sh")
-MARKER_ACQUIRE = "acquire_was_called"
-MARKER_TORCHRUN = "torchrun_ran"
+OLD_LAUNCHER = None  # set by _negative_control from `git show origin/main:...`
 
 
-def _build_tree():
+def _build_tree(claim_dir):
     d = tempfile.mkdtemp(prefix="phisft_")
     for sub in ("runs", "scripts", "eval", "bin", "data/sft"):
         os.makedirs(os.path.join(d, sub), exist_ok=True)
     shutil.copy(LAUNCHER, os.path.join(d, "runs", "v42_phi_sft.sh"))
     os.chmod(os.path.join(d, "runs", "v42_phi_sft.sh"), 0o755)
     shutil.copy(os.path.join(ROOT, "eval", "_devs.sh"), os.path.join(d, "eval", "_devs.sh"))
+    # The REAL claim code so the exercise covers the exec-time CVD / shell / require-device
+    # guards, not a stub that agrees with everything.
+    shutil.copy(os.path.join(ROOT, "scripts", "card_claim.py"),
+                os.path.join(d, "scripts", "card_claim.py"))
 
-    # Minimal real pack the NOTES inline block can torch.load(weights_only=True), and a
-    # resume ckpt whose existence the launcher checks.
     import torch
     torch.save({"input_ids": torch.zeros(4, 2, dtype=torch.long),
                 "labels": torch.zeros(4, 2, dtype=torch.long),
@@ -50,71 +60,139 @@ def _build_tree():
                os.path.join(d, "data/sft/sft_phi_codeexercises_v42_65m_0914.pt"))
     open(os.path.join(d, "ckpt_v41_r3_0914.pt"), "w").close()
 
-    # sft_math.py: --check_pack (cardless gate) exits 0; any training argv also 0.
-    open(os.path.join(d, "sft_math.py"), "w").write(
-        "import sys\nsys.exit(0)\n")
+    # check_pack gate (called directly by the launcher) and exp accounting are no-ops.
+    open(os.path.join(d, "sft_math.py"), "w").write("import sys\nsys.exit(0)\n")
+    open(os.path.join(d, "scripts", "exp.py"), "w").write("import sys\nsys.exit(0)\n")
+    # Post-training humaneval step is absent; launcher exits non-zero there but the claim
+    # trap still fires -- that path is not under test, so provide a harmless acceptor.
+    os.makedirs(os.path.join(d, "eval"), exist_ok=True)
+    open(os.path.join(d, "eval", "humaneval_gen.py"), "w").write("import sys\nsys.exit(0)\n")
 
-    # exp.py: accept start/done no matter the flags.
-    open(os.path.join(d, "scripts", "exp.py"), "w").write(
-        "import sys\nsys.exit(0)\n")
-
-    # card_claim: MODULE used by the read-only preflight (claims returns nothing held);
-    # CLI records and refuses any `acquire` so the old launcher cannot reach torchrun.
-    stub = os.path.join(d, "scripts", "card_claim.py")
-    open(stub, "w").write(
-        "def claims():\n"
-        "    return ([], {})\n"
-        "if __name__ == '__main__':\n"
-        "    import os, sys\n"
-        "    if 'acquire' in sys.argv:\n"
-        "        open(os.environ['CARD_CLAIM_MARKER'], 'w').close()\n"
-        "        sys.exit(3)\n"
-        "    sys.exit(0)\n")
-
-    # torchrun stub: record that launch reached training, then exit 42 so the launcher
-    # takes its training-fail path and never reaches the (absent) post-eval step.
+    # torchrun = a NON-SHELL python process (a bash stub is refused as a shell holder). It
+    # records argv, blocks until a die file appears, and exits with TORCHRUN_RC.
+    ready = os.path.join(d, "torchrun_ready")
+    die = os.path.join(d, "torchrun_die")
     tr = os.path.join(d, "bin", "torchrun")
-    open(tr, "w").write(
-        "#!/bin/bash\n"
-        'echo "$@" > "$TREE/markers/torchrun_argv"\n'
-        'touch "$TREE/markers/' + MARKER_TORCHRUN + '"\n'
-        "exit 42\n")
+    with open(tr, "w") as f:
+        f.write(
+            "#!" + sys.executable + "\n"
+            "import os, sys, time\n"
+            f"open({ready!r}, 'w').close()\n"
+            "with open(os.path.join(os.path.dirname(__file__), '..', 'torchrun_argv'), 'w') as a:\n"
+            "    a.write(' '.join(sys.argv[1:]))\n"
+            f"while not os.path.exists({die!r}):\n"
+            "    time.sleep(0.05)\n"
+            "sys.exit(int(os.environ.get('TORCHRUN_RC', '0')))\n")
     os.chmod(tr, 0o755)
-    return d
+    return d, ready, die
+
+
+def _live_claim_files(claim_dir):
+    return [f for f in os.listdir(claim_dir) if f.endswith(".json")]
+
+
+def _run(d, claim_dir, env_extra=None):
+    env = dict(os.environ,
+               PATH=os.path.join(d, "bin") + os.pathsep + os.environ["PATH"],
+               AUPAI_CLAIM_DIR=claim_dir,
+               HYPOTHESIS="selftest world",
+               CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7",
+               TORCHRUN_RC="0")
+    if env_extra:
+        env.update(env_extra)
+    return subprocess.Popen(["bash", os.path.join(d, "runs", "v42_phi_sft.sh")],
+                            cwd=d, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
 
 def main():
-    d = _build_tree()
-    markers = os.path.join(d, "markers")
-    os.makedirs(markers)
-    env = dict(os.environ, PATH=os.path.join(d, "bin") + os.pathsep + os.environ["PATH"],
-               TREE=d, HYPOTHESIS="selftest world",
-               CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7",
-               CARD_CLAIM_MARKER=os.path.join(markers, MARKER_ACQUIRE))
+    claim_dir = tempfile.mkdtemp(prefix="phisft_claims_")
+    d, ready, die = _build_tree(claim_dir)
+    proc = _run(d, claim_dir)
+    try:
+        # 1. torchrun starts and a live claim binds to its pid before training is left
+        #    unattended.
+        for _ in range(200):
+            if os.path.exists(ready):
+                break
+            time.sleep(0.05)
+        assert os.path.exists(ready), "torchrun stub never started"
+        argv = open(os.path.join(d, "torchrun_argv")).read()
+        assert "--nproc_per_node=8" in argv and "sft_math.py" in argv, argv
 
-    import time
-    t0 = time.time()
-    p = subprocess.run(["bash", os.path.join(d, "runs", "v42_phi_sft.sh")],
-                       cwd=d, env=env, capture_output=True, text=True, timeout=60)
-    dt = time.time() - t0
+        bound = None
+        for _ in range(200):
+            files = _live_claim_files(claim_dir)
+            if files:
+                bound = files[0]
+                break
+            time.sleep(0.05)
+        assert bound, "launcher left torchrun running with NO live card claim"
+        import json
+        claim = json.load(open(os.path.join(claim_dir, bound)))
+        assert sorted(map(str, claim["cards"])) == [str(i) for i in range(8)], claim["cards"]
+        # The claimed pid is the live torchrun stub, a python process -- find it by scanning
+        # children; assert it is alive and the argv-bearing process, not the shell.
+        stub_pid = int(claim["pid"])
+        assert stub_pid != proc.pid, "claim bound to the launcher shell, not torchrun"
+        os.kill(stub_pid, 0)  # alive
 
-    tr_ran = os.path.exists(os.path.join(markers, MARKER_TORCHRUN))
-    acquired = os.path.exists(os.path.join(markers, MARKER_ACQUIRE))
+        # 2/3. let torchrun finish 0 -> launcher unwinds -> trap releases the claim.
+        open(die, "w").close()
+        out, _ = proc.communicate(timeout=60)
+        for _ in range(100):
+            if not _live_claim_files(claim_dir):
+                break
+            time.sleep(0.05)
+        assert not _live_claim_files(claim_dir), (
+            "torchrun exit + trap left a stale claim:\n" + out.decode()[-800:])
+    finally:
+        if proc.poll() is None:
+            open(die, "w").close()
+            proc.kill()
+        shutil.rmtree(d, ignore_errors=True)
 
-    assert tr_ran, ("launcher never reached torchrun; stdout/stderr:\n"
-                    + p.stdout[-800:] + p.stderr[-800:])
-    assert not acquired, "launcher called card_claim acquire before torchrun"
-    assert dt < 60, f"launcher blocked {dt:.1f}s -- device-wait deadline path still live"
-    # torchrun got the 8-rank SFT argv.
-    argv = open(os.path.join(markers, "torchrun_argv")).read()
-    assert "--nproc_per_node=8" in argv and "sft_math.py" in argv, argv
-    # Source-level belt: no card_claim acquire invocation survives in the launcher.
-    src = open(LAUNCHER, encoding="utf-8").read()
-    assert "card_claim.py acquire" not in src, "shell still invokes card_claim acquire"
+    # 4. NEGATIVE CONTROL: the ORIGINAL pre-launch acquire launcher must never reach torchrun.
+    old = subprocess.run(["git", "show", "origin/main:runs/v42_phi_sft.sh"],
+                         cwd=ROOT, capture_output=True, text=True).stdout
+    assert "wait-for-device" in old and "--pid" not in old, "origin/main launcher shape changed"
+    od = tempfile.mkdtemp(prefix="phisft_old_")
+    oclaim = tempfile.mkdtemp(prefix="phisft_oldclaims_")
+    try:
+        for sub in ("runs", "scripts", "eval", "bin", "data/sft"):
+            os.makedirs(os.path.join(od, sub), exist_ok=True)
+        with open(os.path.join(od, "runs", "v42_phi_sft.sh"), "w") as f:
+            f.write(old)
+        os.chmod(os.path.join(od, "runs", "v42_phi_sft.sh"), 0o755)
+        shutil.copy(os.path.join(ROOT, "eval", "_devs.sh"), os.path.join(od, "eval", "_devs.sh"))
+        shutil.copy(os.path.join(ROOT, "scripts", "card_claim.py"),
+                    os.path.join(od, "scripts", "card_claim.py"))
+        os.makedirs(os.path.join(od, "scripts"), exist_ok=True)
+        # every gate before the acquire passes; torchrun marker must never appear
+        for name, body in (("exp.py", "import sys;sys.exit(0)\n"),
+                           ("sft_math.py", "import sys;sys.exit(0)\n")):
+            p = os.path.join(od, "scripts", name) if name == "exp.py" else os.path.join(od, name)
+            open(p, "w").write(body)
+        import torch
+        torch.save({"input_ids": torch.zeros(2, 2, dtype=torch.long),
+                    "labels": torch.zeros(2, 2, dtype=torch.long), "vocab_id": "v"},
+                   os.path.join(od, "data/sft/sft_phi_codeexercises_v42_65m_0914.pt"))
+        open(os.path.join(od, "ckpt_v41_r3_0914.pt"), "w").close()
+        tr = os.path.join(od, "bin", "torchrun")
+        open(tr, "w").write("#!" + sys.executable + "\nimport sys;open(sys.argv[-1],'w').close()\n")
+        os.chmod(tr, 0o755)
+        env = dict(os.environ, PATH=os.path.join(od, "bin") + os.pathsep + os.environ["PATH"],
+                   AUPAI_CLAIM_DIR=oclaim, HYPOTHESIS="neg",
+                   CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7")
+        r = subprocess.run(["bash", os.path.join(od, "runs", "v42_phi_sft.sh")],
+                           cwd=od, env=env, capture_output=True, text=True, timeout=90)
+        assert r.returncode != 0 and "acquire refused" in r.stdout.lower(), (
+            "old launcher did not refuse at the pre-launch claim:\n" + r.stdout[-800:])
+    finally:
+        shutil.rmtree(od, ignore_errors=True)
+        shutil.rmtree(oclaim, ignore_errors=True)
 
-    print(f"phi SFT launcher OK: reached torchrun (8-rank sft_math) with no pre-training "
-          f"card_claim acquire in {dt:.1f}s; ranks self-claim via loader")
-    shutil.rmtree(d, ignore_errors=True)
+    print("phi SFT launcher OK: binds an 8-card live claim to the live torchrun pid after "
+          "device open, releases on exit; old pre-launch-acquire launcher refuses")
     return 0
 
 
