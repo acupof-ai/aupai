@@ -2189,6 +2189,13 @@ def main():
         # jump alerts, NaN unconditional, gnorm 5x-median alerts, a 4x wobble silent, and
         # the val running-min two-point behaviour unchanged.
         "scripts/r3_anneal_watch.py",
+        # The read-only E0 n=10 readout panel (98). Registered because its job is to align
+        # tasks correctly: c_i/n aggregation, the FULL/CLEAN split, and the greedy-vs-n10
+        # flip categories must agree with e0_merge_score's denominators on known-answer
+        # worlds; a miscount (samples vs tasks, wrong exclusion) prints a plausible gate
+        # number. Selftest builds a 3-task n=3 world and pins rates, empties, histogram,
+        # rescued/dropped categories, and rendered text.
+        "scripts/e0_panel.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
