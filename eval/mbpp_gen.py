@@ -40,6 +40,10 @@ sys.path.insert(0, ROOT)
 
 import torch  # noqa: E402
 
+from eval.shard import label as shard_label  # noqa: E402
+from eval.shard import select as shard_select
+from eval.shard import validate as shard_validate
+
 DATA_PATH = os.path.join(ROOT, "data", "eval", "sanitized-mbpp.json")
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
 # r3 six-domain 13-gram contamination union; its r3_mbpp_clean list (338/427,
@@ -202,19 +206,33 @@ def main():
     ap.add_argument("--clean", default=CLEAN_PATH,
                     help="contam manifest carrying r3_mbpp_union/r3_mbpp_clean")
     ap.add_argument("--no_clean", action="store_true", help="FULL/427 only, no CLEAN column")
+    ap.add_argument("--shard_i", type=int, default=None,
+                    help="multi-card shard: score only fixed-order indices i with "
+                         "i %% --shard_n == shard_i. Use --shard_n; with sharding pass "
+                         "--no_clean (a shard is not the full 427, so the clean-complement "
+                         "check cannot run); the merger recomputes FULL/427 and CLEAN/338.")
+    ap.add_argument("--shard_n", type=int, default=None)
     ap.add_argument("--control", choices=["20", "ALL"], default=None,
                     help="judge canonical solutions, no model; ALL must pass")
     args = ap.parse_args()
 
-    recs = json.load(open(args.data, encoding="utf-8"))
+    recs_all = json.load(open(args.data, encoding="utf-8"))
+    shard_validate(args.shard_i, args.shard_n)
+    if args.shard_n is not None and not args.no_clean:
+        ap.error("sharded MBPP runs must pass --no_clean: a shard is not the full 427, so "
+                 "the clean-complement invariant cannot be checked per shard. The merger "
+                 "recomputes FULL/427 and CLEAN/338 from the union manifest.")
     if args.data.endswith("sanitized-mbpp.json"):
-        assert len(recs) == 427, len(recs)
+        assert len(recs_all) == 427, len(recs_all)
+    recs = [r for _, r in shard_select(recs_all, args.shard_i, args.shard_n)]
     clean_ids = set()
     if not args.no_clean:
         clean_ids = load_clean_ids([r["task_id"] for r in recs], args.clean)
         print(f"CLEAN denominator: {len(clean_ids)} tasks (manifest "
               f"{os.path.relpath(args.clean, ROOT)})")
     if args.control:
+        if args.shard_n is not None:
+            ap.error("--control checks canonical answers over the FULL dataset, not a shard")
         subset = recs if args.control == "ALL" else recs[:20]
         bad = [r["task_id"] for r in subset if not judge(r, "\n" + canonical_body(r))]
         print(f"canonical-sig control ({len(subset)}): failed", len(bad), bad[:10])
@@ -241,7 +259,8 @@ def main():
     suffix = f".n{args.n}temp{args.temperature:g}" if args.n > 1 else ""
     preds_path = os.path.join(
         ROOT, "data", "eval",
-        f"preds_mbpp_{os.path.basename(str(args.ckpt).rstrip('/'))}.{args.run}{suffix}.jsonl")
+        f"preds_mbpp_{os.path.basename(str(args.ckpt).rstrip('/'))}.{args.run}{suffix}"
+        f"{shard_label(args.shard_i, args.shard_n)}.jsonl")
     t0 = time.time()
     npass = nempty = nclean_pass = 0
     clean_tasks_seen = 0
@@ -249,7 +268,9 @@ def main():
         out_path = fout.name
         fout.write(json.dumps({
             "_header": 1, "variant": "sig-docstring-rstrip", "benchmark": "mbpp-sanitized",
-            "n_problems": len(recs), "n": args.n, "temperature": args.temperature,
+            "n_problems": len(recs), "n_total_problems": len(recs_all),
+            "shard_i": args.shard_i, "shard_n": args.shard_n,
+            "n": args.n, "temperature": args.temperature,
             "max_new": args.max_new, "ckpt": os.path.basename(str(args.ckpt).rstrip("/")),
             "clean_denominator": (len(clean_ids) if clean_ids else None),
         }, ensure_ascii=False) + "\n")

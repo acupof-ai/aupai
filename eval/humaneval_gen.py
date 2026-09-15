@@ -44,9 +44,12 @@ from contextlib import nullcontext as _nullctx
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import torch  # noqa: E402
 from eval_artifacts import attest, open_artifact  # noqa: E402
 
-import torch  # noqa: E402
+from eval.shard import label as shard_label
+from eval.shard import select as shard_select
+from eval.shard import validate as shard_validate
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = os.path.join(ROOT, "data", "eval", "humaneval", "humaneval_164.jsonl")
@@ -416,6 +419,12 @@ def main():
     ap.add_argument("--temperature", type=float, default=0.0,
                     help="sampling temperature; 0 (default) is greedy. Use 0.2 with --n 10 "
                          "for the stage-2 E0/ET/EC paired protocol")
+    ap.add_argument("--shard_i", type=int, default=None,
+                    help="stage-2 multi-card shard: score only fixed-order indices i with "
+                         "i %% --shard_n == shard_i (position in the data file, not a hash). "
+                         "Used with --shard_n so N cards cover every task exactly once.")
+    ap.add_argument("--shard_n", type=int, default=None,
+                    help="total number of shards; requires --shard_i in [0, shard_n).")
     ap.add_argument("--preds", default=None,
                     help="score an existing preds jsonl (pass/empty/repetition) and exit; "
                          "no model, cardless")
@@ -447,12 +456,15 @@ def main():
               f"(empty {nempty}/{len(rows)} = {empty_frac})", flush=True)
         return
 
-    probs = [json.loads(l) for l in open(args.data, encoding="utf-8") if l.strip()]
+    probs_all = [json.loads(l) for l in open(args.data, encoding="utf-8") if l.strip()]
+    shard_validate(args.shard_i, args.shard_n)
+    probs = [p for _, p in shard_select(probs_all, args.shard_i, args.shard_n)]
     arm = ("chatml" if args.chatml else
            "sig-only" if args.strip_docstrings else
            "no-doctest" if args.strip_doctests else "rstrip-nl" if args.rstrip_nl else
            "standard")
-    print(f"HumanEval: {len(probs)} problems ({arm} arm)"
+    print(f"HumanEval: {len(probs)}/{len(probs_all)} problems ({arm} arm)"
+          f"{f' shard {args.shard_i}/{args.shard_n}' if args.shard_n is not None else ''}"
           f"{f' scoring first {args.first}' if args.first else ''}", flush=True)
     def _prompt(p):
         if args.chatml:
@@ -491,8 +503,9 @@ def main():
                  "with CUDA_VISIBLE_DEVICES= to run cardless.")
 
     # load_checkpoint claims the card only when device names cuda; a CPU load claims nothing.
-    from scripts.loader import load_checkpoint
     from tokenizers import Tokenizer
+
+    from scripts.loader import load_checkpoint
     model, cfg = load_checkpoint(args.ckpt, device=args.device)
     model.eval()
     tok = Tokenizer.from_file(TOK_PATH)
@@ -541,6 +554,7 @@ def main():
         + (".nodoc" if args.strip_docstrings else "")
         + (".rstripnl" if args.rstrip_nl else "")
         + (f".n{args.n}temp{args.temperature:g}" if args.n > 1 else "")
+        + shard_label(args.shard_i, args.shard_n)
         + ".jsonl")
     t0 = time.time()
     npass = nempty = neos = nstop = nrep = nimend = 0
@@ -562,6 +576,7 @@ def main():
             "temperature": args.temperature,
             "stops": STOPS,
             "n_problems": len(probs),
+            "shard_i": args.shard_i, "shard_n": args.shard_n,
             "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, ensure_ascii=False) + "\n")
         for i, (p, prompt) in enumerate(zip(probs, prompts), 1):
