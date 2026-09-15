@@ -121,17 +121,38 @@ Domains **never named in the r3 mix** (full pool unseen as a scheduled domain), 
 The 26.70B L3-noexec pool needs a content-freshness split. Its build_stats
 (`survivor_source_dir: data/corpus/code_ultra_l3_noexec_dc`) show the stub pool r3 cycled is
 a **last-top-function stub transform of the same L3 docs**: stub kept 13,682,629 of noexec's
-15,308,313 docs (89.4%). So of noexec's documents, 1.63M (~2.84B, proportional-token estimate)
-were never carried into the stub and are fully new; the other ~23.86B are documents r3 *saw as
-short stubs* (4.99B total) but whose full exercise bodies it never trained on — touched, not
-learned. Three honest buckets:
+15,308,313 docs (89.4%). The uuid arithmetic gives the document partition, but the **token
+content tells a different story** (0e independent audit `runs/v2_pool_audit_0e.md`, #372;
+66 re-ran `runs/v2_overlap_probe.py` independently at K=50, n=350,140 pairs, plus a per-uuid
+micro-sample n=6,396):
 
-1. **Fully novel (never seen in any form) ≈ 28.0B:** L2 unseen tail 11.56 + starcoder 7.95 +
-   math tail 3.39 + en_c4 tail 1.12 + noexec new-docs 2.84 + zh 0.77 + rp1t 0.38.
-2. **Stub-touched, full body unseen ≈ 23.9B:** noexec docs overlapping the stub set.
+- uuid partition: 1,625,684 docs (10.62%) were never carried into the stub; sampled at 1,859
+  tok/doc = **~3.0B new-uuid problems**. The other 13,682,629 (89.4%) are same-uuid full
+  solutions, 1,723 tok/doc = **~23.6B** (stub rendered only the 365-tok last-def, 4.7× shorter).
+- same-uuid token overlap is tiny: the stub text is a literal substring of the full solution
+  only **5.95%** of pairs (whitespace-normalised 11.5%), so r3 did **not** read these tokens.
+- of the 23.6B, **51.3% of full solutions fail `ast.parse` as a single module** (stub fails
+  0.0%). This is not garbage: an unbiased hash-sample of all parse-fail rows (n=5,102) is
+  0.82% markdown-fenced, 3.51% REPL, and 25.9% contain ≥2 def/class (median 5,239 chars,
+  p10 3,199 / p90 9,397; 19.8% carry imports, 0.02% `__main__`) — English spec + full
+  multi-function/script solutions. On the both-parse-ok 48.7%, the stub AST node-set is a
+  subset of the full solution **99.99%** of the time (exact conditional counts in
+  `runs/indep_overlap_66b.log`), so the parse-ok half (~11.5B) mostly re-contains the seen
+  short def (lowest marginal novelty), while the parse-fail half (~12.1B) carries new
+  function-external orchestration / multi-function context.
+
+Honest buckets (all 26.7B are r3-UNREAD tokens; the split is by marginal value):
+
+1. **High-novelty (never read, parse-agnostic):** L2 unseen tail 11.56 + starcoder 7.95 +
+   rp1t 0.38 + zh 0.77 + en_c4 tail 1.12 (code/language pools) + noexec new-uuid 3.0, plus the
+   separate math_owm tail 3.39 counted under math below.
+2. **noexec same-uuid full solutions 23.6B** = ~12.1B parse-FAIL multi-function long context
+   (high value for complex c=0 tasks, mild prose+code format risk) + ~11.5B parse-ok (AST
+   already contains the seen def; lowest marginal novelty).
 3. **Exhausted (skip):** stub 4.99, keep_p1 2.63, cot 0.40.
 
-Tier A (+30B) is constructible almost entirely from bucket 1 (28.0B) with ~2B from bucket 2.
+Tier A (+30B) is built from bucket 1 plus a **targeted slice of bucket 2's parse-FAIL
+multi-function half** (see §3.1), not from "novel vs already-seen" token bookkeeping.
 
 Per-domain build funnels (0e, pod-measured 2026-09-15, kept/scanned docs): L2 16.36M/29.38M
 (44% dropped), L3-noexec 15.31M/20.75M, starcoder 6.18M (188 build-decon hits, drop 0.025%),
@@ -160,9 +181,15 @@ Resume from `ckpt_v41_r3_0914.pt` (step 38070) into a **new mix** (`data/mix_v42
 new domain-name refs where needed — never edit `mix_v41_gate.json` or `mix_v41_r3.json`,
 both frozen). Composition from §2 bucket 1 (fully novel) + a bucket-2 slice, ≈30B:
 
-- code ~24.3B (~81%): L2 unseen tail 11.6 + starcoder 8.0 + rp1t 0.4 + noexec 4.3 (use the
-  ~2.84B never-carried docs first, then ~1.5B of stub-touched full body; noexec capped at ~14%
-  of the tier). L2 and starcoder (~20B) are the anchors.
+- code ~24.2B (~81%): L2 unseen tail 11.56 + starcoder 7.95 + rp1t 0.38 + **noexec 4.3**.
+  The 4.3B noexec is **not** "novel + some stub-touched": it is (a) all ~3.0B new-uuid
+  problems, plus (b) ~1.3B sampled from the **parse-FAIL multi-function / long-context half**
+  of the same-uuid pool (post-exclusion, fence/REPL-stripped). Hold the ~11.5B parse-ok
+  same-uuid body for Tier B — it mostly re-contains the seen 365-tok def and has the lowest
+  marginal novelty. noexec stays capped at ~14% of the tier, now on **distribution/format
+  risk** (prose+code render, same-uuid problem concentration; L2/starcoder cover primitive
+  diversity better), not on an "already seen" basis. Same-uuid tokens keep the ~0.5 lift
+  discount in §5. L2 and starcoder (~19.5B) are the anchors.
 - math 3.4B (~11%): math_owm unseen tail (digit/modular/sequence primitives).
 - English retention 1.5B (~5%): en_c4 tail 1.1 + a 2nd cot pass 0.4 (exhausted but small,
   high-signal).
@@ -173,7 +200,7 @@ is not a narrower distribution than produced r3 — the difference is all rows a
 starcoder natural code replace 3×-repeated stub/keep_p1. Mix, do not SFT: the phi run showed a
 narrow pack costs −2.7 LAMBADA-EN / −3.2 ARC-E. Retention gate at the half point is
 LAMBADA-EN ≥ 21 (r3 21.93); if the 8% language share is judged too thin to hold that, raise
-English by reusing more en_c4/cot (already tokenized) at the expense of bucket-2 noexec.
+English by reusing more en_c4/cot (already tokenized) at the expense of the noexec slice.
 
 - **Epochs: 1** over unseen rows (cot reuse aside). A second epoch is a separate decision.
 - Decontamination — two stages, and they are NOT interchangeable (0e + 3b evidence):
@@ -188,10 +215,18 @@ English by reusing more en_c4/cot (already tokenized) at the expense of bucket-2
      prompt text and code+newline-joined test_list). Starcoder, rp1t and the zh domains never
      entered r3, so they were never in that rescan. **Hard prerequisite for Tier A: run the
      same 427/HE-164 13-gram rescan over every newly introduced pool (starcoder, rp1t, zh, and
-     the bucket-2 noexec full bodies) and score the eval as CLEAN against whatever union comes
+     the selected noexec slice) and score the eval as CLEAN against whatever union comes
      out** — do not assume 156/338 hold. This is CPU-only (the r3 six-domain rescan was a
      minutes-class offline job), no GPU, and must land before the mix is accepted by
-     `_assert_mix_domains`. The sha1 holdout channel is a third, independent guard for verbatim
+     `_assert_mix_domains`.
+  3. **noexec needs the same holdout exclusion r3's stub had — it has NO `.excl` cache.** r3
+     read `tokens_code_ultra_l3_stub_dc.excl56d12083dc30bdf2.pt` (the 273,879-doc
+     `phi_l3_stub_holdout_manifest` removed); the noexec pool ships only as the full
+     `tokens_code_ultra_l3_noexec_dc.pt`, so feeding it raw reintroduces the exact holdout
+     full solutions. Build an `excl56d` noexec variant (drop the same uuids) **before**
+     selecting the 4.3B. Separately, strip the ~5% markdown-fence / REPL wrappers found in the
+     parse-fail slice (keep multi-def modules — do NOT filter on `ast.parse` failing, which
+     deletes the highest-novelty long multi-function context). The sha1 holdout channel is a third, independent guard for verbatim
      eval/holdout docs: `data/eval/holdout_hashes.txt` carries length header `# n:305007`
      (305,007 registered hashes, `# fp:0dbff3db…`); building the r3 stub pool against it
      excluded 273,879 documents (asserted PASS in `runs/verify_stub_exclusion.py`). The two
@@ -281,7 +316,7 @@ Tier A has no CPU build queue. Tier B adds pool-build time on top.
    are already packed; the cost is card time and it settles whether broad scale moves the
    coverage count.
 2. **Mandatory pre-launch gate (CPU, no GPU):** the 427/HE-164 whitespace-13-gram union rescan
-   over starcoder/rp1t/zh and bucket-2 noexec full bodies (§3.1 decon step 2), and regenerate
+   over starcoder/rp1t/zh and the selected noexec slice (§3.1 decon steps 2-3), and regenerate
    the reused-domain mix rows with `--resume-cursor` at ckpt r3. The build-time gate does not
    cover MBPP-427; CLEAN n is re-derived from this rescan, not assumed to stay 156/338.
 3. Pre-authorise the Tier B pool-build (CPU) so it is ready if Tier A plateaus.
