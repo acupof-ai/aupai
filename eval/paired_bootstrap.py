@@ -102,6 +102,22 @@ def load_clean_task_ids(path):
     return out
 
 
+def load_he_exclude(path):
+    """String task_ids in an HE contam manifest's r3_humaneval_union (the 8).
+
+    HE CLEAN = 164 - union = 156, i.e. EXCLUDE these, opposite of MBPP's
+    r3_mbpp_clean keep-list. Preds carry ids like "HumanEval/21".
+    """
+    if not path:
+        return None
+    with open(path, encoding="utf-8") as fh:
+        u = json.load(fh)
+    v = u.get("r3_humaneval_union")
+    if not isinstance(v, list) or not v:
+        raise SystemExit(f"{path}: r3_humaneval_union missing or not a non-empty list")
+    return {str(s) for s in v}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--a", required=True, help="treatment preds (e.g. ET)")
@@ -113,9 +129,15 @@ def main():
     ap.add_argument("--alpha", type=float, default=0.05, help="one-sided tail")
     ap.add_argument("--clean", default=None,
                     help="MBPP contam manifest; restrict the paired unit to r3_mbpp_clean")
+    ap.add_argument("--he_union", default=None,
+                    help="HE contam manifest; exclude r3_humaneval_union (164->156)")
     args = ap.parse_args()
 
     clean_ids = load_clean_task_ids(args.clean)
+    he_exclude = load_he_exclude(args.he_union)
+    if clean_ids is not None and he_exclude is not None:
+        raise SystemExit("--clean (MBPP keep-list) and --he_union (HE exclude-list) "
+                         "are opposite filters for different benchmarks; pass one")
 
     ra, na, sa = load_task_rates(args.a)
     rb, nb, sb = load_task_rates(args.b)
@@ -136,6 +158,14 @@ def main():
         if len(tasks) != before:
             print(f"CLEAN: pairing restricted to {len(tasks)} of {before} tasks "
                   f"(r3 six-domain union excluded)")
+    if he_exclude is not None:
+        before = len(tasks)
+        tasks = [t for t in tasks if t not in he_exclude]
+        if not tasks:
+            raise SystemExit("no tasks survive the --he_union exclusion")
+        if len(tasks) != before:
+            print(f"HE CLEAN: {len(tasks)} of {before} tasks "
+                  f"(r3_humaneval_union excluded)")
     assert na[tasks[0]] == nb[tasks[0]], (na[tasks[0]], nb[tasks[0]])
     n = na[tasks[0]]
 
@@ -224,8 +254,22 @@ def _selftest():
         write(e, rows([0, 1, 2]))
         _, _, se = load_task_rates(e)
         assert_sample_aligned(sa, se, ["t0"])
+
+        # HE union is an EXCLUDE list of string ids; empty/missing refuses.
+        he = os.path.join(td, "he.json")
+        with open(he, "w", encoding="utf-8") as fh:
+            json.dump({"r3_humaneval_union": ["HumanEval/21", "HumanEval/7"]}, fh)
+        assert load_he_exclude(he) == {"HumanEval/21", "HumanEval/7"}
+        bad_he = os.path.join(td, "bad_he.json")
+        with open(bad_he, "w", encoding="utf-8") as fh:
+            json.dump({"r3_humaneval_union": []}, fh)
+        try:
+            load_he_exclude(bad_he)
+            raise AssertionError("empty HE union was accepted")
+        except SystemExit as e:
+            assert "r3_humaneval_union" in str(e), str(e)
     print("paired_bootstrap selftest OK: missing/shifted si and greedy-vs-n "
-          "refused; identical sets accepted")
+          "refused; identical sets accepted; HE exclude-list loaded/guarded")
     return 0
 
 
