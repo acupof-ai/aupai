@@ -574,9 +574,42 @@ def _selftest() -> int:
     with open(aj_path, encoding="utf-8") as jf:
         assert json.load(jf) == {"k": 3}
     assert not os.path.exists(aj_path + ".tmp")
+
+    # end-to-end WIRING test for the quota-feasibility gate (a unit test of
+    # _check_quota_feasible alone cannot prove build() calls it). Enough docs land in one
+    # char band/PPL band to earn a positive per-stratum floor quota, but the chunker yields
+    # NOTHING for them (simulates the HF MIN_FRAGMENT drop where a stratum is populated by
+    # KenLM-token docs yet every doc is below the BPE fragment threshold). build() must
+    # SystemExit and leave NO pool and NO manifest behind. An all-dropping chunker is
+    # injected because the offline word proxy deliberately has no fragment drop.
+    empty_dir = tempfile.mkdtemp()
+    empty_corpus = os.path.join(empty_dir, "nl.jsonl")
+    short_text = " ".join(sents) * 3
+    with open(empty_corpus, "w", encoding="utf-8") as fh:
+        for _ in range(80):
+            fh.write(json.dumps({"content": short_text, "source": "selftest/en"}) + "\n")
+    empty_out = os.path.join(empty_dir, "pool_empty.jsonl")
+
+    def all_dropping_chunker(_path, _allow=False):
+        return (lambda _t: []), "hf-tokenizer", lambda _t: 0
+
+    globals()["_chunk_fn"], saved_chunk_fn = all_dropping_chunker, globals()["_chunk_fn"]
+    raised = False
+    try:
+        build(empty_corpus, mpath, seed=7, tokenizer_path="", out=empty_out,
+              allow_word_count=True)
+    except SystemExit:
+        raised = True
+    finally:
+        globals()["_chunk_fn"] = saved_chunk_fn
+    assert raised, "build() must refuse a positive-quota stratum that chunks to 0"
+    assert not os.path.exists(empty_out), "no pool written on infeasible quota"
+    assert not os.path.exists(empty_out + ".manifest.json"), "no manifest on refusal"
+
     print(f"selftest ok: {written} chunks, bands={sorted(bands)}, "
           f"length_bands={sorted(lbands)}, multi-chunk rows present, tokenizer-failure "
-          f"refused, pool+manifest atomic (no tmp, counts match)")
+          f"refused, pool+manifest atomic (no tmp, counts match), build() end-to-end "
+          f"refuses an infeasible positive-quota stratum and writes nothing")
     return 0
 
 
