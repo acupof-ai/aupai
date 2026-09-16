@@ -1,5 +1,9 @@
 """Orchestrate L3 multi-dimensional teacher labels over a stratified pilot.
 
+# restartable: resumable by sample_id — completed doc ids are read from --out on start
+# and skipped, labels/rejections are appended per row, so an interrupt re-sends only
+# the unfinished tail; the ledger double-write is a post-pass append over this run's rows.
+
 CPU orchestration only. The teacher call is pluggable:
 - --backend stub   deterministic, no network (used to run the pipeline + parser end
                    to end on a few hundred rows now; NOT a quality label, scores are a
@@ -47,7 +51,11 @@ def stub_teacher(text: str, rubric: dict) -> str:
 
 
 def make_openai_teacher(url, model, timeout):
-    endpoint = url.rstrip("/") + "/v1/chat/completions"
+    # accept either ".../v1" or a bare root; append the chat path once.
+    base = url.rstrip("/")
+    if not base.endswith("/v1"):
+        base += "/v1"
+    endpoint = base + "/chat/completions"
 
     def ask(text, rubric):
         body = json.dumps(
@@ -56,6 +64,10 @@ def make_openai_teacher(url, model, timeout):
                 "messages": [{"role": "user", "content": build_prompt(text, rubric)}],
                 "temperature": 0.0,
                 "max_tokens": 200,
+                # REQUIRED for Qwen3.5: without enable_thinking=false the model spends
+                # the whole budget on a chain-of-thought trace and returns no parseable
+                # rubric JSON.
+                "chat_template_kwargs": {"enable_thinking": False},
             }
         ).encode()
         req = urllib.request.Request(endpoint, data=body, headers={"Content-Type": "application/json"})
@@ -75,7 +87,22 @@ def main():
     ap.add_argument("--model", default="teacher")
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--limit", type=int, default=None, help="cap rows this run (pilot)")
+    ap.add_argument(
+        "--ledger",
+        default=None,
+        help="optional frozen score-ledger jsonl to ALSO append rows to "
+        "(datagen/score_ledger schema, validated on write)",
+    )
+    ap.add_argument(
+        "--domain",
+        default=None,
+        help="full corpus domain name for ledger rows, e.g. en_c4_stage2_dc; required when --ledger is set",
+    )
     args = ap.parse_args()
+
+    ledger_rows = []
+    if args.ledger and not args.domain:
+        raise SystemExit("REFUSE: --ledger requires --domain (full corpus domain name)")
 
     teacher = (
         stub_teacher if args.backend == "stub" else make_openai_teacher(args.url, args.model, args.timeout)
@@ -118,10 +145,12 @@ def main():
                 )
                 rej += 1
                 continue
+            ts = _ts()
+            label_id = hashlib.sha256((sid + teacher_id).encode()).hexdigest()[:16]
             out.write(
                 json.dumps(
                     {
-                        "label_id": hashlib.sha256((sid + teacher_id).encode()).hexdigest()[:16],
+                        "label_id": label_id,
                         "sample_id": sid,
                         "language": row.get("language"),
                         "length_band": row.get("length_band"),
@@ -133,13 +162,39 @@ def main():
                         "backend": args.backend,
                         "scores": scores,
                         "stratum": {"language": row.get("language"), "length_band": row.get("length_band")},
-                        "ts": _ts(),
+                        "ts": ts,
                     },
                     ensure_ascii=False,
                 )
                 + "\n"
             )
+            if args.ledger:
+                ledger_rows.append(
+                    {
+                        "doc_id": sid,
+                        "domain": args.domain,
+                        "lang": str(row.get("language") or "_"),
+                        "scorer_name": "l3-rubric",
+                        "scorer_version": RUBRIC_VERSION,
+                        "ts": ts,
+                        "score": None,
+                        "rubric_dims": scores,
+                        "cut": None,
+                        "model": teacher_id,
+                        "backend": args.backend,
+                        "stratum": {"language": row.get("language"), "length_band": row.get("length_band")},
+                        "rubric_kind": rubric["kind"],
+                        "record_id": label_id,
+                        "src_sha": None,
+                    }
+                )
             kept += 1
+
+    ledger_n = 0
+    if args.ledger and ledger_rows:
+        from datagen.score_ledger import append_rows  # clean dependency on #389/main
+
+        ledger_n = append_rows(args.ledger, ledger_rows)
 
     manifest = {
         "pilot": args.pilot,
@@ -150,6 +205,9 @@ def main():
         "kept": kept,
         "rejected": rej,
         "rejected_path": rej_path,
+        "ledger": args.ledger,
+        "ledger_domain": args.domain,
+        "ledger_appended": ledger_n,
         "ts": _ts(),
     }
     with open(args.out + ".label_manifest.json", "w", encoding="utf-8") as fh:
