@@ -387,7 +387,7 @@
   },
   {
    "id": "v41.external_moe_kernel_bench_0911",
-   "value": "ADOPT/SKIP ruling for external MoE kernels on the p1 V4.1 stack (H20 = SM90, torch 2.11.0+cu129, d=1024, 48 experts, top-3 + 1 shared, expert_ffn=1728, seq 4096, batch 4-8). SKIP both on H20 as of 2026-09-11, decided by CPU/API reading before any card time: (1) DeepGEMM 'Mega MoE' and 'Mega Gate' (PR #432, merged 2026-09-10, v2.6.1->2.80) ship ONLY sm100_* kernel implementations (csrc/jit_kernels/impls/sm100_bf16_mega_gate.hpp, sm100_bf16_mega_moe.hpp, sm100_fp8_fp4_mega_moe.hpp; deep_gemm/include/deep_gemm/impls/sm100_*.cuh), gated __CUDA_ARCH__ >= 1000 with Blackwell UMMA/TMA descriptors; no sm90 variant exists. Their Hopper coverage stops at the older m_grouped_* GEMMs, the same op class as our torch._grouped_mm. Mega MoE additionally mandates multi-process symmetric memory (PyTorch >= 2.9; single-rank size==1 path exists but is a rendezvous no-op). The claimed ~20% faster MoE backward and 30-75% Mega Gate gains do not transfer to SM90. (2) deepseek-ai/tilekernels (TileLang 0.1.14 present on the pod) DOES support SM90, but tile_kernels/moe/ is routing/dispatch/combine primitives only (topk_gate, get_fused_mapping, expand_to_fused, reduce_fused, aux_fi, group_count, inplace_unique_group_indices, normalize_weight): there is no expert grouped GEMM (that is DeepGEMM's layer), and the only autograd gate wrapper, modeling/engram/engram_gate.py (EngramGateFn), computes sigmoid(signed_sqrt(dot(RMSNorm(x),RMSNorm(k)))) \u2014 a different routing function from our fp32 softmax + selection-only expert_bias MoEFFN gate, so no drop-in and no direct bit-parity. The routing primitives remain a candidate for a future microbenchmark of the dispatch chain alone; neither package can replace model.MoEFFN end-to-end on H20, so no wrapper work is justified. The pod already carries sgl-deep-gemm 0.1.0+cu129 with the mega Python bindings, consistent with the source reading (kernels absent at runtime for SM90).",
+   "value": "ADOPT/SKIP ruling for external MoE kernels on the p1 V4.1 stack (H20 = SM90, torch 2.11.0+cu129, d=1024, 48 experts, top-3 + 1 shared, expert_ffn=1728, seq 4096, batch 4-8). SKIP both on H20 as of 2026-09-11, decided by CPU/API reading before any card time: (1) DeepGEMM 'Mega MoE' and 'Mega Gate' (PR #432, merged 2026-09-10, v2.6.1->2.80) ship ONLY sm100_* kernel implementations (csrc/jit_kernels/impls/sm100_bf16_mega_gate.hpp, sm100_bf16_mega_moe.hpp, sm100_fp8_fp4_mega_moe.hpp; deep_gemm/include/deep_gemm/impls/sm100_*.cuh), gated __CUDA_ARCH__ >= 1000 with Blackwell UMMA/TMA descriptors; no sm90 variant exists. Their Hopper coverage stops at the older m_grouped_* GEMMs, the same op class as our torch._grouped_mm. Mega MoE additionally mandates multi-process symmetric memory (PyTorch >= 2.9; single-rank size==1 path exists but is a rendezvous no-op). The claimed ~20% faster MoE backward and 30-75% Mega Gate gains do not transfer to SM90. (2) deepseek-ai/tilekernels (TileLang 0.1.14 present on the pod) DOES support SM90, but tile_kernels/moe/ is routing/dispatch/combine primitives only (topk_gate, get_fused_mapping, expand_to_fused, reduce_fused, aux_fi, group_count, inplace_unique_group_indices, normalize_weight): there is no expert grouped GEMM (that is DeepGEMM's layer), and the only autograd gate wrapper, modeling/engram/engram_gate.py (EngramGateFn), computes sigmoid(signed_sqrt(dot(RMSNorm(x),RMSNorm(k)))) — a different routing function from our fp32 softmax + selection-only expert_bias MoEFFN gate, so no drop-in and no direct bit-parity. The routing primitives remain a candidate for a future microbenchmark of the dispatch chain alone; neither package can replace model.MoEFFN end-to-end on H20, so no wrapper work is justified. The pod already carries sgl-deep-gemm 0.1.0+cu129 with the mega Python bindings, consistent with the source reading (kernels absent at runtime for SM90).",
    "measured": "2026-09-11",
    "source": "https://github.com/deepseek-ai/DeepGEMM/pull/432 (merged 2026-09-10); https://github.com/deepseek-ai/DeepGEMM tree deep_gemm/mega/__init__.py and csrc/jit_kernels/impls (all sm100_*); https://github.com/deepseek-ai/tilekernels tree tile_kernels/moe and tile_kernels/modeling/engram/engram_gate.py; pod: nvidia-smi compute_cap 9.0, sgl-deep-gemm 0.1.0+cu129 installed, tilelang 0.1.14, tile-kernels not installed; model.py:1476 MoEFFN uses torch._grouped_mm, fp32 softmax router with selection-only bias",
    "config": {
@@ -806,6 +806,59 @@
     "preds_humaneval_ckpt_v41_gate_0911.pt.step16000.chatml.v41gate_step16000_chatml_control.jsonl": "20ba884a8ed6b9ec73df3713a22aefd78183e4027262534684de80d468c7c60d"
    },
    "measured": "2026-09-12",
+   "status": "measured"
+  },
+  {
+   "id": "v41.phisft_n6_psft_vs_e0_0915",
+   "value": "Narrow phi-style continuation SFT on the V4.1 base produced NO statistically detectible net change vs the r3-final E0 checkpoint on either stage-2 coding benchmark; the round is judged INEFFECTIVE (not a success, not established harm). Per-sample mean (sum c/(tasks*n), the paired-test quantity -- not pass@10 coverage) on the r3 CLEAN sets: HumanEval rstrip-nl 20.45% (319/1560) vs E0 18.72% (292/1560), delta +1.73 pt; MBPP sig-docstring-rstrip 25.62% (866/3380) vs 26.89% (909/3380), delta -1.27 pt. Paired bootstrap resamples TASKS (10 within-task draws fixed, seeded per (task_id, sample_idx) so arms share one stream), B=10000 one-sided alpha .05: HE lower 95% bound of psft-E0 = -1.41 pt (two-sided CI -1.99..+5.51, P(psft>E0)=0.819); MBPP lower bound = -3.28 pt (CI -3.73..+1.15, P(psft>E0)=0.149). Both lower bounds are <0, so neither delta is significant at 95% and neither is remotely near the +0.30 acceptance gate; the earlier 'HE net +1.73' reading is corrected to 'statistically no difference, slightly positive direction'. Pass@10 coverage (a different, larger number) HE 32.05% vs 30.77%, MBPP 39.35% vs 40.24%; RL gap (coverage minus per-sample mean) psft HE .116 / MBPP .137, both <0.15. Combined with the case-level forgetting observed on the narrow pack, 6 epochs of 63.7M narrow code-exercise tokens carry no net value.",
+   "source": "runs/e0_psft_result.json (8-shard merger FULL+CLEAN per-sample means); paired bootstrap raw runs/psft_vs_e0_he_clean156.json and runs/psft_vs_e0_mbpp_clean338.json (B=10000 seed 20260914, eval/paired_bootstrap.py PR #368); SFT run v42_phisft_n6_20260915T063647Z; controller final ruling 2026-09-15 (aupai-79)",
+   "config": {
+    "sft_ckpt": "ckpt_v42_phisft_n6_20260915T063647Z.pt",
+    "resume_ckpt": "r3 final, step 38070",
+    "sft_pack": "data/sft/sft_phi_codeexercises_v42_65m_0914.pt",
+    "pack_body_tokens": 63700000,
+    "epochs": 6,
+    "optimizer_steps": 4428,
+    "eval_n": 10,
+    "temperature": 0.2,
+    "max_new": 280,
+    "bootstrap_B": 10000,
+    "bootstrap_seed": 20260914,
+    "he": "--rstrip_nl (in-distribution continuation gate column); CLEAN = 164 - r3_humaneval_union(8) = 156",
+    "mbpp": "sig-docstring-rstrip; CLEAN = r3_mbpp_clean 338 = 427 - r3_mbpp_union(89)",
+    "he_psft_per_sample_mean": 0.2044871794871795,
+    "he_e0_per_sample_mean": 0.18717948717948718,
+    "he_delta": 0.01730769230769231,
+    "he_diff_one_sided_lower_95": -0.014102564102564105,
+    "he_ci95_two_sided": [
+     -0.019871794871794874,
+     0.05512820512820513
+    ],
+    "he_a_beats_b": 0.8192,
+    "he_psft_coverage": 0.32051282051282054,
+    "he_e0_coverage": 0.3076923076923077,
+    "mbpp_psft_per_sample_mean": 0.25621301775147926,
+    "mbpp_e0_per_sample_mean": 0.26893491124260355,
+    "mbpp_delta": -0.012721893491124257,
+    "mbpp_diff_one_sided_lower_95": -0.032840236686390537,
+    "mbpp_ci95_two_sided": [
+     -0.037278106508875745,
+     0.011538461538461539
+    ],
+    "mbpp_a_beats_b": 0.1485,
+    "mbpp_psft_coverage": 0.39349112426035504,
+    "mbpp_e0_coverage": 0.40236686390532544,
+    "acceptance_gate_lower_bound_ge": 0.3,
+    "merged_preds_pod": "data/eval/psft_{he,mbpp}_merged.n10temp0.2.jsonl vs data/eval/e0_{he,mbpp}_merged.n10temp0.2.jsonl (pod only, large, not tracked)",
+    "sft_train_log_pod": "runs/v42_phisft_n6_20260915T063647Z.log (pod only)"
+   },
+   "uncertainty": "One SFT seed and one E0 baseline; the paired design shares RNG streams per (task,si) and resamples tasks, so the CIs capture task-sampling noise but not cross-run training variance. Observed paired CI half-width (~3.7 pt HE) is wider than the prior HE MDE estimate ~0.08, which is why +1.73 pt does not reach significance despite P=0.819. n=10 temp 0.2 per-sample rates carry Monte Carlo + temperature sampling noise.",
+   "boundary": "This judges THIS narrow pack at 6 epochs vs the r3-final E0 baseline under the stage-2 continuation columns; it says nothing about broader SFT mixes, other epoch counts, ChatML-format eval, or the 30% HumanEval pass@1 pretrain gate. 'No significant difference' is not proof of zero effect -- both CIs admit changes of a few points. Checkpoint ckpt_v42_phisft_n6_20260915T063647Z.pt postdates the 2026-09-09 ckpt listing and therefore reads [absent] against that frozen snapshot; it was verified present on the pod 2026-09-15 at 6,418,875,759 bytes.",
+   "artifact_sha256": {
+    "runs/psft_vs_e0_he_clean156.json": "5f07107d44a56b118db1ac613a6e05899713fefd980f577e8486a19ead881a18",
+    "runs/psft_vs_e0_mbpp_clean338.json": "9b6f896fb46a3afbe95bf89860eda991401621d11ff9ef7e044ac131592fcea2"
+   },
+   "measured": "2026-09-15",
    "status": "measured"
   }
  ]

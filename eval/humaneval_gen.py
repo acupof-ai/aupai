@@ -420,6 +420,8 @@ def main():
     ap.add_argument("--temperature", type=float, default=0.0,
                     help="sampling temperature; 0 (default) is greedy. Use 0.2 with --n 10 "
                          "for the stage-2 E0/ET/EC paired protocol")
+    ap.add_argument("--batched", action="store_true",
+                    help="decode n samples in one packed forward per step (same per-(task,si) RNG)")
     ap.add_argument("--shard_i", type=int, default=None,
                     help="stage-2 multi-card shard: score only fixed-order indices i with "
                          "i %% --shard_n == shard_i (position in the data file, not a hash). "
@@ -598,7 +600,7 @@ def main():
                 ids = tok.encode(prompt).ids
                 raws = sample_completions(model, tok, ids, p["task_id"], args.n,
                                           args.temperature, args.max_new, args.device,
-                                          cfg.seq)
+                                          cfg.seq, batched=args.batched)
                 oks = []
                 for si, raw in enumerate(raws):
                     c = truncate(raw, p["entry_point"])
