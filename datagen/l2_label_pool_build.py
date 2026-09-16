@@ -193,6 +193,24 @@ def _iter_paths(kind2glob):
             yield kind, p
 
 
+def _check_quota_feasible(quotas, doc_pop, chunk_pop):
+    """Refuse when a stratum is assigned a positive quota but produced zero chunks.
+    doc_pop counts KenLM-scorable docs; the selectable unit is a BPE chunk, so a stratum
+    whose docs all fall below the MIN_FRAGMENT BPE threshold can have doc_pop>0 with
+    chunk_pop==0. Names every unsatisfiable stratum with its quota and populations."""
+    unsatisfiable = {
+        "/".join(k): {"quota": quotas[k], "doc_population": doc_pop.get(k, 0),
+                      "chunk_population": chunk_pop.get(k, 0)}
+        for k in quotas if quotas[k] > 0 and chunk_pop.get(k, 0) == 0}
+    if unsatisfiable:
+        raise SystemExit(
+            "REFUSE: quota assigned to strata that produced 0 chunks (doc_pop counts "
+            "KenLM-token docs, not BPE-chunkable length): "
+            + json.dumps(unsatisfiable, ensure_ascii=False, indent=2)
+            + "\nRelax the strata / fragment threshold or source more long docs; an empty "
+              "stratum must not be silently under-filled.")
+
+
 def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
           code_glob=None, code_model_path=None, allow_word_count=False):
     chunk_fn, tok_kind, ntok = _chunk_fn(tokenizer_path, allow_word_count)
@@ -326,6 +344,9 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
                         if j < q:
                             pool[j] = entry
 
+    # feasibility gate after pass 2 has counted real chunks, before any pool byte writes
+    _check_quota_feasible(quotas, doc_pop, chunk_pop)
+
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     out_lines = []
     over_max = collections.Counter()
@@ -412,6 +433,27 @@ def _allocate_quotas(doc_pop, target):
 
 def _selftest() -> int:
     import tempfile
+
+    # quota feasibility: a positive quota on a stratum with 0 chunks must refuse (the
+    # doc_pop vs BPE-chunk-population gap); normal populated strata still get their quota.
+    k_full = ("nl", "en", "m", "mid")
+    k_empty = ("nl", "en", "xs", "low")
+    doc_pop = {k_full: 100, k_empty: 50}
+    chunk_pop = {k_full: 120}  # the xs/low stratum's docs all chunk to nothing
+    quotas = _allocate_quotas(doc_pop, {"nl": 40})
+    assert quotas[k_full] > 0 and quotas[k_empty] > 0, quotas
+    try:
+        _check_quota_feasible(quotas, doc_pop, chunk_pop)
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("quota>0 with chunk_pop==0 must refuse")
+    # once every quota'd stratum has at least one chunk, the gate passes (it does NOT
+    # demand full satisfaction -- reservoir under-sampling is normal, only an empty stratum)
+    chunk_pop[k_empty] = 3
+    _check_quota_feasible(quotas, doc_pop, chunk_pop)
+    # a stratum with quota 0 and 0 chunks is not an error (nothing was promised)
+    _check_quota_feasible({k_full: 10}, doc_pop, chunk_pop)
 
     # hard-max contract on MEASURED segments: a short trailing window must NEVER
     # overflow the previous full window to >hi (encoder truncation, the de-399
@@ -532,9 +574,42 @@ def _selftest() -> int:
     with open(aj_path, encoding="utf-8") as jf:
         assert json.load(jf) == {"k": 3}
     assert not os.path.exists(aj_path + ".tmp")
+
+    # end-to-end WIRING test for the quota-feasibility gate (a unit test of
+    # _check_quota_feasible alone cannot prove build() calls it). Enough docs land in one
+    # char band/PPL band to earn a positive per-stratum floor quota, but the chunker yields
+    # NOTHING for them (simulates the HF MIN_FRAGMENT drop where a stratum is populated by
+    # KenLM-token docs yet every doc is below the BPE fragment threshold). build() must
+    # SystemExit and leave NO pool and NO manifest behind. An all-dropping chunker is
+    # injected because the offline word proxy deliberately has no fragment drop.
+    empty_dir = tempfile.mkdtemp()
+    empty_corpus = os.path.join(empty_dir, "nl.jsonl")
+    short_text = " ".join(sents) * 3
+    with open(empty_corpus, "w", encoding="utf-8") as fh:
+        for _ in range(80):
+            fh.write(json.dumps({"content": short_text, "source": "selftest/en"}) + "\n")
+    empty_out = os.path.join(empty_dir, "pool_empty.jsonl")
+
+    def all_dropping_chunker(_path, _allow=False):
+        return (lambda _t: []), "hf-tokenizer", lambda _t: 0
+
+    globals()["_chunk_fn"], saved_chunk_fn = all_dropping_chunker, globals()["_chunk_fn"]
+    raised = False
+    try:
+        build(empty_corpus, mpath, seed=7, tokenizer_path="", out=empty_out,
+              allow_word_count=True)
+    except SystemExit:
+        raised = True
+    finally:
+        globals()["_chunk_fn"] = saved_chunk_fn
+    assert raised, "build() must refuse a positive-quota stratum that chunks to 0"
+    assert not os.path.exists(empty_out), "no pool written on infeasible quota"
+    assert not os.path.exists(empty_out + ".manifest.json"), "no manifest on refusal"
+
     print(f"selftest ok: {written} chunks, bands={sorted(bands)}, "
           f"length_bands={sorted(lbands)}, multi-chunk rows present, tokenizer-failure "
-          f"refused, pool+manifest atomic (no tmp, counts match)")
+          f"refused, pool+manifest atomic (no tmp, counts match), build() end-to-end "
+          f"refuses an infeasible positive-quota stratum and writes nothing")
     return 0
 
 
