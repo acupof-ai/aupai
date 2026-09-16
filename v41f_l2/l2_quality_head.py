@@ -71,7 +71,6 @@ class L2Config:
     freeze_encoder: bool = True
     lambda_rank: float = 0.5  # within-domain ranking weight vs per-dim MSE
     margin: float = 0.0  # use plain logistic pairwise (no fixed margin)
-    label_scale: float = 1.0  # labels used as-is in 1..5; set /4 to train in [0.25,1.25]
 
 
 # Loud coupling: the regression head's output width MUST equal the teacher rubric. If 66
@@ -132,18 +131,25 @@ def per_dim_mse(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) ->
 def within_domain_rank_loss(
     pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor, domain_id: torch.Tensor
 ) -> torch.Tensor:
-    """Logistic pairwise ranking WITHIN each domain, summed over dimensions.
+    """Logistic pairwise ranking WITHIN each domain, averaged over active dimensions.
 
     For every (i,j) in the same domain where dim d is labelled for both and target_i >
     target_j, encourage pred_i > pred_j via softplus(-(pred_i-pred_j)). Comparing only
     within domain subtracts the domain mean and kills the "domain = score" prior.
 
+    Normalization is composition-invariant: per dim, take the MEAN over every comparable
+    pair (each pair weighted equally, so repeating data to grow B or regrouping rows into
+    domains does not change an equal-quality batch), then average across only the dims that
+    actually had a comparable pair. This mirrors per_dim_mse's across-dim mean; a prior
+    version accumulated pair_count/B^2 fractions as the denominator, which let the effective
+    rank weight wobble with B and the batch's domain/label composition.
+
     O(B^2) in the batch; training uses large batches drawn per-domain (see L2Dataset), and
     the pairs are computed as a vectorised mask, no python pair loop.
     """
-    B, D = pred.shape
+    D = pred.shape[1]
     total = pred.new_zeros(())
-    npairs = pred.new_zeros(())
+    n_active_dims = 0
     mbool = mask.bool()
     same_domain = domain_id[:, None] == domain_id[None, :]  # [B,B]
     for d in range(D):
@@ -155,10 +161,11 @@ def within_domain_rank_loss(
         if not pair_mask.any():
             continue
         diff = pred[:, d, None] - pred[None, :, d]  # pred_i - pred_j
-        loss = F.softplus(-diff)
-        total = total + loss[pair_mask].mean()
-        npairs = npairs + pair_mask.float().mean()
-    return total / npairs.clamp_min(1.0)
+        total = total + F.softplus(-diff)[pair_mask].mean()
+        n_active_dims += 1
+    if n_active_dims == 0:
+        return pred.new_zeros(())
+    return total / n_active_dims
 
 
 def quality_loss(
