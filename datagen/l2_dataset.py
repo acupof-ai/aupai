@@ -83,6 +83,7 @@ class Example:
     rubric_kind: str  # "code" | "natural_language"; identifies the label order
     domain: str  # corpus domain, carried into the batch for per-domain rank loss
     chunk_id: str = ""  # the CHUNK content id (sample_id); the (doc,chunk) join handle
+    truncated: bool = False  # teacher scored only a >6000-char prefix; excluded from train by default
 
 
 def _iter_jsonl(path):
@@ -144,6 +145,8 @@ def load_pairs(
     scorer_version=None,
     rubric_kind=None,
     any_version=False,
+    include_truncated=False,
+    stats=None,
 ):
     """Validate ledger rows (score_ledger.validate_row via load_rows), keep the pinned
     rubric scorer, and join each label to its text chunk(s). Returns list[Example].
@@ -154,6 +157,14 @@ def load_pairs(
     ``scorer_version=None`` raises -- set ``any_version=True`` ONLY to deliberately read
     every version (diagnostics); training never does. If a pinned version is absent entirely,
     that is a loud error rather than an empty pair list.
+
+    Truncated-prefix labels are EXCLUDED by default: a ``truncated=true`` row means the
+    teacher saw only the first 6000 chars of a long chunk, while the L2 encoder embeds the
+    WHOLE chunk — regressing a whole-chunk embedding toward a prefix grade is target
+    misalignment. Pass ``include_truncated=True`` to deliberately keep them. Every exclusion
+    is counted, never silent: pass a mutable ``stats`` dict to receive
+    ``excluded_truncated`` (and the count is also printed); the returned Examples carry the
+    per-row ``truncated`` flag so a consumer can audit it.
 
     The split/leak unit is the PARENT document. A label's ``doc_id`` resolves to a parent in
     one of two ways, in order:
@@ -192,12 +203,17 @@ def load_pairs(
             )
     pairs = []
     labeled_parents = set()
+    excluded_truncated = 0
     for r in rows:
         if r["scorer_name"] != scorer_name or r["rubric_dims"] is None:
             continue
         if scorer_version is not None and r["scorer_version"] != scorer_version:
             continue
         if rubric_kind is not None and r["rubric_kind"] != rubric_kind:
+            continue
+        truncated = bool(r.get("truncated", False))
+        if truncated and not include_truncated:
+            excluded_truncated += 1
             continue
         kind = r["rubric_kind"]
         dim_order = RUBRIC_DIMS.get(kind)
@@ -229,7 +245,18 @@ def load_pairs(
         labels = tuple(float(dims[d]) for d in dim_order)
         for ci in sorted(target_chunks):
             content, chunk_id = chunks[(parent, ci)]
-            pairs.append(Example(parent, ci, content, labels, kind, r["domain"], chunk_id))
+            pairs.append(Example(parent, ci, content, labels, kind, r["domain"], chunk_id, truncated))
+    # loud accounting: a prefix-only label dropped from training must never vanish silently
+    if excluded_truncated:
+        print(
+            f"l2_dataset: excluded {excluded_truncated} truncated-prefix label(s) from "
+            f"training pairs (teacher saw only the first 6000 chars; pass include_truncated "
+            "to keep)",
+            file=sys.stderr,
+            flush=True,
+        )
+    if stats is not None:
+        stats["excluded_truncated"] = stats.get("excluded_truncated", 0) + excluded_truncated
     return pairs
 
 
@@ -705,6 +732,72 @@ def _selftest():
         pass
     else:
         raise AssertionError("two versions for one parent even under any_version must raise")
+    # truncated-prefix labels (audit correctness gate): the teacher saw only the first 6000
+    # chars while the L2 encoder embeds the whole chunk, so such a pair is excluded by default
+    # and counted; include_truncated=True keeps it AND the Example carries the flag.
+    trunc_pool = os.path.join(tmp, "trunc_pool.jsonl")
+    trunc_led = os.path.join(tmp, "trunc_ledger.jsonl")
+    with open(trunc_pool, "w") as f:
+        f.write(json.dumps({"sample_id": "truncdoc0", "content": "a very long doc body"}) + "\n")
+        f.write(json.dumps({"sample_id": "fulldoc0", "content": "a short doc body"}) + "\n")
+    with open(trunc_led, "w") as f:
+        f.write(
+            json.dumps(
+                ScoreRow(
+                    doc_id="truncdoc0",
+                    domain="py",
+                    lang="en",
+                    scorer_name="l3-rubric",
+                    scorer_version="r1",
+                    ts="2026-09-16T00:00:00Z",
+                    rubric_dims={d: 5 for d in expected},
+                    rubric_kind="code",
+                    model="t",
+                    backend="stub",
+                    stratum=None,
+                    truncated=True,
+                ).to_dict()
+            )
+            + "\n"
+        )
+        f.write(
+            json.dumps(
+                ScoreRow(
+                    doc_id="fulldoc0",
+                    domain="py",
+                    lang="en",
+                    scorer_name="l3-rubric",
+                    scorer_version="r1",
+                    ts="2026-09-16T00:00:00Z",
+                    rubric_dims={d: 4 for d in expected},
+                    rubric_kind="code",
+                    model="t",
+                    backend="stub",
+                    stratum=None,
+                    truncated=False,
+                ).to_dict()
+            )
+            + "\n"
+        )
+    tstats = {}
+    default_pairs = load_pairs(trunc_led, trunc_pool, scorer_version="r1", stats=tstats)
+    assert [p.doc_id for p in default_pairs] == ["fulldoc0"], [p.doc_id for p in default_pairs]
+    assert tstats["excluded_truncated"] == 1, tstats
+    kept = load_pairs(trunc_led, trunc_pool, scorer_version="r1", include_truncated=True)
+    assert {p.doc_id for p in kept} == {"truncdoc0", "fulldoc0"}
+    trow = next(p for p in kept if p.doc_id == "truncdoc0")
+    assert trow.truncated is True
+    assert all(p.truncated is False for p in kept if p.doc_id == "fulldoc0")
+    # a row written BEFORE the field existed (absent) defaults to non-truncated, not excluded
+    with open(trunc_led) as rf:
+        raw = json.loads(rf.read().splitlines()[1])
+    raw.pop("truncated", None)
+    legacy_led = os.path.join(tmp, "trunc_legacy.jsonl")
+    with open(legacy_led, "w") as f:
+        f.write(json.dumps(raw) + "\n")
+    legacy_pairs = load_pairs(legacy_led, trunc_pool, scorer_version="r1")
+    assert [p.doc_id for p in legacy_pairs] == ["fulldoc0"]
+    assert legacy_pairs[0].truncated is False
 
     print(
         "l2_dataset selftest OK: doc_id join + chunk alignment, deterministic no-leak "
