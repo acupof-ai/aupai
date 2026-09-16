@@ -70,9 +70,16 @@ def sample_stream(
 ):
     """One reservoir per (lang,band) over every row of every path.
 
-    Returns (reservoirs dict, total_seen dict, empty count). Reservoir entries are
+    Returns (reservoirs dict, total_seen dict, stats). Reservoir entries are
     (row_with_meta,). Algorithm R with a per-stratum deterministic RNG so adding or
     removing an unrelated stratum never perturbs another stratum's draw.
+
+    stats = {"empty": rows with no usable content, "bad": corrupt rows,
+             "scanned": non-blank lines examined, "bad_by_file": basename -> bad count}.
+    Streaming is tolerant: a corrupt row is counted, never silently sampled and never
+    aborts the pass; the caller enforces a bad-fraction threshold before writing. A row
+    is bad when it is not a JSON object or its `content` is present but not a string;
+    missing/null/blank content is a tolerated empty skip, not corruption.
 
     doc_id_mode: "sequence" -> sample_id assigned at write time (L3 labelling pilot);
     "content" -> each row's doc_id is sha256(content)[:16] at draw time (locked sets
@@ -82,16 +89,34 @@ def sample_stream(
     seen = {}
     rngs = {}
     empty = 0
+    bad = 0
+    scanned = 0
+    bad_by_file = {}
     for path in paths:
+        bname = os.path.basename(path)
         with open(path, encoding="utf-8") as fh:
-            for line in fh:
+            for _lineno, line in enumerate(fh, 1):
                 line = line.strip()
                 if not line:
                     continue
-                row = json.loads(line)
+                scanned += 1
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    bad += 1
+                    bad_by_file[bname] = bad_by_file.get(bname, 0) + 1
+                    continue
+                if not isinstance(row, dict):
+                    bad += 1
+                    bad_by_file[bname] = bad_by_file.get(bname, 0) + 1
+                    continue
                 content = row.get("content")
-                if not content:
+                if content is None or (isinstance(content, str) and not content.strip()):
                     empty += 1
+                    continue
+                if not isinstance(content, str):
+                    bad += 1
+                    bad_by_file[bname] = bad_by_file.get(bname, 0) + 1
                     continue
                 key = strata_key(row)
                 if only_bands is not None and key[1] not in only_bands:
@@ -116,7 +141,8 @@ def sample_stream(
                         pool[j] = meta
     if text_warn_empty and empty:
         print(f"WARN skipped {empty} empty-content rows")
-    return pools, seen, empty
+    stats = {"empty": empty, "bad": bad, "scanned": scanned, "bad_by_file": bad_by_file}
+    return pools, seen, stats
 
 
 def _seeded(seed, key):
@@ -126,10 +152,102 @@ def _seeded(seed, key):
     return r
 
 
+def _write_shard(path):
+    rows = [
+        json.dumps({"source": "src/en", "url": "u0", "content": "alpha " * 20}),
+        "{not valid json",                                   # corrupt JSON -> bad
+        json.dumps(["a", "list", "not", "an", "object"]),    # non-object -> bad
+        json.dumps({"source": "src/en", "url": "u2", "content": 12345}),  # non-string -> bad
+        json.dumps({"source": "src/en", "url": "u3", "content": "   "}),  # blank -> empty
+        "",                                                  # blank line -> ignored
+    ]
+    # two more clearly different-length valid rows so two strata exist and neither bad
+    # row's text can be sampled.
+    rows += [
+        json.dumps({"source": "src/en", "url": f"v{i}", "content": ("word " * (30 + 400 * i))})
+        for i in range(1, 5)
+    ]
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(rows) + "\n")
+
+
+def _selftest() -> int:
+    import subprocess
+    import sys
+    import tempfile
+
+    d = tempfile.mkdtemp()
+    shard = os.path.join(d, "corpus.jsonl")
+    _write_shard(shard)
+
+    # unit: sample_stream classifies every bad row, never samples one, counts them.
+    pools, seen, stats = sample_stream([shard], per_stratum=4, seed=1, allow_short=True)
+    assert stats["bad"] == 3, stats
+    assert stats["empty"] == 1, stats
+    assert stats["scanned"] == 9, stats            # 10 lines minus the one blank line
+    assert stats["bad_by_file"][os.path.basename(shard)] == 3, stats["bad_by_file"]
+    sampled = [m["content"] for k in pools for m in pools[k]]
+    assert all(isinstance(c, str) for c in sampled), "non-string content was sampled"
+    assert "12345" not in sampled and "['a'" not in sampled, "a bad row reached a reservoir"
+    assert sum(seen.values()) == 5, seen           # only the 5 valid objects are population
+
+    script = os.path.abspath(__file__)
+    out = os.path.join(d, "pilot.jsonl")
+
+    def run(*extra):
+        return subprocess.run(
+            [sys.executable, script, "--glob", shard, "--out", out,
+             "--per-stratum", "2", "--seed", "1", "--allow-short", *extra],
+            capture_output=True, text=True, timeout=60)
+
+    # 3/9 = 33% bad; default 1% threshold refuses nonzero and writes nothing.
+    p = run()
+    assert p.returncode != 0 and "REFUSE" in p.stderr, (p.returncode, p.stderr)
+    assert not os.path.exists(out), "pool must not be written when bad fraction exceeds"
+    assert not os.path.exists(out + ".manifest.json"), "no manifest on refusal"
+
+    # an explicit permissive threshold completes; the manifest records the bad rows.
+    p = run("--max-bad-frac", "0.5")
+    assert p.returncode == 0, p.stderr
+    with open(out, encoding="utf-8") as fh:
+        n_out = sum(1 for _ in fh)
+    with open(out + ".manifest.json", encoding="utf-8") as fh:
+        man = json.load(fh)
+    assert n_out == man["n_written"] > 0
+    assert man["bad_lines"] == 3 and man["empty_content_rows"] == 1, man
+    assert man["input_rows_scanned"] == 9 and man["bad_line_fraction"] == round(3 / 9, 8), man
+
+    # --max-bad-frac 0 forbids any bad row even one, so the same shard still refuses.
+    p0 = run("--max-bad-frac", "0")
+    assert p0.returncode != 0 and "REFUSE" in p0.stderr, p0.stderr
+
+    # a fully clean shard passes the strictest threshold and reports zero bad.
+    clean = os.path.join(d, "clean.jsonl")
+    with open(clean, "w", encoding="utf-8") as fh:
+        for i in range(3):
+            fh.write(json.dumps({"source": "src/en", "url": f"c{i}",
+                                 "content": "clean content words " * 30}) + "\n")
+    cout = os.path.join(d, "clean_pilot.jsonl")
+    pc = subprocess.run(
+        [sys.executable, script, "--glob", clean, "--out", cout, "--per-stratum", "2",
+         "--seed", "1", "--allow-short", "--max-bad-frac", "0"],
+        capture_output=True, text=True, timeout=60)
+    assert pc.returncode == 0, pc.stderr
+    with open(cout + ".manifest.json", encoding="utf-8") as fh:
+        cman = json.load(fh)
+    assert cman["bad_lines"] == 0 and cman["input_rows_scanned"] == 3, cman
+    print("selftest ok: per-row validation counts bad JSON/non-object/non-string content "
+          "(bad=3, empty=1, scanned=9) and never samples one; bad-fraction gate refuses "
+          "33% under default 1% and under 0, permits under 50% with manifest accounting, "
+          "clean shard passes strict 0")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--glob", required=True)
-    ap.add_argument("--out", required=True)
+    ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--glob", required=False)
+    ap.add_argument("--out", required=False)
     ap.add_argument("--per-stratum", type=int, default=100)
     ap.add_argument("--seed", type=int, default=20260916)
     ap.add_argument("--allow-short", action="store_true")
@@ -148,7 +266,20 @@ def main():
     ap.add_argument(
         "--only-bands", default=None, help="comma list of length bands to keep, e.g. 's,m,l'; others skipped"
     )
+    ap.add_argument(
+        "--max-bad-frac",
+        type=float,
+        default=0.01,
+        help="refuse nonzero if corrupt input rows (bad JSON / non-object / non-string "
+        "content) exceed this fraction of non-blank lines; 0 forbids any bad row",
+    )
     a = ap.parse_args()
+    if a.selftest:
+        raise SystemExit(_selftest())
+    if not a.glob or not a.out:
+        ap.error("--glob and --out are required")
+    if not 0.0 <= a.max_bad_frac <= 1.0:
+        raise SystemExit("REFUSE: --max-bad-frac must be in [0,1]")
     only_bands = set(a.only_bands.split(",")) if a.only_bands else None
 
     paths = sorted(glob.glob(a.glob))
@@ -159,9 +290,24 @@ def main():
         for p in paths
     }
 
-    pools, seen, _empty = sample_stream(
+    pools, seen, stats = sample_stream(
         paths, a.per_stratum, a.seed, a.allow_short, doc_id_mode=a.doc_id, only_bands=only_bands
     )
+    bad, scanned = stats["bad"], stats["scanned"]
+    bad_frac = (bad / scanned) if scanned else 0.0
+    if bad:
+        top = sorted(stats["bad_by_file"].items(), key=lambda kv: kv[1], reverse=True)[:5]
+        where = ", ".join(f"{f}x{n}" for f, n in top)
+        print(f"WARN {bad} bad input row(s) of {scanned} scanned "
+              f"({bad_frac:.4%}); never sampled; by file: {where}")
+    # corrupt input is loud: sparse corruption is tolerated and COUNTED (a torn tail must
+    # not waste a whole pass), but above the fraction the input is judged broken and the
+    # run refuses BEFORE any pool byte is written, rather than drawing strata on bad data.
+    if bad_frac > a.max_bad_frac:
+        raise SystemExit(
+            f"REFUSE: bad-line fraction {bad_frac:.4%} ({bad}/{scanned}) exceeds "
+            f"--max-bad-frac {a.max_bad_frac:.4%}; fix or rebuild the source shards"
+        )
     keys = sorted(pools)
     if a.max_strata:
         # keep the most-populated strata so a cap does not prefer a rare tail.
@@ -195,6 +341,12 @@ def main():
         "only_bands": sorted(only_bands) if only_bands else None,
         "length_bins_chars": [[lo, hi, nm] for lo, hi, nm in LENGTH_BINS],
         "n_written": written,
+        "input_rows_scanned": scanned,
+        "empty_content_rows": stats["empty"],
+        "bad_lines": bad,
+        "bad_line_fraction": round(bad_frac, 8),
+        "bad_lines_by_file": stats["bad_by_file"],
+        "max_bad_frac": a.max_bad_frac,
         "strata": {f"{k[0]}/{k[1]}": {"pool": len(pools[k]), "population": seen[k]} for k in keys},
     }
     with open(a.out + ".manifest.json", "w", encoding="utf-8") as fh:
