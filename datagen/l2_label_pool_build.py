@@ -291,7 +291,14 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
 
     rng = random.Random(seed)
     reservoirs = collections.defaultdict(list)
-    chunk_pop = collections.Counter()
+    chunk_pop = collections.Counter()       # physical chunks produced (population scanned)
+    unique_pop = collections.Counter()      # distinct chunk sample_ids (selectable units)
+    # GLOBAL across strata/kinds: sample_id = sha256(chunk text), so the same chunk text in
+    # two parent docs / duplicate corpus rows collides and must enter the pool ONCE.
+    # Different chunks of one parent have different text -> different ids, so legitimate
+    # multi-chunk docs are untouched; only identical chunk TEXT is a duplicate.
+    seen_chunk_ids = set()
+    dup_chunks = collections.Counter()
     # whole scorable docs the chunker returned nothing for: these are the
     # <MIN_FRAGMENT_TOKENS extreme fragments, dropped and COUNTED (never silent).
     dropped_docs = collections.Counter()
@@ -317,11 +324,19 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
                 parent = content_doc_id(text)
                 for ci, ch in enumerate(chs):
                     chunk_pop[key] += 1
+                    cid = content_doc_id(ch)
+                    if cid in seen_chunk_ids:
+                        # identical chunk text from another parent / a repeated corpus row:
+                        # counted loud, never sampled (one teacher call + one ledger row)
+                        dup_chunks[key[0]] += 1
+                        continue
+                    seen_chunk_ids.add(cid)
+                    unique_pop[key] += 1
                     if q == 0:
                         continue
-                    t = chunk_pop[key]
+                    t = unique_pop[key]
                     entry = {
-                        "sample_id": content_doc_id(ch),
+                        "sample_id": cid,
                         "parent_doc_id": parent,
                         "chunk_idx": ci,
                         "n_chunks": len(chs),
@@ -344,8 +359,10 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
                         if j < q:
                             pool[j] = entry
 
-    # feasibility gate after pass 2 has counted real chunks, before any pool byte writes
-    _check_quota_feasible(quotas, doc_pop, chunk_pop)
+    # feasibility gate after pass 2 has counted real chunks, before any pool byte writes.
+    # Selectable units are DISTINCT chunk ids: a quota'd stratum whose chunks are all
+    # duplicates (or which chunked to nothing) cannot be filled.
+    _check_quota_feasible(quotas, doc_pop, unique_pop)
 
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     out_lines = []
@@ -364,6 +381,9 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
                 short_kept_tokens[key[0]] += tlen
             out_lines.append(json.dumps(entry, ensure_ascii=False) + "\n")
     written = len(out_lines)
+    # defensive: global dedup must guarantee one emitted row per sample_id
+    emitted_ids = [json.loads(ln)["sample_id"] for ln in out_lines]
+    assert len(emitted_ids) == len(set(emitted_ids)), "duplicate sample_id reached the pool"
 
     manifest = {
         "nl_glob": nl_glob, "code_glob": code_glob,
@@ -375,6 +395,14 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
         "ppl_bands_note": "low<=q33<=mid<=q67<high on the scorable pool; descriptive, not a cut",
         "n_docs_scored": {k: len(refs[k]) for k in refs},
         "n_chunks_written": written,
+        # global chunk-identity accounting: input physical chunks vs distinct sample_ids vs
+        # identical-text collisions removed, so duplicates are visible and never silent.
+        "input_docs": {k: len(refs[k]) for k in refs},
+        "chunk_population_total": {k: sum(v for kk, v in chunk_pop.items() if kk[0] == k)
+                                   for k in targets},
+        "unique_chunks": {k: sum(v for kk, v in unique_pop.items() if kk[0] == k)
+                          for k in targets},
+        "dup_sample_ids": {k: dup_chunks.get(k, 0) for k in targets},
         "min_fragment_tokens": MIN_FRAGMENT_TOKENS,
         "dropped_fragments": {
             k: {"docs": dropped_docs.get(k, 0),
@@ -606,10 +634,59 @@ def _selftest() -> int:
     assert not os.path.exists(empty_out), "no pool written on infeasible quota"
     assert not os.path.exists(empty_out + ".manifest.json"), "no manifest on refusal"
 
+    # global sample_id dedup (audit #14/#16). Seven corpus rows carry identical content, so
+    # length+ppl put provably ONE stratum (quota == doc_pop == 7, reservoir fills without
+    # replacement -> deterministic). The injected chunker returns:
+    #   docs 0..4 : one DISTINCT chunk each (UNIQUE0..UNIQUE4)
+    #   doc 5     : UNIQUE0 again  -> identical TEXT across parents, collapsed once, counted
+    #   doc 6     : two DISTINCT chunks (PARENTA/PARENTB) -> same parent's legit multi-chunk
+    # Expect 7 unique rows (the cross-parent collision kept once), dup=1, unique=7,
+    # physical chunk population=8, and both of doc 6's chunks present.
+    dup_dir = tempfile.mkdtemp()
+    dup_corpus = os.path.join(dup_dir, "nl.jsonl")
+    same = " ".join(sents) * 2
+    with open(dup_corpus, "w", encoding="utf-8") as fh:
+        for _ in range(7):
+            fh.write(json.dumps({"content": same, "source": "selftest/en"}) + "\n")
+    dup_out = os.path.join(dup_dir, "pool_dup.jsonl")
+
+    def fixed_chunker(_path, _allow=False):
+        calls = {"n": 0}
+
+        def chunks(_text):
+            n = calls["n"]
+            calls["n"] += 1
+            if n < 5:
+                return [f"UNIQUE{n}"]
+            if n == 5:
+                return ["UNIQUE0"]
+            return ["PARENTA", "PARENTB"]
+        return chunks, "hf-tokenizer", lambda t: len(t.split())
+
+    globals()["_chunk_fn"], saved2 = fixed_chunker, globals()["_chunk_fn"]
+    try:
+        d_written, d_man = build(dup_corpus, mpath, seed=7, tokenizer_path="",
+                                 out=dup_out, allow_word_count=True)
+    finally:
+        globals()["_chunk_fn"] = saved2
+    with open(dup_out, encoding="utf-8") as dfh:
+        d_ids = [json.loads(l)["sample_id"] for l in dfh]
+    assert len(d_ids) == len(set(d_ids)), "pool must have globally unique sample_ids"
+    for u in range(5):
+        assert content_doc_id(f"UNIQUE{u}") in d_ids, f"UNIQUE{u} missing"
+    assert content_doc_id("PARENTA") in d_ids and content_doc_id("PARENTB") in d_ids, \
+        "same parent's two distinct chunks must BOTH survive"
+    assert d_written == 7, f"5 unique + 1 collapsed duplicate + 2 distinct = 7, got {d_written}"
+    assert d_man["dup_sample_ids"]["nl"] == 1, d_man["dup_sample_ids"]
+    assert d_man["unique_chunks"]["nl"] == 7, d_man["unique_chunks"]
+    assert d_man["chunk_population_total"]["nl"] == 8, d_man["chunk_population_total"]
+
     print(f"selftest ok: {written} chunks, bands={sorted(bands)}, "
           f"length_bands={sorted(lbands)}, multi-chunk rows present, tokenizer-failure "
           f"refused, pool+manifest atomic (no tmp, counts match), build() end-to-end "
-          f"refuses an infeasible positive-quota stratum and writes nothing")
+          f"refuses an infeasible positive-quota stratum and writes nothing; global "
+          f"sample_id dedup keeps identical chunk text once (dups counted), distinct "
+          f"chunks preserved")
     return 0
 
 
