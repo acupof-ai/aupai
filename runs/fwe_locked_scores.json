@@ -1,0 +1,84 @@
+{
+ "model": "HuggingFaceFW/fineweb-edu-classifier",
+ "score": "raw regression logit 0-5 (model card), cut>=3",
+ "max_length": 512,
+ "zh_web_labels": {
+  "n": 180,
+  "n_y1_educational": 33,
+  "n_y0_not": 147,
+  "auc_score_vs_y": 0.5725,
+  "all": {
+   "n": 180,
+   "mean": 0.8837,
+   "median": 0.8603,
+   "p10": 0.578,
+   "p25": 0.694,
+   "p75": 1.081,
+   "p90": 1.264,
+   "min": 0.034,
+   "max": 1.638,
+   "frac_ge3": 0.0,
+   "frac_ge0": 1.0
+  },
+  "score_distribution_y1": {
+   "n": 33,
+   "mean": 0.9502,
+   "median": 0.9201,
+   "p10": 0.629,
+   "p25": 0.743,
+   "p75": 1.13,
+   "p90": 1.307,
+   "min": 0.597,
+   "max": 1.634,
+   "frac_ge3": 0.0,
+   "frac_ge0": 1.0
+  },
+  "score_distribution_y0": {
+   "n": 147,
+   "mean": 0.8687,
+   "median": 0.8574,
+   "p10": 0.561,
+   "p25": 0.683,
+   "p75": 1.061,
+   "p90": 1.26,
+   "min": 0.034,
+   "max": 1.638,
+   "frac_ge3": 0.0,
+   "frac_ge0": 1.0
+  },
+  "at_cut3_educational_recall_kept": 0.0,
+  "at_cut3_notedu_kill_rate": 1.0
+ },
+ "zh_cci3_locked400_distribution_only": {
+  "n": 400,
+  "mean": 1.067,
+  "median": 0.9674,
+  "p10": 0.636,
+  "p25": 0.788,
+  "p75": 1.19,
+  "p90": 1.469,
+  "min": 0.29,
+  "max": 4.234,
+  "frac_ge3": 0.02,
+  "frac_ge0": 1.0
+ },
+ "code_oss100_should_keep": {
+  "n": 100,
+  "score_distribution": {
+   "n": 100,
+   "mean": 0.5564,
+   "median": 0.5164,
+   "p10": 0.24,
+   "p25": 0.349,
+   "p75": 0.755,
+   "p90": 0.899,
+   "min": -0.07,
+   "max": 1.415,
+   "frac_ge3": 0.0,
+   "frac_ge0": 0.98
+  },
+  "false_kill_frac_at_cut3": 1.0,
+  "false_kill_frac_below0": 0.02,
+  "kept_frac_at_cut3": 0.0
+ }
+}
