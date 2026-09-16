@@ -209,20 +209,29 @@ class _FakeTokenizer:
     the gate vocabulary:
       - whole-text length is 1 id per char PLUS 1 for every INTERNAL (non-trailing) newline -- a
         join across a newline can cost +1; a final trailing newline costs 0. This is 98's exact
-        oracle: len(ids) == sum(char in non-last lines) + (#internal newlines). encode/decode
-        round-trip the text exactly, so byte partition is checkable on plain strings.
-      - cut_drift=4: a piece produced by an id-slice mid-line re-encodes +4 (the byte-BPE
-        boundary effect 3b measured); _cut_oversized_line walks the boundary back for it."""
+        oracle. encode/decode round-trip the text, so byte partition is checkable on plain
+        strings after _clean() strips the measurement-only cut marker.
+      - CUT DRIFT IS REAL, NOT AN ADDITIVE ORACLE. decode() of any id slice stamps one CUT_MARK;
+        encode() expands that marker into CUT_DRIFT_IDS extra ids. So a raw 1024-id cut genuinely
+        RE-ENCODES to 1028 through tok.encode(...).ids -- the same path the selftest's own length
+        check uses. The instance reports cut_drift=0 so production's conservative additive term
+        contributes nothing: the walk-back in _cut_oversized_line is driven entirely by the real
+        re-encode, which is the property under test (de/98: length only by real encode)."""
 
-    cut_drift = 4
+    # production reads this via getattr(tok, "cut_drift", 0); 0 -> the +4 comes from encode alone
+    cut_drift = 0
+    CUT_DRIFT_IDS = 4
+    CUT_MARK = "\x00"
+    # marker ids above Unicode so they never decode to a real char and never collide with ord()
+    _DRIFT_BASE = 0x20000
 
     def encode(self, text):
-        # id = codepoint for each char, except a NEWLINE shared between two non-empty lines is
-        # encoded as the pair (0x0A, INTERNAL_NL=10), i.e. +1 over the single newline char.
         ids = []
         lines = text.split("\n")
         for k, line in enumerate(lines):
-            ids.extend(ord(ch) for ch in line)
+            ids.extend(ord(ch) for ch in line if ch != self.CUT_MARK)
+            n_marks = self.CUT_DRIFT_IDS * line.count(self.CUT_MARK)
+            ids.extend(self._DRIFT_BASE + j for j in range(n_marks))
             if k < len(lines) - 1:
                 ids.append(10)             # newline char id
                 ids.append(10 + 0x100)     # +1 internal-newline marker id
@@ -242,7 +251,13 @@ class _FakeTokenizer:
             elif 0 <= t <= 0x10FFFF:
                 out.append(chr(t))
             i += 1
-        return "".join(out)
+        # any id-slice cut piece re-encodes +CUT_DRIFT_IDS; model it by stamping one marker
+        return "".join(out) + self.CUT_MARK
+
+
+def _clean(s, tok):
+    """Strip the selftest tokenizer's measurement-only cut marker (no-op on real tokenizers)."""
+    return s.replace(getattr(tok, "CUT_MARK", ""), "")
 
 
 class _FakeEncoding:
@@ -264,7 +279,7 @@ def _selftest():
 
     def assert_cap(doc, label):
         ch = chunk_document(doc, tok)
-        if "".join(ch) != doc:
+        if "".join(_clean(c, tok) for c in ch) != doc:
             fails.append(f"{label}: partition not exact")
         for c in ch:
             if n(c) > MAX_TOK:
@@ -308,13 +323,37 @@ def _selftest():
     mixed = "q\n" * 2000 + "z\n" * 40
     assert_cap(mixed, "mixed-tail")
 
-    # 4d) +4 CUT DRIFT. A physical line that is exactly at/above the id cap: an id-slice would
-    # re-encode to 1028. _cut_oversized_line must walk the boundary back so EVERY returned piece
-    # re-encodes <=1024 even after decode->re-encode adds 4. Build a no-newline line whose raw
-    # id length forces a cut (decode stamps +4).
-    line = "a" * (MAX_TOK + 100)          # single physical line, 1124 ids, must be cut
+    # 4d) +4 CUT DRIFT -- REAL re-encode, with two red negative controls.
+    # A no-newline physical line of 1124 raw ids forces a cut. decode() of every id slice stamps
+    # one CUT_MARK, which encode() expands to +4, so a raw 1024-id cut RE-ENCODES to 1028 through
+    # the same tok.encode path the cap check uses. Control A: a NAIVE cutter that slices 1024 and
+    # never walks back MUST emit a piece that re-encodes >1024 -- this proves the fixture really
+    # injects the drift (the old fake did not, so the walk-back was untested). Control B: the
+    # production _cut_oversized_line MUST emit only <=1024; deleting its walk-back `while` makes
+    # this identical to the naive cutter and turns this case red ("删 while 回退必红").
+    line = "a" * (MAX_TOK + 100)          # single physical line, 1124 raw ids, must be cut
+
+    def _naive_cut(ln):
+        ids = _ids(tok, ln)
+        out, start = [], 0
+        while start < len(ids):
+            end = min(start + MAX_TOK, len(ids))
+            out.append(tok.decode(ids[start:end]))
+            start = end
+        return out
+
+    naive = _naive_cut(line)
+    ctrl_a = (
+        "negative control A broken: naive 1024 slice did NOT re-encode >1024 "
+        "(fixture fails to inject cut drift, so the walk-back is untested)"
+    )
+    if not any(n(p) > MAX_TOK for p in naive):
+        fails.append(ctrl_a)
+    if "".join(_clean(p, tok) for p in naive) != line:
+        fails.append("naive cutter does not partition the line")
+
     pieces = _cut_oversized_line(line, tok)
-    if "".join(pieces) != line:
+    if "".join(_clean(p, tok) for p in pieces) != line:
         fails.append("cut pieces do not partition the line")
     if len(pieces) < 2:
         fails.append("over-long line was not cut")
@@ -331,7 +370,7 @@ def _selftest():
         nlines = rr.randint(1, 400)
         doc = "\n".join("x" * rr.randint(0, 1300) for _ in range(nlines))
         ch = chunk_document(doc, tok)
-        if "".join(ch) != doc:
+        if "".join(_clean(c, tok) for c in ch) != doc:
             fails.append(f"random[{t}] partition broken")
             break
         bad = [n(c) for c in ch if n(c) > MAX_TOK]
