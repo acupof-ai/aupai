@@ -22,11 +22,11 @@ from types import SimpleNamespace
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).absolute().parent))
 from allclose import cmp
 from ref_oracle import load_reference
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).absolute().parents[2]))
 from v41f.hyperconn import HyperConn
 
 HC, DIM, IT, EPS, NORM_EPS = 4, 32, 20, 1e-6, 1e-20
