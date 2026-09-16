@@ -15,7 +15,9 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
+sys.path.insert(0, REPO)
 
 import l3_rubric as R  # noqa: E402
 from l3_stratified_sample import length_band, sample_stream, strata_key  # noqa: E402
@@ -61,6 +63,25 @@ def test_length_bands():
     assert length_band(0) == "xs" and length_band(399) == "xs"
     assert length_band(400) == "s" and length_band(3000) == "l"
     assert length_band(10**9) == "xl"
+
+
+def test_content_doc_id_and_locked_columns():
+    import hashlib
+
+    from l3_stratified_sample import content_doc_id
+
+    text = "hello locked set"
+    assert content_doc_id(text) == hashlib.sha256(text.encode()).hexdigest()[:16]
+    with tempfile.TemporaryDirectory() as td:
+        p = _corpus(td)
+        pools, _, _ = sample_stream([p], per_stratum=3, seed=4, allow_short=True, doc_id_mode="content")
+        for pool in pools.values():
+            for m in pool:
+                # 16 hex, content-derived, stable; not a sequence id
+                assert len(m["sample_id"]) == 16
+                assert all(c in "0123456789abcdef" for c in m["sample_id"])
+                assert m["sample_id"] == content_doc_id(m["content"])
+                assert "-" not in m["sample_id"]
 
 
 def _world(must_fail, obj):
@@ -221,14 +242,12 @@ def test_parser_failure_is_persisted_not_fabricated(monkeypatch=None):
         driver = os.path.join(td, "drive.py")
         with open(driver, "w") as fh:
             fh.write(
-
-                    f"import sys; sys.path.insert(0,{HERE!r})\n"
-                    "import l3_label_pilot as LP\n"
-                    "LP.stub_teacher=lambda t,r:'not json at all'\n"
-                    f"sys.argv=['x','--pilot',{sample!r},'--out',{labels!r},"
-                    "'--backend','stub']\n"
-                    "LP.main()\n"
-
+                f"import sys; sys.path.insert(0,{HERE!r})\n"
+                "import l3_label_pilot as LP\n"
+                "LP.stub_teacher=lambda t,r:'not json at all'\n"
+                f"sys.argv=['x','--pilot',{sample!r},'--out',{labels!r},"
+                "'--backend','stub']\n"
+                "LP.main()\n"
             )
         r = subprocess.run([sys.executable, driver], env=env, capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
@@ -240,6 +259,53 @@ def test_parser_failure_is_persisted_not_fabricated(monkeypatch=None):
         assert len(rejected) == n_in
         assert all("no JSON object" in x["reason"] for x in rejected)
         assert not os.path.exists(labels) or os.path.getsize(labels) == 0
+
+
+def test_ledger_row_matches_frozen_schema():
+    """The double-write ledger row passes datagen.score_ledger.validate_row, and a
+    tampered row is refused (score + rubric_dims both set -> schema error)."""
+    from datagen.score_ledger import LedgerSchemaError, append_rows
+
+    row = {
+        "doc_id": "0123456789abcdef",
+        "domain": "en_c4_stage2_dc",
+        "lang": "c4-train",
+        "scorer_name": "l3-rubric",
+        "scorer_version": R.RUBRIC_VERSION,
+        "ts": "2026-09-16T09:00:00Z",
+        "score": None,
+        "rubric_dims": {
+            d: 3
+            for d in ("content_quality", "factual_correctness", "complexity", "educational_or_code_value")
+        },
+        "cut": None,
+        "model": "teacher-x",
+        "backend": "openai",
+        "stratum": {"language": "c4-train", "length_band": "m"},
+        "rubric_kind": "natural_language",
+        "record_id": "fedcba9876543210",
+        "src_sha": None,
+    }
+    with tempfile.TemporaryDirectory() as td:
+        path = os.path.join(td, "ledger.jsonl")
+        assert append_rows(path, [row]) == 1
+        with open(path, encoding="utf-8") as led_fh:
+            loaded = json.loads(led_fh.read())
+        assert loaded["doc_id"] == "0123456789abcdef" and loaded["rubric_kind"] == "natural_language"
+        # a 6-score dim is rejected by the frozen validator, not silently written
+        bad = dict(row, rubric_dims={**row["rubric_dims"], "content_quality": 6})
+        try:
+            append_rows(os.path.join(td, "bad.jsonl"), [bad])
+            raise AssertionError("out-of-range rubric dim should fail validate_row")
+        except LedgerSchemaError:
+            pass
+        # a non-UTC ts is refused
+        bad2 = dict(row, ts="2026-09-16 09:00:00")
+        try:
+            append_rows(os.path.join(td, "bad2.jsonl"), [bad2])
+            raise AssertionError("non-Z ts should fail validate_row")
+        except LedgerSchemaError:
+            pass
 
 
 def main():
