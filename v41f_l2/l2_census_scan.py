@@ -105,6 +105,64 @@ def shard_output_path(out_dir: str, domain: str, shard_path: str) -> Path:
     return Path(out_dir) / f"{safe_dom}__{stem}.{SCORER}.jsonl"
 
 
+def marker_path(out_path: Path) -> Path:
+    """The completion/fingerprint sidecar for one scored shard (.jsonl -> .done.json)."""
+    return out_path.with_suffix(".done.json")
+
+
+def expected_marker(cfg: ScanConfig, head_fp: str) -> dict:
+    """The identity a completed shard must match to be safely skipped. If ANY field changes
+    (head retrained, version bumped, model swapped), an old output is NOT the current result
+    and resume must refuse to treat it as done."""
+    return {
+        "scorer_name": SCORER,
+        "scorer_version": cfg.scorer_version,
+        "model": cfg.model_id,
+        "dim_scale": DIM_SCALE,
+        "head_fingerprint": head_fp,
+    }
+
+
+class StaleShardError(RuntimeError):
+    """An output shard exists but was produced by a different head/version/model. Resuming
+    over it would silently serve stale predictions; the caller must pass --force to rescan."""
+
+
+def _check_resume(out_path: Path, cfg: ScanConfig, head_fp: str, force: bool) -> bool:
+    """True if the shard is complete AND identical to the current fingerprint (skip it).
+    Raises StaleShardError on a fingerprint mismatch unless force. A data file without its
+    marker (crash before the rename of the marker, or an older scanner) is treated as
+    incomplete and rescanned, not skipped."""
+    if not out_path.exists():
+        return False
+    if force:
+        # --force means unconditionally rescan, even a current, fingerprint-matched output
+        return False
+    mp = marker_path(out_path)
+    if not mp.exists():
+        raise StaleShardError(
+            f"{out_path} exists but has no completion marker; its head/version is unknown. "
+            "Re-run with --force to rescan it instead of trusting unverifiable output."
+        )
+    done = json.loads(mp.read_text())
+    want = expected_marker(cfg, head_fp)
+    changed = {k: {"have": done.get(k), "want": want[k]} for k in want if done.get(k) != want[k]}
+    if changed:
+        raise StaleShardError(
+            f"{out_path} was scored with a different identity: {json.dumps(changed)}. "
+            "Refusing to reuse stale output; pass --force to rescan and overwrite."
+        )
+    return True
+
+
+def _write_marker(out_path: Path, cfg: ScanConfig, head_fp: str, n_rows: int):
+    payload = {**expected_marker(cfg, head_fp), "rows": n_rows, "ts": _utcnow()}
+    mtmp = marker_path(out_path).with_suffix(".done.json.tmp")
+    with open(mtmp, "w") as fh:
+        json.dump(payload, fh, sort_keys=True)
+    os.replace(mtmp, marker_path(out_path))
+
+
 def read_corpus_docs(shard_path: str):
     """yield (content, src_sha_or_None) per JSONL row. Blank/non-string content skipped."""
     with open(shard_path, encoding="utf-8") as fh:
@@ -146,22 +204,28 @@ def _utcnow() -> str:
 
 
 def scan_shards(domain, paths, out_dir, predict, cfg: ScanConfig, counters, *, force=False):
-    """Score a worker's assigned shards, one validated output file per shard.
+    """Score a worker's assigned shards, one validated output file + fingerprint marker per
+    shard.
 
-    Idempotent: a finished (domain,shard) file is skipped. Each shard stages to a .tmp and
-    atomically renames, so a crash never leaves partial/duplicate rows. Dedup is DOMAIN-level
-    across this worker's shards: one content-id set is shared, so identical content appearing
-    in two shards is scored once and counted in dup_docs (doc_id is a content hash, so the
-    same bytes anywhere are the same doc). Mutates the shared counters dict; returns written.
+    Idempotent and version-safe: a shard is skipped only when its data file AND .done.json
+    marker exist and the marker's scorer/version/model/head fingerprint match THIS run. A
+    changed head or version makes the existing output stale -> StaleShardError (use --force).
+    Each shard stages its data to .tmp and atomically renames, then writes the marker, so a
+    crash never leaves partial/duplicate rows or a claim of completion without scores.
+    Dedup is DOMAIN-level across this worker's shards: one content-id set is shared, so
+    identical content appearing in two shards is scored once and counted in dup_docs (doc_id
+    is a content hash, so the same bytes anywhere are the same doc). Mutates the shared
+    counters dict; returns written.
 
     Cross-worker duplicates (two cards scanning different files that hold identical content)
     cannot share an in-memory set; audit them afterwards with find_domain_duplicates over the
     shared out_dir."""
+    head_fp = head_fingerprint(predict)
     written = 0
     domain_seen: set[str] = set()
     for shard_path in paths:
         out_path = shard_output_path(out_dir, domain, shard_path)
-        if out_path.exists() and not force:
+        if _check_resume(out_path, cfg, head_fp, force):
             counters["skipped_shards"] += 1
             continue
         rows = _score_one_shard(domain, shard_path, predict, cfg, counters, domain_seen)
@@ -171,9 +235,18 @@ def scan_shards(domain, paths, out_dir, predict, cfg: ScanConfig, counters, *, f
         # append_rows validates each row against the canonical schema before any byte lands
         append_rows(str(tmp), rows)
         os.replace(tmp, out_path)
+        _write_marker(out_path, cfg, head_fp, len(rows))
         written += len(rows)
         counters["written_shards"] += 1
     return written
+
+
+def head_fingerprint(predict) -> str:
+    """A stable identity for the scoring head. A real predictor (HeadPredictor) hashes its
+    loaded head state_dict; a stub returns a constant. Different weights -> different fp ->
+    resume refuses to reuse the old output."""
+    fp = getattr(predict, "fingerprint", None)
+    return fp() if callable(fp) else "stub-head"
 
 
 def find_domain_duplicates(out_dir, domain):
@@ -250,6 +323,18 @@ class HeadPredictor:
         self.model = model.to(device).eval()
         self.token_budget = cfg.token_budget
         self.over_ctx = 0
+
+    def fingerprint(self) -> str:
+        """sha256 over the head parameters; a retrained head yields a different fp so resume
+        cannot treat old predictions as the new head's output."""
+        import hashlib
+
+        h = hashlib.sha256()
+        for k in sorted(self.model.head.state_dict()):
+            t = self.model.head.state_dict()[k].float().cpu().contiguous()
+            h.update(k.encode())
+            h.update(t.numpy().tobytes())
+        return f"headsha256:{h.hexdigest()[:16]}"
 
     def _encode_batch(self, texts):
         torch = self.torch
@@ -435,6 +520,70 @@ def _selftest():
         n2 = scan_shards("code_py", [s0, s1], td, stub_predict, cfg, c2)
         assert n2 == 0 and c2["skipped_shards"] == 2 and c2["written_shards"] == 0
         assert len(load_rows(out_files[0])) + len(load_rows(out_files[1])) == 4
+        # every completed shard carries a fingerprint marker naming this head/version/model
+        for of in out_files:
+            mk = json.loads(marker_path(Path(of)).read_text())
+            assert mk["head_fingerprint"] == "stub-head"
+            assert mk["scorer_version"] == cfg.scorer_version and mk["model"] == cfg.model_id
+            assert mk["dim_scale"] == DIM_SCALE and mk["rows"] >= 1
+
+        # STALE RESUME: tamper the marker to a different head fingerprint -> reuse refused
+        m0 = marker_path(shard_output_path(td, "code_py", s0))
+        good_marker = json.loads(m0.read_text())
+        tampered = {**good_marker, "head_fingerprint": "headsha256:deadbeefdeadbe"}
+        m0.write_text(json.dumps(tampered))
+        try:
+            scan_shards(
+                "code_py",
+                [s0],
+                td,
+                stub_predict,
+                cfg,
+                {"docs": 0, "dup_docs": 0, "written_shards": 0, "skipped_shards": 0},
+            )
+        except StaleShardError:
+            pass
+        else:
+            raise AssertionError("a different head fingerprint on resume must raise")
+        # and a changed scorer_version in the run config is equally stale
+        m0.write_text(json.dumps(good_marker))
+        cfg2 = ScanConfig(scorer_version="selftest-r2", lang="en")
+        try:
+            scan_shards(
+                "code_py",
+                [s0],
+                td,
+                stub_predict,
+                cfg2,
+                {"docs": 0, "dup_docs": 0, "written_shards": 0, "skipped_shards": 0},
+            )
+        except StaleShardError:
+            pass
+        else:
+            raise AssertionError("a different scorer_version on resume must raise")
+        # --force overrides the staleness refusal and rescans (re-writing the new marker)
+        c_f = {"docs": 0, "dup_docs": 0, "written_shards": 0, "skipped_shards": 0}
+        scan_shards("code_py", [s0], td, stub_predict, cfg2, c_f, force=True)
+        assert c_f["written_shards"] == 1
+        assert json.loads(m0.read_text())["scorer_version"] == "selftest-r2"
+        m0.write_text(json.dumps(good_marker))  # restore for the forced check below
+
+        # an output with NO marker (older scanner / crash) is not silently trusted
+        m1 = marker_path(shard_output_path(td, "code_py", s1))
+        m1.unlink()
+        try:
+            scan_shards(
+                "code_py",
+                [s1],
+                td,
+                stub_predict,
+                cfg,
+                {"docs": 0, "dup_docs": 0, "written_shards": 0, "skipped_shards": 0},
+            )
+        except StaleShardError:
+            pass
+        else:
+            raise AssertionError("markerless existing output must not be skipped as complete")
 
         # a forced rescan still validates (crash/.tmp safety exercised via overwrite)
         c3 = {"docs": 0, "dup_docs": 0, "written_shards": 0, "skipped_shards": 0}
@@ -497,7 +646,8 @@ def _selftest():
         assert len(xdups) == 1 and len(next(iter(xdups.values()))) == 2, xdups
 
     print(
-        "l2_census_scan selftest OK: disjoint sharding, idempotent resume, canonical "
+        "l2_census_scan selftest OK: disjoint sharding, idempotent fingerprint-checked "
+        "resume (stale head/version/markerless refused without --force), canonical "
         "continuous rows unquantized (out-of-range kept), quota ranking separable, "
         "version-conflict guard, atomic write, domain-level + cross-shard dup detection"
     )
