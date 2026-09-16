@@ -78,7 +78,7 @@ def write_fixture(tmp, n=40):
 
 def test_loader_column_order_matches_head_dims(tmp_path):
     led, pool = write_fixture(tmp_path)
-    pairs = l2_dataset.load_pairs(led, pool, scorer_name="l3-rubric")
+    pairs = l2_dataset.load_pairs(led, pool, scorer_name="l3-rubric", scorer_version="r1")
     assert len(pairs) == 40
     ex = pairs[0]
     assert tuple(ex.labels) and len(ex.labels) == len(DEFAULT_DIMS) == 4
@@ -88,7 +88,7 @@ def test_loader_column_order_matches_head_dims(tmp_path):
 
 def test_small_fit_reduces_mse(tmp_path):
     led, pool = write_fixture(tmp_path)
-    pairs = l2_dataset.load_pairs(led, pool, scorer_name="l3-rubric")
+    pairs = l2_dataset.load_pairs(led, pool, scorer_name="l3-rubric", scorer_version="r1")
     train, val = l2_dataset.split_pairs(pairs, val_frac=0.1)
     vocab = l2_dataset.build_vocab(e.domain for e in train + val)
     dl = l2_dataset.make_torch_loader(
