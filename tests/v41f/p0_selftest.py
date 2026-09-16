@@ -12,7 +12,7 @@ import sys
 import traceback
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).absolute().parent
 sys.path.insert(0, str(HERE))
 
 
