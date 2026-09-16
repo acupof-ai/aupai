@@ -11,11 +11,11 @@ from pathlib import Path
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).absolute().parent))
 from allclose import cmp
 from ref_oracle import load_reference
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).absolute().parents[2]))
 from v41f.moe import MoE, _expert_weighted
 
 _MODEL = None

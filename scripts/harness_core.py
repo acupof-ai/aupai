@@ -488,8 +488,11 @@ def _tmp_repo_shaped(mix_obj=None):
     import subprocess
 
     d = _tmp_repo(mix_obj)
+    # third_party must be linked too: tests/v41f/ref_oracle.py locates the vendored ref as a
+    # sibling of the repo root via a NON-resolving path (a resolving __file__ escaped to the
+    # real ROOT and made the suite ignore a missing/broken v41f in this sandbox, issue #426).
     for name in ("scripts", "eval", "datagen", "probes", "mathbank", "algorithms",
-                 "filters", "docs", "facts", "tests", "v41f", "v41f_l2"):
+                 "filters", "docs", "facts", "tests", "v41f", "v41f_l2", "third_party"):
         if os.path.isdir(os.path.join(ROOT, name)) and not os.path.exists(os.path.join(d, name)):
             os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
     for f in os.listdir(ROOT):
