@@ -1,0 +1,88 @@
+{
+ "device": "cpu",
+ "torch_threads": 10,
+ "domains": {
+  "bge-m3": {
+   "dir": "bge-m3",
+   "pooling": "cls",
+   "hard_max_length": 8192,
+   "length_tokens": {
+    "en_c4_stage2_dc": {
+     "n_sampled": 4,
+     "p50": 1127,
+     "p90": 2480,
+     "p95": 2597,
+     "p99": 2690,
+     "max": 2714,
+     "frac_truncated": 0.0
+    },
+    "code_ultra_l2_dc": {
+     "n_sampled": 4,
+     "p50": 760,
+     "p90": 2369,
+     "p95": 2596,
+     "p99": 2778,
+     "max": 2824,
+     "frac_truncated": 0.0
+    },
+    "code_py_starcoder_dc": {
+     "n_sampled": 4,
+     "p50": 2343,
+     "p90": 5397,
+     "p95": 5620,
+     "p99": 5798,
+     "max": 5843,
+     "frac_truncated": 0.0
+    }
+   },
+   "embed_dim": 1024,
+   "deterministic": true,
+   "unit_norm": true,
+   "benchmark_maxlen": 8192,
+   "throughput_cpu_docs_per_s": {
+    "1": 15.5
+   }
+  },
+  "qwen3-emb-0.6b": {
+   "dir": "Qwen3-Embedding-0.6B",
+   "pooling": "lasttoken",
+   "hard_max_length": null,
+   "length_tokens": {
+    "en_c4_stage2_dc": {
+     "n_sampled": 4,
+     "p50": 1007,
+     "p90": 2235,
+     "p95": 2344,
+     "p99": 2431,
+     "max": 2453,
+     "hard_ctx": 32768
+    },
+    "code_ultra_l2_dc": {
+     "n_sampled": 4,
+     "p50": 631,
+     "p90": 1757,
+     "p95": 1904,
+     "p99": 2021,
+     "max": 2051,
+     "hard_ctx": 32768
+    },
+    "code_py_starcoder_dc": {
+     "n_sampled": 4,
+     "p50": 2108,
+     "p90": 4113,
+     "p95": 4152,
+     "p99": 4183,
+     "max": 4191,
+     "hard_ctx": 32768
+    }
+   },
+   "embed_dim": 1024,
+   "deterministic": true,
+   "unit_norm": true,
+   "benchmark_maxlen": 8192,
+   "throughput_cpu_docs_per_s": {
+    "1": 9.5
+   }
+  }
+ }
+}
