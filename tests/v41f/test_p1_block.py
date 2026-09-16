@@ -75,8 +75,13 @@ def _build_block_pair(layer_id, seed=7, small=None):
     # _SMALL config did not carry it). The reference args default to hc_mult=4 already.
     # MoE: _SMALL left experts at ModelArgs defaults (8 routed / top2 / inter 1024); pin the
     # same into the v41f config whose production default is the 48-expert Flash-S shape.
-    small = small or {**_SMALL, "hc_mult": 4, "n_routed_experts": 8,
-                      "n_activated_experts": 2, "moe_inter_dim": 1024}
+    small = small or {
+        **_SMALL,
+        "hc_mult": 4,
+        "n_routed_experts": 8,
+        "n_activated_experts": 2,
+        "moe_inter_dim": 1024,
+    }
     args = bf16_args(model, **small)
     cfg = V41FConfig(**{k: v for k, v in small.items() if k not in ("max_batch_size", "max_seq_len")})
     prev = torch.get_default_dtype()
@@ -162,8 +167,13 @@ def test_block_ratio2_compressed():
 # coefficient hand-off, whose timing only accumulates across blocks.
 _CHAIN_SMALL = {
     **_SMALL,
-    "compress_ratios": (0, 0, 0), "kv_source_layers": (), "index_source_layers": (),
-    "hc_mult": 4, "n_routed_experts": 8, "n_activated_experts": 2, "moe_inter_dim": 1024,
+    "compress_ratios": (0, 0, 0),
+    "kv_source_layers": (),
+    "index_source_layers": (),
+    "hc_mult": 4,
+    "n_routed_experts": 8,
+    "n_activated_experts": 2,
+    "moe_inter_dim": 1024,
 }
 
 
@@ -240,5 +250,66 @@ def test_two_block_chain_hc_hand_off():
     # changes block1's attention input, so the exact-equality assertion is not a tautology.
     assert gap > 0.1 and gap > scale, (
         f"block0's returned pre must materially change block1's (pre-norm) attention input "
-        f"vs the incoming identity pre; gap={gap:.4f} mean|x|={scale:.4f} -- hand-off unobserved")
+        f"vs the incoming identity pre; gap={gap:.4f} mean|x|={scale:.4f} -- hand-off unobserved"
+    )
     print(f"  block1 attn hand-off pre-norm gap={gap:.4f} vs mean|x|={scale:.4f} (exact post-norm match)")
+
+
+def test_intra_block_collapse_sources_pinned():
+    """Pin the two INTRA-Block coefficient sources at the sublayer call boundary:
+    attention collapses on the INCOMING pre_mix, the FFN on THIS block's own attn_pre.
+
+    The end-of-block and two-chain residuals cannot see an attn_pre->pre_mix swap on the
+    FFN collapse: RMSNorm erases the pre-norm gap to ~1.2e-2 at the MoE input and bf16
+    makes the final stream byte-identical, so a mis-wired source ships green. Capture the
+    actual tensors fed to attn/ffn and match an independent recomputation from the block
+    input; a wrong-source recomputation must still differ (anti-tautology), so the exact
+    equality is not between two identical tensors."""
+    import types
+
+    torch.manual_seed(0)
+    _, blk, cfg = _build_block_pair(0, seed=11)  # window-only layer
+    b, s = 2, 8
+    x = (0.2 * torch.randn(b, s, cfg.dim)).bfloat16()
+    xr = x.unsqueeze(2).repeat(1, 1, cfg.hc_mult, 1)
+    pre = make_identity_pre_mix(xr, cfg.hc_mult)
+
+    cap = {}
+    attn_fwd, ffn_fwd = blk.attn.forward, blk.ffn.forward
+
+    def attn_spy(self, inp, state=None):
+        out, st = attn_fwd(inp, state)
+        cap["attn_in"] = inp.detach().clone()
+        cap["attn_out"] = out.detach().clone()
+        return out, st
+
+    def ffn_spy(self, inp, st=None):
+        cap["ffn_in"] = inp.detach().clone()
+        return ffn_fwd(inp, st)
+
+    blk.attn.forward = types.MethodType(attn_spy, blk.attn)
+    blk.ffn.forward = types.MethodType(ffn_spy, blk.ffn)
+    try:
+        with torch.no_grad():
+            blk(xr, 0, pre, None)
+    finally:
+        blk.attn.forward = attn_fwd
+        blk.ffn.forward = ffn_fwd
+
+    # independent recomputation from the block input (postattn stream rebuilt via hc_post)
+    attn_pre, attn_post, attn_comb = blk.hc.hc_mixes(
+        xr, blk.hc.hc_attn_fn, blk.hc.hc_attn_scale, blk.hc.hc_attn_base
+    )
+    attn_want = blk.attn_norm(blk.hc.hc_pre(xr, pre))
+    postattn = blk.hc.hc_post(cap["attn_out"], xr, attn_post, attn_comb)
+    ffn_want = blk.ffn_norm(blk.hc.hc_pre(postattn, attn_pre))
+
+    cmp("attn input collapses on incoming pre_mix", cap["attn_in"], attn_want, atol=1e-6)
+    cmp("ffn input collapses on this block own attn_pre", cap["ffn_in"], ffn_want, atol=1e-6)
+
+    # anti-tautology: the two WRONG sources must be materially different even post-norm
+    g_attn = (cap["attn_in"].float() - blk.attn_norm(blk.hc.hc_pre(xr, attn_pre)).float()).abs().max().item()
+    g_ffn = (cap["ffn_in"].float() - blk.ffn_norm(blk.hc.hc_pre(postattn, pre)).float()).abs().max().item()
+    print(f"  wrong-source gaps: attn side {g_attn:.4e}, ffn side {g_ffn:.4e}")
+    assert g_attn > 1e-3, f"attn incoming-vs-own pre indistinguishable post-norm: {g_attn}"
+    assert g_ffn > 5e-3, f"ffn attn_pre vs incoming pre_mix indistinguishable post-norm: {g_ffn}"
