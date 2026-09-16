@@ -1011,6 +1011,13 @@ def main():
     # is not run here, because "not in the map" and "cannot run here" are different
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
+        # The frozen scorer-agnostic score ledger (de). Registered because three scorers
+        # (KenLM/fineweb-edu/l3-rubric) append through this one schema and a silently
+        # accepted malformed row -- score and rubric_dims both null, a non-UTC ts, a rubric
+        # grade outside 1..5, a wrong src_sha -- would corrupt the shared funnel before the
+        # quota selector ever reads it. The selftest accepts two valid shapes and rejects 12
+        # named invalid categories plus a content-hash staleness mismatch.
+        "datagen/score_ledger.py",
         # The function-interface SFT pair extractor (3b-18). Registered because its two
         # acceptance properties are only checkable on a known-answer world: the output must
         # run to the function's LAST source line (a cut one statement early still parses and
