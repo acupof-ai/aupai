@@ -75,7 +75,8 @@ def sample_stream(
     removing an unrelated stratum never perturbs another stratum's draw.
 
     stats = {"empty": rows with no usable content, "bad": corrupt rows,
-             "scanned": non-blank lines examined, "bad_by_file": basename -> bad count}.
+             "scanned": non-blank lines examined, "usable": valid non-empty-content rows
+             seen before the band filter, "bad_by_file": basename -> bad count}.
     Streaming is tolerant: a corrupt row is counted, never silently sampled and never
     aborts the pass; the caller enforces a bad-fraction threshold before writing. A row
     is bad when it is not a JSON object or its `content` is present but not a string;
@@ -91,6 +92,7 @@ def sample_stream(
     empty = 0
     bad = 0
     scanned = 0
+    usable = 0
     bad_by_file = {}
     for path in paths:
         bname = os.path.basename(path)
@@ -118,6 +120,7 @@ def sample_stream(
                     bad += 1
                     bad_by_file[bname] = bad_by_file.get(bname, 0) + 1
                     continue
+                usable += 1
                 key = strata_key(row)
                 if only_bands is not None and key[1] not in only_bands:
                     continue
@@ -141,7 +144,8 @@ def sample_stream(
                         pool[j] = meta
     if text_warn_empty and empty:
         print(f"WARN skipped {empty} empty-content rows")
-    stats = {"empty": empty, "bad": bad, "scanned": scanned, "bad_by_file": bad_by_file}
+    stats = {"empty": empty, "bad": bad, "scanned": scanned, "usable": usable,
+             "bad_by_file": bad_by_file}
     return pools, seen, stats
 
 
@@ -185,6 +189,7 @@ def _selftest() -> int:
     assert stats["bad"] == 3, stats
     assert stats["empty"] == 1, stats
     assert stats["scanned"] == 9, stats            # 10 lines minus the one blank line
+    assert stats["usable"] == 5, stats             # exactly the 5 valid non-empty objects
     assert stats["bad_by_file"][os.path.basename(shard)] == 3, stats["bad_by_file"]
     sampled = [m["content"] for k in pools for m in pools[k]]
     assert all(isinstance(c, str) for c in sampled), "non-string content was sampled"
@@ -236,10 +241,40 @@ def _selftest() -> int:
     with open(cout + ".manifest.json", encoding="utf-8") as fh:
         cman = json.load(fh)
     assert cman["bad_lines"] == 0 and cman["input_rows_scanned"] == 3, cman
+    assert cman["usable_content_rows"] == 3, cman
+
+    # empty run is a broken source, never a successful zero-row draw: three distinct shapes
+    # (0-byte file, blank-line-only, rows whose content is null/empty-string) must each
+    # refuse nonzero AND with --allow-short (allow-short means a small stratum, not no data),
+    # writing neither pool nor manifest.
+    empty_cases = {
+        "zero_byte.jsonl": "",
+        "blank_lines.jsonl": "\n   \n\t\n",
+        "empty_content.jsonl": "\n".join(
+            [json.dumps({"source": "en", "content": ""}),
+             json.dumps({"source": "en", "content": "   "}),
+             json.dumps({"source": "en", "content": None})]) + "\n",
+    }
+    for fname, body in empty_cases.items():
+        epath = os.path.join(d, fname)
+        with open(epath, "w", encoding="utf-8") as fh:
+            fh.write(body)
+        eout = os.path.join(d, fname + ".pilot.jsonl")
+        for extra in ([], ["--allow-short"]):
+            pe = subprocess.run(
+                [sys.executable, script, "--glob", epath, "--out", eout,
+                 "--per-stratum", "2", "--seed", "1", *extra],
+                capture_output=True, text=True, timeout=60)
+            assert pe.returncode != 0 and "no scannable rows" in pe.stderr, \
+                (fname, extra, pe.returncode, pe.stderr)
+        assert not os.path.exists(eout), f"{fname}: empty pool written"
+        assert not os.path.exists(eout + ".manifest.json"), f"{fname}: empty manifest written"
+
     print("selftest ok: per-row validation counts bad JSON/non-object/non-string content "
-          "(bad=3, empty=1, scanned=9) and never samples one; bad-fraction gate refuses "
-          "33% under default 1% and under 0, permits under 50% with manifest accounting, "
-          "clean shard passes strict 0")
+          "(bad=3, empty=1, scanned=9, usable=5) and never samples one; bad-fraction gate "
+          "refuses 33% under default 1% and under 0, permits under 50% with manifest "
+          "accounting, clean shard passes strict 0; empty run (0-byte / blank-only / "
+          "all-empty-content) refuses nonzero even with --allow-short, writes nothing")
     return 0
 
 
@@ -293,8 +328,19 @@ def main():
     pools, seen, stats = sample_stream(
         paths, a.per_stratum, a.seed, a.allow_short, doc_id_mode=a.doc_id, only_bands=only_bands
     )
-    bad, scanned = stats["bad"], stats["scanned"]
+    bad, scanned, usable = stats["bad"], stats["scanned"], stats["usable"]
     bad_frac = (bad / scanned) if scanned else 0.0
+    # An empty run is a broken source/glob/extraction, not a valid draw: usable==0 means
+    # the matched files produced zero sampleable content rows (empty file, blank-line-only,
+    # or every row missing/blank content). --allow-short never exempts this; allow-short
+    # means "a stratum is too small", which presupposes some content. Refuse before any
+    # pool/manifest byte so an empty pool can never be reported as a successful draw.
+    if usable == 0:
+        raise SystemExit(
+            f"REFUSE: no scannable rows in {len(paths)} file(s) matching {a.glob} "
+            f"(scanned={scanned}); files empty, blank-line-only, all-empty-content, "
+            "or glob/extraction produced no content"
+        )
     if bad:
         top = sorted(stats["bad_by_file"].items(), key=lambda kv: kv[1], reverse=True)[:5]
         where = ", ".join(f"{f}x{n}" for f, n in top)
@@ -342,6 +388,7 @@ def main():
         "length_bins_chars": [[lo, hi, nm] for lo, hi, nm in LENGTH_BINS],
         "n_written": written,
         "input_rows_scanned": scanned,
+        "usable_content_rows": usable,
         "empty_content_rows": stats["empty"],
         "bad_lines": bad,
         "bad_line_fraction": round(bad_frac, 8),
