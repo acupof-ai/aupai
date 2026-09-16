@@ -38,7 +38,33 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LAUNCHER = os.path.join(ROOT, "runs", "v42_phi_sft.sh")
-OLD_LAUNCHER = None  # set by _negative_control from `git show origin/main:...`
+
+# The PRE-FIX launcher, frozen as a fixture rather than `git show origin/main:...`. Reading
+# the live branch rotted the negative control the moment #367 merged: origin/main then held
+# the FIXED launcher, so the assertion "old has wait-for-device and no --pid" failed on every
+# later merge. This literal is the exact buggy shape -- an acquire --wait-for-device run
+# BEFORE torchrun, which refuses (no GPU-holding descendant) and exits without training.
+# Keep it self-contained: it must reach the acquire and print "card claim acquire refused".
+_OLD_BUGGY_LAUNCHER = """#!/bin/bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}
+# shellcheck disable=SC1091
+source eval/_devs.sh 8
+CARDS=$(IFS=,; echo "${_DEVS[*]}")
+[ -z "${HYPOTHESIS:-}" ] && { echo "REFUSING no hypothesis"; exit 2; }
+[ -f ckpt_v41_r3_0914.pt ] || { echo "REFUSING no ckpt"; exit 2; }
+[ -f data/sft/sft_phi_codeexercises_v42_65m_0914.pt ] || { echo "REFUSING no pack"; exit 2; }
+CUDA_VISIBLE_DEVICES= python3 sft_math.py --check_pack
+python3 scripts/exp.py start --name v42_phi_sft --cmd x --hypothesis "$HYPOTHESIS" >/dev/null
+python3 scripts/card_claim.py acquire --name v42_phi_sft --cards "$CARDS" \\
+  --note old --wait 0 --wait-for-device 300 || {
+  echo "REFUSING to launch: card_claim acquire refused on $CARDS"
+  python3 scripts/exp.py done --name v42_phi_sft --status fail --result "card claim refused"
+  exit 1
+}
+torchrun --nproc_per_node=8 sft_math.py
+"""
 
 
 def _build_tree(claim_dir):
@@ -183,10 +209,10 @@ def main():
         shutil.rmtree(d2, ignore_errors=True)
         shutil.rmtree(claim_dir2, ignore_errors=True)
 
-    # 4. NEGATIVE CONTROL: the ORIGINAL pre-launch acquire launcher must never reach torchrun.
-    old = subprocess.run(["git", "show", "origin/main:runs/v42_phi_sft.sh"],
-                         cwd=ROOT, capture_output=True, text=True).stdout
-    assert "wait-for-device" in old and "--pid" not in old, "origin/main launcher shape changed"
+    # 4. NEGATIVE CONTROL: the frozen pre-launch-acquire launcher must never reach torchrun.
+    old = _OLD_BUGGY_LAUNCHER
+    assert "wait-for-device" in old and "--pid" not in old, \
+        "the frozen old-launcher fixture lost its buggy shape"
     od = tempfile.mkdtemp(prefix="phisft_old_")
     oclaim = tempfile.mkdtemp(prefix="phisft_oldclaims_")
     try:
