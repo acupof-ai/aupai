@@ -19,6 +19,7 @@ Outputs (all append; the run resumes by sample_id):
 import argparse
 import concurrent.futures as cf
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -33,6 +34,35 @@ from l3_rubric import RUBRIC_VERSION, build_prompt, parse_scores, select_rubric 
 KIND_DOMAIN = {"nl": "en_c4_stage2_dc", "code": "code_py_starcoder_dc"}
 
 _CRASH_STATE = {"n": 0}  # selftest-only hard-kill hook state
+
+
+@contextlib.contextmanager
+def exclusive_out_lock(out):
+    """Cross-process singleton guard on one labeling target. Two `drive` processes
+    pointed at the same --out/ledger would each resume-overlap and DOUBLE-label/write
+    every shared sample (in-process threading.Lock cannot stop a second process). Take
+    an exclusive flock on <out>.lock before opening out/ledger; a second driver fails
+    immediately, nonzero, naming the other writer. The lock is released automatically on
+    normal exit or crash (the fd dies with the process). Resume/reconcile is unchanged."""
+    os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
+    lock_path = os.path.abspath(out) + ".lock"
+    with open(lock_path, "a+", encoding="utf-8") as lf:
+        try:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except (BlockingIOError, OSError) as e:
+            raise SystemExit(
+                f"REFUSE: another l3_label_drive process already holds {lock_path} and "
+                f"is writing this out/ledger ({type(e).__name__}). Running two drivers on "
+                "one target double-labels overlapping sample_ids; use one process or a "
+                "different --out.") from e
+        lf.seek(0)
+        lf.truncate()
+        lf.write(f"pid={os.getpid()} started={time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n")
+        lf.flush()
+        try:
+            yield lf
+        finally:
+            fcntl.flock(lf.fileno(), fcntl.LOCK_UN)
 
 
 def _post(url, model, timeout, text, rubric):
@@ -233,6 +263,7 @@ def drive(pool, out, endpoints, model, *, concurrency, timeout, limit, ledger):
     if ledger:
         os.makedirs(os.path.dirname(os.path.abspath(ledger)), exist_ok=True)
     with (
+        exclusive_out_lock(out),
         open(out, "a", encoding="utf-8") as out_fh,
         open(rej_path, "a", encoding="utf-8") as rej_fh,
         (open(ledger, "a", encoding="utf-8") if ledger else contextlib.nullcontext()) as ledger_fh,
@@ -416,9 +447,28 @@ def _selftest() -> int:
     assert len(out_ids) == 12 and len(led_ids) == 12, (len(out_ids), len(led_ids))
     assert sorted(out_ids) == sorted(led_ids), "out/ledger diverged after recovery"
     assert len(set(out_ids)) == 12 and len(set(led_ids)) == 12, "duplicate label rows"
+    # singleton flock: while one writer holds <out>.lock a second acquire of the SAME
+    # target must refuse nonzero; a different target is independent; the lock releases on
+    # context exit so a subsequent same-target acquire succeeds (crash auto-release is the
+    # OS closing the fd).
+    lock_out = os.path.join(d2, "singleton.jsonl")
+    other_out = os.path.join(d2, "other.jsonl")
+    with exclusive_out_lock(lock_out):
+        try:
+            with exclusive_out_lock(lock_out):
+                raise AssertionError("second driver on same target must refuse")
+        except SystemExit:
+            pass
+        # a different target does not collide
+        with exclusive_out_lock(other_out):
+            pass
+    # after release the same target is acquirable again (proves auto-release on exit)
+    with exclusive_out_lock(lock_out):
+        pass
     print("selftest ok: 4 labels across 2 endpoints (2 each), retry recovered "
           "HTTP500, 4 ledger rows, resume skipped all done; SIGKILL at ledger->out "
-          "row 4 recovered to out==ledger (12 each, no dup/gap)")
+          "row 4 recovered to out==ledger (12 each, no dup/gap); singleton flock "
+          "refuses a second writer on one target, releases on exit")
     return 0
 
 
