@@ -65,50 +65,85 @@ def ppl_band(ppl, lo, hi):
     return "low" if ppl <= lo else "mid" if ppl <= hi else "high"
 
 
-def _cap_chunks(segments, lo, hi):
-    """Impose the HARD max: every emitted segment is <= hi items. Sliding windows
-    of width hi leave a 1..lo-1 tail; folding it into the previous full window would
-    overflow to hi+lo-1 (encoder truncation). Instead repartition the last
-    hi+tail items into two pieces both in [lo, hi]. A lone document shorter than lo
-    stays one short chunk (represents the xs length band)."""
-    if len(segments) >= 2 and 0 < len(segments[-1]) < lo:
+MIN_FRAGMENT_TOKENS = 128  # whole docs shorter than this are dropped, not labeled
+
+
+def _cap_segments(segments, lo, hi, measure, split):
+    """Impose the HARD max on MEASURED segments. Sliding windows leave a 1..lo-1 tail;
+    folding it into a full window would overflow (encoder truncation). Repartition the
+    last two segments so both halves measure in [lo, hi], searching around the measured
+    midpoint (an exact token-id midpoint is only even after decode->re-encode drift)."""
+    if len(segments) >= 2 and 0 < measure(segments[-1]) < lo:
         tail = segments.pop()
         prev = segments.pop()
         combo = prev + tail
-        cut = max(lo, min(len(combo) // 2, len(combo) - lo))
-        segments.append(combo[:cut])
-        segments.append(combo[cut:])
-    assert all(len(s) <= hi for s in segments), "chunk over hard token max"
+        mid = len(combo) // 2
+        best, best_gap = mid, None
+        for cut in range(max(lo, mid - 32), min(len(combo) - lo, mid + 32) + 1):
+            a, b = split(combo, cut)
+            ma, mb = measure(a), measure(b)
+            if ma > hi or mb > hi:
+                continue
+            gap = abs(ma - mb)
+            if best_gap is None or gap < best_gap:
+                best, best_gap = cut, gap
+        a, b = split(combo, best)
+        segments.extend([a, b])
+    assert all(measure(s) <= hi for s in segments), "chunk over hard measured max"
     return segments
 
 
 def _chunk_fn(tokenizer_path):
-    """text -> list[chunk_text] of 512-1024 tokens via the gate tokenizer; every chunk
-    is hard-capped at 1024 tokens (a short tail repartitions the last boundary, never
-    overflows). Word-count fallback (flagged in the manifest) only if the HF tokenizer
-    is unavailable."""
+    """text -> list[chunk_text] each measuring 512-1024 tokens under the GATE
+    TOKENIZER. The cap is checked on decode->re-ENCODED text, not on sliced token ids:
+    byte-level BPE is not invertible at cut points and a 1024-id slice decodes to text
+    that re-encodes up to ~1028 (measured), so an id-based cap emits >1024 chunks.
+    A whole document shorter than MIN_FRAGMENT_TOKENS is dropped; single-doc chunks of
+    128-511 tokens are kept (the xs/s length strata). Word-count fallback (flagged in
+    the manifest) only if the HF tokenizer is unavailable."""
     try:
         from tokenizers import Tokenizer
         tok = Tokenizer.from_file(tokenizer_path)
 
+        def ntok(text):
+            return len(tok.encode(text).ids)
+
+        def measured(ids):
+            return len(tok.encode(tok.decode(ids)).ids)
+
         def chunks(text, lo=512, hi=1024):
             ids = tok.encode(text).ids
-            if not ids:
+            if not ids or len(ids) < MIN_FRAGMENT_TOKENS:
                 return []
-            win = [ids[i:i + hi] for i in range(0, len(ids), hi)]
-            win = [list(s) for s in _cap_chunks(win, lo, hi)]
-            return [tok.decode(w) for w in win]
+            segs, start = [], 0
+            while start < len(ids):
+                end = min(start + hi, len(ids))
+                # shrink to a boundary whose DECODED text re-encodes within the max
+                while end > start and measured(ids[start:end]) > hi:
+                    end -= 1
+                if end == start:
+                    end = start + 1  # forward progress on a pathological token
+                segs.append(ids[start:end])
+                start = end
+            if len(segs) == 1 and measured(segs[0]) < lo:
+                return [tok.decode(segs[0])]  # lone 128-511 doc: keep as one short chunk
+            segs = _cap_segments(
+                segs, lo, hi, measured, lambda s, k: (s[:k], s[k:]))
+            return [tok.decode(s) for s in segs]
 
-        return chunks, "hf-tokenizer"
+        return chunks, "hf-tokenizer", ntok
     except Exception:
+        def ntok(text):
+            return len(text.split())  # ~1 token/word proxy for the fallback path
+
         def chunks(text, lo=120, hi=260):  # ~4 tokens/word proxy
             words = text.split()
             if not words:
                 return []
             win = [words[i:i + hi] for i in range(0, len(words), hi)]
-            win = _cap_chunks(win, lo, hi)
+            win = _cap_segments(win, lo, hi, len, lambda s, k: (s[:k], s[k:]))
             return [" ".join(s) for s in win]
-        return chunks, "word-fallback"
+        return chunks, "word-fallback", ntok
 
 
 def _iter_paths(kind2glob):
@@ -122,7 +157,7 @@ def _iter_paths(kind2glob):
 
 def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
           code_glob=None, code_model_path=None):
-    chunk_fn, tok_kind = _chunk_fn(tokenizer_path)
+    chunk_fn, tok_kind, ntok = _chunk_fn(tokenizer_path)
     # Code is optional: ae owns AST-boundary code chunks (l2_code_chunk_pool.py)
     # with ppl=null until a code KenLM exists. NL-only runs emit pool_en_c4.jsonl.
     models = {"nl": InterpolatedKneserNey.load(nl_model_path)}
@@ -201,6 +236,10 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
     rng = random.Random(seed)
     reservoirs = collections.defaultdict(list)
     chunk_pop = collections.Counter()
+    # whole scorable docs the chunker returned nothing for: these are the
+    # <MIN_FRAGMENT_TOKENS extreme fragments, dropped and COUNTED (never silent).
+    dropped_docs = collections.Counter()
+    dropped_tokens = collections.Counter()
     for p, items in by_path.items():
         by_line = {r[1]: (kind, r) for kind, r in items}
         with open(p, encoding="utf-8") as fh:
@@ -211,9 +250,13 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
                 _, _, source, url, _charlen, _ppl = r
                 text = json.loads(line).get("content") or ""
                 chs = chunk_fn(text)
-                if not chs:
-                    continue
                 key = key_of[kind][(p, lineno)]
+                if not chs:
+                    # pass1 already scored this doc, so empty here = whole doc <
+                    # MIN_FRAGMENT_TOKENS: dropped, counted per kind, not silent.
+                    dropped_docs[kind] += 1
+                    dropped_tokens[kind] += ntok(text)
+                    continue
                 q = quotas.get(key, 0)
                 parent = content_doc_id(text)
                 for ci, ch in enumerate(chs):
@@ -247,9 +290,20 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
 
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     written = 0
+    over_max = collections.Counter()
+    short_kept = collections.Counter()      # 128-511 token single-doc chunks kept
+    short_kept_tokens = collections.Counter()
+    token_hist = collections.Counter()
     with open(out, "w", encoding="utf-8") as fo:
         for key in sorted(reservoirs):
             for entry in reservoirs[key]:
+                tlen = ntok(entry["content"])
+                token_hist[min(tlen // 128 * 128, 2048)] += 1
+                if tlen > 1024:
+                    over_max[key[0]] += 1
+                if tlen < 512:
+                    short_kept[key[0]] += 1
+                    short_kept_tokens[key[0]] += tlen
                 fo.write(json.dumps(entry, ensure_ascii=False) + "\n")
                 written += 1
 
@@ -263,6 +317,18 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
         "ppl_bands_note": "low<=q33<=mid<=q67<high on the scorable pool; descriptive, not a cut",
         "n_docs_scored": {k: len(refs[k]) for k in refs},
         "n_chunks_written": written,
+        "min_fragment_tokens": MIN_FRAGMENT_TOKENS,
+        "dropped_fragments": {
+            k: {"docs": dropped_docs.get(k, 0),
+                "tokens": dropped_tokens.get(k, 0)}
+            for k in targets},
+        "short_chunks_kept_128_511": {
+            k: {"chunks": short_kept.get(k, 0),
+                "tokens": short_kept_tokens.get(k, 0)}
+            for k in targets},
+        "chunks_over_1024_must_be_zero": {k: over_max.get(k, 0) for k in targets},
+        "chunk_token_hist_128bins": {str(k): token_hist[k]
+                                     for k in sorted(token_hist)},
         "strata": {
             "/".join(k): {"quota": quotas.get(k, 0),
                           "doc_population": doc_pop.get(k, 0),
@@ -308,21 +374,35 @@ def _allocate_quotas(doc_pop, target):
 def _selftest() -> int:
     import tempfile
 
-    # hard-max contract: a short trailing window must NEVER overflow the previous
-    # full window to >1024 (encoder truncation, the de-399 shape). Exhaustive over
-    # every possible tail length 1..511 and multiples of the window.
+    # hard-max contract on MEASURED segments: a short trailing window must NEVER
+    # overflow the previous full window to >hi (encoder truncation, the de-399
+    # shape). Exhaustive over every possible tail length 1..lo-1 and 0-3 full windows.
     for hi, lo in ((1024, 512), (260, 120)):
+        def split(s, k):
+            return s[:k], s[k:]
         for n_full in range(0, 4):
             for tail in range(0, lo):
                 segs = [[0] * hi for _ in range(n_full)]
                 if tail:
                     segs.append([0] * tail)
-                out = _cap_chunks([list(s) for s in segs], lo, hi)
+                out = _cap_segments([list(s) for s in segs], lo, hi, len, split)
                 assert all(len(s) <= hi for s in out), (hi, n_full, tail, out)
                 if segs and 0 < len(segs[-1]) < lo and n_full >= 1:
                     assert len(out[-1]) >= lo, (hi, n_full, tail, out)
+    # a MEASURED-drift measure (decode->re-encode inflates near the boundary) still
+    # caps: measure = id count + 4 on long pieces, emulating the observed +4 BPE drift.
+    def drift(s):  # emulate decode->re-encode +4 inflation on long pieces
+        return len(s) + (4 if len(s) >= 512 else 0)
+
+    def drift_split(s, k):
+        return s[:k], s[k:]
+
+    drift_in = [[0] * 1024, [0] * 40]
+    drift_out = _cap_segments([list(s) for s in drift_in], 512, 1024, drift,
+                              drift_split)
+    assert all(drift(s) <= 1024 for s in drift_out), [drift(s) for s in drift_out]
     # the word-fallback chunker itself honors the cap on a tail-triggering doc
-    wchunks, wkind = _chunk_fn("")  # no tokenizer file -> word fallback
+    wchunks, wkind, _ = _chunk_fn("")  # no tokenizer file -> word fallback
     assert wkind == "word-fallback"
     for n_words in (261, 300, 521, 1000, 260 * 3 + 7):
         c = wchunks(" ".join(f"w{i}" for i in range(n_words)))
