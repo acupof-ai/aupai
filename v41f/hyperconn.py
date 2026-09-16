@@ -57,13 +57,16 @@ class HyperConn(nn.Module):
         self.norm_eps = norm_eps
         mix_hc = (2 + hc_mult) * hc_mult
         hc_dim = hc_mult * dim
-        # Block builds these in fp32; keep them fp32 regardless of the stream dtype.
-        self.hc_attn_fn = nn.Parameter(torch.empty(mix_hc, hc_dim))
-        self.hc_ffn_fn = nn.Parameter(torch.empty(mix_hc, hc_dim))
-        self.hc_attn_base = nn.Parameter(torch.empty(mix_hc))
-        self.hc_ffn_base = nn.Parameter(torch.empty(mix_hc))
-        self.hc_attn_scale = nn.Parameter(torch.empty(3))
-        self.hc_ffn_scale = nn.Parameter(torch.empty(3))
+        # ref Block builds these under set_dtype(float32). Construct them explicitly fp32 so
+        # the dtype does not depend on the global default at construction time: Block is
+        # instantiated inside a set_default_dtype(bfloat16) context, under which a plain
+        # torch.empty would wrongly make the coefficient tables bf16 (ref keeps them fp32).
+        self.hc_attn_fn = nn.Parameter(torch.empty(mix_hc, hc_dim, dtype=torch.float32))
+        self.hc_ffn_fn = nn.Parameter(torch.empty(mix_hc, hc_dim, dtype=torch.float32))
+        self.hc_attn_base = nn.Parameter(torch.empty(mix_hc, dtype=torch.float32))
+        self.hc_ffn_base = nn.Parameter(torch.empty(mix_hc, dtype=torch.float32))
+        self.hc_attn_scale = nn.Parameter(torch.empty(3, dtype=torch.float32))
+        self.hc_ffn_scale = nn.Parameter(torch.empty(3, dtype=torch.float32))
         self.reset_parameters()
 
     def reset_parameters(self):

@@ -2301,6 +2301,9 @@ def main():
         # DeepSeek-V4.1 reference, so a new P0 module needs no map entry (the runner does),
         # and the suite is the oracle-equivalence proof for the whole v41f build.
         "tests/v41f/p0_selftest.py",
+        # The v41f P1 assembly suite (de): whole-Block (then whole-Model) allclose against
+        # the same vendored reference, proving the P0 leaf modules are wired together.
+        "tests/v41f/p1_selftest.py",
         # v41f-S config-formula total/active parameter counter (3b); --selftest pins a
         # hand-computed tiny config so the total=sum-of-modules identity cannot silently rot.
         "scripts/v41f_param_count.py",
