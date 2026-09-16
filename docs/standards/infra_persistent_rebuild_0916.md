@@ -1,8 +1,8 @@
 # Infra provisioning rebuild after the 2026-09-16 pod loss
 
 Scope: standing up a NEW node so the data funnel has somewhere to run. This is the
-infrastructure precondition that `docs/standards/data_pipeline_rebuild_0916.md` (PR #404)
-line 5-6 assumes and does not describe — persistent volumes, the static pod, the `~/bin/pod`
+infrastructure precondition that `docs/standards/data_pipeline_rebuild_0916.md` (PR #404,
+opening scope note) assumes and does not describe — persistent volumes, the static pod, the `~/bin/pod`
 transport, H20 visibility, code delivery, claims, and backup. Data regeneration (tokenizer
 gates, corpora, KenLM, pools, κ labels) lives in that document and is not repeated here.
 
@@ -25,8 +25,9 @@ user's release.
 **Root cause.** The working tree `/work/aupai` was a Kubernetes **emptyDir**
 (`scripts/harness.py:272` `EPHEMERAL_MOUNTS = ("/work",)`). An emptyDir is created when the
 pod is scheduled and **deleted with the pod**; on 2026-09-16 the static pod was permanently
-removed and every byte under it — ~662 GB of checkpoints, corpora, token caches, the token
-cache tree, runs/ ledgers, and the gate tokenizer copy — was wiped. The container deleting
+removed and every byte under it — roughly 662 GB (measured at teardown, not a recorded
+fact: checkpoints, corpora, token caches, runs/ ledgers, and the gate tokenizer copy — was
+wiped. The container deleting
 cleanly was the failure, not a crash: nothing about an emptyDir survives pod removal.
 
 `check_root_durable` named this exact risk for the whole campaign
