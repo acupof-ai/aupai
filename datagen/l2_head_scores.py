@@ -183,10 +183,21 @@ def build_groups(rows, scorer_version=None, rubric_dim=None, by_lang=True):
         if rubric_dim not in allowed:
             raise HeadScoreError(f"rubric_dim {rubric_dim!r} is not a rubric dimension")
     groups = {}
+    # one document at most once per (group, pinned version): duplicates break quota
+    # conservation exactly as in score_quota.pin_groups -- loud, never silently double-keep.
+    seen = set()
     for r in sel:
         if rubric_dim is not None and rubric_dim not in r["dims"]:
             raise HeadScoreError(f"row {r['doc_id']} ({r['rubric_kind']}) lacks {rubric_dim}")
         key = (r["domain"], r["lang"]) if by_lang else (r["domain"], None)
+        identity = (key, r["doc_id"])
+        if identity in seen:
+            raise HeadScoreError(
+                f"duplicate doc_id {r['doc_id']!r} in group {key} for l2-head/"
+                f"{r['scorer_version']}; reconcile the head-score shards (one score per doc "
+                "per pinned version) before selecting a quota"
+            )
+        seen.add(identity)
         groups.setdefault(key, []).append((r["doc_id"], _row_value(r, rubric_dim)))
     return groups, (scorer_version or versions[0])
 
@@ -275,6 +286,14 @@ def _selftest():
         pass
     else:
         raise AssertionError("mixed head versions must raise")
+
+    # a duplicate doc_id in one pinned group refuses (would double-retain under a quota)
+    try:
+        build_groups(rows + [dict(rows[0])], "h1")
+    except HeadScoreError:
+        pass
+    else:
+        raise AssertionError("duplicate l2-head doc_id must raise")
 
     # append/load round trip
     with tempfile.TemporaryDirectory() as td:
