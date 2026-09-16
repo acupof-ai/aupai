@@ -1025,6 +1025,12 @@ def main():
         # targeted domain / a quota under the survival floor / an unpinned multi-version
         # ledger each raise rather than silently wiping or blending snapshots.
         "datagen/score_quota.py",
+        # The L2 head continuous-prediction score schema + quota adapter (de). Registered
+        # because it is the boundary that keeps a continuous float prediction (which can sit
+        # outside 1..5) from being clamped/rounded into the int teacher-label ledger; the
+        # selftest pins unquantized pass-through, exact 4-dim keys per rubric kind, the
+        # mean/single-dim adapter ranking through score_quota, and multi-version refusal.
+        "datagen/l2_head_scores.py",
         # The L2 quality-encoder training loader (de). Registered because the only thing it
         # guarantees is that a teacher label is bound to the RIGHT text chunk: it joins by
         # doc_id (not row order), requires all four l3_rubric dims, splits at document
