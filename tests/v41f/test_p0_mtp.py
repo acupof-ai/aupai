@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).absolute().parents[2]))
 from v41f.mtp import DSparkMTP
 
 DIM = 4
