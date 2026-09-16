@@ -1815,6 +1815,13 @@ def main():
         # only surfaces later as a generation collapse, which is how the CSA compress branch's
         # own leak survived until someone perturbed a key and watched earlier outputs move.
         "scripts/test_v4_attn.py",
+        # Added in the same commit as the file itself (deadlock pattern below). genB's
+        # independent edge validator for datagen/l2_code_chunk_pool (#399). CPU only: the
+        # --selftest path uses synthetic fixtures with a char/4 counter (no tokenizer, no
+        # corpus) and includes the semicolon-multi-statement regression cases that reproduce
+        # the real partition_fail root cause. The real-BPE mechanism check and the corpus
+        # audit take explicit --tokenizer/--root and do not run on the default --selftest path.
+        "datagen/test_l2_code_chunks_edges.py",
         # Added in the same commit as the file itself: selftests_are_gated refuses to
         # register a path that does not exist, so registering from main first would have
         # been red until the file landed, and landing the file first is red the other way.
