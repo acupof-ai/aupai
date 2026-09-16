@@ -56,6 +56,7 @@ from dataclasses import dataclass
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datagen.l3_rubric import CODE_RUBRIC, NL_RUBRIC  # noqa: E402
+from datagen.score_ledger import content_doc_id as _cdid  # noqa: E402
 from datagen.score_ledger import load_rows  # noqa: E402
 
 # Dimension names/order are NOT defined here: they are imported from the single source
@@ -474,59 +475,71 @@ def _selftest():
         sides = {side for side, exs in (("t", t1), ("v", v1)) for ex in exs if ex.doc_id == d}
         assert len(sides) == 1, f"{d} split across train and val"
 
-    # LEAK FIX known-answer world: a production multi-chunk document (3 chunks, each with a
-    # DISTINCT sample_id but one parent_doc_id) must have ALL chunks on one split side across
-    # many seeds. Keying the split on the per-chunk sample_id (the bug) would split them.
-    from datagen.score_ledger import content_doc_id as _cdid
-
+    # LEAK FIX known-answer world. MANY multi-chunk parents (40 parents x 3 chunks), each
+    # chunk with a DISTINCT sample_id but one parent_doc_id. We call the REAL split_pairs
+    # (not the hash helper directly) at val_frac=0.5 across 50 seeds and assert, per seed,
+    # that (a) every parent's three chunks land on ONE side, and (b) at least one parent goes
+    # to val, so a keying change to the per-chunk id cannot pass by dumping everything into
+    # train. Keying the bucket on chunk_id (the historical bug) splits a parent across
+    # train/val on seed 0 of this exact world.
     leak_dir = os.path.join(tmp, "leak")
     os.makedirs(leak_dir, exist_ok=True)
     led_p = os.path.join(leak_dir, "ledger.jsonl")
     pool_p = os.path.join(leak_dir, "pool.jsonl")
-    parent = _cdid("one long source document body text")
-    chunk_texts = ["one long source", "source document body", "body text padding xyz"]
+    N_PARENTS = 40
     with open(led_p, "w") as lf, open(pool_p, "w") as pf:
-        lf.write(
-            json.dumps(
-                ScoreRow(
-                    doc_id=parent,
-                    domain="py",
-                    lang="en",
-                    scorer_name="l3-rubric",
-                    scorer_version="r1",
-                    ts="2026-09-16T00:00:00Z",
-                    rubric_dims={d: 4 for d in expected},
-                    rubric_kind="code",
-                    model="t",
-                    backend="stub",
-                    stratum=None,
-                ).to_dict()
-            )
-            + "\n"
-        )
-        for ci, ct in enumerate(chunk_texts):
-            pf.write(
-                json.dumps({"sample_id": _cdid(ct), "parent_doc_id": parent, "chunk_idx": ci, "content": ct})
+        for pi in range(N_PARENTS):
+            parent = f"parent{pi:03d}"
+            lf.write(
+                json.dumps(
+                    ScoreRow(
+                        doc_id=parent,
+                        domain="py",
+                        lang="en",
+                        scorer_name="l3-rubric",
+                        scorer_version="r1",
+                        ts="2026-09-16T00:00:00Z",
+                        rubric_dims={d: 4 for d in expected},
+                        rubric_kind="code",
+                        model="t",
+                        backend="stub",
+                        stratum=None,
+                    ).to_dict()
+                )
                 + "\n"
             )
+            for ci in range(3):
+                ct = f"parent {pi} chunk {ci} " + f"word{pi}x{ci} " * 4
+                pf.write(
+                    json.dumps(
+                        {"sample_id": _cdid(ct), "parent_doc_id": parent, "chunk_idx": ci, "content": ct}
+                    )
+                    + "\n"
+                )
     leak_pairs = load_pairs(led_p, pool_p)
-    assert len(leak_pairs) == 3, len(leak_pairs)
-    assert {p.doc_id for p in leak_pairs} == {parent}
-    assert {p.chunk_idx for p in leak_pairs} == {0, 1, 2}
-    # every chunk carries the PARENT as doc_id; hashing the bucket on doc_id directly shows
-    # the three distinct chunks share one bucket across many seeds (the split guard that
-    # requires a non-empty val side is exercised separately on the 21-doc pool above).
+    assert len(leak_pairs) == N_PARENTS * 3, len(leak_pairs)
+    leak_parents = {p.doc_id for p in leak_pairs}
+    assert len(leak_parents) == N_PARENTS
+    # the three chunks of a parent have DISTINCT sample_ids (else the bug were unprovable)
+    one = next(iter(leak_parents))
+    assert len({p.chunk_id for p in leak_pairs if p.doc_id == one}) == 3
+    split_seen_val = False
     for seed in range(50):
-        sides = {"t" if _hash_bucket(seed, p.doc_id) < 0.5 else "v" for p in leak_pairs}
-        assert len(sides) == 1, f"seed {seed}: a parent's 3 chunks split across train/val"
-    # the OLD bug keyed on the per-chunk id: confirm the three chunk_ids would NOT agree, so
-    # the test actually discriminates the fix instead of passing on an identical-id fluke.
-    distinct_chunk_buckets = {_hash_bucket(0, p.chunk_id) < 0.5 for p in leak_pairs}
-    assert len(distinct_chunk_buckets) > 1, "chunks must have distinct sample_ids to prove the fix"
+        tr, va = split_pairs(leak_pairs, 0.5, seed=seed)
+        side_of = {}
+        for exs, side in ((tr, "t"), (va, "v")):
+            for ex in exs:
+                side_of.setdefault(ex.doc_id, set()).add(side)
+        split = [d for d, sides in side_of.items() if len(sides) > 1]
+        assert not split, f"seed {seed}: parents split across train/val: {split[:3]}"
+        if va:
+            split_seen_val = True
+    assert split_seen_val, "across 50 seeds no parent ever landed in val -- test is vacuous"
 
     # a CHUNK-level label (doc_id == a chunk sample_id, not the parent) lands on exactly one
     # (parent, chunk_idx); it must NOT fan out to the document's other chunks.
-    cid0 = leak_pairs[0].chunk_id
+    cid0 = next(p.chunk_id for p in leak_pairs if p.chunk_idx == 0)
+    cparent = next(p.doc_id for p in leak_pairs if p.chunk_id == cid0)
     led_c = os.path.join(leak_dir, "ledger_chunk.jsonl")
     with open(led_c, "w") as lf:
         lf.write(
@@ -548,7 +561,8 @@ def _selftest():
             + "\n"
         )
     chunk_pairs = load_pairs(led_c, pool_p)
-    assert len(chunk_pairs) == 1 and chunk_pairs[0].doc_id == parent and chunk_pairs[0].chunk_id == cid0
+    assert len(chunk_pairs) == 1
+    assert chunk_pairs[0].doc_id == cparent and chunk_pairs[0].chunk_id == cid0
 
     # missing text chunk -> loud
     bad_pool = os.path.join(tmp, "bad.jsonl")
