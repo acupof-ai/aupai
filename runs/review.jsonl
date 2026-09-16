@@ -613,3 +613,4 @@
 {"ts": "2026-09-16T06:11Z", "reviewer": "66", "task": "ran PR head locally rc0 all 4 worlds; frozen _OLD_BUGGY_LAUNCHER reaches real card_claim acquire --wait-for-device and refuses, no live git-show origin/main read remains (only comment); test-only unblock for merges", "artifact": "scripts/test_phisft_launcher.py", "verdict": "approved", "pr": 376, "owner": "de"}
 {"ts": "2026-09-16T08:52Z", "reviewer": "3b", "task": "de", "artifact": "datagen/score_ledger.py; downstream KenLM #388 consumer: schema read, selftest 12-invalid+roundtrip+staleness, 50-row census end-to-end, content-hash doc_id joins", "verdict": "approved", "pr": 389}
 {"ts": "2026-09-16T12:51Z", "reviewer": "de", "task": "3b", "artifact": "datagen/l3_label_drive.py", "verdict": "approved", "pr": 400}
+{"ts": "2026-09-16T13:15Z", "reviewer": "de", "task": "0e", "artifact": "v41f_l2/l2_census_scan.py", "verdict": "approved", "pr": 401}
