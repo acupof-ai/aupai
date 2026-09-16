@@ -65,10 +65,28 @@ def ppl_band(ppl, lo, hi):
     return "low" if ppl <= lo else "mid" if ppl <= hi else "high"
 
 
+def _cap_chunks(segments, lo, hi):
+    """Impose the HARD max: every emitted segment is <= hi items. Sliding windows
+    of width hi leave a 1..lo-1 tail; folding it into the previous full window would
+    overflow to hi+lo-1 (encoder truncation). Instead repartition the last
+    hi+tail items into two pieces both in [lo, hi]. A lone document shorter than lo
+    stays one short chunk (represents the xs length band)."""
+    if len(segments) >= 2 and 0 < len(segments[-1]) < lo:
+        tail = segments.pop()
+        prev = segments.pop()
+        combo = prev + tail
+        cut = max(lo, min(len(combo) // 2, len(combo) - lo))
+        segments.append(combo[:cut])
+        segments.append(combo[cut:])
+    assert all(len(s) <= hi for s in segments), "chunk over hard token max"
+    return segments
+
+
 def _chunk_fn(tokenizer_path):
-    """text -> list[chunk_text] of 512-1024 tokens via the gate tokenizer; a short
-    final tail is folded into the previous chunk. Word-count fallback (flagged in the
-    manifest) only if the HF tokenizer is unavailable."""
+    """text -> list[chunk_text] of 512-1024 tokens via the gate tokenizer; every chunk
+    is hard-capped at 1024 tokens (a short tail repartitions the last boundary, never
+    overflows). Word-count fallback (flagged in the manifest) only if the HF tokenizer
+    is unavailable."""
     try:
         from tokenizers import Tokenizer
         tok = Tokenizer.from_file(tokenizer_path)
@@ -77,15 +95,9 @@ def _chunk_fn(tokenizer_path):
             ids = tok.encode(text).ids
             if not ids:
                 return []
-            out, start = [], 0
-            while start < len(ids):
-                w = ids[start:start + hi]
-                if 0 < len(w) < lo and out:
-                    out[-1] = out[-1] + w
-                else:
-                    out.append(w)
-                start += hi
-            return [tok.decode(w) for w in out]
+            win = [ids[i:i + hi] for i in range(0, len(ids), hi)]
+            win = [list(s) for s in _cap_chunks(win, lo, hi)]
+            return [tok.decode(w) for w in win]
 
         return chunks, "hf-tokenizer"
     except Exception:
@@ -93,18 +105,9 @@ def _chunk_fn(tokenizer_path):
             words = text.split()
             if not words:
                 return []
-            out, cur = [], []
-            for w in words:
-                cur.append(w)
-                if len(cur) >= hi:
-                    out.append(" ".join(cur))
-                    cur = []
-            if cur:
-                if len(cur) < lo and out:
-                    out[-1] += " " + " ".join(cur)
-                else:
-                    out.append(" ".join(cur))
-            return out
+            win = [words[i:i + hi] for i in range(0, len(words), hi)]
+            win = _cap_chunks(win, lo, hi)
+            return [" ".join(s) for s in win]
         return chunks, "word-fallback"
 
 
@@ -304,6 +307,26 @@ def _allocate_quotas(doc_pop, target):
 
 def _selftest() -> int:
     import tempfile
+
+    # hard-max contract: a short trailing window must NEVER overflow the previous
+    # full window to >1024 (encoder truncation, the de-399 shape). Exhaustive over
+    # every possible tail length 1..511 and multiples of the window.
+    for hi, lo in ((1024, 512), (260, 120)):
+        for n_full in range(0, 4):
+            for tail in range(0, lo):
+                segs = [[0] * hi for _ in range(n_full)]
+                if tail:
+                    segs.append([0] * tail)
+                out = _cap_chunks([list(s) for s in segs], lo, hi)
+                assert all(len(s) <= hi for s in out), (hi, n_full, tail, out)
+                if segs and 0 < len(segs[-1]) < lo and n_full >= 1:
+                    assert len(out[-1]) >= lo, (hi, n_full, tail, out)
+    # the word-fallback chunker itself honors the cap on a tail-triggering doc
+    wchunks, wkind = _chunk_fn("")  # no tokenizer file -> word fallback
+    assert wkind == "word-fallback"
+    for n_words in (261, 300, 521, 1000, 260 * 3 + 7):
+        c = wchunks(" ".join(f"w{i}" for i in range(n_words)))
+        assert all(len(x.split()) <= 260 for x in c), (n_words, [len(x.split()) for x in c])
 
     sents = ["the", "model", "reads", "each", "document", "and", "scores",
              "the", "words", "in", "order", "natural", "prose", "repeats",
