@@ -17,14 +17,14 @@ Input contract
    redefined here. Every label row must carry all four dims of its kind, each int 1..5
    (validate_row enforces the range; this module enforces the SET and joins to text):
        content_quality, factual_correctness, complexity, educational_or_code_value
-2. Text pool: JSONL, one text chunk per row, joined to a label by doc_id:
-       {"doc_id": <content hash, equals the ledger doc_id>, "content": <text>,
-        "chunk_idx": 0}
-   The 66 sampler calls the id field "sample_id", which is accepted as an alias. chunk_idx
-   is optional and defaults to 0; when one document is split into multiple chunks each row
-   carries its own chunk_idx, and (doc_id, chunk_idx) must be unique. Labels are per
-   document, so every chunk of a document inherits that document's 4-vector; chunk_idx is
-   what proves a label is bound to the right chunk instead of by row position.
+2. Text pool: JSONL, one text chunk per row in the production shape (l2_label_pool_build):
+       {"sample_id": content_doc_id(chunk), "parent_doc_id": content_doc_id(whole doc),
+        "chunk_idx": <int>, "content": <chunk text>}
+   The split/leak unit is parent_doc_id: all chunks of one source document share it. A row
+   without parent_doc_id (single-chunk / legacy pools may use plain "doc_id") falls back to
+   treating that chunk as its own document. (parent_doc_id, chunk_idx) must be unique, and a
+   chunk sample_id may not repeat. A DOCUMENT-level label (ledger doc_id == parent_doc_id) is
+   inherited by every chunk; a CHUNK-level label (doc_id == a sample_id) lands on one chunk.
 
 Guarantees
 - join is by doc_id, never by file order: a missing text chunk is a loud LookupError and a
@@ -56,6 +56,7 @@ from dataclasses import dataclass
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from datagen.l3_rubric import CODE_RUBRIC, NL_RUBRIC  # noqa: E402
+from datagen.score_ledger import content_doc_id as _cdid  # noqa: E402
 from datagen.score_ledger import load_rows  # noqa: E402
 
 # Dimension names/order are NOT defined here: they are imported from the single source
@@ -75,12 +76,13 @@ class DatasetJoinError(ValueError):
 
 @dataclass
 class Example:
-    doc_id: str
+    doc_id: str  # PARENT document id (split/group key); all chunks of one doc share it
     chunk_idx: int
     text: str
     labels: tuple  # floats in 1..5, ordered by RUBRIC_DIMS[rubric_kind]
     rubric_kind: str  # "code" | "natural_language"; identifies the label order
     domain: str  # corpus domain, carried into the batch for per-domain rank loss
+    chunk_id: str = ""  # the CHUNK content id (sample_id); the (doc,chunk) join handle
 
 
 def _iter_jsonl(path):
@@ -93,43 +95,70 @@ def _iter_jsonl(path):
 
 
 def load_text_pool(path):
-    """{(doc_id, chunk_idx): text}. Accepts sample_id as the doc_id alias. Loud on a
-    duplicate chunk key or a missing/empty id or content."""
-    pool = {}
+    """Index the chunk pool for a DOCUMENT-level join.
+
+    Returns (chunks, chunk_to_parent):
+      chunks           {(parent_doc_id, chunk_idx): (content, chunk_id)}
+      chunk_to_parent   {chunk_id: (parent_doc_id, chunk_idx)}
+
+    The production pool (l2_label_pool_build) writes one row PER CHUNK with
+    ``sample_id = content_doc_id(chunk)`` (the chunk's own id), ``parent_doc_id`` (the whole
+    source document) and ``chunk_idx``. The train/val split and leak prevention MUST key on
+    the PARENT, never the per-chunk sample_id -- otherwise chunks of one source document hash
+    to different sides and leak. The chunk_id survives only as the (doc,chunk) join handle.
+    Rows without parent_doc_id (single-chunk / legacy pools) fall back to the chunk itself as
+    the document. Loud on a duplicate (parent, chunk_idx), duplicate chunk_id, or bad id."""
+    chunks = {}
+    chunk_to_parent = {}
     for ln, row in _iter_jsonl(path):
-        doc_id = row.get("doc_id") or row.get("sample_id")
-        if not doc_id:
-            raise DatasetJoinError(f"{path}:{ln}: text row has no doc_id/sample_id")
+        chunk_id = row.get("sample_id") or row.get("doc_id")
+        if not chunk_id:
+            raise DatasetJoinError(f"{path}:{ln}: text row has no sample_id/doc_id")
         content = row.get("content")
         if not isinstance(content, str) or not content:
-            raise DatasetJoinError(f"{path}:{ln}: text for {doc_id} has empty content")
+            raise DatasetJoinError(f"{path}:{ln}: text for {chunk_id} has empty content")
         chunk_idx = row.get("chunk_idx", 0)
         if not isinstance(chunk_idx, int) or isinstance(chunk_idx, bool) or chunk_idx < 0:
             raise DatasetJoinError(f"{path}:{ln}: chunk_idx must be a non-negative int")
-        key = (doc_id, chunk_idx)
-        if key in pool:
+        parent = row.get("parent_doc_id") or chunk_id
+        if not isinstance(parent, str) or not parent:
+            raise DatasetJoinError(f"{path}:{ln}: parent_doc_id must be a non-empty string")
+        key = (parent, chunk_idx)
+        if key in chunks:
             raise DatasetJoinError(f"{path}:{ln}: duplicate chunk {key}")
-        pool[key] = content
-    return pool
+        if chunk_id in chunk_to_parent:
+            raise DatasetJoinError(
+                f"{path}:{ln}: duplicate chunk sample_id {chunk_id} under "
+                f"{chunk_to_parent[chunk_id]} and {key}"
+            )
+        chunks[key] = (content, chunk_id)
+        chunk_to_parent[chunk_id] = key
+    return chunks, chunk_to_parent
 
 
 def load_pairs(
     ledger_path, text_pool_path, *, scorer_name=DEFAULT_SCORER, scorer_version=None, rubric_kind=None
 ):
     """Validate ledger rows (score_ledger.validate_row via load_rows), keep the pinned
-    rubric scorer, and join each label to its text chunk. Returns list[Example].
+    rubric scorer, and join each label to its text chunk(s). Returns list[Example].
 
-    Two labels for the same (doc_id, chunk set) under the pinned scorer/version is a loud
-    error: an append-only ledger can carry a re-label, and silently emitting duplicate
-    training pairs would double-weight that document. Pin the version you mean."""
+    The split/leak unit is the PARENT document. A label's ``doc_id`` resolves to a parent in
+    one of two ways, in order:
+      1. it is a parent_doc_id in the pool -> the label covers the whole document and every
+         chunk inherits it;
+      2. it is a chunk sample_id -> the label targets that one chunk (resolved via
+         chunk_to_parent), so it lands on exactly that (parent, chunk_idx).
+    Two labels for one parent under the pinned scorer/version is a loud error (an append-only
+    ledger can carry a re-label; silently double-weighting a document is the failure this
+    prevents). Pin the version you mean."""
     rows = load_rows(ledger_path)
-    pool = load_text_pool(text_pool_path)
-    # one index pass: doc_id -> sorted chunk indices, so the join is O(labels + pool)
+    chunks, chunk_to_parent = load_text_pool(text_pool_path)
+    # one index pass: parent -> sorted chunk indices, O(labels + pool)
     chunks_of = {}
-    for doc_id, ci in pool:
-        chunks_of.setdefault(doc_id, []).append(ci)
+    for parent, ci in chunks:
+        chunks_of.setdefault(parent, []).append(ci)
     pairs = []
-    labeled = set()
+    labeled_parents = set()
     for r in rows:
         if r["scorer_name"] != scorer_name or r["rubric_dims"] is None:
             continue
@@ -149,19 +178,25 @@ def load_pairs(
             raise DatasetJoinError(
                 f"{r['doc_id']} ({kind}): rubric row missing dims {missing}; requires {list(dim_order)}"
             )
-        doc_id = r["doc_id"]
-        if doc_id in labeled:
+        label_id = r["doc_id"]
+        if label_id in chunks_of:
+            parent = label_id  # document-level label
+            target_chunks = chunks_of[parent]
+        elif label_id in chunk_to_parent:  # chunk-level label
+            parent, ci = chunk_to_parent[label_id]
+            target_chunks = [ci]
+        else:
+            raise DatasetJoinError(f"{label_id}: labeled but no matching parent doc or chunk in the pool")
+        if parent in labeled_parents:
             raise DatasetJoinError(
-                f"{doc_id}: two {scorer_name}/{r['scorer_version']} rubric rows for one doc; "
-                "pin a single version (a re-label must not silently double-weight a doc)"
+                f"{parent}: two {scorer_name}/{r['scorer_version']} rubric labels for one "
+                "parent doc; pin a single version (a re-label must not double-weight a doc)"
             )
-        chunk_idxs = chunks_of.get(doc_id)
-        if not chunk_idxs:
-            raise DatasetJoinError(f"{doc_id}: labeled but no text chunk in the pool")
-        labeled.add(doc_id)
+        labeled_parents.add(parent)
         labels = tuple(float(dims[d]) for d in dim_order)
-        for ci in sorted(chunk_idxs):
-            pairs.append(Example(doc_id, ci, pool[(doc_id, ci)], labels, kind, r["domain"]))
+        for ci in sorted(target_chunks):
+            content, chunk_id = chunks[(parent, ci)]
+            pairs.append(Example(parent, ci, content, labels, kind, r["domain"], chunk_id))
     return pairs
 
 
@@ -366,10 +401,54 @@ def _selftest():
 
     with open(pool, "w", encoding="utf-8") as f:
         for i in range(20):
-            # doc00 also carries a second chunk to exercise chunk_idx alignment
-            f.write(json.dumps({"sample_id": f"doc{i:02d}", "content": f"text {i}"}) + "\n")
-        f.write(json.dumps({"doc_id": "doc00", "chunk_idx": 1, "content": "text 0 second half"}) + "\n")
-        f.write(json.dumps({"doc_id": "docnl0", "content": "a coherent paragraph of prose."}) + "\n")
+            # production shape: every row is a CHUNK with its own sample_id and the PARENT
+            # document id. doc00 carries a second chunk to exercise parent-level alignment.
+            if i == 0:
+                f.write(
+                    json.dumps(
+                        {
+                            "sample_id": "doc00_chunk0",
+                            "parent_doc_id": "doc00",
+                            "chunk_idx": 0,
+                            "content": "text 0",
+                        }
+                    )
+                    + "\n"
+                )
+            else:
+                f.write(
+                    json.dumps(
+                        {
+                            "sample_id": f"{i:02d}_chunk0",
+                            "parent_doc_id": f"doc{i:02d}",
+                            "chunk_idx": 0,
+                            "content": f"text {i}",
+                        }
+                    )
+                    + "\n"
+                )
+        f.write(
+            json.dumps(
+                {
+                    "sample_id": "doc00_chunk1",
+                    "parent_doc_id": "doc00",
+                    "chunk_idx": 1,
+                    "content": "text 0 second half",
+                }
+            )
+            + "\n"
+        )
+        f.write(
+            json.dumps(
+                {
+                    "sample_id": "docnl0_chunk0",
+                    "parent_doc_id": "docnl0",
+                    "chunk_idx": 0,
+                    "content": "a coherent paragraph of prose.",
+                }
+            )
+            + "\n"
+        )
 
     pairs = load_pairs(led, pool)
     assert len(pairs) == 22, len(pairs)  # 20 code + 1 extra chunk + 1 NL; scalar ignored
@@ -395,6 +474,95 @@ def _selftest():
     for d in {p.doc_id for p in pairs}:
         sides = {side for side, exs in (("t", t1), ("v", v1)) for ex in exs if ex.doc_id == d}
         assert len(sides) == 1, f"{d} split across train and val"
+
+    # LEAK FIX known-answer world. MANY multi-chunk parents (40 parents x 3 chunks), each
+    # chunk with a DISTINCT sample_id but one parent_doc_id. We call the REAL split_pairs
+    # (not the hash helper directly) at val_frac=0.5 across 50 seeds and assert, per seed,
+    # that (a) every parent's three chunks land on ONE side, and (b) at least one parent goes
+    # to val, so a keying change to the per-chunk id cannot pass by dumping everything into
+    # train. Keying the bucket on chunk_id (the historical bug) splits a parent across
+    # train/val on seed 0 of this exact world.
+    leak_dir = os.path.join(tmp, "leak")
+    os.makedirs(leak_dir, exist_ok=True)
+    led_p = os.path.join(leak_dir, "ledger.jsonl")
+    pool_p = os.path.join(leak_dir, "pool.jsonl")
+    N_PARENTS = 40
+    with open(led_p, "w") as lf, open(pool_p, "w") as pf:
+        for pi in range(N_PARENTS):
+            parent = f"parent{pi:03d}"
+            lf.write(
+                json.dumps(
+                    ScoreRow(
+                        doc_id=parent,
+                        domain="py",
+                        lang="en",
+                        scorer_name="l3-rubric",
+                        scorer_version="r1",
+                        ts="2026-09-16T00:00:00Z",
+                        rubric_dims={d: 4 for d in expected},
+                        rubric_kind="code",
+                        model="t",
+                        backend="stub",
+                        stratum=None,
+                    ).to_dict()
+                )
+                + "\n"
+            )
+            for ci in range(3):
+                ct = f"parent {pi} chunk {ci} " + f"word{pi}x{ci} " * 4
+                pf.write(
+                    json.dumps(
+                        {"sample_id": _cdid(ct), "parent_doc_id": parent, "chunk_idx": ci, "content": ct}
+                    )
+                    + "\n"
+                )
+    leak_pairs = load_pairs(led_p, pool_p)
+    assert len(leak_pairs) == N_PARENTS * 3, len(leak_pairs)
+    leak_parents = {p.doc_id for p in leak_pairs}
+    assert len(leak_parents) == N_PARENTS
+    # the three chunks of a parent have DISTINCT sample_ids (else the bug were unprovable)
+    one = next(iter(leak_parents))
+    assert len({p.chunk_id for p in leak_pairs if p.doc_id == one}) == 3
+    split_seen_val = False
+    for seed in range(50):
+        tr, va = split_pairs(leak_pairs, 0.5, seed=seed)
+        side_of = {}
+        for exs, side in ((tr, "t"), (va, "v")):
+            for ex in exs:
+                side_of.setdefault(ex.doc_id, set()).add(side)
+        split = [d for d, sides in side_of.items() if len(sides) > 1]
+        assert not split, f"seed {seed}: parents split across train/val: {split[:3]}"
+        if va:
+            split_seen_val = True
+    assert split_seen_val, "across 50 seeds no parent ever landed in val -- test is vacuous"
+
+    # a CHUNK-level label (doc_id == a chunk sample_id, not the parent) lands on exactly one
+    # (parent, chunk_idx); it must NOT fan out to the document's other chunks.
+    cid0 = next(p.chunk_id for p in leak_pairs if p.chunk_idx == 0)
+    cparent = next(p.doc_id for p in leak_pairs if p.chunk_id == cid0)
+    led_c = os.path.join(leak_dir, "ledger_chunk.jsonl")
+    with open(led_c, "w") as lf:
+        lf.write(
+            json.dumps(
+                ScoreRow(
+                    doc_id=cid0,
+                    domain="py",
+                    lang="en",
+                    scorer_name="l3-rubric",
+                    scorer_version="r1c",
+                    ts="2026-09-16T00:00:00Z",
+                    rubric_dims={d: 2 for d in expected},
+                    rubric_kind="code",
+                    model="t",
+                    backend="stub",
+                    stratum=None,
+                ).to_dict()
+            )
+            + "\n"
+        )
+    chunk_pairs = load_pairs(led_c, pool_p)
+    assert len(chunk_pairs) == 1
+    assert chunk_pairs[0].doc_id == cparent and chunk_pairs[0].chunk_id == cid0
 
     # missing text chunk -> loud
     bad_pool = os.path.join(tmp, "bad.jsonl")
