@@ -38,7 +38,7 @@ Guarantees
 - collation truncates each encoded chunk to max_len and dynamically pads the batch; the
   tokenizer is an injected callable `encode(str) -> list[int]` (no hard tokenizer dep).
 
-    pairs = load_pairs("labels.jsonl", "pool.jsonl")
+    pairs = load_pairs("labels.jsonl", "pool.jsonl", scorer_version="r1")
     train, val = split_pairs(pairs, val_frac=0.1, seed=20260916)
     collate = make_collate(encode, max_len=512)
     batch = collate([train[0], train[1]])   # input_ids, attention_mask, labels
@@ -137,10 +137,23 @@ def load_text_pool(path):
 
 
 def load_pairs(
-    ledger_path, text_pool_path, *, scorer_name=DEFAULT_SCORER, scorer_version=None, rubric_kind=None
+    ledger_path,
+    text_pool_path,
+    *,
+    scorer_name=DEFAULT_SCORER,
+    scorer_version=None,
+    rubric_kind=None,
+    any_version=False,
 ):
     """Validate ledger rows (score_ledger.validate_row via load_rows), keep the pinned
     rubric scorer, and join each label to its text chunk(s). Returns list[Example].
+
+    The scorer_version MUST be pinned: pass ``scorer_version="r1"`` to train on exactly one
+    teacher version. An append-only ledger can hold several versions (a re-label); silently
+    mixing them averages incompatible targets and double-weights docs. Passing
+    ``scorer_version=None`` raises -- set ``any_version=True`` ONLY to deliberately read
+    every version (diagnostics); training never does. If a pinned version is absent entirely,
+    that is a loud error rather than an empty pair list.
 
     The split/leak unit is the PARENT document. A label's ``doc_id`` resolves to a parent in
     one of two ways, in order:
@@ -148,15 +161,35 @@ def load_pairs(
          chunk inherits it;
       2. it is a chunk sample_id -> the label targets that one chunk (resolved via
          chunk_to_parent), so it lands on exactly that (parent, chunk_idx).
-    Two labels for one parent under the pinned scorer/version is a loud error (an append-only
-    ledger can carry a re-label; silently double-weighting a document is the failure this
-    prevents). Pin the version you mean."""
+    Two labels for one parent under the pinned scorer/version is a loud error."""
+    if scorer_version is None and not any_version:
+        raise DatasetJoinError(
+            "load_pairs requires an explicit scorer_version (an append-only ledger may hold "
+            "several teacher versions; mixing them silently is not allowed). Pass "
+            'scorer_version="<pin>" or any_version=True for an intentional all-version read.'
+        )
     rows = load_rows(ledger_path)
     chunks, chunk_to_parent = load_text_pool(text_pool_path)
     # one index pass: parent -> sorted chunk indices, O(labels + pool)
     chunks_of = {}
     for parent, ci in chunks:
         chunks_of.setdefault(parent, []).append(ci)
+    # version presence is checked against the rows that survive scorer_name/kind BEFORE the
+    # join, so a pinned-but-absent version raises instead of returning an empty pair list.
+    eligible = [
+        r
+        for r in rows
+        if r["scorer_name"] == scorer_name
+        and r["rubric_dims"] is not None
+        and (rubric_kind is None or r["rubric_kind"] == rubric_kind)
+    ]
+    if scorer_version is not None:
+        present = {r["scorer_version"] for r in eligible}
+        if scorer_version not in present:
+            raise DatasetJoinError(
+                f"pinned scorer_version {scorer_version!r} absent for scorer "
+                f"{scorer_name!r}; ledger has {sorted(present)}"
+            )
     pairs = []
     labeled_parents = set()
     for r in rows:
@@ -450,7 +483,7 @@ def _selftest():
             + "\n"
         )
 
-    pairs = load_pairs(led, pool)
+    pairs = load_pairs(led, pool, scorer_version="r1")
     assert len(pairs) == 22, len(pairs)  # 20 code + 1 extra chunk + 1 NL; scalar ignored
 
     # the NL example keeps its kind and carries the NL-ordered label vector
@@ -516,7 +549,7 @@ def _selftest():
                     )
                     + "\n"
                 )
-    leak_pairs = load_pairs(led_p, pool_p)
+    leak_pairs = load_pairs(led_p, pool_p, scorer_version="r1")
     assert len(leak_pairs) == N_PARENTS * 3, len(leak_pairs)
     leak_parents = {p.doc_id for p in leak_pairs}
     assert len(leak_parents) == N_PARENTS
@@ -560,7 +593,7 @@ def _selftest():
             )
             + "\n"
         )
-    chunk_pairs = load_pairs(led_c, pool_p)
+    chunk_pairs = load_pairs(led_c, pool_p, scorer_version="r1c")
     assert len(chunk_pairs) == 1
     assert chunk_pairs[0].doc_id == cparent and chunk_pairs[0].chunk_id == cid0
 
@@ -569,7 +602,7 @@ def _selftest():
     with open(bad_pool, "w", encoding="utf-8") as bf:
         bf.write(json.dumps({"doc_id": "doc99", "content": "x"}) + "\n")
     try:
-        load_pairs(led, bad_pool)
+        load_pairs(led, bad_pool, scorer_version="r1")
     except DatasetJoinError:
         pass
     else:
@@ -623,9 +656,60 @@ def _selftest():
         else:
             raise AssertionError("unseen domain must raise KeyError in the tensor collate")
 
+    # scorer_version pinning (audit fix): training MUST name one version; a missing pin
+    # raises, an absent pinned version raises (instead of an empty pair list), and only
+    # any_version=True opts into an all-version read.
+    try:
+        load_pairs(led, pool)
+    except DatasetJoinError:
+        pass
+    else:
+        raise AssertionError("load_pairs without scorer_version/any_version must raise")
+    try:
+        load_pairs(led, pool, scorer_version="does-not-exist")
+    except DatasetJoinError:
+        pass
+    else:
+        raise AssertionError("a pinned-but-absent scorer_version must raise, not return []")
+    pinned = load_pairs(led, pool, scorer_version="r1")
+    assert pinned and all(isinstance(p, Example) for p in pinned)
+    # any_version is the explicit escape hatch and returns the same single-version rows here
+    assert len(load_pairs(led, pool, any_version=True)) == len(pinned)
+    # a genuinely MIXED-version ledger under any_version is refused on the second label of a
+    # parent (a re-label must never double-weight a doc); build one against the leak pool.
+    mix_led = os.path.join(leak_dir, "mixed_versions.jsonl")
+    parent0 = "parent000"
+    with open(mix_led, "w") as mf:
+        for ver in ("r1", "r2"):
+            mf.write(
+                json.dumps(
+                    ScoreRow(
+                        doc_id=parent0,
+                        domain="py",
+                        lang="en",
+                        scorer_name="l3-rubric",
+                        scorer_version=ver,
+                        ts="2026-09-16T00:00:00Z",
+                        rubric_dims={d: 3 for d in expected},
+                        rubric_kind="code",
+                        model="t",
+                        backend="stub",
+                        stratum=None,
+                    ).to_dict()
+                )
+                + "\n"
+            )
+    try:
+        load_pairs(mix_led, pool_p, any_version=True)
+    except DatasetJoinError:
+        pass
+    else:
+        raise AssertionError("two versions for one parent even under any_version must raise")
+
     print(
         "l2_dataset selftest OK: doc_id join + chunk alignment, deterministic no-leak "
-        "split, missing/duplicate refusal, truncate/pad collate, label mask, torch tensors"
+        "split, missing/duplicate refusal, scorer_version pin, truncate/pad collate, label "
+        "mask, torch tensors"
     )
 
 
