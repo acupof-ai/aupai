@@ -107,6 +107,40 @@ class InterpolatedKneserNey:
         if not (0.0 < self.d < 1.0):
             self.d = 0.75
 
+    # ----- persistence: a trained model is reusable across runs -----
+    def save(self, path: str) -> None:
+        """Write the trained counts as JSON. Keys are ngram tuples (JSON arrays);
+        the discount d is stored so a loaded model scores identically without
+        re-deriving it. Lazily-built continuation caches are derived, not saved."""
+        payload = {
+            "format": "stdlib-kn-ngram-v1",
+            "order": self.order,
+            "discount": self.d,
+            "counts": {
+                str(o): {" ".join(ng): c for ng, c in self.counts[o].items()}
+                for o in range(1, self.order + 1)
+            },
+        }
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False)
+        os.replace(tmp, path)  # atomic: a reader never sees a half-written model
+
+    @classmethod
+    def load(cls, path: str) -> InterpolatedKneserNey:
+        with open(path, encoding="utf-8") as f:
+            payload = json.load(f)
+        m = cls(order=int(payload["order"]))
+        m.d = float(payload["discount"])
+        for o in range(1, m.order + 1):
+            block = payload["counts"].get(str(o), {})
+            if o == 1:
+                m.counts[o] = Counter({(k,): int(v) for k, v in block.items()})
+            else:
+                m.counts[o] = Counter({tuple(k.split(" ")): int(v)
+                                      for k, v in block.items()})
+        return m
+
     # ----- continuation counts, built lazily and cached -----
     def _build_continuation(self):
         """KN statistics.
@@ -286,12 +320,26 @@ def _selftest() -> int:
     m1.train_lines(train)
     assert math.isfinite(m1.perplexity("the cat"))
 
+    # save/load round-trip: a reloaded model scores every probe text identically and
+    # carries the same order/discount, so a model trained once is reusable across runs.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        mp = os.path.join(td, "model.json")
+        m.save(mp)
+        m2 = InterpolatedKneserNey.load(mp)
+        assert m2.order == m.order and m2.d == m.d
+        for probe in ("the cat sat on the mat", "zxqw vlmp krntt",
+                      "{{ }}} %s ####", "the the the the"):
+            before, after = m.perplexity(probe), m2.perplexity(probe)
+            assert math.isinf(before) == math.isinf(after)
+            if math.isfinite(before):
+                assert abs(before - after) < 1e-12, (probe, before, after)
+
     # census ledger writer, only when the frozen schema module is importable (it is a
     # separate file that may not exist in an older tree). Known answers: one validated
     # row per doc, doc_id is the content hash and joins back to the source text.
     try:
-        import tempfile
-
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from score_ledger import load_rows, content_doc_id  # noqa: I001
     except Exception:
@@ -325,7 +373,7 @@ def _selftest() -> int:
             assert content_doc_id("   \t  ") not in {r["doc_id"] for r in rows}, \
                 "zero-token doc must have no ledger row"
     print("selftest ok: normal < template < gibberish; deterministic; order-1 finite; "
-          "census ledger round-trip; zero-token skipped")
+          "census ledger round-trip; zero-token skipped; model save/load identical")
     return 0
 
 
@@ -346,11 +394,11 @@ def main() -> int:
     ap.add_argument("--model-id", default="", help="model id recorded in ledger rows")
     ap.add_argument("--scorer-version", default="v1", help="scorer_version pin")
     ap.add_argument("--src-sha", default=None, help="64-hex source-build fingerprint (optional)")
+    ap.add_argument("--save-model", help="write trained model (JSON counts) to this path")
+    ap.add_argument("--load-model", help="score with a saved model instead of training")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
-    if not a.train:
-        ap.error("--train is required without --selftest")
 
     def read_iter(path, cap):
         with open(path, encoding="utf-8") as fh:
@@ -365,10 +413,21 @@ def main() -> int:
                 else:
                     yield line
 
-    m = InterpolatedKneserNey(order=a.order)
-    n = m.train_lines(read_iter(a.train, a.train_limit))
-    m._build_continuation()
-    print(f"trained on {n} docs, order={a.order}, discount={m.d:.3f}", file=sys.stderr)
+    if a.load_model:
+        m = InterpolatedKneserNey.load(a.load_model)
+        m._build_continuation()
+        print(f"loaded model order={m.order} discount={m.d:.3f} from {a.load_model}",
+              file=sys.stderr)
+    else:
+        if not a.train:
+            ap.error("--train is required without --load-model")
+        m = InterpolatedKneserNey(order=a.order)
+        n = m.train_lines(read_iter(a.train, a.train_limit))
+        m._build_continuation()
+        print(f"trained on {n} docs, order={a.order}, discount={m.d:.3f}", file=sys.stderr)
+    if a.save_model:
+        m.save(a.save_model)
+        print(f"saved model -> {a.save_model}", file=sys.stderr)
     if a.score:
         if a.ledger:
             if not a.domain or not a.model_id:
