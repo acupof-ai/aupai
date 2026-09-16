@@ -39,9 +39,10 @@ def _post(url, model, timeout, text, rubric):
     base = url.rstrip("/")
     if not base.endswith("/v1"):
         base += "/v1"
+    prompt, truncated = build_prompt(text, rubric)
     body = json.dumps({
         "model": model,
-        "messages": [{"role": "user", "content": build_prompt(text, rubric)}],
+        "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.0,
         "max_tokens": 200,
         # REQUIRED for Qwen3.x: without this the budget goes to CoT and no rubric JSON.
@@ -50,7 +51,7 @@ def _post(url, model, timeout, text, rubric):
     req = urllib.request.Request(base + "/chat/completions", data=body,
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read())["choices"][0]["message"]["content"]
+        return json.loads(r.read())["choices"][0]["message"]["content"], truncated
 
 
 def _label_one(item, endpoints, model, timeout):
@@ -62,12 +63,12 @@ def _label_one(item, endpoints, model, timeout):
     last = None
     for _ in range(2):
         try:
-            raw = _post(ep, model, timeout, text, rubric)
+            raw, truncated = _post(ep, model, timeout, text, rubric)
             scores = parse_scores(raw, rubric)
-            return True, (row, scores, rubric["kind"], ep), ep
+            return True, (row, scores, rubric["kind"], ep, truncated), ep
         except Exception as e:  # loud: persist the failure, never fabricate a label
             last = f"{type(e).__name__}: {e}"
-    return False, (row.get("sample_id"), last, rubric["kind"], ep), ep
+    return False, (row.get("sample_id"), last, rubric["kind"], ep, False), ep
 
 
 def _write_durable(out_fh, ledger_fh, label_row, ledger_row):
@@ -109,7 +110,7 @@ def _label_all(todo, out_fh, rej_fh, ledger_fh, endpoints, model, concurrency, t
             ok, payload, ep = fu.result()
             with lock:
                 if ok:
-                    row, scores, kind, _ = payload
+                    row, scores, kind, _, truncated = payload
                     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                     label_id = hashlib.sha256(
                         (row["sample_id"] + model).encode()).hexdigest()[:16]
@@ -128,6 +129,7 @@ def _label_all(todo, out_fh, rej_fh, ledger_fh, endpoints, model, concurrency, t
                         "backend": "openai",
                         "scores": scores,
                         "stratum": stratum,
+                        "truncated": truncated,
                         "ts": ts,
                     }
                     ledger_row = None
@@ -148,6 +150,7 @@ def _label_all(todo, out_fh, rej_fh, ledger_fh, endpoints, model, concurrency, t
                             "rubric_kind": kind,
                             "record_id": label_id,
                             "src_sha": None,
+                            "truncated": truncated,
                         }
                     # a write/fsync failure raises and stops the run rather than
                     # continuing with out/ledger diverged
@@ -215,6 +218,7 @@ def drive(pool, out, endpoints, model, *, concurrency, timeout, limit, ledger):
                     "backend": lr["backend"],
                     "scores": lr["rubric_dims"],
                     "stratum": lr["stratum"],
+                    "truncated": lr.get("truncated", False),
                     "ts": lr["ts"],
                 }, ensure_ascii=False) + "\n")
             rec_fh.flush()
@@ -339,8 +343,10 @@ def _selftest() -> int:
 
     tmp = tempfile.mkdtemp()
     pool = os.path.join(tmp, "pool.jsonl")
-    docs = ["the quick brown fox runs and jumps over the lazy sleeping dog " * 30
-            for _ in range(4)]
+    short = "the quick brown fox runs and jumps over the lazy sleeping dog " * 30
+    long_doc = "ordinary prose words that keep repeating past the truncation limit " * 120
+    assert len(short) <= 6000 < len(long_doc), (len(short), len(long_doc))
+    docs = [short, short, short, long_doc]
     with open(pool, "w", encoding="utf-8") as fh:
         for i, txt in enumerate(docs):
             select_rubric(txt)  # raises if rubric selection breaks on the sample
@@ -361,9 +367,14 @@ def _selftest() -> int:
         assert set(l["scores"]) == {
             "content_quality", "factual_correctness",
             "complexity", "educational_or_code_value"}, l["scores"]
+    # truncated flag: only the >6000-char doc is a prefix label, in BOTH row kinds
+    label_trunc = {l["sample_id"]: l["truncated"] for l in labels}
+    assert label_trunc == {"s0000": False, "s0001": False,
+                           "s0002": False, "s0003": True}, label_trunc
     with open(ledger, encoding="utf-8") as fh:
-        n_ledger = sum(1 for _ in fh)
-    assert n_ledger == 4, n_ledger
+        led_rows = [json.loads(l) for l in fh]
+    assert len(led_rows) == 4, len(led_rows)
+    assert {r["doc_id"]: r["truncated"] for r in led_rows} == label_trunc
     kept2, _, _ = drive(pool, out, [gu, fu], "stub-model", concurrency=4,
                         timeout=10, limit=None, ledger=ledger)
     assert kept2 == 0, "resume did not skip done sample_ids"
