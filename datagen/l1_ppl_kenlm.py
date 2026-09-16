@@ -26,12 +26,17 @@ WHAT A PPL SCORE DOES AND DOES NOT SAY (read before quoting a number).
 
 Model format: ARPA (the KenLM text format) so a future KenLM binary model drops in
 without changing the scorer. `--selftest` exercises known answers on a tiny corpus.
+
+# restartable: census scoring streams the corpus and appends ledger rows in 2000-row
+# validated batches, so an interrupt costs at most the unflushed tail and re-running
+# only re-adds rows; it never rescans or rewrites a corpus shard or the ledger.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import os
 import re
 import sys
 from collections import Counter, defaultdict
@@ -171,6 +176,59 @@ class InterpolatedKneserNey:
         return math.exp(-logp / n)
 
 
+def append_census_ledger(model: InterpolatedKneserNey, path, *, ledger: str,
+                         domain: str, lang: str, model_id: str, version: str,
+                         limit: int, src_sha: str | None = None) -> tuple[int, int]:
+    """Census full-scan path: score every jsonl/raw row and append one validated
+    ledger row per document (stratum=None). doc_id is the content hash per the frozen
+    schema, so a re-cleaned source stops joining to its old score. score_ledger sits
+    in this same directory; import it by path so `python datagen/l1_ppl_kenlm.py`
+    works whether or not datagen is on sys.path as a package.
+
+    Returns (written, skipped). A document with ZERO scorable tokens (empty or
+    whitespace-only content) is skipped, not written: its PPL is infinite, and a row
+    with both score and rubric_dims null violates the ledger's XOR (it would abort the
+    whole census at that row). Out-of-vocabulary text that still tokenises keeps a
+    finite backoff PPL and IS written -- only an empty token stream is unscorable.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from datetime import datetime, timezone
+
+    from score_ledger import ScoreRow, append_rows, content_doc_id
+
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: UP017
+    batch, written, skipped = [], 0, 0
+
+    def emit(text: str, ppl: float):
+        nonlocal written
+        row = ScoreRow(
+            doc_id=content_doc_id(text), domain=domain, lang=lang,
+            scorer_name="kenlm", scorer_version=version, ts=ts,
+            score=float(ppl), rubric_dims=None, cut=None, model=model_id,
+            backend="stdlib-kn", stratum=None, rubric_kind=None, record_id=None,
+            src_sha=src_sha)
+        batch.append(row)
+        if len(batch) >= 2000:
+            written += append_rows(ledger, batch)
+            batch.clear()
+
+    with open(path, encoding="utf-8") as fh:
+        for k, line in enumerate(fh):
+            if limit and k >= limit:
+                break
+            line = line.rstrip("\n")
+            if not line.strip():
+                continue
+            text = json.loads(line).get("content", "") if path.endswith(".jsonl") else line
+            if not tokenize(text):  # whitespace/empty content: PPL=inf, no valid row
+                skipped += 1
+                continue
+            emit(text, model.perplexity(text))
+    if batch:
+        written += append_rows(ledger, batch)
+    return written, skipped
+
+
 def score_lines(model: InterpolatedKneserNey, lines) -> list[dict]:
     out = []
     for idx, line in enumerate(lines):
@@ -210,8 +268,6 @@ def _selftest() -> int:
           f"gibberish={ppl_gibber:.2f} template={ppl_tmpl:.2f}")
     assert math.isfinite(ppl_normal)
     # the known-answer contract: a normal in-distribution sentence is markedly
-    # less surprising than unseen gibberish tokens and punctuation templates.
-    # the known-answer contract: a normal in-distribution sentence is markedly
     # less surprising than both failure modes. The ordering between the two junk
     # kinds is not fixed: repeating a common word violates its bigram context hard
     # (a determiner is never followed by a determiner), so it can outscore even
@@ -222,16 +278,54 @@ def _selftest() -> int:
     assert ppl_tmpl > ppl_normal * 5, "template noise must be far above normal"
 
     # determinism: same text scores identically across two passes
-    assert m.perplexity("the dog ran in the park") == ppl_normal or True
     p1 = m.perplexity("a cat and a dog")
-    p2 = m.perplexity("a cat and a dog")
-    assert p1 == p2
+    assert p1 == m.perplexity("a cat and a dog")
 
     # order-1 model must still produce finite scores (no bigram continuation)
     m1 = InterpolatedKneserNey(order=1)
     m1.train_lines(train)
     assert math.isfinite(m1.perplexity("the cat"))
-    print("selftest ok: normal < template < gibberish; deterministic; order-1 finite")
+
+    # census ledger writer, only when the frozen schema module is importable (it is a
+    # separate file that may not exist in an older tree). Known answers: one validated
+    # row per doc, doc_id is the content hash and joins back to the source text.
+    try:
+        import tempfile
+
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from score_ledger import load_rows, content_doc_id  # noqa: I001
+    except Exception:
+        load_rows = None
+    if load_rows is not None:
+        with tempfile.TemporaryDirectory() as td:
+            src = os.path.join(td, "in.jsonl")
+            led = os.path.join(td, "ledger.jsonl")
+            with open(src, "w", encoding="utf-8") as f:
+                for s in train[:10]:
+                    f.write(json.dumps({"content": s}) + "\n")
+                # a non-empty LINE whose content is whitespace-only: tokenises to
+                # nothing -> PPL inf -> must be skipped, never written as a
+                # score=null/rubric=null row (that XOR would abort the census).
+                f.write(json.dumps({"content": "   \t  "}) + "\n")
+                # an OOV-but-tokenisable doc keeps a finite backoff PPL -> written
+                f.write(json.dumps({"content": "zxqw vlmp krntt bwor"}) + "\n")
+            written, skipped = append_census_ledger(
+                m, src, ledger=led, domain="probe_en", lang="en",
+                model_id="kenlm_test", version="t1", limit=0)
+            rows = load_rows(led)
+            assert written == 11 and skipped == 1, (written, skipped)
+            assert len(rows) == 11, "whitespace doc skipped, OOV doc written"
+            ids = {content_doc_id(s) for s in train[:10]}
+            ids.add(content_doc_id("zxqw vlmp krntt bwor"))
+            assert all(r["doc_id"] in ids for r in rows), "census doc_id must be content hash"
+            assert all(r["scorer_name"] == "kenlm" and r["stratum"] is None
+                       and r["cut"] is None and r["record_id"] is None
+                       and isinstance(r["score"], float)
+                       and math.isfinite(r["score"]) for r in rows), "OOV keeps finite PPL"
+            assert content_doc_id("   \t  ") not in {r["doc_id"] for r in rows}, \
+                "zero-token doc must have no ledger row"
+    print("selftest ok: normal < template < gibberish; deterministic; order-1 finite; "
+          "census ledger round-trip; zero-token skipped")
     return 0
 
 
@@ -246,6 +340,12 @@ def main() -> int:
                     help="docs to train on (0=all); separate from --limit so a model "
                          "can train on a large pool while scoring a small sample")
     ap.add_argument("--hist", action="store_true", help="print PPL histogram for scored file")
+    ap.add_argument("--ledger", help="append a census row per scored doc to this JSONL ledger")
+    ap.add_argument("--domain", default="", help="corpus domain for ledger rows")
+    ap.add_argument("--lang", default="en", help="BCP-47 lang for ledger rows")
+    ap.add_argument("--model-id", default="", help="model id recorded in ledger rows")
+    ap.add_argument("--scorer-version", default="v1", help="scorer_version pin")
+    ap.add_argument("--src-sha", default=None, help="64-hex source-build fingerprint (optional)")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
@@ -270,6 +370,16 @@ def main() -> int:
     m._build_continuation()
     print(f"trained on {n} docs, order={a.order}, discount={m.d:.3f}", file=sys.stderr)
     if a.score:
+        if a.ledger:
+            if not a.domain or not a.model_id:
+                ap.error("--ledger requires --domain and --model-id")
+            n_written, n_skipped = append_census_ledger(
+                m, a.score, ledger=a.ledger, domain=a.domain, lang=a.lang,
+                model_id=a.model_id, version=a.scorer_version, limit=a.limit,
+                src_sha=a.src_sha)
+            print(f"appended {n_written} census rows, skipped {n_skipped} "
+                  f"unscorable (zero-token) -> {a.ledger}", file=sys.stderr)
+            return 0
         rows = score_lines(m, read_iter(a.score, a.limit))
         finite = [r for r in rows if math.isfinite(r["ppl"])]
         if a.hist and finite:
