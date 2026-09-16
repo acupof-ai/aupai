@@ -99,6 +99,25 @@ class QualityHead(nn.Module):
         return self.net(embeddings.float())
 
 
+HEAD_CKPT_VERSION = 1
+
+
+def save_head(path, head: QualityHead, cfg: L2Config):
+    """Save ONLY the head (the encoder is a frozen public base, never checkpointed). The
+    scanner's HeadPredictor loads this exact shape: {"version","cfg","head"}."""
+    from dataclasses import asdict
+
+    torch.save({"version": HEAD_CKPT_VERSION, "cfg": asdict(cfg), "head": head.state_dict()}, path)
+
+
+def load_head_state(path):
+    """Return (head_state_dict, cfg_kwargs) for save_head's format. Refuses a foreign blob."""
+    state = torch.load(path, map_location="cpu", weights_only=False)
+    if not isinstance(state, dict) or "head" not in state:
+        raise ValueError(f"{path} is not an L2 head checkpoint (need keys version/cfg/head)")
+    return state["head"], state.get("cfg", {})
+
+
 def per_dim_mse(pred: torch.Tensor, target: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     """Mean squared error per dimension over rows where that dim is labelled.
 
