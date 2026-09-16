@@ -99,18 +99,37 @@ def top_level_line_units(text):
 
 
 def _fit_line_piece(line, ntok):
-    """One physical line longer than MAX_TOK: cut at a real BPE id boundary. ntok carries the
-    tokenizer in `_enc`; a non-tokenizer stand-in (selftest) returns the line whole."""
+    """Cut one over-long physical line into pieces with ntok(piece) <= MAX_TOK.
+
+    With a real tokenizer (`_enc`) this cuts at exact BPE id boundaries. Without one (the
+    selftest counters) it falls back to the largest CHARACTER prefix whose ntok fits, so the
+    hard cap is still guaranteed for any test counter that is monotone in character count.
+    The pieces partition the line by construction (no char is lost); a real corpus always has
+    `_enc` and uses the BPE path."""
     if ntok(line) <= MAX_TOK:
         return [line]
     enc = getattr(ntok, "_enc", None)
-    if enc is None:
-        return [line]
-    ids = enc.encode(line).ids
-    pieces, start = [], 0
-    while start < len(ids):
-        pieces.append(enc.decode(ids[start:start + MAX_TOK], skip_special_tokens=False))
-        start += MAX_TOK
+    if enc is not None:
+        ids = enc.encode(line).ids
+        pieces, start = [], 0
+        while start < len(ids):
+            pieces.append(enc.decode(ids[start:start + MAX_TOK], skip_special_tokens=False))
+            start += MAX_TOK
+        return pieces
+    # char-prefix fallback for the tokenizer-less selftest.
+    pieces, rest = [], line
+    while rest:
+        lo, hi = 0, len(rest)
+        # largest prefix that fits
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if ntok(rest[:mid]) <= MAX_TOK:
+                lo = mid
+            else:
+                hi = mid - 1
+        cut = lo or 1
+        pieces.append(rest[:cut])
+        rest = rest[cut:]
     return pieces
 
 
@@ -309,7 +328,33 @@ def _selftest():
             if ntok(c) > MAX_TOK:
                 fails.append(f"chunk over MAX ({ntok(c)}) in doc head {d2[:20]!r}")
 
-    # 5) ids: sample_id is content hash of THAT chunk, parent stable, content_doc_id reused.
+    # 4e) ADVERSARIAL non-additive tokenizer. The real gate BPE was measured on 1.09M line
+    # junctions as worst-case +1 id per join (it can also be 0/-1). Simulate the WORST case:
+    # length(s) = base chars + number of internal '\n'. The packer budgets with this exact
+    # counter, so this is the same relationship production has (packer and cap-backstop share
+    # the real tokenizer). If no chunk exceeds MAX here, no <=+1-per-junction tokenizer can.
+    def ntok_adv(s):
+        return len(s) + max(0, s.count("\n"))
+    ntok_adv._enc = None
+    adv_docs = [
+        funcs([f"f{i}" for i in range(200)]),
+        "q\n" * 4000,                                    # dense newline growth
+        "x = " + "a" * 1400 + "\n" + "y = 2\n" * 200,   # one over-long physical line + tail
+        semi,
+        "import a\n" * 5 + funcs([f"g{i}" for i in range(150)]),
+    ]
+    over = []
+    for doc in adv_docs:
+        ch = chunk_document(doc, ntok_adv)
+        if "".join(ch) != doc:
+            fails.append("adversarial partition not exact")
+        for c in ch:
+            if ntok_adv(c) > MAX_TOK:
+                over.append(ntok_adv(c))
+    if over:
+        fails.append(f"adversarial chunks over MAX: {sorted(set(over))[:5]}")
+
+
     rows = build_rows(funcs(["a", "b", "c", "d", "e", "f", "g", "h"]) * 3,
                       "starcoderdata:python", None, ntok)
     ids = [r["sample_id"] for r in rows]
