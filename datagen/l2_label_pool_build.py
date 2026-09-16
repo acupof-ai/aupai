@@ -93,14 +93,19 @@ def _cap_segments(segments, lo, hi, measure, split):
     return segments
 
 
-def _chunk_fn(tokenizer_path):
+def _chunk_fn(tokenizer_path, allow_word_count=False):
     """text -> list[chunk_text] each measuring 512-1024 tokens under the GATE
     TOKENIZER. The cap is checked on decode->re-ENCODED text, not on sliced token ids:
     byte-level BPE is not invertible at cut points and a 1024-id slice decodes to text
     that re-encodes up to ~1028 (measured), so an id-based cap emits >1024 chunks.
     A whole document shorter than MIN_FRAGMENT_TOKENS is dropped; single-doc chunks of
-    128-511 tokens are kept (the xs/s length strata). Word-count fallback (flagged in
-    the manifest) only if the HF tokenizer is unavailable."""
+    128-511 tokens are kept (the xs/s length strata).
+
+    A failure to load the HF tokenizer is FATAL: silently falling back to word count
+    would make the measured <=1024 token gate vacuous (the thing three rounds just
+    fixed). Word count is allowed only when the caller explicitly opts in
+    (allow_word_count / --word-count), and then the manifest marks the chunks as
+    NON-BPE so they can never be mistaken for gate-tokenizer output."""
     try:
         from tokenizers import Tokenizer
         tok = Tokenizer.from_file(tokenizer_path)
@@ -132,7 +137,15 @@ def _chunk_fn(tokenizer_path):
             return [tok.decode(s) for s in segs]
 
         return chunks, "hf-tokenizer", ntok
-    except Exception:
+    except Exception as e:
+        if not allow_word_count:
+            raise SystemExit(
+                f"REFUSE: could not load gate HF tokenizer at {tokenizer_path!r}: "
+                f"{type(e).__name__}: {e}. The measured 512-1024 token hard cap is only "
+                "meaningful under the real tokenizer; refusing rather than silently "
+                "falling back to word count. Pass --word-count explicitly to accept the "
+                "non-BPE proxy (the manifest will mark the pool accordingly).") from e
+
         def ntok(text):
             return len(text.split())  # ~1 token/word proxy for the fallback path
 
@@ -146,6 +159,31 @@ def _chunk_fn(tokenizer_path):
         return chunks, "word-fallback", ntok
 
 
+def _atomic_write_jsonl(path, lines):
+    """Write JSONL atomically: temp file in the same dir, fsync, then os.replace so a
+    crash can never leave a half-written pool at `path` (the restartability promise)."""
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        for ln in lines:
+            fh.write(ln)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
+def _atomic_write_json(path, obj):
+    d = os.path.dirname(os.path.abspath(path))
+    os.makedirs(d, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh, indent=2, ensure_ascii=False)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
 def _iter_paths(kind2glob):
     for kind, pattern in sorted(kind2glob.items()):
         paths = sorted(glob.glob(pattern))
@@ -156,8 +194,8 @@ def _iter_paths(kind2glob):
 
 
 def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
-          code_glob=None, code_model_path=None):
-    chunk_fn, tok_kind, ntok = _chunk_fn(tokenizer_path)
+          code_glob=None, code_model_path=None, allow_word_count=False):
+    chunk_fn, tok_kind, ntok = _chunk_fn(tokenizer_path, allow_word_count)
     # Code is optional: ae owns AST-boundary code chunks (l2_code_chunk_pool.py)
     # with ppl=null until a code KenLM exists. NL-only runs emit pool_en_c4.jsonl.
     models = {"nl": InterpolatedKneserNey.load(nl_model_path)}
@@ -289,23 +327,22 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
                             pool[j] = entry
 
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
-    written = 0
+    out_lines = []
     over_max = collections.Counter()
     short_kept = collections.Counter()      # 128-511 token single-doc chunks kept
     short_kept_tokens = collections.Counter()
     token_hist = collections.Counter()
-    with open(out, "w", encoding="utf-8") as fo:
-        for key in sorted(reservoirs):
-            for entry in reservoirs[key]:
-                tlen = ntok(entry["content"])
-                token_hist[min(tlen // 128 * 128, 2048)] += 1
-                if tlen > 1024:
-                    over_max[key[0]] += 1
-                if tlen < 512:
-                    short_kept[key[0]] += 1
-                    short_kept_tokens[key[0]] += tlen
-                fo.write(json.dumps(entry, ensure_ascii=False) + "\n")
-                written += 1
+    for key in sorted(reservoirs):
+        for entry in reservoirs[key]:
+            tlen = ntok(entry["content"])
+            token_hist[min(tlen // 128 * 128, 2048)] += 1
+            if tlen > 1024:
+                over_max[key[0]] += 1
+            if tlen < 512:
+                short_kept[key[0]] += 1
+                short_kept_tokens[key[0]] += tlen
+            out_lines.append(json.dumps(entry, ensure_ascii=False) + "\n")
+    written = len(out_lines)
 
     manifest = {
         "nl_glob": nl_glob, "code_glob": code_glob,
@@ -336,8 +373,10 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
                           "drawn": len(reservoirs[k])}
             for k in sorted(set(doc_pop) | set(chunk_pop))},
     }
-    with open(out + ".manifest.json", "w", encoding="utf-8") as fh:
-        json.dump(manifest, fh, indent=2, ensure_ascii=False)
+    # manifest first, pool second: a reader that sees the pool always sees a manifest
+    # describing exactly these rows; both writes are tmp+fsync+rename (no half files).
+    _atomic_write_json(out + ".manifest.json", manifest)
+    _atomic_write_jsonl(out, out_lines)
     return written, manifest
 
 
@@ -402,11 +441,20 @@ def _selftest() -> int:
                               drift_split)
     assert all(drift(s) <= 1024 for s in drift_out), [drift(s) for s in drift_out]
     # the word-fallback chunker itself honors the cap on a tail-triggering doc
-    wchunks, wkind, _ = _chunk_fn("")  # no tokenizer file -> word fallback
+    wchunks, wkind, _ = _chunk_fn("", allow_word_count=True)
     assert wkind == "word-fallback"
     for n_words in (261, 300, 521, 1000, 260 * 3 + 7):
         c = wchunks(" ".join(f"w{i}" for i in range(n_words)))
         assert all(len(x.split()) <= 260 for x in c), (n_words, [len(x.split()) for x in c])
+    # broken world: a bad/missing tokenizer WITHOUT explicit word-count must REFUSE,
+    # never silently degrade (that would void the measured token hard cap).
+    for bad_path in ("", "/nonexistent/tokenizer/path.json"):
+        try:
+            _chunk_fn(bad_path, allow_word_count=False)
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError(f"tokenizer load failure at {bad_path!r} must refuse")
 
     sents = ["the", "model", "reads", "each", "document", "and", "scores",
              "the", "words", "in", "order", "natural", "prose", "repeats",
@@ -439,7 +487,7 @@ def _selftest() -> int:
     mpath = os.path.join(tmp, "nl.model.json")
     model.save(mpath)
     out = os.path.join(tmp, "pool.jsonl")
-    written, man = build(corpus, mpath, seed=7, tokenizer_path="", out=out)
+    written, man = build(corpus, mpath, seed=7, tokenizer_path="", out=out, allow_word_count=True)
     assert written > 0, "no chunks written"
     assert man["n_docs_scored"]["nl"] == 9, man["n_docs_scored"]
     assert man["tokenizer_chunk"] == "word-fallback", man["tokenizer_chunk"]
@@ -456,7 +504,7 @@ def _selftest() -> int:
     for e in got:
         assert 0 <= e["chunk_idx"] < e["n_chunks"], (e["chunk_idx"], e["n_chunks"])
     out2 = os.path.join(tmp, "pool2.jsonl")
-    w2, _ = build(corpus, mpath, seed=7, tokenizer_path="", out=out2)
+    w2, _ = build(corpus, mpath, seed=7, tokenizer_path="", out=out2, allow_word_count=True)
 
     def ids_at(path):
         with open(path, encoding="utf-8") as fh:
@@ -464,8 +512,29 @@ def _selftest() -> int:
 
     ids1, ids2 = ids_at(out), ids_at(out2)
     assert w2 == written and ids1 == ids2, "not deterministic at fixed seed"
+
+    # atomicity known-answer: both outputs present and complete, no .tmp left, and the
+    # manifest's n_chunks_written equals the actual pool row count (crash can never leave
+    # a half pool at the target path, nor a pool whose manifest is missing/short).
+    for p in (out, out + ".manifest.json"):
+        assert os.path.exists(p), p
+        assert not os.path.exists(p + ".tmp"), f"stale temp at {p}.tmp"
+    with open(out, encoding="utf-8") as nf:
+        assert sum(1 for _ in nf) == man["n_chunks_written"]
+    # the atomic helpers themselves: complete target, no tmp, content exact
+    ap_path = os.path.join(tmp, "atomic.jsonl")
+    _atomic_write_jsonl(ap_path, ['{"a":1}\n', '{"b":2}\n'])
+    with open(ap_path, encoding="utf-8") as af:
+        assert af.read() == '{"a":1}\n{"b":2}\n'
+    assert not os.path.exists(ap_path + ".tmp")
+    aj_path = os.path.join(tmp, "atomic.json")
+    _atomic_write_json(aj_path, {"k": 3})
+    with open(aj_path, encoding="utf-8") as jf:
+        assert json.load(jf) == {"k": 3}
+    assert not os.path.exists(aj_path + ".tmp")
     print(f"selftest ok: {written} chunks, bands={sorted(bands)}, "
-          f"length_bands={sorted(lbands)}, multi-chunk rows present")
+          f"length_bands={sorted(lbands)}, multi-chunk rows present, tokenizer-failure "
+          f"refused, pool+manifest atomic (no tmp, counts match)")
     return 0
 
 
@@ -477,6 +546,9 @@ def main():
     ap.add_argument("--nl-model", default=None)
     ap.add_argument("--code-model", default=None)
     ap.add_argument("--tokenizer", default=None)
+    ap.add_argument("--word-count", action="store_true",
+                    help="explicitly accept the non-BPE word-count chunker; the manifest "
+                         "marks the pool word-fallback instead of hf-tokenizer")
     ap.add_argument("--out", default=None)
     ap.add_argument("--seed", type=int, default=20260916)
     a = ap.parse_args()
@@ -490,7 +562,8 @@ def main():
     written, manifest = build(
         a.nl_glob, a.nl_model,
         code_glob=a.code_glob, code_model_path=a.code_model,
-        seed=a.seed, tokenizer_path=a.tokenizer, out=a.out)
+        seed=a.seed, tokenizer_path=a.tokenizer, out=a.out,
+        allow_word_count=a.word_count)
     print(f"wrote {written} chunks -> {a.out}")
     print(json.dumps({k: manifest[k] for k in
                       ("n_docs_scored", "n_chunks_written", "ppl_terciles")}, indent=2))
