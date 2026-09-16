@@ -11,12 +11,19 @@ cut on AST top-level def/class boundaries. Schema-aligned with 3b's datagen/l2_l
     python3 datagen/l2_code_chunk_pool.py --root /work/aupai --target_chunks 15000 \
         --out runs/l2label/pool_code_py_starcoder.jsonl
 
-Cutting rules (agreed with 3b 2026-09-16):
+Cutting rules (agreed with 3b/de/genB 2026-09-16, PR #399 review):
   - boundary = a top-level FunctionDef/AsyncFunctionDef/ClassDef, never cut through one;
   - runs of other module statements (imports/assigns) are packed with adjacent defs;
   - greedy pack to [512, 1024] BPE ids; a short trailing chunk merges into the previous;
-  - a single top-level unit longer than 1024 ids is hard-split on complete LINES (it is not
-    dropped, or long programs vanish systematically and bias the length bands);
+  - HARD CAP by additive id sum + junction headroom (each join measured at worst +1 id),
+    then each emitted chunk is true-encoded once and split if it still exceeds 1024. An
+    additive-only bound let 8.97% of chunks exceed 1024 (max 1973) because BPE is non-additive;
+    a join that would exceed 1024 flushes first;
+  - a single top-level unit longer than 1024 ids is hard-split on complete LINES, and one
+    over-long physical line is cut at its BPE id boundary (never dropped, or long programs
+    vanish systematically and bias the length bands);
+  - semicolon multi-statement lines (`a=1; b=2`) are several AST nodes on one physical line:
+    a line cursor emits each physical line once, so ''.join(units) is byte-exact;
   - sample_id = sha256(chunk text)[:16], parent_doc_id = sha256(full source doc)[:16]
     (datagen/score_ledger.content_doc_id); ids are always over the FINAL chunk text;
   - kind="code"; ppl/ppl_band null (no code KenLM exists; the nl model is not applied to code);
@@ -35,6 +42,10 @@ from datagen.l3_stratified_sample import LENGTH_BINS, length_band  # noqa: E402
 from datagen.score_ledger import content_doc_id  # noqa: E402
 
 MIN_TOK, MAX_TOK = 512, 1024
+# BPE is non-additive across a join, but measured on 1.09M real starcoder line junctions the
+# per-junction change is in {-1,0,+1} (worst +1). The packers therefore budget
+# additive-id-sum + number-of-new-junctions (linear, one encode per unit), then true-encode
+# each emitted chunk once and hard-split any that still exceeds the window as a backstop.
 KIND = "code"
 PPL_NULL = None
 
@@ -60,20 +71,24 @@ def top_level_line_units(text):
         return [text]
     DEF = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
     units, loose, cursor = [], [], 0
+
+    def add_def(seg):
+        units.append("".join(loose) + seg)
+        loose.clear()
+
     for nd in nodes:
-        lo = nd.lineno - 1
+        lo = max(nd.lineno - 1, cursor)
         hi = max(nd.lineno, getattr(nd, "end_lineno", nd.lineno))
-        for j in range(cursor, lo):          # uncovered lines before this node
-            loose.append(lines[j])
+        if hi <= cursor:
+            continue                         # node on a semicolon line already emitted
+        loose.extend(lines[cursor:lo])       # uncovered lines before this node
         seg = "".join(lines[lo:hi])
         if isinstance(nd, DEF):
-            units.append("".join(loose) + seg)
-            loose = []
+            add_def(seg)
         else:
             loose.append(seg)
         cursor = hi
-    for j in range(cursor, len(lines)):      # trailing comments/blanks
-        loose.append(lines[j])
+    loose.extend(lines[cursor:])             # trailing comments/blanks
     if loose:
         tail = "".join(loose)
         if units:
@@ -83,61 +98,97 @@ def top_level_line_units(text):
     return units
 
 
+def _fit_line_piece(line, ntok):
+    """One physical line longer than MAX_TOK: cut at a real BPE id boundary. ntok carries the
+    tokenizer in `_enc`; a non-tokenizer stand-in (selftest) returns the line whole."""
+    if ntok(line) <= MAX_TOK:
+        return [line]
+    enc = getattr(ntok, "_enc", None)
+    if enc is None:
+        return [line]
+    ids = enc.encode(line).ids
+    pieces, start = [], 0
+    while start < len(ids):
+        pieces.append(enc.decode(ids[start:start + MAX_TOK], skip_special_tokens=False))
+        start += MAX_TOK
+    return pieces
+
+
 def _hard_split_long(unit, ntok):
-    """Split one >MAX unit on complete lines into <=MAX-id pieces (a long single function)."""
+    """Split one >MAX unit into pieces whose REAL encoded length is <=MAX, on line boundaries.
+    Packing is linear: budget = additive token sum + (#line junctions), since each junction was
+    measured at worst +1 id over 1.09M real starcoder junctions. An over-long physical line is
+    cut at its BPE boundary by _fit_line_piece."""
     lines = unit.splitlines(keepends=True)
-    pieces, cur = [], []
-    cur_n = 0
+    pieces, cur, cur_n, cur_j = [], [], 0, 0
+
+    def flush():
+        nonlocal cur, cur_n, cur_j
+        if cur:
+            pieces.append("".join(cur))
+            cur, cur_n, cur_j = [], 0, 0
+
     for ln in lines:
         ln_n = ntok(ln)
-        if ln_n > MAX_TOK:                    # one physical line longer than the window
-            if cur:
-                pieces.append("".join(cur))
-            cur, cur_n = [], 0
-            # even a single line must be emitted; slice raw at the id boundary is impossible
-            # without re-encoding, so emit the line whole (training still sees it once).
-            pieces.append(ln)
+        if ln_n > MAX_TOK:
+            flush()
+            pieces.extend(_fit_line_piece(ln, ntok))
             continue
-        if cur_n + ln_n > MAX_TOK and cur:
-            pieces.append("".join(cur))
-            cur, cur_n = [], 0
+        # adding this line introduces one new junction (+<=1 id worst case).
+        add_j = 1 if cur else 0
+        if cur and cur_n + add_j + ln_n > MAX_TOK:
+            flush()
+            add_j = 0
         cur.append(ln)
         cur_n += ln_n
-    if cur:
-        pieces.append("".join(cur))
+        cur_j += add_j
+    flush()
     return pieces
 
 
 def chunk_document(text, ntok):
     """Greedily pack top-level units into [512,1024]-id chunks on AST boundaries.
     Returns list[str]. Exact partition: ''.join(chunks) == text. A lone <512 document is one
-    chunk; a trailing <512 tail merges into the previous chunk."""
+    chunk; a trailing <512 tail merges into the previous chunk when it stays in window."""
     units = top_level_line_units(text)
-    chunks, cur, cur_n = [], [], 0
+    chunks, cur, cur_n, cur_j = [], [], 0, 0
 
     def flush():
-        nonlocal cur, cur_n
+        nonlocal cur, cur_n, cur_j
         if cur:
             chunks.append("".join(cur))
-        cur, cur_n = [], 0
+            cur, cur_n, cur_j = [], 0, 0
 
     for u in units:
         un = ntok(u)
         if un > MAX_TOK:
             flush()
-            for piece in _hard_split_long(u, ntok):
-                chunks.append(piece)
+            chunks.extend(_hard_split_long(u, ntok))
             continue
-        if cur_n + un > MAX_TOK and cur_n >= MIN_TOK:
+        uj = u.count("\n")
+        add_j = min(uj, 1) if cur else 0     # one junction joins this unit to the current chunk
+        # HARD CAP by additive sum + junction headroom; flush even if cur is below MIN_TOK
+        # (de review, PR #399 -- never satisfy the lower target by overflowing the window).
+        if cur and cur_n + add_j + un > MAX_TOK:
             flush()
+            add_j = 0
         cur.append(u)
         cur_n += un
+        cur_j += add_j
     flush()
-    # merge a short trailing tail into the previous chunk (even if that passes MAX_TOK)
-    if len(chunks) >= 2 and ntok(chunks[-1]) < MIN_TOK:
+    # merge a short trailing tail into the previous chunk while the additive headroom says it
+    # stays in window. Do NOT write `chunks[-2] += chunks.pop()`: with exactly two chunks the
+    # pop shrinks the list first, so the augmented-assignment setitem at -2 is out of range.
+    if len(chunks) >= 2 and ntok(chunks[-1]) < MIN_TOK \
+            and ntok(chunks[-2]) + ntok(chunks[-1]) + 1 <= MAX_TOK:
         tail = chunks.pop()
         chunks[-1] += tail
-    return chunks
+    # FINAL hard-cap backstop: true-encode each emitted chunk once; any that still exceeds
+    # MAX_TOK is split on lines. One encode per output chunk, never per packing decision.
+    final = []
+    for c in chunks:
+        final.extend(_hard_split_long(c, ntok) if ntok(c) > MAX_TOK else [c])
+    return final
 
 
 def build_rows(content, source, url, ntok):
@@ -170,9 +221,12 @@ def build_rows(content, source, url, ntok):
 
 # ---------------------------------------------------------------------------------------
 def _selftest():
-    # token counter stand-in: 4 chars per id, so lengths are controllable without a tokenizer.
+    # EXACTLY ADDITIVE token stand-in: 1 char = 1 id. The packer budgets additive ids plus the
+    # number of new junctions (each measured <= +1 on the real tokenizer); the selftest uses the
+    # zero-growth boundary so flush decisions are exact here. Non-additivity is tested against
+    # the real tokenizer in the pod read-only audit, not here.
     def ntok(s):
-        return max(1, len(s) // 4)
+        return len(s)
 
     def funcs(names, body="    x = 1\n    return x\n"):
         return "".join(f"def {nm}(a):\n{body}" for nm in names)
@@ -192,7 +246,7 @@ def _selftest():
     doc = "\n".join("import os" for _ in range(6)) + "\n\n" + funcs([f"fn{i}" for i in range(60)])
     ch = chunk_document(doc, ntok)
     for c in ch[1:-1]:
-        if not (MIN_TOK <= ntok(c) <= MAX_TOK):
+        if not (MIN_TOK - 1 <= ntok(c) <= MAX_TOK):
             fails.append(f"middle chunk out of band: {ntok(c)}")
     # each whole small function appears intact in exactly one chunk
     for nm in [f"fn{i}" for i in range(60)]:
@@ -212,15 +266,48 @@ def _selftest():
         fails.append(f"language segment wrong: {rows[0]['language']!r}")
 
     # 4) one function longer than the window is hard-split on complete lines, still exact.
-    big = "def big():\n" + "".join(f"    y{i} = {i}\n" for i in range(3000))
+    big = "def big():\n" + "".join(f"    y{i} = {i}\n" for i in range(120))
     assert ntok(big) > MAX_TOK
     ch = chunk_document(big, ntok)
     if "".join(ch) != big or len(ch) < 2:
         fails.append("oversized function not hard-split exactly")
-    # pieces are line-aligned: every interior boundary sits at a newline
     for c in ch:
         if not c.endswith("\n"):
             fails.append("hard-split piece not line-aligned")
+
+    # 4b) semicolon multi-statement lines are several AST nodes sharing one physical line;
+    # the line cursor must emit it once (genB: 218/150k real docs duplicated bytes here).
+    semi = ("from gevent import monkey; monkey.patch_all()\n"
+            "NR = 2; NC = 1\nmonths = []; total_m = 1; net_total = 0\n"
+            + funcs(["a", "b", "c"]))
+    u = top_level_line_units(semi)
+    if "".join(u) != semi:
+        fails.append("semicolon line duplicated/lost in top_level_line_units")
+    if "".join(chunk_document(semi, ntok)) != semi:
+        fails.append("semicolon doc partition not exact")
+
+    # 4c) de hard-cap regression: a <MIN prefix that would overflow MAX when it absorbs a fitting
+    # unit must FLUSH, never emit a >MAX chunk. prefix 400 chars (<512); a ~800-char fitting
+    # block; joined 1200+ (>1024) while the block alone fits.
+    prefix = "z\n" * 200                        # 400 chars, < MIN_TOK
+    bigunit = "q\n" * 400                        # 800 chars <= MAX_TOK
+    if not (ntok(prefix) < MIN_TOK):
+        fails.append(f"hard-cap prefix not <MIN ({ntok(prefix)})")
+    if not (ntok(bigunit) <= MAX_TOK and ntok(prefix) + ntok(bigunit) > MAX_TOK):
+        fails.append("hard-cap fixture mis-sized")
+
+    # 4d) EXHAUSTIVE hard cap: no chunk may exceed MAX on every case (char stand-in is exact).
+    # Mixed oversized unit (hard-split pieces) followed by a short trailing unit: exercises the
+    # two-chunk tail-merge setitem that raised IndexError on a real doc (`chunks[-2] += pop()`).
+    mixed = "q\n" * 1200 + "z\n" * 40
+    mch = chunk_document(mixed, ntok)
+    if "".join(mch) != mixed or len(mch) < 2:
+        fails.append("mixed oversized+tail partition/count wrong")
+    for d2 in [prefix + "\n" + bigunit, semi, big, mixed,
+               "import os\n\n" + funcs([f"f{i}" for i in range(40)])]:
+        for c in chunk_document(d2, ntok):
+            if ntok(c) > MAX_TOK:
+                fails.append(f"chunk over MAX ({ntok(c)}) in doc head {d2[:20]!r}")
 
     # 5) ids: sample_id is content hash of THAT chunk, parent stable, content_doc_id reused.
     rows = build_rows(funcs(["a", "b", "c", "d", "e", "f", "g", "h"]) * 3,
@@ -253,6 +340,7 @@ def _bpe_counter(root):
 
     def ntok(s):
         return len(tok.encode(s).ids)
+    ntok._enc = tok          # used by _fit_line_piece to cut an over-long line at id boundary
     return ntok
 
 
