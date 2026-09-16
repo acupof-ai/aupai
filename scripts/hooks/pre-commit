@@ -1018,6 +1018,41 @@ def main():
         # quota selector ever reads it. The selftest accepts two valid shapes and rejects 12
         # named invalid categories plus a content-hash staleness mismatch.
         "datagen/score_ledger.py",
+        # ae: the L2 code label-pool chunker (512-1024 BPE chunks on AST top-level def/class
+        # boundaries). Registered because its correctness is exact byte partition and never
+        # bisecting a fitting function, both invisible to eyeballing: the selftest asserts
+        # ''.join(chunks)==source on short/multifunction/long/unparseable docs, every small
+        # def lands intact in one chunk, an oversized function hard-splits on whole lines, and
+        # ids are per-final-chunk content hashes. Pure strings, no tokenizer (a 4-chars/id
+        # counter stand-in), no corpus. ~0.1s.
+        "datagen/l2_code_chunk_pool.py",
+        # The per-domain conditional quota selector that reads the frozen ledger (de).
+        # Registered because the whole reason it exists is to NOT use one global cut: the
+        # selftest pins on known answers that the low-scored zh/web group keeps its own
+        # lower threshold, the keep count conserves each quota exactly, and an empty
+        # targeted domain / a quota under the survival floor / an unpinned multi-version
+        # ledger each raise rather than silently wiping or blending snapshots.
+        "datagen/score_quota.py",
+        # The L2 head continuous-prediction score schema + quota adapter (de). Registered
+        # because it is the boundary that keeps a continuous float prediction (which can sit
+        # outside 1..5) from being clamped/rounded into the int teacher-label ledger; the
+        # selftest pins unquantized pass-through, exact 4-dim keys per rubric kind, the
+        # mean/single-dim adapter ranking through score_quota, and multi-version refusal.
+        "datagen/l2_head_scores.py",
+        # The L2 quality-encoder training loader (de). Registered because the only thing it
+        # guarantees is that a teacher label is bound to the RIGHT text chunk: it joins by
+        # doc_id (not row order), requires all four l3_rubric dims, splits at document
+        # granularity (no chunk train/val leakage), and refuses a missing/duplicate chunk.
+        # The selftest pins label-chunk alignment, order-independent reproducibility, and a
+        # contract assertion that the loader's dim set equals datagen/l3_rubric.py's.
+        "datagen/l2_dataset.py",
+        # The L2 census scanner (0e). Registered because the sharding/resume contract is only
+        # checkable on a synthetic world: worker shard subsets must be disjoint and
+        # union-complete, a re-scan must skip a finished shard with no duplicate rows, and
+        # every written row is an UNQUANTIZED continuous 4-float score (out-of-range kept)
+        # that the quota adapter can rank; a mixed scorer_version must raise. The selftest
+        # builds two shards + stub predictor and pins all.
+        "v41f_l2/l2_census_scan.py",
         # The function-interface SFT pair extractor (3b-18). Registered because its two
         # acceptance properties are only checkable on a known-answer world: the output must
         # run to the function's LAST source line (a cut one statement early still parses and
@@ -1780,6 +1815,13 @@ def main():
         # only surfaces later as a generation collapse, which is how the CSA compress branch's
         # own leak survived until someone perturbed a key and watched earlier outputs move.
         "scripts/test_v4_attn.py",
+        # Added in the same commit as the file itself (deadlock pattern below). genB's
+        # independent edge validator for datagen/l2_code_chunk_pool (#399). CPU only: the
+        # --selftest path uses synthetic fixtures with a char/4 counter (no tokenizer, no
+        # corpus) and includes the semicolon-multi-statement regression cases that reproduce
+        # the real partition_fail root cause. The real-BPE mechanism check and the corpus
+        # audit take explicit --tokenizer/--root and do not run on the default --selftest path.
+        "datagen/test_l2_code_chunks_edges.py",
         # Added in the same commit as the file itself: selftests_are_gated refuses to
         # register a path that does not exist, so registering from main first would have
         # been red until the file landed, and landing the file first is red the other way.
@@ -2020,6 +2062,30 @@ def main():
         # --selftest pins normal prose far below mojibake/template/line-repeat PPL,
         # the known-answer contract that makes the threshold-free scorer non-vacuous.
         "datagen/l1_ppl_kenlm.py",
+        # 3b: L2 teacher-label training-pool builder (50k stratified chunks). Its
+        # selftest trains a tiny KN model on a synthetic low/mid/high-PPL corpus and
+        # pins the PPL bands, length bands, content-hash sample_id/parent_doc_id
+        # linkage, multi-chunk rows and fixed-seed determinism, and EXHAUSTIVELY
+        # asserts every emitted chunk is <= the 1024 hard token max across all tail
+        # lengths 1..511 (the de-399 truncation shape). CPU-only, no corpus.
+        "datagen/l2_label_pool_build.py",
+        # 3b: multi-endpoint concurrent teacher driver for the 50k L2 pool. Selftest
+        # runs two in-process stub HTTP servers and pins endpoint round-robin, one
+        # retry recovering an HTTP 500, reject counting, score-ledger rows and
+        # resume-by-sample_id. Cardless, corpusless. ~1s.
+        "datagen/l3_label_drive.py",
+        # 3b: single-endpoint labeler resume identity guard. Selftest pins that an
+        # identical pilot+config resumes, while a changed pilot (positional sample_ids
+        # rebound), a changed backend/teacher_model/rubric_version (mixed labels), or a
+        # missing manifest all refuse with nonzero exit. CPU-only, no network/corpus.
+        "datagen/l3_label_pilot.py",
+        # ae: the strict machine-generated-banner rule for English code corpora (L0/L1
+        # hardening 2026-09-16). Pure string work, no corpus -- 7 real Django/AutoRest/protobuf
+        # banner positives and 7 real-code negatives that a looser regex was measured to
+        # false-kill (autogenerated=False, an inline do-not-modify, an in-function docstring),
+        # plus header-gate and marker/tool conjunction controls. Runs here because a banner
+        # rule that fires on ordinary words silently drops hand-written code. ~0.05s.
+        "datagen/code_quality_rules.py",
         # de-36: the pod ledger puller. Its selftest is cardless and podless -- every case
         # is fabricated rows plus a stubbed pod reader, because the live numbers change
         # daily and an assertion against them would be red the moment someone pulls (the
