@@ -1,0 +1,137 @@
+{
+ "code_ultra_l2_dc": {
+  "shards_sampled": 6,
+  "docs_sampled": 9000,
+  "py_parse_pct": 95.58,
+  "parse_fail_pct": 4.42,
+  "rate_pct": {
+   "autogen": 0.089,
+   "vendored": 0.022,
+   "minified": 0.0,
+   "stub_all_funcs": 0.089,
+   "stub_ge80pct": 0.111,
+   "todo_ge5": 0.244
+  },
+  "parse_fail_breakdown": {
+   "foreign:scala": 203,
+   "foreign:python": 147,
+   "no_language_evidence": 18,
+   "unbalanced_or_unterminated": 10,
+   "noncode:html": 8,
+   "LANG:js": 4,
+   "noncode:generated": 3,
+   "foreign:ruby": 2,
+   "noncode:css": 1,
+   "LANG:java": 1,
+   "noncode:config": 1
+  },
+  "seconds": 13.9
+ },
+ "code_ultra_l3_noexec_dc": {
+  "shards_sampled": 6,
+  "docs_sampled": 9000,
+  "py_parse_pct": 48.02,
+  "parse_fail_pct": 51.98,
+  "rate_pct": {
+   "autogen": 0.089,
+   "vendored": 0.0,
+   "minified": 1.922,
+   "stub_all_funcs": 0.0,
+   "stub_ge80pct": 0.0,
+   "todo_ge5": 0.011
+  },
+  "parse_fail_breakdown": {
+   "foreign:python": 4133,
+   "foreign:scala": 437,
+   "noncode:generated": 91,
+   "unbalanced_or_unterminated": 16,
+   "foreign:typescript": 1
+  },
+  "seconds": 17.3
+ },
+ "code_ultra_l3_stub_dc": {
+  "shards_sampled": 6,
+  "docs_sampled": 9000,
+  "py_parse_pct": 100.0,
+  "parse_fail_pct": 0.0,
+  "rate_pct": {
+   "autogen": 0.078,
+   "vendored": 0.0,
+   "minified": 0.222,
+   "stub_all_funcs": 0.0,
+   "stub_ge80pct": 0.0,
+   "todo_ge5": 0.0
+  },
+  "parse_fail_breakdown": {},
+  "seconds": 6.2
+ },
+ "code_keep_p1_dc": {
+  "shards_sampled": 6,
+  "docs_sampled": 8999,
+  "py_parse_pct": 54.96,
+  "parse_fail_pct": 45.04,
+  "rate_pct": {
+   "autogen": 0.367,
+   "vendored": 0.033,
+   "minified": 0.022,
+   "stub_all_funcs": 0.311,
+   "stub_ge80pct": 0.322,
+   "todo_ge5": 0.4
+  },
+  "parse_fail_breakdown": {
+   "LANG:js": 858,
+   "foreign:ruby": 619,
+   "LANG:java": 436,
+   "LANG:cpp": 424,
+   "foreign:php": 303,
+   "foreign:go": 297,
+   "foreign:csharp": 207,
+   "noncode:html": 202,
+   "no_language_evidence": 186,
+   "LANG:c": 118,
+   "foreign:scala": 110,
+   "unbalanced_or_unterminated": 68,
+   "foreign:typescript": 55,
+   "cpp_marker_without_code": 51,
+   "foreign:python": 51,
+   "noncode:generated": 28,
+   "foreign:rust": 20,
+   "noncode:config": 10,
+   "noncode:license": 6,
+   "noncode:css": 4
+  },
+  "seconds": 17.5
+ },
+ "code_py_starcoder_dc": {
+  "shards_sampled": 6,
+  "docs_sampled": 8953,
+  "py_parse_pct": 100.0,
+  "parse_fail_pct": 0.0,
+  "rate_pct": {
+   "autogen": 3.172,
+   "vendored": 0.402,
+   "minified": 0.0,
+   "stub_all_funcs": 0.48,
+   "stub_ge80pct": 0.57,
+   "todo_ge5": 0.748
+  },
+  "parse_fail_breakdown": {},
+  "seconds": 21.2
+ },
+ "code_py_rp1t_dc": {
+  "shards_sampled": 6,
+  "docs_sampled": 9000,
+  "py_parse_pct": 100.0,
+  "parse_fail_pct": 0.0,
+  "rate_pct": {
+   "autogen": 1.9,
+   "vendored": 0.167,
+   "minified": 0.0,
+   "stub_all_funcs": 0.589,
+   "stub_ge80pct": 0.678,
+   "todo_ge5": 1.144
+  },
+  "parse_fail_breakdown": {},
+  "seconds": 23.8
+ }
+}
