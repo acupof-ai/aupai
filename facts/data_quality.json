@@ -1409,6 +1409,40 @@
    },
    "uncertainty": "n=30 vs n=15, SE of gap 0.20 so the exact -0.3 is noisy; robust claim is no POSITIVE gate->human-quality correlation (point estimate negative). two arms used adjacent rubric iterations (exec then no-exec); both grade content truth the same and the no-exec change was an infra fix, not a scoring change.",
    "status": "measured"
+  },
+  {
+   "id": "dq.fineweb_edu.official_classifier_locked_0916",
+   "value": "official FineWeb-Edu 340M classifier NOT usable on locked sets: zh web_labels AUC 0.5725 (CI .474-.677, chance), 0/180 >=3; zh cci3 locked-400 (121 junk/279 keep, labels joined by id from cci3_audit_400_labels.jsonl) AUC[score predicts not-junk]=0.4220 (CI .359-.483 ENTIRELY BELOW .5 -- inversely oriented, junk scores higher), not-rewrite AUC 0.556; code OSS-100 false-kill 100% at >=3 (median 0.52)",
+   "measured": "2026-09-16",
+   "source": "laptop CPU offline inference, scripts/score_fineweb_edu_locked.py; model HuggingFaceFW/fineweb-edu-classifier model.safetensors sha256[:32] 27fbfe65ce71c3fc50df7b71246c83fe (437,955,572 B); raw runs/fwe_locked_scores.json; analysis docs/lessons/fineweb_edu_classifier_locked.md",
+   "config": {
+    "sets": "web_labels 180 zh rows (33 y=1 educational/147 y=0) in data/corpus/sample/web_labels.jsonl; code_sample_100 real OSS sources in runs/code_rp1t_markup_handread.json (should-keep proxy); cci3_audit_400 400 zh rows distribution-only (per-row hand labels were session-only, not in repo)",
+    "score_semantics": "raw regression logit 0-5 per official model card, NOT sigmoid, no prompt prefix; int_score=round(clamp(s,0,5)); official curation cut >=3; max_length 512 (BERT position cap)",
+    "auc": "sklearn roc_auc_score raw logit vs y; 2000-row paired bootstrap seed 0",
+    "auc_zh": 0.5725,
+    "auc_zh_ci95": [
+     0.4741,
+     0.6769
+    ],
+    "zh_frac_ge3": 0.0,
+    "code_false_kill_at3": 1.0,
+    "code_false_kill_below0": 0.02,
+    "cci3_frac_ge3": 0.02,
+    "runtime": "680 docs CPU in ~42s, no GPU",
+    "cci3_auc_not_junk": 0.422,
+    "cci3_auc_not_junk_ci95": [
+     0.3585,
+     0.4834
+    ],
+    "cci3_auc_not_rewrite": 0.5563,
+    "cci3_median_score_junk": 1.0409,
+    "cci3_median_score_keep": 0.9246,
+    "cci3_labels": "data/corpus/sample/cci3_audit_400_labels.jsonl joined by id (121 junk/32 rewrite)"
+   },
+   "uncertainty": "web_labels n=180 wide CI crosses .5; cci3-400 is the sharper result: not-junk AUC 0.42 with a CI fully below .5 (score is ANTI-correlated with keep -- junk reads as more 'educational'), direction confirmed by junk median 1.04 > keep 0.92. Code false-kill is a 100-doc should-keep proxy, not a labelled confusion matrix.",
+   "status": "measured",
+   "guard_phrases": [],
+   "retracted_value": []
   }
  ]
 }
