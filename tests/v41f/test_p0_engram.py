@@ -16,11 +16,11 @@ from types import SimpleNamespace
 import torch
 from torch import nn
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).absolute().parent))
 from allclose import cmp
 from ref_oracle import load_reference
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).absolute().parents[2]))
 from v41f import engram as ours
 
 # raw token id -> decoded text. Hand-built so normalization collapse is known:
