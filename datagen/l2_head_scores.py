@@ -126,15 +126,28 @@ def validate_row(row):
 
 
 def append_rows(path, rows):
-    """Validate and append continuous head-score rows to an append-only JSONL file."""
+    """Validate and append continuous head-score rows to an append-only JSONL file,
+    all-or-nothing for the cheap deterministic failures: EVERY row is validated and
+    serialized BEFORE the file is opened, so one bad/unserializable row raises with zero
+    bytes from this batch touching disk -- the file's prior prefix is untouched and re-running
+    never double-writes the good rows that preceded the bad one. Once the whole batch is
+    known-good it is appended in one open and flushed+fsynced before close so a completed
+    call's bytes are durable. Crash-safe replacement of the shard itself (tmp+rename+dir
+    fsync) is the caller's job; this guarantees no partial VALIDATION prefix."""
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-    n = 0
+    # materialize + validate + serialize up front: a generator or list is fully consumed here,
+    # and any HeadScoreError/TypeError lands before the append handle exists.
+    lines = []
+    for row in rows:
+        validate_row(row)
+        lines.append(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+    if not lines:
+        return 0
     with open(path, "a", encoding="utf-8") as f:
-        for row in rows:
-            validate_row(row)
-            f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
-            n += 1
-    return n
+        f.writelines(lines)
+        f.flush()
+        os.fsync(f.fileno())
+    return len(lines)
 
 
 def load_rows(path):
@@ -302,9 +315,47 @@ def _selftest():
         loaded = load_rows(p)
         assert loaded[1]["dims"]["content_quality"] == 5.7 and len(loaded) == 2
 
+        # all-or-nothing: a bad row in the MIDDLE of a batch must not leave its good prefix on
+        # disk (the old per-row validate-then-write committed g before reaching the bad row).
+        bad = dict(good)
+        bad["dims"] = dict(good["dims"])
+        bad["dims"]["content_quality"] = float("nan")
+        try:
+            append_rows(p, [row("g_mid"), bad])
+        except HeadScoreError:
+            pass
+        else:
+            raise AssertionError("bad row mid-batch must raise")
+        assert len(load_rows(p)) == 2, "failed batch partially appended a good prefix"
+        # a row that passes schema validation but is not JSON-serializable must ALSO fail before
+        # any byte lands (serialization is front-loaded, not deferred into the write loop).
+        unser = {**row("g_unser"), "extra": {"a", "b"}}
+        try:
+            append_rows(p, [row("g_pre"), unser])
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("unserializable row must raise before writing")
+        assert len(load_rows(p)) == 2, "unserializable batch partially appended"
+        # because the failed batches wrote nothing, a clean retry appends exactly once (no dupes)
+        assert append_rows(p, [row("g3")]) == 1 and len(load_rows(p)) == 3
+        # an empty batch writes nothing and reports 0 without touching the file
+        assert append_rows(p, []) == 0 and len(load_rows(p)) == 3
+        # durability: a successful append fsyncs the data fd before returning (os is shared, so
+        # patching os.fsync intercepts the call append_rows makes)
+        real_fsync, calls = os.fsync, []
+        os.fsync = lambda fd: (calls.append(fd), real_fsync(fd))[1]
+        try:
+            append_rows(p, [row("g4")])
+        finally:
+            os.fsync = real_fsync
+        assert calls, "append_rows must fsync before close"
+        assert len(load_rows(p)) == 4
+
     print(
         "l2_head_scores selftest OK: float dims unquantized (out-of-range kept), schema "
-        "rejections, mean/single-dim adapter through score_quota, version conflict, round-trip"
+        "rejections, mean/single-dim adapter through score_quota, version conflict, round-trip, "
+        "all-or-nothing append (no partial prefix/double-write), fsync"
     )
 
 
