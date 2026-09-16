@@ -75,3 +75,7 @@ runs/*.jsonl.lock
 # regen ran after git had built the tree, so it could only land in the index -- permanently
 # dirty against HEAD, aborting the next merge (shape A, 6e ruling 2026-09-04).
 data/pod_head_manifest.txt
+
+# large HF classifier weights, downloaded at need (see docs/lessons/fineweb_edu_classifier_locked.md)
+models/
+runs/fwe_score.err
