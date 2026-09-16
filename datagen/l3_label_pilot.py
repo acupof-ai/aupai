@@ -34,6 +34,62 @@ def _ts():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def read_jsonl_lenient(path, id_key):
+    """Read a JSONL of records, returning (ids, torn_tail, total_valid).
+
+    Resume must SURVIVE a crash that tore the final line: a partial last record is not
+    valid JSON, is not a label, and would make strict json.loads abort forever. So:
+    - every non-last record must be valid JSON carrying id_key; a bad record in the
+      MIDDLE is corruption (not a torn append) and raises loudly;
+    - only a single unparseable LAST non-empty line is tolerated and reported as
+      torn_tail=True so the caller can truncate it and re-label that sample.
+    """
+    ids = []
+    torn_tail = False
+    if not os.path.exists(path):
+        return ids, False
+    with open(path, encoding="utf-8") as fh:
+        raw = [ln for ln in (line.strip() for line in fh) if ln]
+    for i, rec in enumerate(raw):
+        is_last = i == len(raw) - 1
+        try:
+            obj = json.loads(rec)
+        except json.JSONDecodeError:
+            if is_last:
+                torn_tail = True
+                continue
+            raise SystemExit(
+                f"REFUSE resume: {path} has invalid JSON on line {i + 1} of {len(raw)} "
+                "(a non-final record is corrupt, not a torn append). Inspect/recover "
+                "manually; only a single partial LAST line is auto-truncated.") from None
+        ids.append(obj[id_key])
+    return ids, torn_tail
+
+
+def truncate_torn_tail(path):
+    """Drop a single partial (non-JSON) trailing line so an append-mode resume rewrites
+    that record whole. Rewritten atomically via tmp+replace; returns True if truncated."""
+    if not os.path.exists(path):
+        return False
+    with open(path, encoding="utf-8") as fh:
+        lines = fh.readlines()
+    kept = [ln for ln in lines if ln.strip()]
+    if not kept:
+        return False
+    try:
+        json.loads(kept[-1])
+        return False
+    except json.JSONDecodeError:
+        kept = kept[:-1]
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.writelines(kept)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+        return True
+
+
 def stub_teacher(text: str, rubric: dict) -> str:
     """Deterministic non-label: scores track length bands so the whole pipeline runs
     offline. Explicitly not a judgement; backend must be 'openai' for real labels."""
@@ -96,12 +152,8 @@ def check_resume_identity(out, pilot_path, pilot_sha, config):
     Raises SystemExit on any mismatch. No prior labels (empty out) is a fresh run."""
     if not os.path.exists(out):
         return 0
-    done = set()
-    with open(out, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                done.add(json.loads(line)["sample_id"])
+    ids, _torn = read_jsonl_lenient(out, "sample_id")
+    done = set(ids)
     if not done:
         return 0
     manifest_path = out + ".label_manifest.json"
@@ -177,8 +229,52 @@ def _selftest():
         # broken world 3: labels present but manifest gone -> refuse (cannot verify)
         os.remove(man)
         expect_refuse("missing manifest", out, pilot, new_sha, cfg)
+
+    # --- torn-tail self-heal and rejected dedup (audit #18/#19) in a fresh dir ---
+    with tempfile.TemporaryDirectory() as td:
+        out = os.path.join(td, "labels.jsonl")
+        rej = out + ".rejected.jsonl"
+
+        # a torn LAST label line: valid preceding rows load, tail flagged + truncated,
+        # and the torn sample is no longer in the done set so it gets retried.
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write('{"sample_id": "good1"}\n')
+            fh.write('{"sample_id": "good2"}\n')
+            fh.write('{"sample_id": "tor')  # partial, no newline
+        ids, torn = read_jsonl_lenient(out, "sample_id")
+        assert ids == ["good1", "good2"] and torn is True
+        assert truncate_torn_tail(out) is True
+        with open(out, encoding="utf-8") as rf:
+            repaired = rf.read().splitlines()
+        assert repaired == ['{"sample_id": "good1"}', '{"sample_id": "good2"}']
+        assert truncate_torn_tail(out) is False  # idempotent: nothing torn now
+
+        # a bad MIDDLE record must stay loud (never silently dropped)
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write('{"sample_id": "good1"}\n')
+            fh.write('NOT JSON IN THE MIDDLE\n')
+            fh.write('{"sample_id": "good3"}\n')
+        try:
+            read_jsonl_lenient(out, "sample_id")
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError("corrupt middle record must refuse")
+
+        # rejected dedup: two prior rejects load into the seen set; a torn reject tail
+        # is truncated and not counted.
+        with open(rej, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"sample_id": "r1"}) + "\n")
+            fh.write(json.dumps({"sample_id": "r2"}) + "\n")
+            fh.write('{"sample_id": "r3-tor')  # partial reject
+        rids, rtorn = read_jsonl_lenient(rej, "sample_id")
+        assert rids == ["r1", "r2"] and rtorn is True
+        assert truncate_torn_tail(rej) is True
+        assert set(read_jsonl_lenient(rej, "sample_id")[0]) == {"r1", "r2"}
     print("selftest ok: fresh=0; identical resume allowed; changed pilot, changed "
-          "backend/model/rubric, and missing manifest all refused")
+          "backend/model/rubric, and missing manifest all refused; torn LAST line in "
+          "labels/rejects self-heals (middle corruption loud); rejected ids dedup on "
+          "resume so a re-run never doubles a reject")
     return 0
 
 
@@ -221,17 +317,22 @@ def main():
     cur_config = {"backend": args.backend, "teacher_model": teacher_id,
                   "rubric_version": RUBRIC_VERSION}
     cur_pilot_sha = file_sha256(args.pilot)
-    n_prior = check_resume_identity(args.out, args.pilot, cur_pilot_sha, cur_config)
-    done = set()
-    if n_prior:
-        with open(args.out, encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if line:
-                    done.add(json.loads(line)["sample_id"])
-
+    # #411 guard: refuse resume across changed pilot bytes or teacher/config. Run before
+    # the lenient/torn-tail self-heal so identity is verified on the prior manifest first.
+    check_resume_identity(args.out, args.pilot, cur_pilot_sha, cur_config)
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     rej_path = args.out + ".rejected.jsonl"
+
+    # Self-heal torn suffixes from a crash mid-append before resuming: a partial LAST
+    # line in labels or rejects is truncated (atomic rewrite) so the sample is retried;
+    # a bad MIDDLE record stays a loud refusal inside read_jsonl_lenient.
+    label_ids, label_torn = read_jsonl_lenient(args.out, "sample_id")
+    done = set(label_ids)
+    truncated_labels = truncate_torn_tail(args.out) if label_torn else False
+    rej_ids, rej_torn = read_jsonl_lenient(rej_path, "sample_id")
+    rejected_seen = set(rej_ids)
+    truncated_rejects = truncate_torn_tail(rej_path) if rej_torn else False
+
     kept = rej = 0
     with (
         open(args.pilot, encoding="utf-8") as inp,
@@ -241,7 +342,7 @@ def main():
         for line in inp:
             row = json.loads(line)
             sid = row["sample_id"]
-            if sid in done:
+            if sid in done or sid in rejected_seen:
                 continue
             if args.limit is not None and (kept + rej) >= args.limit:
                 break
@@ -254,6 +355,8 @@ def main():
                 raw = teacher(text, rubric)
                 scores = parse_scores(raw, rubric)
             except Exception as e:  # loud: persist, count, never fabricate
+                if sid in rejected_seen:
+                    continue  # defensive: already counted on this resume's input set
                 rej_fh.write(
                     json.dumps(
                         {"sample_id": sid, "reason": str(e), "rubric_kind": rubric["kind"], "ts": _ts()},
@@ -261,6 +364,7 @@ def main():
                     )
                     + "\n"
                 )
+                rejected_seen.add(sid)
                 rej += 1
                 continue
             ts = _ts()
@@ -316,6 +420,10 @@ def main():
 
         ledger_n = append_rows(args.ledger, ledger_rows)
 
+    # manifest counts describe what is ON DISK after this run (prior + new), so the
+    # manifest never drifts from the labels/rejected file line counts after a resume.
+    total_kept = len(done)
+    total_rej = len(rejected_seen)
     manifest = {
         "pilot": args.pilot,
         "pilot_sha256": cur_pilot_sha,
@@ -323,9 +431,13 @@ def main():
         "backend": args.backend,
         "teacher_model": teacher_id,
         "rubric_version": RUBRIC_VERSION,
-        "kept": kept,
-        "rejected": rej,
+        "kept": total_kept,
+        "newly_kept_this_run": kept,
+        "rejected": total_rej,
+        "newly_rejected_this_run": rej,
         "rejected_path": rej_path,
+        "repaired_torn_label_tail": truncated_labels,
+        "repaired_torn_reject_tail": truncated_rejects,
         "ledger": args.ledger,
         "ledger_domain": args.domain,
         "ledger_appended": ledger_n,
