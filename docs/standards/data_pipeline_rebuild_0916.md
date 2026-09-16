@@ -1,10 +1,15 @@
-# L2 encoder label-pool rebuild runbook (after the 2026-09-16 pod loss)
+# Data funnel rebuild recipe after the 2026-09-16 pod loss
 
-Pure documentation. Nothing here fetches or starts anything; it is the ordered checklist
-to rebuild the L2 teacher-label track on a freshly provisioned pod. All code is on `main`
-(merge `0f5aa15e`, PR #400, and earlier #396). The emptyDir `/work/aupai` that was
-destroyed held **no code and no irreplaceable byte** that is not regenerable by these
-steps from the upstream corpora; the expensive part is re-fetch and re-score, not recovery.
+Scope: regenerating the **data funnel only** — gate tokenizer, decontaminated corpora,
+NL KenLM, the stratified L2 pools, the locked κ sets, and teacher labels. Infrastructure
+provisioning (container/hostPath mounts, claims, `~/bin/pod`, H20 assignment, persistent
+backup) is a separate document owned by 66 and is a precondition assumed here, not described.
+
+This is a recipe, not an executable plan: nothing here fetches or starts anything until a new
+pod is provisioned and the user releases it. All code is on `main` (merge `0f5aa15e`,
+PR #400; earlier #396). The destroyed emptyDir `/work/aupai` held no code and no irreplaceable
+byte that is not regenerable by these steps from upstream corpora; the cost is re-fetch and
+re-score, not recovery.
 
 ## 0. What was lost and what regenerates it
 
@@ -16,23 +21,17 @@ steps from the upstream corpora; the expensive part is re-fetch and re-score, no
 | `runs/l2label/nl_c4_kn.model.json` (~312 MB) | step 3 below, minutes of CPU | order-3 KN counts from the NL sample |
 | `runs/l2label/pool_en_c4.jsonl` (35,000) | step 4, `datagen/l2_label_pool_build.py` | `--seed 20260916` |
 | `runs/l2label/pool_code_py_starcoder.jsonl` (15,000) | ae `datagen/l2_code_chunk_pool.py` (#399) | fixed seed |
-| `runs/locked_en/en_locked_300.jsonl`, `en_handread60.jsonl` | step 5 re-draw | seed `20260916`, one shard, documented in `runs/locked_en_README.md` |
+| `runs/locked_en/en_locked_300.jsonl`, `en_handread60.jsonl` | step 5 re-draw | seed `20260916`, one shard, per `runs/locked_en_README.md` |
 | `runs/locked_en/kappa{300,60}.labels.jsonl` | step 6 re-label | teacher temp 0.0; near-reproducible |
 | 50k score-ledger labels | step 7, `datagen/l3_label_drive.py` | teacher temp 0.0 |
 
-Not on the emptyDir — **verify before assuming a re-download is needed**:
-- Teacher weights `/data00/models/Qwen3.6-35B-A3B-FP8` are a hostPath NVMe mount, not part of
-  `/work`. The 2026-09-16 loss audit (`r3-ckpt-lost-pod-destroyed` memory) checked the four
-  persistent `/data00–03` for the **aupai tree and r3 ckpt only**; the shared model directory
-  was not in scope and can have survived. `ls -la /data00/models/` first.
+Teacher weights are data, not infra, and were NOT on the emptyDir: `/data00/models/Qwen3.6-35B-A3B-FP8`
+is a hostPath NVMe mount. The 2026-09-16 loss audit checked the four persistent `/data00–03`
+for the aupai tree and r3 ckpt only; the shared model directory was out of scope and can have
+survived. **After provisioning, `ls /data00/models/` first — do not re-download until that
+check confirms the weights are absent.**
 
-## 1. Provision the pod (infra; user decision, not this runbook)
-
-A new container with 8 H20, `/work` empty, and the persistent `/data00–03` mounts. Then
-`bash scripts/bootstrap_pod.sh` (fetch/build/vocab/check stages, one at a time). No GPU work
-until the user names cards.
-
-## 2. Gate tokenizer
+## 1. Gate tokenizer
 
 ```bash
 python scripts/build_gate_tokenizer.py     # 32,768 slots, <eos>=1, [NUM]=32767
@@ -41,7 +40,7 @@ python scripts/tokenizer_eval.py --tokenizers data/tokenizer.json --selftest
 The chunk hard-max is measured **with this tokenizer** (decode→re-encode drifts +0..4 at cut
 points), so the pool must be rebuilt against the same vocabulary the encoder trains on.
 
-## 3. Corpora
+## 2. Corpora
 
 Re-fetch and decontaminate the two domains (existing build scripts; mirror chain
 hf-mirror→modelscope→HF with `curl -4`, per `CLAUDE.md` pod rules):
@@ -50,7 +49,7 @@ hf-mirror→modelscope→HF with `curl -4`, per `CLAUDE.md` pod rules):
 
 Verify each re-fetched shard against its recorded sha before trusting strata downstream.
 
-## 4. NL KenLM model (CPU, minutes)
+## 3. NL KenLM model (CPU, minutes)
 
 ```bash
 # representative sample across shards (~40k docs was sufficient on the lost run)
@@ -59,7 +58,7 @@ python3 datagen/l1_ppl_kenlm.py --train /tmp/nl_train.jsonl --order 3 \
 python3 datagen/l1_ppl_kenlm.py --selftest    # normal << template/gibberish/repeat
 ```
 
-## 5. NL pool (CPU)
+## 4. NL pool (CPU)
 
 ```bash
 python3 datagen/l2_label_pool_build.py \
@@ -79,12 +78,12 @@ Post-build gate (must all hold; read from the manifest + a real-BPE rescan):
 - `dropped_fragments` (<128 tokens) and `short_chunks_kept_128_511` counted, non-silent.
 - `sample_id == sha256(content)[:16]`; no duplicate `sample_id`.
 
-## 6. Code pool (ae #399, blocked at loss)
+## 5. Code pool (ae #399)
 
 `datagen/l2_code_chunk_pool.py` — parent-doc length band, `ppl=null`, every chunk ≤1024 by
 the same measured-BPE rule (de's #399 block). Only run after #399 merges; do not substitute.
 
-## 7. Locked κ sets + labels (after teacher is serving)
+## 6. Locked κ sets + labels (after teacher is serving)
 
 Re-draw is deterministic; see `runs/locked_en_README.md`.
 ```bash
@@ -102,7 +101,7 @@ python datagen/l3_label_pilot.py --pilot runs/locked_en/en_locked_300.jsonl \
 κ gate the user set before any scale (on the lost run: s-band edu ≤1-grade disagreement,
 factual binary agreement 93%): human-read κ60 first; do not scale until it passes.
 
-## 8. 50k labels, multi-endpoint
+## 7. 50k labels, multi-endpoint
 
 `cat` the two pools, validate `sample_id` uniqueness (`sort -u`), then:
 ```bash
@@ -119,7 +118,7 @@ python datagen/l3_label_drive.py --pool runs/l2label/pool_50k.jsonl \
   crash resumes with out==ledger, no dropped/duplicate teacher calls.
 - Report total, JSON success, per-endpoint throughput, 4-dim distributions, per-domain counts.
 
-## 9. Facts to re-record
+## 8. Facts to re-record
 
 The new measurements get fresh `facts/*.json` entries (old pod-only numbers are gone with the
 pod): measured tercile boundaries, per-stratum populations/drawn, aggregate teacher throughput
