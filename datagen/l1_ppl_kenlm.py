@@ -178,12 +178,18 @@ class InterpolatedKneserNey:
 
 def append_census_ledger(model: InterpolatedKneserNey, path, *, ledger: str,
                          domain: str, lang: str, model_id: str, version: str,
-                         limit: int, src_sha: str | None = None) -> int:
+                         limit: int, src_sha: str | None = None) -> tuple[int, int]:
     """Census full-scan path: score every jsonl/raw row and append one validated
     ledger row per document (stratum=None). doc_id is the content hash per the frozen
     schema, so a re-cleaned source stops joining to its old score. score_ledger sits
     in this same directory; import it by path so `python datagen/l1_ppl_kenlm.py`
     works whether or not datagen is on sys.path as a package.
+
+    Returns (written, skipped). A document with ZERO scorable tokens (empty or
+    whitespace-only content) is skipped, not written: its PPL is infinite, and a row
+    with both score and rubric_dims null violates the ledger's XOR (it would abort the
+    whole census at that row). Out-of-vocabulary text that still tokenises keeps a
+    finite backoff PPL and IS written -- only an empty token stream is unscorable.
     """
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from datetime import datetime, timezone
@@ -191,16 +197,16 @@ def append_census_ledger(model: InterpolatedKneserNey, path, *, ledger: str,
     from score_ledger import ScoreRow, append_rows, content_doc_id
 
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: UP017
-    batch, written = [], 0
+    batch, written, skipped = [], 0, 0
 
     def emit(text: str, ppl: float):
         nonlocal written
         row = ScoreRow(
             doc_id=content_doc_id(text), domain=domain, lang=lang,
             scorer_name="kenlm", scorer_version=version, ts=ts,
-            score=None if not math.isfinite(ppl) else float(ppl),
-            rubric_dims=None, cut=None, model=model_id, backend="stdlib-kn",
-            stratum=None, rubric_kind=None, record_id=None, src_sha=src_sha)
+            score=float(ppl), rubric_dims=None, cut=None, model=model_id,
+            backend="stdlib-kn", stratum=None, rubric_kind=None, record_id=None,
+            src_sha=src_sha)
         batch.append(row)
         if len(batch) >= 2000:
             written += append_rows(ledger, batch)
@@ -214,10 +220,13 @@ def append_census_ledger(model: InterpolatedKneserNey, path, *, ledger: str,
             if not line.strip():
                 continue
             text = json.loads(line).get("content", "") if path.endswith(".jsonl") else line
+            if not tokenize(text):  # whitespace/empty content: PPL=inf, no valid row
+                skipped += 1
+                continue
             emit(text, model.perplexity(text))
     if batch:
         written += append_rows(ledger, batch)
-    return written
+    return written, skipped
 
 
 def score_lines(model: InterpolatedKneserNey, lines) -> list[dict]:
@@ -294,18 +303,29 @@ def _selftest() -> int:
             with open(src, "w", encoding="utf-8") as f:
                 for s in train[:10]:
                     f.write(json.dumps({"content": s}) + "\n")
-            n = append_census_ledger(
+                # a non-empty LINE whose content is whitespace-only: tokenises to
+                # nothing -> PPL inf -> must be skipped, never written as a
+                # score=null/rubric=null row (that XOR would abort the census).
+                f.write(json.dumps({"content": "   \t  "}) + "\n")
+                # an OOV-but-tokenisable doc keeps a finite backoff PPL -> written
+                f.write(json.dumps({"content": "zxqw vlmp krntt bwor"}) + "\n")
+            written, skipped = append_census_ledger(
                 m, src, ledger=led, domain="probe_en", lang="en",
                 model_id="kenlm_test", version="t1", limit=0)
             rows = load_rows(led)
-            assert n == 10 and len(rows) == 10
+            assert written == 11 and skipped == 1, (written, skipped)
+            assert len(rows) == 11, "whitespace doc skipped, OOV doc written"
             ids = {content_doc_id(s) for s in train[:10]}
+            ids.add(content_doc_id("zxqw vlmp krntt bwor"))
             assert all(r["doc_id"] in ids for r in rows), "census doc_id must be content hash"
             assert all(r["scorer_name"] == "kenlm" and r["stratum"] is None
                        and r["cut"] is None and r["record_id"] is None
-                       and isinstance(r["score"], float) for r in rows)
+                       and isinstance(r["score"], float)
+                       and math.isfinite(r["score"]) for r in rows), "OOV keeps finite PPL"
+            assert content_doc_id("   \t  ") not in {r["doc_id"] for r in rows}, \
+                "zero-token doc must have no ledger row"
     print("selftest ok: normal < template < gibberish; deterministic; order-1 finite; "
-          "census ledger round-trip")
+          "census ledger round-trip; zero-token skipped")
     return 0
 
 
@@ -353,11 +373,12 @@ def main() -> int:
         if a.ledger:
             if not a.domain or not a.model_id:
                 ap.error("--ledger requires --domain and --model-id")
-            n_written = append_census_ledger(
+            n_written, n_skipped = append_census_ledger(
                 m, a.score, ledger=a.ledger, domain=a.domain, lang=a.lang,
                 model_id=a.model_id, version=a.scorer_version, limit=a.limit,
                 src_sha=a.src_sha)
-            print(f"appended {n_written} census rows -> {a.ledger}", file=sys.stderr)
+            print(f"appended {n_written} census rows, skipped {n_skipped} "
+                  f"unscorable (zero-token) -> {a.ledger}", file=sys.stderr)
             return 0
         rows = score_lines(m, read_iter(a.score, a.limit))
         finite = [r for r in rows if math.isfinite(r["ppl"])]
