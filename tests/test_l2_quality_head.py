@@ -130,6 +130,47 @@ def test_rank_never_crosses_domain():
     assert within_domain_rank_loss(pred, targ, mask, dom).item() == 0.0
 
 
+def test_rank_normalized_by_active_dims_not_pair_fraction():
+    # Regression (#7/#32): the denominator used to be a sum of pair_count/B^2 fractions, so
+    # the rank term's effective weight scaled with how many dims carried a comparable pair
+    # instead of averaging over those dims the way per_dim_mse does. Two batches with the
+    # SAME per-pair loss (ordered gap 4 every comparable pair, single domain, B=2) must give
+    # the same rank loss whether 1 or all 4 dims are labelled. Old denominator returned 4x.
+    pred = torch.tensor([[1.0, 1.0, 1.0, 1.0], [5.0, 5.0, 5.0, 5.0]])
+    targ = pred.clone()
+    dom = torch.tensor([0, 0])
+    one_dim = torch.tensor([[1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]])
+    four_dim = torch.ones(2, 4)
+    l1 = within_domain_rank_loss(pred, targ, one_dim, dom)
+    l4 = within_domain_rank_loss(pred, targ, four_dim, dom)
+    assert torch.isclose(l1, l4, atol=1e-6), (l1.item(), l4.item())
+    # value is the single ordered-gap-4 pair loss, not 4x it
+    assert torch.isclose(l4, torch.tensor(0.01814993), atol=1e-5), l4.item()
+
+
+def test_rank_weight_invariant_to_domain_grouping_and_batch_size():
+    # Equal-quality batches (every within-domain comparable pair has the same ordered gap 4)
+    # must yield the same rank loss regardless of how rows are grouped into domains or how
+    # many such groups the batch holds: the ranking regularizer must not get stronger purely
+    # because a batch contains more domains or rows.
+    g = 4.0
+    one_pair = (
+        torch.tensor([[1.0], [1.0 + g]]),
+        torch.tensor([[1.0], [5.0]]),
+        torch.ones(2, 1),
+        torch.tensor([0, 0]),
+    )
+    two_domains = (
+        torch.tensor([[1.0], [1.0 + g], [1.0], [1.0 + g]]),
+        torch.tensor([[1.0], [5.0], [1.0], [5.0]]),
+        torch.ones(4, 1),
+        torch.tensor([0, 0, 1, 1]),
+    )
+    l_a = within_domain_rank_loss(*one_pair)
+    l_b = within_domain_rank_loss(*two_domains)
+    assert torch.isclose(l_a, l_b, atol=1e-6), (l_a.item(), l_b.item())
+
+
 def test_combined_loss_weights_rank():
     cfg = L2Config(lambda_rank=0.0)
     pred = torch.tensor([[3.0, 3.0]])
