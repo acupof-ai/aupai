@@ -1018,6 +1018,14 @@ def main():
         # quota selector ever reads it. The selftest accepts two valid shapes and rejects 12
         # named invalid categories plus a content-hash staleness mismatch.
         "datagen/score_ledger.py",
+        # ae: the L2 code label-pool chunker (512-1024 BPE chunks on AST top-level def/class
+        # boundaries). Registered because its correctness is exact byte partition and never
+        # bisecting a fitting function, both invisible to eyeballing: the selftest asserts
+        # ''.join(chunks)==source on short/multifunction/long/unparseable docs, every small
+        # def lands intact in one chunk, an oversized function hard-splits on whole lines, and
+        # ids are per-final-chunk content hashes. Pure strings, no tokenizer (a 4-chars/id
+        # counter stand-in), no corpus. ~0.1s.
+        "datagen/l2_code_chunk_pool.py",
         # The per-domain conditional quota selector that reads the frozen ledger (de).
         # Registered because the whole reason it exists is to NOT use one global cut: the
         # selftest pins on known answers that the low-scored zh/web group keeps its own
