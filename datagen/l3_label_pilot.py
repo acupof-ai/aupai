@@ -78,10 +78,114 @@ def make_openai_teacher(url, model, timeout):
     return ask
 
 
+def file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def check_resume_identity(out, pilot_path, pilot_sha, config):
+    """Refuse a resume unless the existing --out was produced against the SAME pilot
+    bytes and SAME backend/model/rubric version. Sequence-mode sample_ids are
+    positional, so a changed pilot silently rebinds every id to different content; a
+    changed teacher/backend mixes labels. Returns the count already labelled.
+
+    Raises SystemExit on any mismatch. No prior labels (empty out) is a fresh run."""
+    if not os.path.exists(out):
+        return 0
+    done = set()
+    with open(out, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                done.add(json.loads(line)["sample_id"])
+    if not done:
+        return 0
+    manifest_path = out + ".label_manifest.json"
+    if not os.path.exists(manifest_path):
+        raise SystemExit(
+            f"REFUSE resume: {out} has {len(done)} labels but {manifest_path} is "
+            "missing, so pilot/config identity cannot be verified. Use a new --out.")
+    with open(manifest_path, encoding="utf-8") as fh:
+        prior = json.load(fh)
+    if prior.get("pilot_sha256") != pilot_sha:
+        raise SystemExit(
+            f"REFUSE resume: pilot file changed.\n"
+            f"  manifest pilot_sha256: {prior.get('pilot_sha256')}\n"
+            f"  current  pilot_sha256: {pilot_sha}\n"
+            "Sequence-mode sample_ids are positional; the same id now points at "
+            "different content. Re-draw to a new --out instead of resuming.")
+    for key in ("backend", "teacher_model", "rubric_version"):
+        if prior.get(key) != config[key]:
+            raise SystemExit(
+                f"REFUSE resume: {key} differs from the prior run "
+                f"(manifest={prior.get(key)!r}, current={config[key]!r}). "
+                "Mixing teachers/backends/rubric versions under one --out is rejected; "
+                "label to a new --out.")
+    return len(done)
+
+
+def _selftest():
+    import tempfile
+
+    def expect_refuse(label, out, pilot, sha, cfg):
+        try:
+            check_resume_identity(out, pilot, sha, cfg)
+        except SystemExit:
+            return
+        raise AssertionError(f"{label}: mismatched resume must be refused")
+
+    with tempfile.TemporaryDirectory() as td:
+        out = os.path.join(td, "labels.jsonl")
+        pilot = os.path.join(td, "pilot.jsonl")
+        with open(pilot, "w", encoding="utf-8") as fh:
+            fh.write('{"sample_id": "nl-s-0000000", "content": "hello world"}\n')
+        sha = file_sha256(pilot)
+        cfg = {"backend": "openai", "teacher_model": "m", "rubric_version": RUBRIC_VERSION}
+        man = out + ".label_manifest.json"
+
+        # fresh: no out file -> 0
+        assert check_resume_identity(out, pilot, sha, cfg) == 0
+
+        # simulate a completed prior run: 2 labels + matching manifest
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"sample_id": "a"}) + "\n")
+            fh.write(json.dumps({"sample_id": "b"}) + "\n")
+        with open(man, "w", encoding="utf-8") as fh:
+            json.dump({"pilot_sha256": sha, **cfg}, fh)
+        assert check_resume_identity(out, pilot, sha, cfg) == 2  # identical -> resumes
+
+        # broken world 1: pilot bytes changed (positional ids rebound) -> refuse
+        with open(pilot, "w", encoding="utf-8") as fh:
+            fh.write('{"sample_id": "nl-s-0000000", "content": "DIFFERENT content"}\n')
+        new_sha = file_sha256(pilot)
+        assert new_sha != sha
+        expect_refuse("changed pilot", out, pilot, new_sha, cfg)
+
+        # broken world 2: backend / teacher / rubric mismatch -> refuse each
+        with open(man, "w", encoding="utf-8") as fh:
+            json.dump({"pilot_sha256": new_sha, **cfg}, fh)
+        for key, bad in (("backend", "stub"), ("teacher_model", "other"),
+                         ("rubric_version", "future-v9")):
+            badcfg = dict(cfg)
+            badcfg[key] = bad
+            expect_refuse(f"changed {key}", out, pilot, new_sha, badcfg)
+
+        # broken world 3: labels present but manifest gone -> refuse (cannot verify)
+        os.remove(man)
+        expect_refuse("missing manifest", out, pilot, new_sha, cfg)
+    print("selftest ok: fresh=0; identical resume allowed; changed pilot, changed "
+          "backend/model/rubric, and missing manifest all refused")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--pilot", required=True, help="stratified sample jsonl")
-    ap.add_argument("--out", required=True, help="labels jsonl")
+    ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--pilot", help="stratified sample jsonl")
+    ap.add_argument("--out", help="labels jsonl")
     ap.add_argument("--backend", choices=["stub", "openai"], default="stub")
     ap.add_argument("--url", default="http://127.0.0.1:8000")
     ap.add_argument("--model", default="teacher")
@@ -99,6 +203,10 @@ def main():
         help="full corpus domain name for ledger rows, e.g. en_c4_stage2_dc; required when --ledger is set",
     )
     args = ap.parse_args()
+    if args.selftest:
+        return _selftest()
+    if not args.pilot or not args.out:
+        ap.error("--pilot and --out are required")
 
     ledger_rows = []
     if args.ledger and not args.domain:
@@ -109,11 +217,17 @@ def main():
     )
     teacher_id = "stub-length-function" if args.backend == "stub" else args.model
 
+    cur_config = {"backend": args.backend, "teacher_model": teacher_id,
+                  "rubric_version": RUBRIC_VERSION}
+    cur_pilot_sha = file_sha256(args.pilot)
+    n_prior = check_resume_identity(args.out, args.pilot, cur_pilot_sha, cur_config)
     done = set()
-    if os.path.exists(args.out):
+    if n_prior:
         with open(args.out, encoding="utf-8") as fh:
             for line in fh:
-                done.add(json.loads(line)["sample_id"])
+                line = line.strip()
+                if line:
+                    done.add(json.loads(line)["sample_id"])
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     rej_path = args.out + ".rejected.jsonl"
@@ -198,6 +312,7 @@ def main():
 
     manifest = {
         "pilot": args.pilot,
+        "pilot_sha256": cur_pilot_sha,
         "out": args.out,
         "backend": args.backend,
         "teacher_model": teacher_id,
