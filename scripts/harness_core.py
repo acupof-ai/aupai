@@ -489,7 +489,7 @@ def _tmp_repo_shaped(mix_obj=None):
 
     d = _tmp_repo(mix_obj)
     for name in ("scripts", "eval", "datagen", "probes", "mathbank", "algorithms",
-                 "filters", "docs", "facts"):
+                 "filters", "docs", "facts", "tests"):
         if os.path.isdir(os.path.join(ROOT, name)) and not os.path.exists(os.path.join(d, name)):
             os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
     for f in os.listdir(ROOT):
