@@ -7,7 +7,9 @@ Two shapes:
 - V41F_SMALL: same-as-upstream reference shapes, used by P0 allclose on CPU.
 - v41f_s(): the trainable 8xH20 config (see docs/standards/v41_faithful_repro.md §3).
 
-Scales in comments are ESTIMATES until a real count/peek reports them.
+v41f_s() size, measured by scripts/v41f_param_count.py: 0.9046 B total params,
+210.95 M active/token (23.32%). This is the faithful V4.1-Flash-S config, not the retired
+~350M-active r3 gate line; do not retune these shapes toward that older number.
 """
 from dataclasses import dataclass, fields
 from typing import Literal

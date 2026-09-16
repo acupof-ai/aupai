@@ -28,7 +28,7 @@ def _bruteforce(q, kv, sink, idxs, scale):
                 w = [torch.exp(torch.tensor(s - mx)) for s in logits]
                 z = sum(w)
                 acc = torch.zeros(d)
-                for wi, v in zip(w[:-1], vals):
+                for wi, v in zip(w[:-1], vals, strict=True):
                     acc += (wi / z) * v
                 out[bi, mi, hi] = acc
     return out
