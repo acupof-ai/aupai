@@ -22,8 +22,10 @@ from v41f_l2.l2_quality_head import (
     L2Dataset,
     L2QualityModel,
     QualityHead,
+    load_head_state,
     per_dim_mse,
     quality_loss,
+    save_head,
     train_step,
     within_domain_rank_loss,
 )
@@ -138,6 +140,34 @@ def test_combined_loss_weights_rank():
     # single row -> no pairs -> rank 0, so total == mse regardless of lambda
     assert torch.isclose(parts0["rank"], torch.tensor(0.0))
     assert torch.isclose(l0, parts0["mse"])
+
+
+def test_head_checkpoint_roundtrip_cpu(tmp_path):
+    # train_l2.save_head -> scanner load_head_state must reproduce identical outputs on CPU,
+    # and the cfg must ride along so the scanner rebuilds the same head shape.
+    cfg = L2Config(hidden_dim=128, lambda_rank=0.25)
+    torch.manual_seed(7)
+    head = QualityHead(cfg).eval()
+    emb = torch.randn(5, 1024)
+    before = head(emb).detach().clone()
+
+    p = tmp_path / "head.pt"
+    save_head(str(p), head, cfg)
+
+    state, loaded_cfg = load_head_state(str(p))
+    assert loaded_cfg["hidden_dim"] == 128 and loaded_cfg["lambda_rank"] == 0.25
+    rebuilt = QualityHead(L2Config(**loaded_cfg)).eval()
+    rebuilt.load_state_dict(state)
+    after = rebuilt(emb)
+    assert torch.allclose(before, after, atol=1e-6)
+
+    # a foreign blob (plain tensor / missing "head") must refuse, not silently mis-load
+    import torch as _t
+
+    bad = tmp_path / "bad.pt"
+    _t.save(_t.zeros(3), str(bad))
+    with pytest.raises(ValueError):
+        load_head_state(str(bad))
 
 
 def _row(doc_id, domain, dims, kind=None):
