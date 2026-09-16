@@ -1018,6 +1018,13 @@ def main():
         # quota selector ever reads it. The selftest accepts two valid shapes and rejects 12
         # named invalid categories plus a content-hash staleness mismatch.
         "datagen/score_ledger.py",
+        # The per-domain conditional quota selector that reads the frozen ledger (de).
+        # Registered because the whole reason it exists is to NOT use one global cut: the
+        # selftest pins on known answers that the low-scored zh/web group keeps its own
+        # lower threshold, the keep count conserves each quota exactly, and an empty
+        # targeted domain / a quota under the survival floor / an unpinned multi-version
+        # ledger each raise rather than silently wiping or blending snapshots.
+        "datagen/score_quota.py",
         # The function-interface SFT pair extractor (3b-18). Registered because its two
         # acceptance properties are only checkable on a known-answer world: the output must
         # run to the function's LAST source line (a cut one statement early still parses and
