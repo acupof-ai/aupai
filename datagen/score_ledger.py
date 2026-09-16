@@ -31,8 +31,13 @@ Schema (one JSON object per line, all keys present every line):
                        CENSUS row (every document was scored), not "unknown": a row whose
                        provenance is unknown must not be written.
     rubric_kind    str | None. Rubric variant for a multi-dim row (66 l3-rubric kind).
-    record_id      str | None. Id of the SCORING record when it differs from the document
-                       (66 label_id); doc_id carries the sampled document's sample_id.
+    record_id      str | None. External id used to JOIN the row back to an upstream record
+                       that is not addressable by the content hash: a sampling run's
+                       label_id (66), or an existing labeled set's own source id (the cci3
+                       audit ids are a source-repo hash, not sha256(content), so a locked-
+                       set rescoring stores that id here to join back to the hand labels).
+                       doc_id stays the content identity; record_id is the provenance-set
+                       join handle. Null for a census row with no external record.
     src_sha        str | None. Content fingerprint of the CORPUS SOURCE BUILD the document
                        belongs to (the corpus_fingerprint/filters_fp convention), a 64-hex
                        sha256. Optional: census rows over a fingerprinted build fill it.
