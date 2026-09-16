@@ -1,0 +1,66 @@
+{
+ "device": "NVIDIA H20",
+ "timed_region": "gpu_forward_only",
+ "models": {
+  "qwen3-emb-0.6b": {
+   "ctx": 32768,
+   "n_docs": 1200,
+   "total_tokens": 853965,
+   "p50_tokens": 335,
+   "p95_tokens": 2931,
+   "budget32k": {
+    "n_batches": 27,
+    "mean_bs": 26.1,
+    "docs_per_s": 74.1,
+    "tokens_per_s": 52740.2
+   },
+   "budget64k": {
+    "n_batches": 14,
+    "mean_bs": 13.0,
+    "docs_per_s": 66.1,
+    "tokens_per_s": 47007.0
+   },
+   "peak_mem_GB": 17.15
+  },
+  "bge-m3": {
+   "ctx": 8192,
+   "n_docs": 1200,
+   "total_tokens": 1065759,
+   "p50_tokens": 407,
+   "p95_tokens": 3690,
+   "budget32k": {
+    "n_batches": 35,
+    "mean_bs": 32.5,
+    "docs_per_s": 131.1,
+    "tokens_per_s": 116443.0
+   },
+   "budget64k": {
+    "n_batches": 17,
+    "mean_bs": 16.3,
+    "docs_per_s": 123.7,
+    "tokens_per_s": 109876.3
+   },
+   "peak_mem_GB": 3.91
+  },
+  "bge-large-en": {
+   "ctx": 512,
+   "n_docs": 1200,
+   "total_tokens": 408888,
+   "p50_tokens": 391,
+   "p95_tokens": 512,
+   "budget32k": {
+    "n_batches": 13,
+    "mean_bs": 12.5,
+    "docs_per_s": 513.8,
+    "tokens_per_s": 175055.8
+   },
+   "budget64k": {
+    "n_batches": 7,
+    "mean_bs": 6.2,
+    "docs_per_s": 488.7,
+    "tokens_per_s": 166509.6
+   },
+   "peak_mem_GB": 3.14
+  }
+ }
+}
