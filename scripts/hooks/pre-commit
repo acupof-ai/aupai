@@ -2208,6 +2208,11 @@ def main():
         # manifest and pins physical-line parsing, index screening, and the sha1/manifest
         # count guards.
         "eval/mmlu.py",
+        # The v41f P0 faithful-reproduction suite (fb). One runner discovers and runs every
+        # tests/v41f/test_p0_*.py per-module allclose against the vendored, sha-pinned
+        # DeepSeek-V4.1 reference, so a new P0 module needs no map entry (the runner does),
+        # and the suite is the oracle-equivalence proof for the whole v41f build.
+        "tests/v41f/p0_selftest.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
