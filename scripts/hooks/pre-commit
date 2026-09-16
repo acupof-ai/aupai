@@ -2074,6 +2074,11 @@ def main():
         # retry recovering an HTTP 500, reject counting, score-ledger rows and
         # resume-by-sample_id. Cardless, corpusless. ~1s.
         "datagen/l3_label_drive.py",
+        # 3b: single-endpoint labeler resume identity guard. Selftest pins that an
+        # identical pilot+config resumes, while a changed pilot (positional sample_ids
+        # rebound), a changed backend/teacher_model/rubric_version (mixed labels), or a
+        # missing manifest all refuse with nonzero exit. CPU-only, no network/corpus.
+        "datagen/l3_label_pilot.py",
         # ae: the strict machine-generated-banner rule for English code corpora (L0/L1
         # hardening 2026-09-16). Pure string work, no corpus -- 7 real Django/AutoRest/protobuf
         # banner positives and 7 real-code negatives that a looser regex was measured to
