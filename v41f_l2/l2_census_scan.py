@@ -160,20 +160,37 @@ def _write_marker(out_path: Path, cfg: ScanConfig, head_fp: str, n_rows: int):
     mtmp = marker_path(out_path).with_suffix(".done.json.tmp")
     with open(mtmp, "w") as fh:
         json.dump(payload, fh, sort_keys=True)
-    os.replace(mtmp, marker_path(out_path))
+    _durably_rename(mtmp, marker_path(out_path))
 
 
-def read_corpus_docs(shard_path: str):
-    """yield (content, src_sha_or_None) per JSONL row. Blank/non-string content skipped."""
+def read_corpus_docs(shard_path: str, counters: dict):
+    """Stream (content, src_sha) for every USABLE JSONL row, accounting for every input row.
+
+    Nothing is dropped silently. Counters:
+      input_rows        every non-blank physical line attempted,
+      bad_content_rows  lines that are not JSON, are not an object, lack "content", carry a
+                        non-string content, or an empty/whitespace string.
+    A blank separator line is ignored without counting. All-bad input surfaces upstream as a
+    shard with zero valid rows, which is refused rather than silently completed."""
     with open(shard_path, encoding="utf-8") as fh:
         for line in fh:
             line = line.strip()
             if not line:
                 continue
-            row = json.loads(line)
+            counters["input_rows"] = counters.get("input_rows", 0) + 1
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                counters["bad_content_rows"] = counters.get("bad_content_rows", 0) + 1
+                continue
+            if not isinstance(row, dict):
+                counters["bad_content_rows"] = counters.get("bad_content_rows", 0) + 1
+                continue
             content = row.get("content")
-            if isinstance(content, str) and content:
-                yield content, row.get("src_sha")
+            if not isinstance(content, str) or not content.strip():
+                counters["bad_content_rows"] = counters.get("bad_content_rows", 0) + 1
+                continue
+            yield content, row.get("src_sha")
 
 
 def build_row(content, vec, cfg: ScanConfig, domain, shard_path, src_sha=None):
@@ -203,6 +220,36 @@ def _utcnow() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _fsync_file(path):
+    """Flush file data to disk so a later rename does not expose a non-durable file."""
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _fsync_dir(dir_path):
+    """fsync a directory so a file creation/rename inside it is durable (POSIX requirement)."""
+    fd = os.open(dir_path, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def _durably_rename(src: Path, dst: Path):
+    """fsync the source, atomically rename to dst, then fsync the parent directory."""
+    _fsync_file(str(src))
+    os.replace(src, dst)
+    _fsync_dir(str(dst.parent))
+
+
+class EmptyShardError(RuntimeError):
+    """A shard produced ZERO valid score rows. Marking it complete would make resume skip it
+    forever, silently giving an all-bad/empty domain zero scores; fail loud instead."""
+
+
 def scan_shards(domain, paths, out_dir, predict, cfg: ScanConfig, counters, *, force=False):
     """Score a worker's assigned shards, one validated output file + fingerprint marker per
     shard.
@@ -229,12 +276,20 @@ def scan_shards(domain, paths, out_dir, predict, cfg: ScanConfig, counters, *, f
             counters["skipped_shards"] += 1
             continue
         rows = _score_one_shard(domain, shard_path, predict, cfg, counters, domain_seen)
+        if not rows:
+            raise EmptyShardError(
+                f"{shard_path}: 0 valid scored rows "
+                f"(input_rows={counters.get('input_rows', 0)}, "
+                f"bad_content_rows={counters.get('bad_content_rows', 0)}). Not publishing a "
+                "file or completion marker; fix the shard/glob before trusting this domain."
+            )
         tmp = out_path.with_suffix(out_path.suffix + ".tmp")
         if tmp.exists():
             tmp.unlink()
-        # append_rows validates each row against the canonical schema before any byte lands
+        # append_rows validates each row against the canonical schema before any byte lands;
+        # publish + marker are both fsync/rename/fsync-dir durable
         append_rows(str(tmp), rows)
-        os.replace(tmp, out_path)
+        _durably_rename(tmp, out_path)
         _write_marker(out_path, cfg, head_fp, len(rows))
         written += len(rows)
         counters["written_shards"] += 1
@@ -283,7 +338,7 @@ def _score_one_shard(domain, shard_path, predict, cfg, counters, domain_seen):
             counters["docs"] += 1
 
     batch = []
-    for content, src_sha in read_corpus_docs(shard_path):
+    for content, src_sha in read_corpus_docs(shard_path, counters):
         cid = content_doc_id(content)
         if cid in domain_seen:
             counters["dup_docs"] += 1
@@ -387,13 +442,27 @@ def main(argv=None):
         ap.error("--head-ckpt is required for a real scan")
 
     globs = {d: os.path.join(args.corpus_root, d, "*.jsonl") for d in args.domains}
-    shards = assign_shards(enumerate_shards(globs), args.shard, args.num_shards)
+    all_shards = enumerate_shards(globs)
+    if not all_shards:
+        # a glob typo / wrong corpus root / rebuilt-but-empty domain would otherwise finish
+        # with zero scores and look successful; that is misconfiguration, not an empty census.
+        raise SystemExit(f"no corpus shards matched {globs}; check --corpus-root/--domains")
+    shards = assign_shards(all_shards, args.shard, args.num_shards)
+    if not shards:
+        raise SystemExit(f"worker --shard {args.shard}/--num-shards {args.num_shards} was assigned 0 shards")
     cfg = ScanConfig(scorer_version=args.scorer_version)
     predict = HeadPredictor(args.head_ckpt, cfg)
     by_domain: dict[str, list] = {}
     for domain, path in shards:
         by_domain.setdefault(domain, []).append(path)
-    counters = {"docs": 0, "dup_docs": 0, "written_shards": 0, "skipped_shards": 0}
+    counters = {
+        "docs": 0,
+        "dup_docs": 0,
+        "written_shards": 0,
+        "skipped_shards": 0,
+        "input_rows": 0,
+        "bad_content_rows": 0,
+    }
     for domain, paths in sorted(by_domain.items()):
         scan_shards(domain, paths, args.out_dir, predict, cfg, counters, force=args.force)
     # probe measured ~0 docs at 8192; nonzero means the length distribution moved and docs
@@ -418,6 +487,13 @@ def main(argv=None):
         raise SystemExit(
             f"{total_xdup} cross-shard duplicate doc_id(s) found in {args.out_dir}; the census "
             "double-counted them. Re-dedup the corpus or shard assignment before selecting."
+        )
+    # bad content rows must never be a silent loss; a nonzero count fails the scan so an
+    # upstream parse/encoding problem cannot quietly shrink a domain.
+    if counters["bad_content_rows"]:
+        raise SystemExit(
+            f"{counters['bad_content_rows']} unparseable/empty/missing-content rows skipped "
+            f"of {counters['input_rows']} input rows; fix the corpus before trusting the census"
         )
 
 
@@ -645,11 +721,109 @@ def _selftest():
         xdups = find_domain_duplicates(dd2, "code_py")
         assert len(xdups) == 1 and len(next(iter(xdups.values()))) == 2, xdups
 
+    # BAD-ROW ACCOUNTING + EMPTY-SHARD REFUSAL (hardening). Bad lines are counted, not
+    # silently dropped; a zero-valid shard is neither published nor marker-completed.
+    def const_pred(texts):
+        return [[3.0, 3.0, 3.0, 3.0] for _ in texts]
+
+    with tempfile.TemporaryDirectory() as bd:
+        mixed = os.path.join(bd, "mixed.jsonl")
+        with open(mixed, "w") as fh:
+            fh.write(json.dumps({"content": "good doc here"}) + "\n")
+            fh.write("\n")  # blank separator: ignored, NOT counted
+            fh.write("not json at all\n")  # unparseable
+            fh.write(json.dumps({"content": ""}) + "\n")  # empty
+            fh.write(json.dumps({"content": 42}) + "\n")  # non-string
+            fh.write(json.dumps({"nope": "x"}) + "\n")  # missing key
+        hc = {
+            "docs": 0,
+            "dup_docs": 0,
+            "written_shards": 0,
+            "skipped_shards": 0,
+            "input_rows": 0,
+            "bad_content_rows": 0,
+        }
+        scan_shards("code_py", [mixed], bd, const_pred, cfg, hc)
+        assert hc["input_rows"] == 5, hc  # 1 good + 4 bad; blank not counted
+        assert hc["bad_content_rows"] == 4, hc
+        assert hc["docs"] == 1 and hc["written_shards"] == 1
+
+        empty = os.path.join(bd, "empty.jsonl")
+        with open(empty, "w") as fh:
+            fh.write(json.dumps({"content": ""}) + "\n")
+            fh.write("garbage\n")
+        ec = {
+            "docs": 0,
+            "dup_docs": 0,
+            "written_shards": 0,
+            "skipped_shards": 0,
+            "input_rows": 0,
+            "bad_content_rows": 0,
+        }
+        try:
+            scan_shards("code_py", [empty], bd, const_pred, cfg, ec)
+        except EmptyShardError:
+            pass
+        except Exception as e:  # bypassed guard falls through to a missing-tmp rename: still loud
+            raise AssertionError(
+                f"zero-valid shard must raise EmptyShardError before any publish, got {type(e).__name__}"
+            ) from e
+        else:
+            raise AssertionError("a zero-valid shard must raise, not publish an empty result")
+        assert not shard_output_path(bd, "code_py", empty).exists(), "no data published for empty shard"
+        assert not marker_path(shard_output_path(bd, "code_py", empty)).exists(), "no marker for empty shard"
+        assert not shard_output_path(bd, "code_py", empty).with_suffix(".tmp").exists()
+
+    # DURABLE PUBLISH: file fsync before rename, parent-dir fsync after. Spy on THIS module's
+    # globals (a fresh import would be a different module under `python l2_census_scan.py`).
+    g = globals()
+    calls = {"file": 0, "dir": 0, "replace": 0}
+    of_file, of_dir, of_repl = g["_fsync_file"], g["_fsync_dir"], os.replace
+
+    def spy_file(p):
+        calls["file"] += 1
+        return of_file(p)
+
+    def spy_dir(p):
+        calls["dir"] += 1
+        return of_dir(p)
+
+    def spy_repl(a, b):
+        calls["replace"] += 1
+        return of_repl(a, b)
+
+    g["_fsync_file"], g["_fsync_dir"], os.replace = spy_file, spy_dir, spy_repl
+    try:
+        with tempfile.TemporaryDirectory() as fd:
+            p = os.path.join(fd, "d.jsonl")
+            with open(p, "w") as fh:
+                fh.write(json.dumps({"content": "durable please"}) + "\n")
+            scan_shards(
+                "code_py",
+                [p],
+                fd,
+                const_pred,
+                cfg,
+                {
+                    "docs": 0,
+                    "dup_docs": 0,
+                    "written_shards": 0,
+                    "skipped_shards": 0,
+                    "input_rows": 0,
+                    "bad_content_rows": 0,
+                },
+            )
+            # data file rename is one durable publish; marker rename is another -> >=1 each
+            assert calls["file"] >= 1 and calls["dir"] >= 1 and calls["replace"] >= 1, calls
+    finally:
+        g["_fsync_file"], g["_fsync_dir"], os.replace = of_file, of_dir, of_repl
+
     print(
         "l2_census_scan selftest OK: disjoint sharding, idempotent fingerprint-checked "
         "resume (stale head/version/markerless refused without --force), canonical "
         "continuous rows unquantized (out-of-range kept), quota ranking separable, "
-        "version-conflict guard, atomic write, domain-level + cross-shard dup detection"
+        "version-conflict guard, durable fsync publish, bad-row counting, empty-shard "
+        "refusal, domain-level + cross-shard dup detection"
     )
 
 
