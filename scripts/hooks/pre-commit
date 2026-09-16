@@ -2009,6 +2009,10 @@ def main():
         # here because a corpus filter that silently widens is how a domain gets built from
         # the wrong rows and nobody sees it until the retention number is quoted. ~0.1s.
         "datagen/code_lang_validate.py",
+        # 3b: L1 word n-gram perplexity quality layer (stdlib interpolated Kneser-Ney).
+        # --selftest pins normal prose far below mojibake/template/line-repeat PPL,
+        # the known-answer contract that makes the threshold-free scorer non-vacuous.
+        "datagen/l1_ppl_kenlm.py",
         # de-36: the pod ledger puller. Its selftest is cardless and podless -- every case
         # is fabricated rows plus a stubbed pod reader, because the live numbers change
         # daily and an assertion against them would be red the moment someone pulls (the
