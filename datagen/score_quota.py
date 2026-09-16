@@ -86,8 +86,22 @@ def pin_groups(rows, scorer_name, scorer_version=None, rubric_kind=None, rubric_
     elif len(versions) > 1:
         raise VersionConflict(f"scorer {scorer_name} has versions {versions}; pin one")
     groups = {}
+    # A document must appear at most once in the pinned scorer/version selection. An
+    # append-only census ledger can carry a duplicate doc_id (re-run / double append); if it
+    # did, keep/total would count that doc twice, retain it twice, and silently push another
+    # document out -- the per-domain quota would not conserve. Loud, mirroring
+    # l2_dataset.load_pairs: reconcile the source, never silently dedup a selection.
+    seen = set()
     for r in sel:
         key = (r["domain"], r["lang"]) if by_lang else (r["domain"], None)
+        identity = (key, r["doc_id"])
+        if identity in seen:
+            raise QuotaError(
+                f"duplicate doc_id {r['doc_id']!r} in group {key} for "
+                f"{scorer_name}/{r['scorer_version']}; reconcile the ledger (one score per doc "
+                "per pinned scorer+version) before selecting a quota"
+            )
+        seen.add(identity)
         groups.setdefault(key, []).append((r["doc_id"], _order_value(r, rubric_dim)))
     return groups, (scorer_version or versions[0])
 
@@ -242,10 +256,12 @@ def _selftest():
             {},
         ),
         (lambda: pin_groups(rows + [{**rows[0], "scorer_version": "v2"}], "kenlm"), {}),
+        # duplicate doc_id in one pinned group must raise (quota would double-retain it)
+        (lambda: pin_groups(rows + [dict(rows[0])], "kenlm", "v1"), {}),
     ):
         try:
             fn(**kw)
-        except (EmptyDomain, DomainWouldEmpty, VersionConflict):
+        except (EmptyDomain, DomainWouldEmpty, VersionConflict, QuotaError):
             pass
         else:
             raise AssertionError("expected a loud selector refusal")
