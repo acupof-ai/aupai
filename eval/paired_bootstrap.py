@@ -102,6 +102,50 @@ def load_clean_task_ids(path):
     return out
 
 
+def load_he_exclude(path):
+    """String task_ids in an HE contam manifest's r3_humaneval_union (the 8).
+
+    HE CLEAN = 164 - union = 156, i.e. EXCLUDE these, opposite of MBPP's
+    r3_mbpp_clean keep-list. Preds carry ids like "HumanEval/21".
+    """
+    if not path:
+        return None
+    with open(path, encoding="utf-8") as fh:
+        u = json.load(fh)
+    v = u.get("r3_humaneval_union")
+    if not isinstance(v, list) or not v:
+        raise SystemExit(f"{path}: r3_humaneval_union missing or not a non-empty list")
+    return {str(s) for s in v}
+
+
+def apply_task_filters(tasks, clean_ids=None, he_exclude=None):
+    """The single filter path main and the selftest share. Returns the filtered list.
+
+    The two flags are OPPOSITE filters on DIFFERENT benchmark id spaces (MBPP int keep vs
+    HE string exclude); passing both is always a caller error, never an intersection.
+    """
+    if clean_ids is not None and he_exclude is not None:
+        raise SystemExit("--clean (MBPP keep-list) and --he_union (HE exclude-list) "
+                         "are opposite filters for different benchmarks; pass one")
+    if clean_ids is not None:
+        before = len(tasks)
+        tasks = [t for t in tasks if t in clean_ids]
+        if not tasks:
+            raise SystemExit("no CLEAN task_ids survive the --clean filter")
+        if len(tasks) != before:
+            print(f"CLEAN: pairing restricted to {len(tasks)} of {before} tasks "
+                  f"(r3 six-domain union excluded)")
+    if he_exclude is not None:
+        before = len(tasks)
+        tasks = [t for t in tasks if t not in he_exclude]
+        if not tasks:
+            raise SystemExit("no tasks survive the --he_union exclusion")
+        if len(tasks) != before:
+            print(f"HE CLEAN: {len(tasks)} of {before} tasks "
+                  f"(r3_humaneval_union excluded)")
+    return tasks
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--a", required=True, help="treatment preds (e.g. ET)")
@@ -113,9 +157,12 @@ def main():
     ap.add_argument("--alpha", type=float, default=0.05, help="one-sided tail")
     ap.add_argument("--clean", default=None,
                     help="MBPP contam manifest; restrict the paired unit to r3_mbpp_clean")
+    ap.add_argument("--he_union", default=None,
+                    help="HE contam manifest; exclude r3_humaneval_union (164->156)")
     args = ap.parse_args()
 
     clean_ids = load_clean_task_ids(args.clean)
+    he_exclude = load_he_exclude(args.he_union)
 
     ra, na, sa = load_task_rates(args.a)
     rb, nb, sb = load_task_rates(args.b)
@@ -128,14 +175,7 @@ def main():
     if not tasks:
         raise SystemExit("no shared task_ids between the two files")
     assert_sample_aligned(sa, sb, tasks)
-    if clean_ids is not None:
-        before = len(tasks)
-        tasks = [t for t in tasks if t in clean_ids]
-        if not tasks:
-            raise SystemExit("no CLEAN task_ids survive the --clean filter")
-        if len(tasks) != before:
-            print(f"CLEAN: pairing restricted to {len(tasks)} of {before} tasks "
-                  f"(r3 six-domain union excluded)")
+    tasks = apply_task_filters(tasks, clean_ids=clean_ids, he_exclude=he_exclude)
     assert na[tasks[0]] == nb[tasks[0]], (na[tasks[0]], nb[tasks[0]])
     n = na[tasks[0]]
 
@@ -224,8 +264,51 @@ def _selftest():
         write(e, rows([0, 1, 2]))
         _, _, se = load_task_rates(e)
         assert_sample_aligned(sa, se, ["t0"])
+
+        # HE union loader: an EXCLUDE list of string ids; empty/missing refuses.
+        he = os.path.join(td, "he.json")
+        with open(he, "w", encoding="utf-8") as fh:
+            json.dump({"r3_humaneval_union": ["HumanEval/21", "HumanEval/7"]}, fh)
+        assert load_he_exclude(he) == {"HumanEval/21", "HumanEval/7"}
+        bad_he = os.path.join(td, "bad_he.json")
+        with open(bad_he, "w", encoding="utf-8") as fh:
+            json.dump({"r3_humaneval_union": []}, fh)
+        try:
+            load_he_exclude(bad_he)
+            raise AssertionError("empty HE union was accepted")
+        except SystemExit as e:
+            assert "r3_humaneval_union" in str(e), str(e)
+
+        # END-TO-END through apply_task_filters -- the exact list main() bootstraps.
+        # (1) The full 164 HE tasks minus the real-shaped 8-id union is EXACTLY 156.
+        he_all = [f"HumanEval/{i}" for i in range(164)]
+        he8 = {"HumanEval/19", "HumanEval/66", "HumanEval/71", "HumanEval/78",
+               "HumanEval/105", "HumanEval/123", "HumanEval/129", "HumanEval/156"}
+        kept = apply_task_filters(list(he_all), he_exclude=he8)
+        assert len(kept) == 156, len(kept)
+        assert not (he8 & set(kept)), "an excluded union task entered the bootstrap"
+        assert set(kept) == set(he_all) - he8  # exact complement, nothing else dropped
+        # (2) the per-task stats vectors the bootstrap indexes have the 156 denominator;
+        # an excluded id cannot be indexed into the kept list.
+        rates = {t: 0.0 for t in he_all}
+        import numpy as np
+        arr = np.array([rates[t] for t in kept])
+        assert arr.shape == (156,)
+
+        # (3) MBPP --clean is a KEEP-list on INT ids and is unaffected by the HE path:
+        # pass only clean, no he set, and it restricts normally; passing BOTH refuses.
+        mbpp_all = list(range(427))
+        mbpp_keep = {2, 9, 42, 400}
+        mkept = apply_task_filters(list(mbpp_all), clean_ids=mbpp_keep)
+        assert set(mkept) == mbpp_keep, mkept
+        try:
+            apply_task_filters(list(mbpp_all), clean_ids=mbpp_keep, he_exclude=he8)
+            raise AssertionError("--clean and --he_union together were accepted")
+        except SystemExit as e:
+            assert "opposite filters" in str(e), str(e)
     print("paired_bootstrap selftest OK: missing/shifted si and greedy-vs-n "
-          "refused; identical sets accepted")
+          "refused; identical sets accepted; HE 164->156 exclude and MBPP keep "
+          "filters verified end-to-end (both-together refused)")
     return 0
 
 
