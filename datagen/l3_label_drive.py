@@ -18,6 +18,7 @@ Outputs (all append; the run resumes by sample_id):
 """
 import argparse
 import concurrent.futures as cf
+import contextlib
 import hashlib
 import json
 import os
@@ -30,6 +31,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from l3_rubric import RUBRIC_VERSION, build_prompt, parse_scores, select_rubric  # noqa: E402
 
 KIND_DOMAIN = {"nl": "en_c4_stage2_dc", "code": "code_py_starcoder_dc"}
+
+_CRASH_STATE = {"n": 0}  # selftest-only hard-kill hook state
 
 
 def _post(url, model, timeout, text, rubric):
@@ -67,21 +70,38 @@ def _label_one(item, endpoints, model, timeout):
     return False, (row.get("sample_id"), last, rubric["kind"], ep), ep
 
 
-def _label_all(todo, out_fh, rej_fh, endpoints, model, ledger, concurrency, timeout):
+def _write_durable(out_fh, ledger_fh, label_row, ledger_row):
+    """Persist one label as an atomic-across-crash unit. The score-ledger row is
+    written and fsynced FIRST, then the label row is written and fsynced -- `out` is
+    the commit marker. A SIGKILL at any instant therefore leaves every sample_id in
+    `out` already durably present exactly once in the ledger (resume also treats ledger
+    doc_ids as done, so the reverse window can not create a duplicate on restart).
+    A write/fsync/validate failure raises and stops the run rather than continuing
+    with the two files diverged (de, PR #400 block)."""
+    if ledger_fh is not None:
+        from score_ledger import validate_row
+        validate_row(ledger_row)  # loud: never persist a schema-invalid ledger row
+        ledger_fh.write(json.dumps(ledger_row, ensure_ascii=False, sort_keys=True) + "\n")
+        ledger_fh.flush()
+        os.fsync(ledger_fh.fileno())
+    # test-only hard-kill hook (L3_DRIVE_CRASH_AFTER=N): die AFTER the ledger row is
+    # durable but BEFORE the out row is fsynced -- exactly the window the ordering and
+    # union-resume must survive. Never set in production.
+    crash_n = os.environ.get("L3_DRIVE_CRASH_AFTER")
+    if crash_n:
+        _CRASH_STATE["n"] += 1
+        if _CRASH_STATE["n"] == int(crash_n):
+            os._exit(9)
+    out_fh.write(json.dumps(label_row, ensure_ascii=False) + "\n")
+    out_fh.flush()
+    os.fsync(out_fh.fileno())
+
+
+def _label_all(todo, out_fh, rej_fh, ledger_fh, endpoints, model, concurrency, timeout):
     lock = threading.Lock()
     stats = {ep: {"ok": 0, "rej": 0} for ep in endpoints}
-    ledger_buf = []
     kept = rej = 0
     t0 = time.time()
-
-    def flush_ledger():
-        if not (ledger and ledger_buf):
-            return
-        from score_ledger import append_rows
-        n = append_rows(ledger, ledger_buf)
-        if n != len(ledger_buf):
-            raise SystemExit(f"REFUSE: ledger accepted {n}/{len(ledger_buf)} rows")
-        ledger_buf.clear()
 
     with cf.ThreadPoolExecutor(max_workers=concurrency) as ex:
         futs = [ex.submit(_label_one, it, endpoints, model, timeout) for it in todo]
@@ -93,7 +113,9 @@ def _label_all(todo, out_fh, rej_fh, endpoints, model, ledger, concurrency, time
                     ts = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                     label_id = hashlib.sha256(
                         (row["sample_id"] + model).encode()).hexdigest()[:16]
-                    out_fh.write(json.dumps({
+                    stratum = {"language": row.get("language"),
+                               "length_band": row.get("length_band")}
+                    label_row = {
                         "label_id": label_id,
                         "sample_id": row["sample_id"],
                         "language": row.get("language"),
@@ -105,12 +127,12 @@ def _label_all(todo, out_fh, rej_fh, endpoints, model, ledger, concurrency, time
                         "teacher_model": model,
                         "backend": "openai",
                         "scores": scores,
-                        "stratum": {"language": row.get("language"),
-                                    "length_band": row.get("length_band")},
+                        "stratum": stratum,
                         "ts": ts,
-                    }, ensure_ascii=False) + "\n")
-                    if ledger:
-                        ledger_buf.append({
+                    }
+                    ledger_row = None
+                    if ledger_fh is not None:
+                        ledger_row = {
                             "doc_id": row["sample_id"],
                             "domain": KIND_DOMAIN.get(row.get("kind"), "_"),
                             "lang": str(row.get("language") or "_"),
@@ -122,14 +144,14 @@ def _label_all(todo, out_fh, rej_fh, endpoints, model, ledger, concurrency, time
                             "cut": None,
                             "model": model,
                             "backend": "openai",
-                            "stratum": {"language": row.get("language"),
-                                        "length_band": row.get("length_band")},
+                            "stratum": stratum,
                             "rubric_kind": kind,
                             "record_id": label_id,
                             "src_sha": None,
-                        })
-                        if len(ledger_buf) >= 200:
-                            flush_ledger()
+                        }
+                    # a write/fsync failure raises and stops the run rather than
+                    # continuing with out/ledger diverged
+                    _write_durable(out_fh, ledger_fh, label_row, ledger_row)
                     kept += 1
                     stats[ep]["ok"] += 1
                 else:
@@ -141,7 +163,6 @@ def _label_all(todo, out_fh, rej_fh, endpoints, model, ledger, concurrency, time
                     }, ensure_ascii=False) + "\n")
                     rej += 1
                     stats[ep]["rej"] += 1
-    flush_ledger()
     return kept, rej, stats, time.time() - t0
 
 
@@ -149,21 +170,70 @@ def drive(pool, out, endpoints, model, *, concurrency, timeout, limit, ledger):
     with open(pool, encoding="utf-8") as fh:
         rows = [json.loads(l) for l in fh]
     done = set()
+    out_sids = set()
     if os.path.exists(out):
         with open(out, encoding="utf-8") as fh:
             for line in fh:
-                done.add(json.loads(line)["sample_id"])
+                line = line.strip()
+                if line:
+                    out_sids.add(json.loads(line)["sample_id"])
+    done |= out_sids
+
+    # The ledger is fsynced BEFORE its out mirror row, so a hard kill can leave a
+    # doc_id durable in the ledger but absent from out. Reconcile on startup: rebuild
+    # the missing out rows deterministically from the ledger joined to the pool (which
+    # still carries source/url) -- no teacher re-call, no dropped/duplicated label.
+    pool_by_sid = {r["sample_id"]: r for r in rows}
+    ledger_doc_ids = set()
+    recon = []
+    if ledger and os.path.exists(ledger):
+        with open(ledger, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                lr = json.loads(line)
+                ledger_doc_ids.add(lr["doc_id"])
+                if lr["doc_id"] not in out_sids:
+                    recon.append(lr)
+    if recon:
+        os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+        with open(out, "a", encoding="utf-8") as rec_fh:
+            for lr in recon:
+                pr = pool_by_sid.get(lr["doc_id"], {})
+                rec_fh.write(json.dumps({
+                    "label_id": lr["record_id"],
+                    "sample_id": lr["doc_id"],
+                    "language": pr.get("language", lr.get("stratum", {}).get("language")),
+                    "length_band": pr.get("length_band",
+                                          lr.get("stratum", {}).get("length_band")),
+                    "source": pr.get("source"),
+                    "url": pr.get("url"),
+                    "rubric_version": lr["scorer_version"],
+                    "rubric_kind": lr["rubric_kind"],
+                    "teacher_model": lr["model"],
+                    "backend": lr["backend"],
+                    "scores": lr["rubric_dims"],
+                    "stratum": lr["stratum"],
+                    "ts": lr["ts"],
+                }, ensure_ascii=False) + "\n")
+            rec_fh.flush()
+            os.fsync(rec_fh.fileno())
+    done |= ledger_doc_ids
     todo = [(i, r) for i, r in enumerate(rows) if r["sample_id"] not in done]
     if limit is not None:
         todo = todo[:limit]
 
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     rej_path = out + ".rejected.jsonl"
+    if ledger:
+        os.makedirs(os.path.dirname(os.path.abspath(ledger)), exist_ok=True)
     with (
         open(out, "a", encoding="utf-8") as out_fh,
         open(rej_path, "a", encoding="utf-8") as rej_fh,
+        (open(ledger, "a", encoding="utf-8") if ledger else contextlib.nullcontext()) as ledger_fh,
     ):
-        result = _label_all(todo, out_fh, rej_fh, endpoints, model, ledger,
+        result = _label_all(todo, out_fh, rej_fh, ledger_fh, endpoints, model,
                             concurrency, timeout)
     kept, rej, stats, dt = result
     rate = (kept + rej) / dt if dt else 0.0
@@ -176,6 +246,40 @@ def drive(pool, out, endpoints, model, *, concurrency, timeout, limit, ledger):
         "concurrency": concurrency,
     }, indent=2))
     return kept, rej, stats
+
+
+def _crash_child(spec_path):
+    """Selftest child: run drive and hard-die in the ledger->out window on row N."""
+    with open(spec_path, encoding="utf-8") as fh:
+        spec = json.load(fh)
+    import http.server
+    import socketserver
+
+    class S(socketserver.TCPServer):
+        allow_reuse_address = True
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length", 0)))
+            body = json.dumps({"choices": [{"message": {"content": json.dumps({
+                "content_quality": 3, "factual_correctness": 3,
+                "complexity": 3, "educational_or_code_value": 3})}}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = S(("127.0.0.1", 0), H)
+    import threading
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_address[1]}"
+    if spec.get("crash_after"):
+        os.environ["L3_DRIVE_CRASH_AFTER"] = str(spec["crash_after"])
+    drive(spec["pool"], spec["out"], [url], "child-model", concurrency=1,
+          timeout=10, limit=None, ledger=spec["ledger"])
 
 
 def _selftest() -> int:
@@ -265,9 +369,79 @@ def _selftest() -> int:
     assert kept2 == 0, "resume did not skip done sample_ids"
     g.shutdown()
     f.shutdown()
+
+    # ---- hard-kill durability: child dies in the ledger->out window, parent
+    # reconciles + resumes; final out and ledger sets must be equal, no dupes/gaps.
+    import subprocess
+    d2 = tempfile.mkdtemp()
+    pool2 = os.path.join(d2, "pool.jsonl")
+    out2 = os.path.join(d2, "out.jsonl")
+    led2 = os.path.join(d2, "ledger.jsonl")
+    with open(pool2, "w", encoding="utf-8") as fh:
+        for i in range(12):
+            fh.write(json.dumps({"sample_id": f"k{i:03d}", "language": "en",
+                                 "length_band": "m", "source": "st/x", "url": None,
+                                 "kind": "nl",
+                                 "content": "durable row content with many words " * 20})
+                     + "\n")
+    spec = os.path.join(d2, "spec.json")
+    with open(spec, "w", encoding="utf-8") as fh:
+        json.dump({"pool": pool2, "out": out2, "ledger": led2, "crash_after": 4}, fh)
+    p = subprocess.run([sys.executable, os.path.abspath(__file__),
+                        "--crash-child", spec], capture_output=True, timeout=60)
+    assert p.returncode == 9, p.returncode  # hard exit in the dangerous window
+    with open(out2, encoding="utf-8") as fh:
+        n_out_killed = sum(1 for _ in fh)
+    with open(led2, encoding="utf-8") as fh:
+        n_led_killed = sum(1 for _ in fh)
+    assert n_led_killed == 4 and n_out_killed == 3, (n_out_killed, n_led_killed)
+    # restart in THIS process: reconcile the orphaned ledger row, finish the rest
+    kept3, rej3, _ = _recover_and_finish(pool2, out2, led2)
+    assert (kept3, rej3) == (8, 0), (kept3, rej3)  # 4 already scored, 8 remaining
+    with open(out2, encoding="utf-8") as fh:
+        out_ids = [json.loads(l)["sample_id"] for l in fh]
+    with open(led2, encoding="utf-8") as fh:
+        led_ids = [json.loads(l)["doc_id"] for l in fh]
+    assert len(out_ids) == 12 and len(led_ids) == 12, (len(out_ids), len(led_ids))
+    assert sorted(out_ids) == sorted(led_ids), "out/ledger diverged after recovery"
+    assert len(set(out_ids)) == 12 and len(set(led_ids)) == 12, "duplicate label rows"
     print("selftest ok: 4 labels across 2 endpoints (2 each), retry recovered "
-          "HTTP500, 4 ledger rows, resume skipped all done")
+          "HTTP500, 4 ledger rows, resume skipped all done; SIGKILL at ledger->out "
+          "row 4 recovered to out==ledger (12 each, no dup/gap)")
     return 0
+
+
+def _recover_and_finish(pool, out, ledger):
+    """selftest helper: relaunch a short-lived stub server, reconcile, finish pool."""
+    import http.server
+    import socketserver
+    import threading
+
+    class S(socketserver.TCPServer):
+        allow_reuse_address = True
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length", 0)))
+            body = json.dumps({"choices": [{"message": {"content": json.dumps({
+                "content_quality": 2, "factual_correctness": 2,
+                "complexity": 2, "educational_or_code_value": 2})}}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = S(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        return drive(pool, out, [f"http://127.0.0.1:{srv.server_address[1]}"],
+                     "recover-model", concurrency=8, timeout=10, limit=None,
+                     ledger=ledger)
+    finally:
+        srv.shutdown()
 
 
 def main():
@@ -281,7 +455,13 @@ def main():
     ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--ledger", default=None)
+    ap.add_argument("--crash-child", default=None,
+                    help="selftest-only: spec json; run drive and hard-exit in the "
+                         "ledger->out window (L3_DRIVE_CRASH_AFTER).")
     a = ap.parse_args()
+    if a.crash_child:
+        _crash_child(a.crash_child)
+        return 0
     if a.selftest:
         return _selftest()
     missing = [n for n, v in (("--pool", a.pool), ("--out", a.out),
