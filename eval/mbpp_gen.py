@@ -201,6 +201,8 @@ def main():
     ap.add_argument("--max_new", type=int, default=280)
     ap.add_argument("--n", type=int, default=1)
     ap.add_argument("--temperature", type=float, default=0.0)
+    ap.add_argument("--batched", action="store_true",
+                    help="decode n samples in one packed forward per step (same per-(task,si) RNG)")
     ap.add_argument("--first", type=int, default=None)
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--clean", default=CLEAN_PATH,
@@ -282,7 +284,7 @@ def main():
                 from eval.sampling import sample_completions
                 raws = sample_completions(model, tok, tok.encode(prompt).ids, rec["task_id"],
                                           args.n, args.temperature, args.max_new, args.device,
-                                          cfg.seq)
+                                          cfg.seq, batched=args.batched)
             else:
                 raws = [_greedy(model, tok, tok.encode(prompt).ids, args.max_new, args.device,
                                 cfg.seq)]
