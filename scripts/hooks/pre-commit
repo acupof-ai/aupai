@@ -1038,6 +1038,13 @@ def main():
         # The selftest pins label-chunk alignment, order-independent reproducibility, and a
         # contract assertion that the loader's dim set equals datagen/l3_rubric.py's.
         "datagen/l2_dataset.py",
+        # The L2 census scanner (0e). Registered because the sharding/resume contract is only
+        # checkable on a synthetic world: worker shard subsets must be disjoint and
+        # union-complete, a re-scan must skip a finished shard with no duplicate rows, and
+        # every written row is an UNQUANTIZED continuous 4-float score (out-of-range kept)
+        # that the quota adapter can rank; a mixed scorer_version must raise. The selftest
+        # builds two shards + stub predictor and pins all.
+        "v41f_l2/l2_census_scan.py",
         # The function-interface SFT pair extractor (3b-18). Registered because its two
         # acceptance properties are only checkable on a known-answer world: the output must
         # run to the function's LAST source line (a cut one statement early still parses and

@@ -20,7 +20,7 @@ import argparse
 
 import torch
 
-from v41f_l2.l2_quality_head import L2Config, L2QualityModel, quality_loss
+from v41f_l2.l2_quality_head import L2Config, L2QualityModel, quality_loss, save_head
 
 
 def load_encoder(encoder: str, device: str):
@@ -51,7 +51,9 @@ def build_loaders(args, tokenizer):
     for name, split in (("train", train), ("val", val)):
         missing = kinds_all - {ex.rubric_kind for ex in split}
         if missing:
-            raise SystemExit(f"{name} split is empty for rubric_kind(s) {sorted(missing)}; reseed or lower val_frac")
+            raise SystemExit(
+                f"{name} split is empty for rubric_kind(s) {sorted(missing)}; reseed or lower val_frac"
+            )
     # shared domain vocab across both splits: same domain must get the same id, and an
     # unseen domain at batch time raises inside the loader rather than becoming a silent -1.
     domain_vocab = build_vocab(ex.domain for ex in train + val)
@@ -79,6 +81,7 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--lambda-rank", type=float, default=0.5)
     ap.add_argument("--val-frac", type=float, default=0.1)
+    ap.add_argument("--save-ckpt", help="write the trained QualityHead state_dict here")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
 
@@ -107,6 +110,11 @@ def main():
             opt.step()
             last = parts
         print(f"epoch {ep} train {last}")  # real per-epoch val aggregation added with data
+
+    # head only (frozen public encoder is never checkpointed); scanner loads this exact file
+    if args.save_ckpt:
+        save_head(args.save_ckpt, model.head, cfg)
+        print(f"saved head checkpoint -> {args.save_ckpt}")
 
 
 if __name__ == "__main__":
