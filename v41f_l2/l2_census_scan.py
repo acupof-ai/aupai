@@ -275,13 +275,21 @@ def scan_shards(domain, paths, out_dir, predict, cfg: ScanConfig, counters, *, f
         if _check_resume(out_path, cfg, head_fp, force):
             counters["skipped_shards"] += 1
             continue
-        rows = _score_one_shard(domain, shard_path, predict, cfg, counters, domain_seen)
+        rows, stats = _score_one_shard(domain, shard_path, predict, cfg, counters, domain_seen)
         if not rows:
+            # 0 kept splits two ways. dup>0: every USABLE row was normal cross-shard
+            # dedup (#420's shared domain_seen) — the content is already scored in an earlier
+            # shard, so publishing nothing is correct; skip, do not mark this file complete.
+            # dup==0: the shard was empty/blank or every input row was bad, so nothing covers
+            # its content anywhere — refuse instead of stamping a zero-row shard done forever.
+            if stats["dup"] > 0:
+                counters["dup_only_shards"] = counters.get("dup_only_shards", 0) + 1
+                continue
             raise EmptyShardError(
                 f"{shard_path}: 0 valid scored rows "
-                f"(input_rows={counters.get('input_rows', 0)}, "
-                f"bad_content_rows={counters.get('bad_content_rows', 0)}). Not publishing a "
-                "file or completion marker; fix the shard/glob before trusting this domain."
+                f"(input_rows={stats['input']}, bad_content_rows={stats['bad']}, "
+                f"dup_dropped={stats['dup']}). Not publishing a file or completion marker; "
+                "fix the shard/glob before trusting this domain."
             )
         tmp = out_path.with_suffix(out_path.suffix + ".tmp")
         if tmp.exists():
@@ -325,7 +333,13 @@ def _score_one_shard(domain, shard_path, predict, cfg, counters, domain_seen):
     # Stream the shard in bounded DOC_BATCH micro-batches: a shard can be GBs, so we never
     # hold all its text. Within a batch the predictor packs to the GPU token budget (the 131
     # docs/s shape). domain_seen is the cross-shard content-id set for this worker.
+    # Returns (rows, this-shard stats); the stats distinguish "every usable row was a normal
+    # cross-shard duplicate" from "the shard was empty or all bad", which scan_shards decides
+    # on (skip vs refuse).
     rows = []
+    in0 = counters.get("input_rows", 0)
+    bad0 = counters.get("bad_content_rows", 0)
+    dup0 = counters["dup_docs"]
 
     def flush(batch):
         if not batch:
@@ -349,7 +363,13 @@ def _score_one_shard(domain, shard_path, predict, cfg, counters, domain_seen):
             flush(batch)
             batch = []
     flush(batch)
-    return rows
+    stats = {
+        "input": counters.get("input_rows", 0) - in0,
+        "bad": counters.get("bad_content_rows", 0) - bad0,
+        "dup": counters["dup_docs"] - dup0,
+        "kept": len(rows),
+    }
+    return rows, stats
 
 
 # --------------------------------------------------------------------------------------
@@ -460,6 +480,7 @@ def main(argv=None):
         "dup_docs": 0,
         "written_shards": 0,
         "skipped_shards": 0,
+        "dup_only_shards": 0,
         "input_rows": 0,
         "bad_content_rows": 0,
     }
@@ -774,6 +795,31 @@ def _selftest():
         assert not marker_path(shard_output_path(bd, "code_py", empty)).exists(), "no marker for empty shard"
         assert not shard_output_path(bd, "code_py", empty).with_suffix(".tmp").exists()
 
+        # ALL-DUPLICATE shard: two shards holding the same content are a normal #420 cross-shard
+        # case. The second yields 0 kept but every usable row deduped, so scan_shards skips it
+        # (counted dup_only_shards) instead of failing; its content is already in shard one.
+        d1 = os.path.join(bd, "dup_a.jsonl")
+        d2 = os.path.join(bd, "dup_b.jsonl")
+        for dp in (d1, d2):
+            with open(dp, "w") as fh:
+                fh.write(json.dumps({"content": "shared across shards"}) + "\n")
+        dc = {
+            "docs": 0,
+            "dup_docs": 0,
+            "written_shards": 0,
+            "skipped_shards": 0,
+            "dup_only_shards": 0,
+            "input_rows": 0,
+            "bad_content_rows": 0,
+        }
+        n = scan_shards("code_py", [d1, d2], bd, const_pred, cfg, dc)
+        assert n == 1, n  # one unique doc scored once
+        assert dc["dup_docs"] == 1 and dc["dup_only_shards"] == 1, dc
+        assert dc["written_shards"] == 1, dc
+        # the all-duplicate shard publishes NOTHING and is never marked complete
+        assert not shard_output_path(bd, "code_py", d2).exists()
+        assert not marker_path(shard_output_path(bd, "code_py", d2)).exists()
+
     # DURABLE PUBLISH: file fsync before rename, parent-dir fsync after. Spy on THIS module's
     # globals (a fresh import would be a different module under `python l2_census_scan.py`).
     g = globals()
@@ -822,8 +868,9 @@ def _selftest():
         "l2_census_scan selftest OK: disjoint sharding, idempotent fingerprint-checked "
         "resume (stale head/version/markerless refused without --force), canonical "
         "continuous rows unquantized (out-of-range kept), quota ranking separable, "
-        "version-conflict guard, durable fsync publish, bad-row counting, empty-shard "
-        "refusal, domain-level + cross-shard dup detection"
+        "version-conflict guard, durable fsync publish, bad-row counting, empty/all-bad "
+        "shard refusal with all-duplicate shards skipped, domain-level + cross-shard dup "
+        "detection"
     )
 
 
