@@ -45,6 +45,13 @@ def build_loaders(args, tokenizer):
 
     pairs = load_pairs(args.ledger, args.pool, scorer_name="l3-rubric", rubric_kind=args.rubric_kind)
     train, val = split_pairs(pairs, val_frac=args.val_frac)
+    # doc-hash split could put every doc of a rare kind in one side; a kind seen overall but
+    # missing from a split means the model never trains (or never evals) it — fail loud.
+    kinds_all = {ex.rubric_kind for ex in pairs}
+    for name, split in (("train", train), ("val", val)):
+        missing = kinds_all - {ex.rubric_kind for ex in split}
+        if missing:
+            raise SystemExit(f"{name} split is empty for rubric_kind(s) {sorted(missing)}; reseed or lower val_frac")
     # shared domain vocab across both splits: same domain must get the same id, and an
     # unseen domain at batch time raises inside the loader rather than becoming a silent -1.
     domain_vocab = build_vocab(ex.domain for ex in train + val)
