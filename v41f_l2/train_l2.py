@@ -43,7 +43,14 @@ def build_loaders(args, tokenizer):
             "datagen/l2_dataset.py not found (PR #397). Merge it to main before training."
         ) from e
 
-    pairs = load_pairs(args.ledger, args.pool, scorer_name="l3-rubric", rubric_kind=args.rubric_kind)
+    pairs = load_pairs(
+        args.ledger,
+        args.pool,
+        scorer_name="l3-rubric",
+        scorer_version=args.scorer_version,
+        rubric_kind=args.rubric_kind,
+        any_version=args.any_version,
+    )
     train, val = split_pairs(pairs, val_frac=args.val_frac)
     # doc-hash split could put every doc of a rare kind in one side; a kind seen overall but
     # missing from a split means the model never trains (or never evals) it — fail loud.
@@ -75,6 +82,15 @@ def main():
     ap.add_argument("--pool", required=True)
     ap.add_argument("--encoder", default="BAAI/bge-m3")
     ap.add_argument("--rubric-kind", default=None, choices=[None, "code", "natural_language"])
+    ap.add_argument(
+        "--scorer-version",
+        help="teacher scorer_version to train on (required unless --any-version)",
+    )
+    ap.add_argument(
+        "--any-version",
+        action="store_true",
+        help="deliberately read every teacher version (diagnostics; never for real training)",
+    )
     ap.add_argument("--max-len", type=int, default=8192)
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--epochs", type=int, default=3)
@@ -84,6 +100,8 @@ def main():
     ap.add_argument("--save-ckpt", help="write the trained QualityHead state_dict here")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
+    if not args.scorer_version and not args.any_version:
+        ap.error("give --scorer-version <pin> (or --any-version for an intentional all-version read)")
 
     from transformers import AutoTokenizer
 
