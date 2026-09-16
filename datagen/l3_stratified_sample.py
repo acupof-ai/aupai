@@ -57,12 +57,26 @@ def strata_key(row: dict) -> tuple[str, str]:
     return (language_of(row), length_band(len(str(row.get("content") or ""))))
 
 
-def sample_stream(paths, per_stratum, seed, allow_short, text_warn_empty=True):
+def content_doc_id(text: str) -> str:
+    """Stable per-document CONTENT id, identical to datagen/score_ledger.content_doc_id
+    (sha256 of utf-8 content, first 16 hex). Used for the locked English hand-read set so
+    fineweb-edu AUC / PPL / the L3 teacher rubric all join on one content-derived id;
+    never url/row-number (those move when the corpus is rebuilt)."""
+    return hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:16]
+
+
+def sample_stream(
+    paths, per_stratum, seed, allow_short, text_warn_empty=True, doc_id_mode="sequence", only_bands=None
+):
     """One reservoir per (lang,band) over every row of every path.
 
     Returns (reservoirs dict, total_seen dict, empty count). Reservoir entries are
     (row_with_meta,). Algorithm R with a per-stratum deterministic RNG so adding or
     removing an unrelated stratum never perturbs another stratum's draw.
+
+    doc_id_mode: "sequence" -> sample_id assigned at write time (L3 labelling pilot);
+    "content" -> each row's doc_id is sha256(content)[:16] at draw time (locked sets
+    that must join to score_ledger on content identity).
     """
     pools = {}
     seen = {}
@@ -80,12 +94,14 @@ def sample_stream(paths, per_stratum, seed, allow_short, text_warn_empty=True):
                     empty += 1
                     continue
                 key = strata_key(row)
+                if only_bands is not None and key[1] not in only_bands:
+                    continue
                 seen[key] = seen.get(key, 0) + 1
                 rng = rngs.setdefault(key, _seeded(seed, key))
                 t = seen[key]
                 pool = pools.setdefault(key, [])
                 meta = {
-                    "sample_id": "",
+                    "sample_id": content_doc_id(content) if doc_id_mode == "content" else "",
                     "language": key[0],
                     "length_band": key[1],
                     "source": row.get("source"),
@@ -123,7 +139,17 @@ def main():
         default=None,
         help="optional cap on number of strata (keeps the pilot bounded)",
     )
+    ap.add_argument(
+        "--doc-id",
+        choices=["sequence", "content"],
+        default="sequence",
+        help="content = sha256(content)[:16] (locked hand-read sets); sequence = stratum-order id (L3 pilot)",
+    )
+    ap.add_argument(
+        "--only-bands", default=None, help="comma list of length bands to keep, e.g. 's,m,l'; others skipped"
+    )
     a = ap.parse_args()
+    only_bands = set(a.only_bands.split(",")) if a.only_bands else None
 
     paths = sorted(glob.glob(a.glob))
     if not paths:
@@ -133,7 +159,9 @@ def main():
         for p in paths
     }
 
-    pools, seen, _empty = sample_stream(paths, a.per_stratum, a.seed, a.allow_short)
+    pools, seen, _empty = sample_stream(
+        paths, a.per_stratum, a.seed, a.allow_short, doc_id_mode=a.doc_id, only_bands=only_bands
+    )
     keys = sorted(pools)
     if a.max_strata:
         # keep the most-populated strata so a cap does not prefer a rare tail.
@@ -149,7 +177,11 @@ def main():
     with open(a.out, "w", encoding="utf-8") as out:
         for key in keys:  # stratum order so a reviewer reads each band together
             for meta in pools[key]:
-                meta["sample_id"] = f"{key[0]}-{key[1]}-{written:07d}"
+                if a.doc_id == "sequence":
+                    meta["sample_id"] = f"{key[0]}-{key[1]}-{written:07d}"
+                # locked-set placeholder columns, filled later (never by the sampler):
+                meta.setdefault("teacher_labels", None)
+                meta.setdefault("hand_read", None)
                 out.write(json.dumps(meta, ensure_ascii=False) + "\n")
                 written += 1
 
@@ -159,6 +191,8 @@ def main():
         "n_sources": len(paths),
         "seed": a.seed,
         "per_stratum": a.per_stratum,
+        "doc_id": a.doc_id,
+        "only_bands": sorted(only_bands) if only_bands else None,
         "length_bins_chars": [[lo, hi, nm] for lo, hi, nm in LENGTH_BINS],
         "n_written": written,
         "strata": {f"{k[0]}/{k[1]}": {"pool": len(pools[k]), "population": seen[k]} for k in keys},
