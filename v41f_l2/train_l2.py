@@ -43,6 +43,7 @@ def build_loaders(args, tokenizer):
             "datagen/l2_dataset.py not found (PR #397). Merge it to main before training."
         ) from e
 
+    load_stats = {}
     pairs = load_pairs(
         args.ledger,
         args.pool,
@@ -50,7 +51,11 @@ def build_loaders(args, tokenizer):
         scorer_version=args.scorer_version,
         rubric_kind=args.rubric_kind,
         any_version=args.any_version,
+        include_truncated=args.include_truncated,
+        stats=load_stats,
     )
+    if load_stats.get("excluded_truncated"):
+        print(f"excluded_truncated={load_stats['excluded_truncated']} (pass --include-truncated to keep)")
     train, val = split_pairs(pairs, val_frac=args.val_frac)
     # doc-hash split could put every doc of a rare kind in one side; a kind seen overall but
     # missing from a split means the model never trains (or never evals) it — fail loud.
@@ -97,6 +102,11 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--lambda-rank", type=float, default=0.5)
     ap.add_argument("--val-frac", type=float, default=0.1)
+    ap.add_argument(
+        "--include-truncated",
+        action="store_true",
+        help="keep teacher labels scored on only a >6000-char prefix (excluded by default)",
+    )
     ap.add_argument("--save-ckpt", help="write the trained QualityHead state_dict here")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = ap.parse_args()
