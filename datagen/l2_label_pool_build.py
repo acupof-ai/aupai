@@ -193,6 +193,24 @@ def _iter_paths(kind2glob):
             yield kind, p
 
 
+def _check_quota_feasible(quotas, doc_pop, chunk_pop):
+    """Refuse when a stratum is assigned a positive quota but produced zero chunks.
+    doc_pop counts KenLM-scorable docs; the selectable unit is a BPE chunk, so a stratum
+    whose docs all fall below the MIN_FRAGMENT BPE threshold can have doc_pop>0 with
+    chunk_pop==0. Names every unsatisfiable stratum with its quota and populations."""
+    unsatisfiable = {
+        "/".join(k): {"quota": quotas[k], "doc_population": doc_pop.get(k, 0),
+                      "chunk_population": chunk_pop.get(k, 0)}
+        for k in quotas if quotas[k] > 0 and chunk_pop.get(k, 0) == 0}
+    if unsatisfiable:
+        raise SystemExit(
+            "REFUSE: quota assigned to strata that produced 0 chunks (doc_pop counts "
+            "KenLM-token docs, not BPE-chunkable length): "
+            + json.dumps(unsatisfiable, ensure_ascii=False, indent=2)
+            + "\nRelax the strata / fragment threshold or source more long docs; an empty "
+              "stratum must not be silently under-filled.")
+
+
 def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
           code_glob=None, code_model_path=None, allow_word_count=False):
     chunk_fn, tok_kind, ntok = _chunk_fn(tokenizer_path, allow_word_count)
@@ -326,6 +344,9 @@ def build(nl_glob, nl_model_path, *, seed, tokenizer_path, out,
                         if j < q:
                             pool[j] = entry
 
+    # feasibility gate after pass 2 has counted real chunks, before any pool byte writes
+    _check_quota_feasible(quotas, doc_pop, chunk_pop)
+
     os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
     out_lines = []
     over_max = collections.Counter()
@@ -412,6 +433,27 @@ def _allocate_quotas(doc_pop, target):
 
 def _selftest() -> int:
     import tempfile
+
+    # quota feasibility: a positive quota on a stratum with 0 chunks must refuse (the
+    # doc_pop vs BPE-chunk-population gap); normal populated strata still get their quota.
+    k_full = ("nl", "en", "m", "mid")
+    k_empty = ("nl", "en", "xs", "low")
+    doc_pop = {k_full: 100, k_empty: 50}
+    chunk_pop = {k_full: 120}  # the xs/low stratum's docs all chunk to nothing
+    quotas = _allocate_quotas(doc_pop, {"nl": 40})
+    assert quotas[k_full] > 0 and quotas[k_empty] > 0, quotas
+    try:
+        _check_quota_feasible(quotas, doc_pop, chunk_pop)
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("quota>0 with chunk_pop==0 must refuse")
+    # once every quota'd stratum has at least one chunk, the gate passes (it does NOT
+    # demand full satisfaction -- reservoir under-sampling is normal, only an empty stratum)
+    chunk_pop[k_empty] = 3
+    _check_quota_feasible(quotas, doc_pop, chunk_pop)
+    # a stratum with quota 0 and 0 chunks is not an error (nothing was promised)
+    _check_quota_feasible({k_full: 10}, doc_pop, chunk_pop)
 
     # hard-max contract on MEASURED segments: a short trailing window must NEVER
     # overflow the previous full window to >hi (encoder truncation, the de-399
