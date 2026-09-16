@@ -97,6 +97,17 @@ class InterpolatedKneserNey:
         self._finalize_discount()
         return n_docs
 
+    def is_empty(self) -> bool:
+        """True when no token was ever counted. An empty model is degenerate: the
+        unigram backoff assigns p=0.5 to every word, so every document scores a
+        constant PPL 2.0 that looks optimal -- it must never score or persist."""
+        return sum(self.counts[1].values()) == 0
+
+    def _assert_nonempty(self, op: str):
+        if self.is_empty():
+            raise ValueError(f"refusing to {op} an empty KN model (0 training tokens); "
+                             "such a model scores a constant PPL 2.0 for every document")
+
     def _finalize_discount(self) -> None:
         # d = n1 / (n1 + 2 n2) over the highest-order ngram counts.
         c = self.counts[self.order]
@@ -112,6 +123,7 @@ class InterpolatedKneserNey:
         """Write the trained counts as JSON. Keys are ngram tuples (JSON arrays);
         the discount d is stored so a loaded model scores identically without
         re-deriving it. Lazily-built continuation caches are derived, not saved."""
+        self._assert_nonempty("save")
         payload = {
             "format": "stdlib-kn-ngram-v1",
             "order": self.order,
@@ -139,6 +151,7 @@ class InterpolatedKneserNey:
             else:
                 m.counts[o] = Counter({tuple(k.split(" ")): int(v)
                                       for k, v in block.items()})
+        m._assert_nonempty("load")  # an empty persisted model must never reload to score
         return m
 
     # ----- continuation counts, built lazily and cached -----
@@ -189,6 +202,7 @@ class InterpolatedKneserNey:
         return (max(0.0, c - self.d) + self.d * n_follow * self._kn(w, ctx[1:])) / tok_sum
 
     def doc_logprob(self, tokens: list[str]) -> tuple[float, int]:
+        self._assert_nonempty("score")
         if not hasattr(self, "_cont_total"):
             self._build_continuation()
         pad = [BOS] * (self.order - 1) + tokens + [EOS]
@@ -372,8 +386,34 @@ def _selftest() -> int:
                        and math.isfinite(r["score"]) for r in rows), "OOV keeps finite PPL"
             assert content_doc_id("   \t  ") not in {r["doc_id"] for r in rows}, \
                 "zero-token doc must have no ledger row"
+    # --- broken world: an EMPTY model must refuse to score/save/load, never emit the
+    # constant PPL 2.0 that an empty backoff assigns every word (fb adversarial audit).
+    empty = InterpolatedKneserNey(order=3)
+    assert empty.train_lines([]) == 0
+    assert empty.is_empty()
+    with tempfile.TemporaryDirectory() as td0:
+        for bad in (lambda: empty.perplexity("any text at all here"),
+                    lambda: empty.save(os.path.join(td0, "empty.json"))):
+            try:
+                bad()
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("empty model must refuse to score/save")
+        # a hand-forged empty model file must refuse to load, not silently score 2.0
+        empty_path = os.path.join(td0, "forged_empty.json")
+        with open(empty_path, "w", encoding="utf-8") as f:
+            json.dump({"format": "stdlib-kn-ngram-v1", "order": 3, "discount": 0.75,
+                       "counts": {"1": {}, "2": {}, "3": {}}}, f)
+        try:
+            InterpolatedKneserNey.load(empty_path)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("empty persisted model must refuse to load")
     print("selftest ok: normal < template < gibberish; deterministic; order-1 finite; "
-          "census ledger round-trip; zero-token skipped; model save/load identical")
+          "census ledger round-trip; zero-token skipped; model save/load identical; "
+          "empty model refuses score/save/load (no constant PPL 2.0)")
     return 0
 
 
@@ -423,6 +463,11 @@ def main() -> int:
             ap.error("--train is required without --load-model")
         m = InterpolatedKneserNey(order=a.order)
         n = m.train_lines(read_iter(a.train, a.train_limit))
+        if n == 0:
+            raise SystemExit(
+                f"REFUSE: 0 trainable docs from --train {a.train} (empty file, or rows "
+                "with no 'content' field). An empty model scores a constant PPL 2.0 for "
+                "every document; not saving or scoring it.")
         m._build_continuation()
         print(f"trained on {n} docs, order={a.order}, discount={m.d:.3f}", file=sys.stderr)
     if a.save_model:
