@@ -11,8 +11,9 @@ known-answer worlds AND (optionally) audits real code_py_starcoder. Never edits 
 The chunker's #399-B API is the length-oracle contract: chunk_document(text, tok) and
 _cut_oversized_line/_pack_lines take a tokenizer-like object (.encode(s).ids, .decode(ids),
 optional .cut_drift). char/4 counters CANNOT prove the hard cap because BPE is non-additive
-across joins; the default selftest therefore injects ae's _FakeTokenizer (exact oracle +
-cut_drift=4) and asserts every emitted chunk RE-ENCODES <= MAX_TOK under that drift.
+across joins; the default selftest therefore injects ae's _FakeTokenizer (exact +1/internal-
+newline oracle, plus a REAL +4 cut drift applied inside encode via a decode-stamped marker)
+and asserts every emitted chunk RE-ENCODES <= MAX_TOK under that drift.
 
 Contract, one master invariant + four edges:
   M. ''.join(chunk_document(text, tok)) == text   -- exact partition, 0 bytes lost/reordered.
@@ -32,6 +33,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from datagen.l2_code_chunk_pool import (  # noqa: E402
     MAX_TOK,
+    _clean,
     _cut_oversized_line,
     _FakeTokenizer,
     _pack_lines,
@@ -76,7 +78,7 @@ def check_all_chunks_within_cap(text, tok):
 
 # ------------------------------------------------------------------ synthetic known answers
 def _selftest():
-    tok = _FakeTokenizer()          # exact oracle + cut_drift=4 (BPE non-additivity, 3b-measured)
+    tok = _FakeTokenizer()  # exact +1/internal-newline oracle, real +4 cut drift inside encode
     n = _n(tok)
     fails = []
 
@@ -124,11 +126,11 @@ def _selftest():
     # 3 (pathological single line > window): _cut_oversized_line cuts so pieces re-encode <=MAX.
     longline = "    z = [" + ",".join(str(i) for i in range(4000)) + "]\n"
     pieces = _cut_oversized_line(longline, tok)
-    if "".join(pieces) != longline:
+    if "".join(_clean(p, tok) for p in pieces) != longline:
         fails.append("single-long-line rejoin not exact")
     over = [n(p) for p in pieces if n(p) > MAX_TOK]
     if over:
-        fails.append(f"_cut_oversized_line piece over cap under drift +{tok.cut_drift}: {over[:3]}")
+        fails.append(f"_cut_oversized_line piece over cap under drift +{tok.CUT_DRIFT_IDS}: {over[:3]}")
 
     # 3 (drift boundary): _pack_lines assembled candidate must re-encode <=MAX at every join.
     lines = [f"row_{i} = compute({i})\n" for i in range(2000)]
