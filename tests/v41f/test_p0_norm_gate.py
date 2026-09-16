@@ -30,6 +30,12 @@ def test_gate_sqrtsoftplus():
     n, dim, n_experts, topk = 64, 48, 48, 6
     ref = model.Gate(0, _ArgsLite(n_experts, topk, dim))
     ours = Gate(dim, n_experts, topk)
+    # Upstream Gate allocates weight with torch.empty (the loader fills it); uninitialized
+    # bf16 memory is intermittently NaN depending on allocator layout, which made this test
+    # flaky (~1/4 runs). Write finite values into the reference first, then mirror them.
+    with torch.no_grad():
+        ref.weight.copy_(torch.randn(n_experts, dim) * 0.1)
+        ref.bias.zero_()
     ours.weight.data.copy_(ref.weight.data)
     ours.bias.data.copy_(ref.bias.data)
     x = torch.randn(n, dim)
