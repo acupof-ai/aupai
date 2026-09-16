@@ -126,11 +126,19 @@ def test_rubric_selection_and_prompt():
     nl = "A short essay about the history of agriculture, entirely prose."
     assert R.select_rubric(code)["kind"] == "code"
     assert R.select_rubric(nl)["kind"] == "natural_language"
-    p = R.build_prompt(code, R.CODE_RUBRIC)
+    prompt, truncated = R.build_prompt(code, R.CODE_RUBRIC)
+    assert not truncated
     assert all(
-        d in p for d in ("content_quality", "factual_correctness", "complexity", "educational_or_code_value")
+        d in prompt for d in ("content_quality", "factual_correctness", "complexity", "educational_or_code_value")
     )
     assert R.RUBRIC_VERSION.startswith("l3rubric-")
+    # boundary: exactly TRUNC_CHARS is whole; one more is a prefix label with a loud notice
+    p_at, t_at = R.build_prompt("x" * R.TRUNC_CHARS, R.NL_RUBRIC)
+    assert t_at is False and f"FIRST {R.TRUNC_CHARS}" not in p_at
+    p_over, t_over = R.build_prompt("y" * (R.TRUNC_CHARS + 1), R.NL_RUBRIC)
+    assert t_over is True and f"FIRST {R.TRUNC_CHARS}" in p_over
+    # the prefix the teacher actually sees is exactly TRUNC_CHARS chars of document
+    assert p_over.rstrip("\n").endswith("y" * R.TRUNC_CHARS)
 
 
 def test_end_to_end_stub_pipeline():
@@ -187,6 +195,8 @@ def test_end_to_end_stub_pipeline():
             assert r0["stratum"]["language"] and r0["stratum"]["length_band"]
             assert set(r0["scores"]) == set(R.CODE_RUBRIC["dimensions"])
             assert all(isinstance(v, int) and 1 <= v <= 5 for v in r0["scores"].values())
+            assert isinstance(r0["truncated"], bool)
+            assert r0["truncated"] is False  # pilot corpus tops out below 6000 chars
         # resume: a second run labels nothing new
         r2 = subprocess.run(
             [

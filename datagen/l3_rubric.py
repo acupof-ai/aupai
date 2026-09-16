@@ -64,6 +64,11 @@ NL_RUBRIC = {
 _DIMS = ("content_quality", "factual_correctness", "complexity", "educational_or_code_value")
 MIN_SCORE, MAX_SCORE = 1, 5
 
+# A teacher prompt cannot carry an unbounded chunk. Inputs longer than this are scored on
+# only the first TRUNC_CHARS characters; the label is then bound to that prefix and the
+# caller must mark the ledger row truncated=True so a whole-chunk trainer excludes it.
+TRUNC_CHARS = 6000
+
 
 def _is_code_content(text: str) -> bool:
     """Cheap routing between the two rubrics without a model. L3 code rows are
@@ -87,9 +92,16 @@ def select_rubric(text: str) -> dict:
     return CODE_RUBRIC if _is_code_content(text) else NL_RUBRIC
 
 
-def build_prompt(text: str, rubric: dict) -> str:
-    """Return the user prompt. The model must answer with ONLY a JSON object; the
-    parser's job is to enforce shape, not to salvage prose."""
+def build_prompt(text: str, rubric: dict):
+    """Return (prompt, truncated). The model must answer with ONLY a JSON object; the
+    parser's job is to enforce shape, not to salvage prose.
+
+    A document longer than TRUNC_CHARS is scored on only its first TRUNC_CHARS characters.
+    Such a label covers a prefix, not the whole chunk, so truncated is returned True and an
+    explicit notice is put in the prompt itself: the teacher is told exactly what it saw and
+    that the scores apply only to that part. Callers thread the bool onto the ledger row."""
+    truncated = len(text) > TRUNC_CHARS
+    body = text[:TRUNC_CHARS]
     lines = [
         "You are labeling data for a coding-model pretraining corpus.",
         f"Rubric kind: {rubric['kind']}. Score FOUR dimensions INDEPENDENTLY, each an "
@@ -104,10 +116,16 @@ def build_prompt(text: str, rubric: dict) -> str:
         "Respond with ONLY a JSON object on one line, no prose, no code fence:",
         json.dumps({d: f"<{MIN_SCORE}-{MAX_SCORE} int>" for d in _DIMS}),
         "",
-        "Document:",
-        text[:6000],
     ]
-    return "\n".join(lines)
+    if truncated:
+        lines += [
+            f"NOTE: the document below is longer than {TRUNC_CHARS} characters; only its "
+            f"FIRST {TRUNC_CHARS} characters are shown. Score ONLY the shown prefix and do "
+            "not infer anything about the unseen remainder.",
+            "",
+        ]
+    lines += ["Document:", body]
+    return "\n".join(lines), truncated
 
 
 def parse_scores(raw: str, rubric: dict) -> dict:
