@@ -17,6 +17,7 @@ Outputs (all append; the run resumes by sample_id):
 # restartable: completed sample_ids in --out are skipped; ledger rows append in batches.
 """
 import argparse
+import collections
 import concurrent.futures as cf
 import contextlib
 import fcntl
@@ -202,6 +203,20 @@ def _label_all(todo, out_fh, rej_fh, ledger_fh, endpoints, model, concurrency, t
 def drive(pool, out, endpoints, model, *, concurrency, timeout, limit, ledger):
     with open(pool, encoding="utf-8") as fh:
         rows = [json.loads(l) for l in fh]
+    # Loud refuse on duplicate pool sample_ids. The canonical builder
+    # (l2_label_pool_build.py) dedups globally by sample_id, so reaching here means a
+    # foreign/hand-edited pool; never keep-one silently, which would hide upstream
+    # corruption and make the out row count disagree with the given pool.
+    sid_counts = collections.Counter(r["sample_id"] for r in rows)
+    dups = {sid: n for sid, n in sid_counts.items() if n > 1}
+    if dups:
+        detail = ", ".join(f"{sid} x{n}" for sid, n in list(dups.items())[:10])
+        more = f" (+{len(dups) - 10} more)" if len(dups) > 10 else ""
+        raise SystemExit(
+            f"REFUSE: pool {pool} has {len(dups)} duplicate sample_id(s) "
+            f"[{detail}{more}]. Rebuild the pool with the canonical builder "
+            f"datagen/l2_label_pool_build.py (it dedups by sample_id); do not edit it by hand."
+        )
     done = set()
     out_sids = set()
     if os.path.exists(out):
@@ -409,6 +424,35 @@ def _selftest() -> int:
     kept2, _, _ = drive(pool, out, [gu, fu], "stub-model", concurrency=4,
                         timeout=10, limit=None, ledger=ledger)
     assert kept2 == 0, "resume did not skip done sample_ids"
+
+    # duplicate pool sample_ids -> loud nonzero refusal BEFORE any teacher call or write;
+    # the canonical builder guarantees uniqueness, so this is a foreign/hand-edited pool.
+    # Placed while stub servers are up so that disabling the guard actually labels the dup
+    # rows (returns normally) and the `assert raised` below fails on the real property.
+    d3 = tempfile.mkdtemp()
+    dup_pool = os.path.join(d3, "dup_pool.jsonl")
+    with open(dup_pool, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"sample_id": "DUP0", "language": "en", "length_band": "m",
+                             "source": "x", "url": None, "kind": "nl",
+                             "content": "duplicate content words " * 10}) + "\n")
+        fh.write(json.dumps({"sample_id": "UNIQ", "language": "en", "length_band": "m",
+                             "source": "x", "url": None, "kind": "nl",
+                             "content": "other content words " * 10}) + "\n")
+        fh.write(json.dumps({"sample_id": "DUP0", "language": "en", "length_band": "m",
+                             "source": "x", "url": None, "kind": "nl",
+                             "content": "duplicate content words " * 10}) + "\n")
+    dup_out = os.path.join(d3, "out.jsonl")
+    raised = False
+    try:
+        drive(dup_pool, dup_out, [gu, fu], "stub-model", concurrency=1,
+              timeout=5, limit=None, ledger=None)
+    except SystemExit as e:
+        raised = True
+        assert "DUP0 x2" in str(e), str(e)
+        assert "l2_label_pool_build.py" in str(e), str(e)
+    assert raised, "driver must refuse a pool with duplicate sample_ids"
+    assert not os.path.exists(dup_out), "no labels written on dup-pool refusal"
+
     g.shutdown()
     f.shutdown()
 
@@ -468,7 +512,8 @@ def _selftest() -> int:
     print("selftest ok: 4 labels across 2 endpoints (2 each), retry recovered "
           "HTTP500, 4 ledger rows, resume skipped all done; SIGKILL at ledger->out "
           "row 4 recovered to out==ledger (12 each, no dup/gap); singleton flock "
-          "refuses a second writer on one target, releases on exit")
+          "refuses a second writer on one target, releases on exit; duplicate "
+          "pool sample_id refused nonzero before any write")
     return 0
 
 
