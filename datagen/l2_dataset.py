@@ -80,6 +80,7 @@ class Example:
     text: str
     labels: tuple  # floats in 1..5, ordered by RUBRIC_DIMS[rubric_kind]
     rubric_kind: str  # "code" | "natural_language"; identifies the label order
+    domain: str  # corpus domain, carried into the batch for per-domain rank loss
 
 
 def _iter_jsonl(path):
@@ -160,7 +161,7 @@ def load_pairs(
         labeled.add(doc_id)
         labels = tuple(float(dims[d]) for d in dim_order)
         for ci in sorted(chunk_idxs):
-            pairs.append(Example(doc_id, ci, pool[(doc_id, ci)], labels, kind))
+            pairs.append(Example(doc_id, ci, pool[(doc_id, ci)], labels, kind, r["domain"]))
     return pairs
 
 
@@ -189,7 +190,13 @@ def split_pairs(pairs, val_frac=0.1, seed=20260916):
 
 
 def make_collate(encode, max_len=512, pad_id=0):
-    """Build a collate fn. `encode(text) -> list[int]`; truncate to max_len, dynamic pad."""
+    """Build a PURE-PYTHON collate fn. `encode(text) -> list[int]`; truncate to max_len,
+    dynamic pad. Returns Python lists (no torch import); use make_torch_loader for tensors.
+
+    Every rubric row carries all four dims (load_pairs refuses a missing dim), so label_mask
+    is all-ones. It is still emitted alongside labels so the trainer masks its MSE explicitly
+    instead of treating a placeholder 0.0 as a true grade; if a future sparse label is ever
+    admitted, represent it as None in Example.labels and this mask turns 0 for that dim."""
     if not callable(encode):
         raise TypeError("encode must be callable: text -> list[int token ids]")
 
@@ -198,21 +205,90 @@ def make_collate(encode, max_len=512, pad_id=0):
         if any(not s for s in seqs):
             raise DatasetJoinError("a chunk encoded to zero tokens; check the tokenizer")
         width = max(len(s) for s in seqs)
-        input_ids, mask = [], []
+        input_ids, attn = [], []
         for s in seqs:
             pad = width - len(s)
             input_ids.append(s + [pad_id] * pad)
-            mask.append([1] * len(s) + [0] * pad)
-        labels = [list(ex.labels) for ex in batch]
+            attn.append([1] * len(s) + [0] * pad)
+        labels, label_mask = [], []
+        for ex in batch:
+            vals, msk = [], []
+            for v in ex.labels:
+                vals.append(0.0 if v is None else float(v))
+                msk.append(0 if v is None else 1)
+            labels.append(vals)
+            label_mask.append(msk)
         return {
             "input_ids": input_ids,
-            "attention_mask": mask,
+            "attention_mask": attn,
             "labels": labels,
+            "label_mask": label_mask,
+            "domain": [ex.domain for ex in batch],
+            "rubric_kind": [ex.rubric_kind for ex in batch],
             "doc_id": [ex.doc_id for ex in batch],
             "chunk_idx": [ex.chunk_idx for ex in batch],
         }
 
     return collate
+
+
+def make_torch_loader(
+    examples,
+    encode,
+    *,
+    batch_size,
+    max_len=512,
+    pad_id=0,
+    shuffle=False,
+    seed=20260916,
+    domain_vocab=None,
+    kind_vocab=None,
+):
+    """Thin torch wrapper over the pure join. Returns a DataLoader whose batches are tensors:
+    input_ids/attention_mask [B,L], labels/label_mask [B,4], plus domain_id [B] and
+    rubric_kind_id [B] for per-domain / per-kind loss. `examples` is a train/val list from
+    split_pairs. domain_vocab maps domain name -> stable int id; pass a shared one built with
+    build_vocab() across train+val so train/val use identical ids. torch is imported lazily.
+
+    An unseen domain/kind at batch time raises (KeyError) rather than getting a silent -1 id:
+    build the vocab over every split before constructing the loaders."""
+    import torch
+    from torch.utils.data import DataLoader, Dataset
+
+    kind_vocab = kind_vocab or {k: i for i, k in enumerate(sorted(RUBRIC_DIMS))}
+    if domain_vocab is None:
+        domain_vocab = build_vocab(ex.domain for ex in examples)
+
+    class _DS(Dataset):
+        def __init__(self, items):
+            self.items = items
+
+        def __len__(self):
+            return len(self.items)
+
+        def __getitem__(self, i):
+            return self.items[i]
+
+    def collate(batch):
+        base = make_collate(encode, max_len, pad_id)(batch)
+        return {
+            "input_ids": torch.tensor(base["input_ids"], dtype=torch.long),
+            "attention_mask": torch.tensor(base["attention_mask"], dtype=torch.long),
+            "labels": torch.tensor(base["labels"], dtype=torch.float32),
+            "label_mask": torch.tensor(base["label_mask"], dtype=torch.float32),
+            "domain_id": torch.tensor([domain_vocab[d] for d in base["domain"]], dtype=torch.long),
+            "rubric_kind_id": torch.tensor([kind_vocab[k] for k in base["rubric_kind"]], dtype=torch.long),
+        }
+
+    gen = torch.Generator().manual_seed(seed)
+    return DataLoader(
+        _DS(examples), batch_size=batch_size, shuffle=shuffle, collate_fn=collate, generator=gen
+    )
+
+
+def build_vocab(names):
+    """Stable str -> int id over an iterable of domain (or kind) names, sorted."""
+    return {n: i for i, n in enumerate(sorted(set(names)))}
 
 
 def _selftest():
@@ -352,10 +428,36 @@ def _selftest():
     width = max(len([1 for m in row if m]) for row in b["attention_mask"])
     assert len(b["input_ids"][0]) == len(b["input_ids"][1]) == width
     assert b["labels"][0] == list(by_key[("doc00", 0)].labels)
+    # all four dims are scored -> mask is all-ones, and domain/kind ride into the batch
+    assert b["label_mask"] == [[1, 1, 1, 1], [1, 1, 1, 1]]
+    assert b["domain"] == ["py", "py"] and b["rubric_kind"] == ["code", "code"]
+
+    # torch wrapper: tensor labels/mask [B,4], stable domain_id/kind_id for rank loss
+    try:
+        import torch
+    except ImportError:
+        torch = None
+    if torch is not None:
+        train, _val = split_pairs(pairs, 0.1, seed=7)
+        dvoc = build_vocab(ex.domain for ex in pairs)  # shared across train+val
+        loader = make_torch_loader(train, enc, batch_size=8, max_len=4, domain_vocab=dvoc)
+        tb = next(iter(loader))
+        assert tb["labels"].shape[1] == 4 and tb["label_mask"].shape == tb["labels"].shape
+        assert tb["domain_id"].dtype == torch.long and tb["rubric_kind_id"].dtype == torch.long
+        assert set(tb["rubric_kind_id"].tolist()) <= set(range(len(RUBRIC_DIMS)))
+        assert tb["input_ids"].shape[0] == tb["labels"].shape[0] == 8
+        # an unseen domain (vocab missing it) must raise, not silently get a -1 id
+        nl_loader = make_torch_loader([nl], enc, batch_size=1, domain_vocab={"py": 0})
+        try:
+            next(iter(nl_loader))
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("unseen domain must raise KeyError in the tensor collate")
 
     print(
         "l2_dataset selftest OK: doc_id join + chunk alignment, deterministic no-leak "
-        "split, missing/duplicate refusal, truncate/pad collate"
+        "split, missing/duplicate refusal, truncate/pad collate, label mask, torch tensors"
     )
 
 
