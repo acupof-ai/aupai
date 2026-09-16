@@ -1434,6 +1434,153 @@
    "status": "measured",
    "guard_phrases": [],
    "retracted_value": []
+  },
+  {
+   "id": "dq.l2_encoder_truncation_real_docs_0916",
+   "value": {
+    "bge_large_en_frac_gt512": {
+     "en_c4": 0.2567,
+     "code_l2": 0.516,
+     "starcoder": 0.5433
+    },
+    "bge_m3_frac_gt8192": {
+     "en_c4": 0.0,
+     "code_l2": 0.0,
+     "starcoder": 0.0013
+    },
+    "qwen3emb_frac_gt32768": {
+     "en_c4": 0.0,
+     "code_l2": 0.0,
+     "starcoder": 0.0
+    }
+   },
+   "unit": "fraction of docs truncated past hard context",
+   "measured": "2026-09-16",
+   "source": "scripts/probe_lengths.py -> runs/encoder_length_distribution.json",
+   "config": {
+    "n_per_domain": 1500,
+    "domains": "en_c4_stage2_dc,code_ultra_l2_dc,code_py_starcoder_dc sampled from pod shards",
+    "bge_m3_p50_p95_tokens": {
+     "en_c4": [
+      262,
+      1743
+     ],
+     "code_l2": [
+      540,
+      3414
+     ],
+     "starcoder": [
+      598,
+      4933
+     ]
+    }
+   },
+   "uncertainty": "sampling n=1500/domain; truncation fractions stable to +-0.01",
+   "status": "measured"
+  },
+  {
+   "id": "dq.l2_encoder_gpu_forward_throughput_h20_0916",
+   "value": {
+    "bge_m3_docs_per_s": {
+     "budget32k": 131.1,
+     "budget64k": 123.7
+    },
+    "qwen3emb_docs_per_s": {
+     "budget32k": 74.1,
+     "budget64k": 66.1
+    },
+    "bge_large_en_docs_per_s": {
+     "budget32k": 513.8,
+     "budget64k": 488.7
+    },
+    "bge_m3_tokens_per_s_budget32k": 116443.0,
+    "peak_mem_GB": {
+     "bge_m3": 3.91,
+     "qwen3emb": 17.15,
+     "bge_large_en": 3.14
+    }
+   },
+   "unit": "docs/s and tokens/s, pure GPU forward (tokenizer excluded)",
+   "measured": "2026-09-16",
+   "source": "scripts/gpu_forward_bench_pod.py -> runs/encoder_probe_gpu_forward.json",
+   "config": {
+    "device": "NVIDIA H20 fp16",
+    "n_docs": 1200,
+    "token_budges": [
+     32768,
+     65536
+    ],
+    "timed_region": "gpu_forward_only, pre-tokenized length-sorted packs, warmup2/rep6",
+    "p50_p95_tokens_sample": {
+     "bge_m3": [
+      407,
+      3690
+     ],
+     "qwen3emb": [
+      335,
+      2931
+     ]
+    }
+   },
+   "uncertainty": "steady-state forward only; production adds pipelined CPU tokenize, padded/IO overhead not included; expect <=25% derate",
+   "status": "measured"
+  },
+  {
+   "id": "dq.l2_encoder_cpu_throughput_laptop_0916",
+   "value": {
+    "bge_m3_bs1_docs_per_s": 15.5,
+    "qwen3emb_bs1_docs_per_s": 9.5,
+    "bge_large_en_bs1_docs_per_s": 15.3
+   },
+   "unit": "docs/s on laptop CPU",
+   "measured": "2026-09-16",
+   "source": "scripts/probe_encoders.py -> runs/encoder_probe_cpu.json",
+   "config": {
+    "threads": 10,
+    "max_docs": 50,
+    "bs": 1,
+    "truncation": "per-model hard ctx",
+    "note": "bge-m3/qwen only bs1 bounded point (large-batch CPU OOMs/too slow); bge-large full curve 15.3/6.2/5.9 at bs1/32/128"
+   },
+   "uncertainty": "small n bs1 point; batch CPU path unmeasured for m3/qwen",
+   "status": "measured"
+  },
+  {
+   "id": "dq.l2_census_scan_cardhours_h20_0916",
+   "value": {
+    "bge_m3": {
+     "40M": {
+      "single_card_h": 84.8,
+      "eight_card_h": 10.6
+     },
+     "80M": {
+      "single_card_h": 169.5,
+      "eight_card_h": 21.2
+     }
+    },
+    "qwen3emb": {
+     "40M": {
+      "single_card_h": 149.9
+     },
+     "80M": {
+      "single_card_h": 299.9
+     }
+    },
+    "bge_m3_derated_to_100docps": {
+     "40M_single_card_h": 111.1,
+     "80M_single_card_h": 222.2
+    }
+   },
+   "unit": "H20 card-hours, GPU-forward extrapolation",
+   "measured": "2026-09-16",
+   "source": "runs/encoder_probe_gpu_forward.json (bge-m3 131.1 per-second @32k); hours = N_docs / per_second_rate / 3600",
+   "config": {
+    "formula": "N_docs/docs_per_s/3600",
+    "docs": "40-80 million census scan",
+    "billing": "single card shown; 8-card linear ideal, no tokenize/IO"
+   },
+   "uncertainty": "ideal forward-only; +25-30% at derated 100 docs/s; multi-card assumes independent shard scans",
+   "status": "measured"
   }
  ]
 }
