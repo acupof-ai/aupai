@@ -1025,6 +1025,13 @@ def main():
         # targeted domain / a quota under the survival floor / an unpinned multi-version
         # ledger each raise rather than silently wiping or blending snapshots.
         "datagen/score_quota.py",
+        # The L2 quality-encoder training loader (de). Registered because the only thing it
+        # guarantees is that a teacher label is bound to the RIGHT text chunk: it joins by
+        # doc_id (not row order), requires all four l3_rubric dims, splits at document
+        # granularity (no chunk train/val leakage), and refuses a missing/duplicate chunk.
+        # The selftest pins label-chunk alignment, order-independent reproducibility, and a
+        # contract assertion that the loader's dim set equals datagen/l3_rubric.py's.
+        "datagen/l2_dataset.py",
         # The function-interface SFT pair extractor (3b-18). Registered because its two
         # acceptance properties are only checkable on a known-answer world: the output must
         # run to the function's LAST source line (a cut one statement early still parses and
