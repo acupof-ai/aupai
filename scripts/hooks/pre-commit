@@ -2074,6 +2074,13 @@ def main():
         # retry recovering an HTTP 500, reject counting, score-ledger rows and
         # resume-by-sample_id. Cardless, corpusless. ~1s.
         "datagen/l3_label_drive.py",
+        # 3b: stratified pilot sampler per-row validation. Selftest feeds a shard with bad
+        # JSON, a non-object row, non-string content, a blank-content row and a blank line,
+        # and pins bad=3/empty=1/scanned=9 with no bad row ever sampled, plus the main()
+        # --max-bad-frac gate: 33% bad refuses nonzero (default 1% and strict 0) before any
+        # pool byte, 50% permits and records bad_lines in the manifest, a clean shard passes
+        # 0. Cardless, corpusless, subprocess-driven.
+        "datagen/l3_stratified_sample.py",
         # 3b: single-endpoint labeler resume identity guard. Selftest pins that an
         # identical pilot+config resumes, while a changed pilot (positional sample_ids
         # rebound), a changed backend/teacher_model/rubric_version (mixed labels), or a
