@@ -218,15 +218,15 @@ class HeadPredictor:
         import torch
         from transformers import AutoModel, AutoTokenizer
 
-        from v41f_l2.l2_quality_head import L2Config, L2QualityModel
+        from v41f_l2.l2_quality_head import L2Config, L2QualityModel, load_head_state
 
         self.torch = torch
         self.device = device
         self.tok = AutoTokenizer.from_pretrained(cfg.model_id)
         enc = AutoModel.from_pretrained(cfg.model_id, torch_dtype=torch.float16)
-        state = torch.load(head_ckpt, map_location="cpu", weights_only=False)
-        model = L2QualityModel(enc, state.get("cfg", L2Config()), pooling="cls")
-        model.head.load_state_dict(state.get("head", state))
+        head_state, head_cfg = load_head_state(head_ckpt)
+        model = L2QualityModel(enc, L2Config(**head_cfg) if head_cfg else L2Config(), pooling="cls")
+        model.head.load_state_dict(head_state)
         self.model = model.to(device).eval()
         self.token_budget = cfg.token_budget
         self.over_ctx = 0
