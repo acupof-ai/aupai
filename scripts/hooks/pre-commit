@@ -2043,8 +2043,15 @@ def main():
         # 3b: L2 teacher-label training-pool builder (50k stratified chunks). Its
         # selftest trains a tiny KN model on a synthetic low/mid/high-PPL corpus and
         # pins the PPL bands, length bands, content-hash sample_id/parent_doc_id
-        # linkage, multi-chunk rows and fixed-seed determinism. CPU-only, no corpus.
+        # linkage, multi-chunk rows and fixed-seed determinism, and EXHAUSTIVELY
+        # asserts every emitted chunk is <= the 1024 hard token max across all tail
+        # lengths 1..511 (the de-399 truncation shape). CPU-only, no corpus.
         "datagen/l2_label_pool_build.py",
+        # 3b: multi-endpoint concurrent teacher driver for the 50k L2 pool. Selftest
+        # runs two in-process stub HTTP servers and pins endpoint round-robin, one
+        # retry recovering an HTTP 500, reject counting, score-ledger rows and
+        # resume-by-sample_id. Cardless, corpusless. ~1s.
+        "datagen/l3_label_drive.py",
         # ae: the strict machine-generated-banner rule for English code corpora (L0/L1
         # hardening 2026-09-16). Pure string work, no corpus -- 7 real Django/AutoRest/protobuf
         # banner positives and 7 real-code negatives that a looser regex was measured to
