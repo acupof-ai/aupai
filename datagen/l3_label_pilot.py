@@ -21,9 +21,12 @@ Small pilot first (a few hundred); do NOT point this at millions.
 """
 
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import os
+import sys
 import time
 import urllib.request
 
@@ -271,10 +274,60 @@ def _selftest():
         assert rids == ["r1", "r2"] and rtorn is True
         assert truncate_torn_tail(rej) is True
         assert set(read_jsonl_lenient(rej, "sample_id")[0]) == {"r1", "r2"}
+
+    # --- end-to-end through main(): manifest counts must EQUAL on-disk file line counts
+    # on a fresh run and after a torn-tail resume (the #419 kept-under-count regression).
+    with tempfile.TemporaryDirectory() as td:
+        pilot = os.path.join(td, "p.jsonl")
+        out = os.path.join(td, "labels.jsonl")
+        with open(pilot, "w", encoding="utf-8") as fh:
+            for i in range(5):
+                fh.write(json.dumps({
+                    "sample_id": f"e{i:07d}", "language": "en", "length_band": "s",
+                    "source": "st/x", "url": None,
+                    "content": "the quick brown fox jumps and runs onward lazily " * 8,
+                }) + "\n")
+
+        def run_main():
+            buf = io.StringIO()
+            old = sys.argv
+            sys.argv = ["l3_label_pilot.py", "--pilot", pilot, "--out", out,
+                        "--backend", "stub"]
+            try:
+                with contextlib.redirect_stdout(buf):
+                    main()
+            finally:
+                sys.argv = old
+            return json.loads(buf.getvalue())
+
+        def n_lines(p):
+            return sum(1 for _ in open(p, encoding="utf-8")) if os.path.exists(p) else 0
+
+        m1 = run_main()
+        assert m1["kept"] == 5 and m1["newly_kept_this_run"] == 5, m1
+        assert m1["kept"] == n_lines(out), "fresh kept must equal labels file lines"
+        # idempotent resume labels nothing new, count still matches the file
+        m2 = run_main()
+        assert m2["kept"] == 5 and m2["newly_kept_this_run"] == 0, m2
+        assert m2["kept"] == n_lines(out)
+        # tear the LAST label line mid-write by cutting the file inside it (a real
+        # crash truncates the e4 record, not an appended duplicate): self-heal drops the
+        # partial record, then e4 is re-labelled; final kept equals the repaired file.
+        with open(out, encoding="utf-8") as fh:
+            lines = fh.readlines()
+        last = lines[-1]
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.writelines(lines[:-1])
+            fh.write(last[: len(last) // 2])  # half of e4's record, no trailing newline
+        m3 = run_main()
+        assert m3["repaired_torn_label_tail"] is True, m3
+        assert m3["kept"] == n_lines(out) == 5, (m3["kept"], n_lines(out))
+        assert m3["newly_kept_this_run"] == 1, m3
     print("selftest ok: fresh=0; identical resume allowed; changed pilot, changed "
           "backend/model/rubric, and missing manifest all refused; torn LAST line in "
           "labels/rejects self-heals (middle corruption loud); rejected ids dedup on "
-          "resume so a re-run never doubles a reject")
+          "resume so a re-run never doubles a reject; e2e manifest kept/rejected equal "
+          "on-disk line counts on fresh, resumed, and torn-tail runs")
     return 0
 
 
@@ -355,8 +408,6 @@ def main():
                 raw = teacher(text, rubric)
                 scores = parse_scores(raw, rubric)
             except Exception as e:  # loud: persist, count, never fabricate
-                if sid in rejected_seen:
-                    continue  # defensive: already counted on this resume's input set
                 rej_fh.write(
                     json.dumps(
                         {"sample_id": sid, "reason": str(e), "rubric_kind": rubric["kind"], "ts": _ts()},
@@ -412,6 +463,7 @@ def main():
                         "truncated": truncated,
                     }
                 )
+            done.add(sid)  # keep done == on-disk labels so manifest kept counts this run too
             kept += 1
 
     ledger_n = 0
