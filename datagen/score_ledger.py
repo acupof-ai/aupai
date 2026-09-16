@@ -41,6 +41,11 @@ Schema (one JSON object per line, all keys present every line):
     src_sha        str | None. Content fingerprint of the CORPUS SOURCE BUILD the document
                        belongs to (the corpus_fingerprint/filters_fp convention), a 64-hex
                        sha256. Optional: census rows over a fingerprinted build fill it.
+    truncated      bool, optional, default False. True only on a rubric label row whose prompt
+                       could not fit the whole chunk and the teacher scored only its first
+                       6000 chars. The label is then bound to a prefix, not the whole-chunk
+                       embedding input; a trainer excludes such pairs unless it opts in.
+                       Absent on old rows -> False (back-compatible).
 
 Content identity / staleness (the reason doc_id is a content hash): if the source is
 rebuilt or re-cleaned the document content changes, content_doc_id changes, so the old
@@ -79,6 +84,7 @@ ALL_FIELDS = (
     "rubric_kind",
     "record_id",
     "src_sha",
+    "truncated",
 )
 
 
@@ -171,6 +177,12 @@ def validate_row(row):
         if v is not None and not isinstance(v, str):
             raise LedgerSchemaError(f"{f} must be a string or null, got {v!r}")
 
+    # truncated is OPTIONAL and defaults to False for rows written before the field existed.
+    # True means a teacher/rubric label scored only a truncated prefix of the chunk; a trainer
+    # consuming whole-chunk embeddings must not regress that prefix label on the whole chunk.
+    if "truncated" in row and not isinstance(row["truncated"], bool):
+        raise LedgerSchemaError(f"truncated must be a bool, got {row['truncated']!r}")
+
 
 @dataclass
 class ScoreRow:
@@ -189,6 +201,7 @@ class ScoreRow:
     rubric_kind: object = None
     record_id: object = None
     src_sha: object = None
+    truncated: bool = False
 
     def to_dict(self):
         d = asdict(self)
@@ -307,6 +320,9 @@ def _selftest():
     def m_bad_model(r):
         r["model"] = 7
 
+    def m_bad_truncated(r):
+        r["truncated"] = "yes"
+
     def bad(mut, label):
         r = json.loads(json.dumps(valid_scalar))
         mut(r)
@@ -329,8 +345,16 @@ def _selftest():
         (m_bad_stratum, "stratum type"),
         (m_bad_srcsha, "src_sha hex"),
         (m_bad_model, "model type"),
+        (m_bad_truncated, "truncated not bool"),
     ):
         bad(mut, label)
+
+    # truncated: bool true accepted; absent key reads as False via the consumer .get default
+    vt = json.loads(json.dumps(valid_scalar))
+    vt["truncated"] = True
+    validate_row(vt)
+    assert vt["truncated"] is True
+    assert valid_scalar.get("truncated", False) is False  # old row -> not truncated
 
     # append/load round trip + content-hash identity and staleness guard
     with tempfile.TemporaryDirectory() as td:
@@ -347,7 +371,7 @@ def _selftest():
             raise AssertionError("changed content must not match the old doc_id")
 
     print(
-        "score_ledger selftest OK: 2 valid row shapes accepted, 12 invalid categories "
+        "score_ledger selftest OK: 2 valid row shapes accepted, 13 invalid categories "
         "rejected, append/load round-trip, content-hash staleness guard"
     )
 

@@ -27,7 +27,7 @@ import os
 import time
 import urllib.request
 
-from l3_rubric import RUBRIC_VERSION, build_prompt, parse_scores, select_rubric
+from l3_rubric import RUBRIC_VERSION, TRUNC_CHARS, build_prompt, parse_scores, select_rubric
 
 
 def _ts():
@@ -58,10 +58,11 @@ def make_openai_teacher(url, model, timeout):
     endpoint = base + "/chat/completions"
 
     def ask(text, rubric):
+        prompt, _ = build_prompt(text, rubric)
         body = json.dumps(
             {
                 "model": model,
-                "messages": [{"role": "user", "content": build_prompt(text, rubric)}],
+                "messages": [{"role": "user", "content": prompt}],
                 "temperature": 0.0,
                 "max_tokens": 200,
                 # REQUIRED for Qwen3.5: without enable_thinking=false the model spends
@@ -132,6 +133,9 @@ def main():
                 break
             text = row["content"]
             rubric = select_rubric(text)
+            # build_prompt cuts and flags on the same predicate; the openai teacher gets
+            # the flagged prompt, and this bool is threaded onto both emitted rows.
+            truncated = len(text) > TRUNC_CHARS
             try:
                 raw = teacher(text, rubric)
                 scores = parse_scores(raw, rubric)
@@ -162,6 +166,7 @@ def main():
                         "backend": args.backend,
                         "scores": scores,
                         "stratum": {"language": row.get("language"), "length_band": row.get("length_band")},
+                        "truncated": truncated,
                         "ts": ts,
                     },
                     ensure_ascii=False,
@@ -186,6 +191,7 @@ def main():
                         "rubric_kind": rubric["kind"],
                         "record_id": label_id,
                         "src_sha": None,
+                        "truncated": truncated,
                     }
                 )
             kept += 1
