@@ -17,7 +17,7 @@ from pathlib import Path
 
 import torch
 
-REF_DIR = Path(__file__).resolve().parents[2] / "third_party" / "deepseek_v41_ref"
+REF_DIR = Path(__file__).absolute().parents[2] / "third_party" / "deepseek_v41_ref"
 
 
 class _QuantNotAvailable(RuntimeError):

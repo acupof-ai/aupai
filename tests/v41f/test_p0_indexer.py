@@ -13,11 +13,11 @@ from pathlib import Path
 
 import torch
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(Path(__file__).absolute().parent))
 from allclose import cmp
 from ref_oracle import bf16_args, load_reference
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).absolute().parents[2]))
 import torch.nn.functional as F
 
 from v41f.indexer import Indexer, select_candidate_blocks
