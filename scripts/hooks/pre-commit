@@ -1615,6 +1615,10 @@ def main():
         "datagen/test_near_dedup_known.py",
         "datagen/test_parallel_exact_identity.py",
         "datagen/test_fence_extraction.py",
+        # L3 teacher-label funnel: stratified reservoir draw, multi-dim rubric parser
+        # loud-failure, and end-to-end versioned labelling. CPU only, no network (stub
+        # backend); registered in the same commit as the pipeline.
+        "datagen/test_l3_label_pipeline.py",
         "eval/test_l1_fewshot_2x2.py",
         "scripts/test_e1_28_matched.py",
         "scripts/test_e1_29_floor_by_class.py",
