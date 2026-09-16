@@ -155,8 +155,18 @@ def _check_resume(out_path: Path, cfg: ScanConfig, head_fp: str, force: bool) ->
     return True
 
 
-def _write_marker(out_path: Path, cfg: ScanConfig, head_fp: str, n_rows: int):
-    payload = {**expected_marker(cfg, head_fp), "rows": n_rows, "ts": _utcnow()}
+def _write_marker(out_path: Path, cfg: ScanConfig, head_fp: str, n_rows: int, over_ctx_count: int = 0):
+    # over_ctx_count is a per-shard OUTPUT statistic (docs whose bge-m3 input hit the 8192
+    # cap and were truncated), persisted here so truncation is traceable from the marker
+    # without scraping stdout. It is deliberately NOT in expected_marker's identity fields:
+    # it describes what was scored, not which head/version/model scored it.
+    payload = {
+        **expected_marker(cfg, head_fp),
+        "rows": n_rows,
+        "over_ctx_count": over_ctx_count,
+        "over_ctx_ctx": MAX_CTX,
+        "ts": _utcnow(),
+    }
     mtmp = marker_path(out_path).with_suffix(".done.json.tmp")
     with open(mtmp, "w") as fh:
         json.dump(payload, fh, sort_keys=True)
@@ -193,9 +203,15 @@ def read_corpus_docs(shard_path: str, counters: dict):
             yield content, row.get("src_sha")
 
 
-def build_row(content, vec, cfg: ScanConfig, domain, shard_path, src_sha=None):
+def build_row(content, vec, cfg: ScanConfig, domain, shard_path, src_sha=None, enc_over_ctx=False):
     """One whole-doc 4-vector -> a canonical head-score row (continuous, unquantized).
-    doc_id is the whole-content hash, re-checked against the bytes."""
+    doc_id is the whole-content hash, re-checked against the bytes.
+
+    enc_over_ctx=True marks a doc whose bge-m3 input tokenized to the 8192 cap and was
+    truncated before the head saw it (encoder-side, distinct from the teacher's 6000-char
+    label truncation in datagen/l2_dataset.py). It is an extra schema key; validate_row
+    checks required fields and passes unknown keys through, so the canonical reader keeps
+    working while the flag is traceable per row."""
     if len(vec) != len(RUBRIC_DIMS):
         raise ValueError(f"predictor returned {len(vec)} dims, expected {len(RUBRIC_DIMS)}")
     doc_id = content_doc_id(content)
@@ -212,6 +228,7 @@ def build_row(content, vec, cfg: ScanConfig, domain, shard_path, src_sha=None):
         "source_shard": shard_path,
         "src_sha": src_sha,
         "dim_scale": DIM_SCALE,
+        "enc_over_ctx": bool(enc_over_ctx),
         "dims": {name: float(x) for name, x in zip(RUBRIC_DIMS, vec, strict=True)},
     }
 
@@ -298,7 +315,7 @@ def scan_shards(domain, paths, out_dir, predict, cfg: ScanConfig, counters, *, f
         # publish + marker are both fsync/rename/fsync-dir durable
         append_rows(str(tmp), rows)
         _durably_rename(tmp, out_path)
-        _write_marker(out_path, cfg, head_fp, len(rows))
+        _write_marker(out_path, cfg, head_fp, len(rows), over_ctx_count=stats["over_ctx"])
         written += len(rows)
         counters["written_shards"] += 1
     return written
@@ -329,6 +346,24 @@ def find_domain_duplicates(out_dir, domain):
 DOC_BATCH = 256  # unique docs per predictor call; bounds text held in memory
 
 
+def _predict_vecs(predict, texts):
+    """Call a predictor and return (vecs, over_ctx_flags) aligned to `texts`.
+
+    The production HeadPredictor returns the tuple (flags mark per-doc 8192 truncation). A
+    predictor/selftest stub that returns only vectors is accepted with all-False flags, so
+    the scoring path tolerates a plain callable but a real truncation flag is never faked."""
+    out = predict(texts)
+    if isinstance(out, tuple) and len(out) == 2:
+        vecs, flags = out
+    else:
+        vecs, flags = out, [False] * len(texts)
+    if len(vecs) != len(texts):
+        raise ValueError(f"predictor returned {len(vecs)} vectors for {len(texts)} docs")
+    if len(flags) != len(texts):
+        raise ValueError(f"predictor returned {len(flags)} over-ctx flags for {len(texts)} docs")
+    return vecs, flags
+
+
 def _score_one_shard(domain, shard_path, predict, cfg, counters, domain_seen):
     # Stream the shard in bounded DOC_BATCH micro-batches: a shard can be GBs, so we never
     # hold all its text. Within a batch the predictor packs to the GPU token budget (the 131
@@ -340,16 +375,17 @@ def _score_one_shard(domain, shard_path, predict, cfg, counters, domain_seen):
     in0 = counters.get("input_rows", 0)
     bad0 = counters.get("bad_content_rows", 0)
     dup0 = counters["dup_docs"]
+    over0 = counters.get("over_ctx", 0)
 
     def flush(batch):
         if not batch:
             return
-        vecs = predict([c for c, _ in batch])
-        if len(vecs) != len(batch):
-            raise ValueError(f"predictor returned {len(vecs)} vectors for {len(batch)} docs")
-        for (content, src_sha), vec in zip(batch, vecs, strict=True):
-            rows.append(build_row(content, vec, cfg, domain, shard_path, src_sha=src_sha))
+        vecs, flags = _predict_vecs(predict, [c for c, _ in batch])
+        for (content, src_sha), vec, over in zip(batch, vecs, flags, strict=True):
+            rows.append(build_row(content, vec, cfg, domain, shard_path, src_sha=src_sha, enc_over_ctx=over))
             counters["docs"] += 1
+            if over:
+                counters["over_ctx"] = counters.get("over_ctx", 0) + 1
 
     batch = []
     for content, src_sha in read_corpus_docs(shard_path, counters):
@@ -368,6 +404,7 @@ def _score_one_shard(domain, shard_path, predict, cfg, counters, domain_seen):
         "bad": counters.get("bad_content_rows", 0) - bad0,
         "dup": counters["dup_docs"] - dup0,
         "kept": len(rows),
+        "over_ctx": counters.get("over_ctx", 0) - over0,
     }
     return rows, stats
 
@@ -414,26 +451,32 @@ class HeadPredictor:
     def _encode_batch(self, texts):
         torch = self.torch
         enc = self.tok(texts, padding=True, truncation=True, max_length=MAX_CTX, return_tensors="pt")
-        # a doc at the cap was truncated; probe measured ~0, so a nonzero count is a signal
-        self.over_ctx += int((enc["attention_mask"].sum(1) >= MAX_CTX).sum())
+        # a doc at the cap was truncated; probe measured ~0, so a nonzero count is a signal.
+        # Return per-doc flags (not just the running total) so the flag rides on the row.
+        over = (enc["attention_mask"].sum(1) >= MAX_CTX).tolist()
+        self.over_ctx += int(sum(over))
         with torch.no_grad():
             pred = self.model(enc["input_ids"].to(self.device), enc["attention_mask"].to(self.device))
-        return pred.float().cpu().tolist()
+        return pred.float().cpu().tolist(), [bool(x) for x in over]
 
     def __call__(self, texts):
         # whole docs, greedy token-budget packs (length-sorting upstream reduces padding in a
-        # production run; the call boundary stays one batch in / one 4-vector-per-doc out).
-        out, cur, cur_tok = [], [], 0
+        # production run; the call boundary stays one batch in / one (vec,flag)-per-doc out).
+        out, flags, cur, cur_tok = [], [], [], 0
         for t in texts:
             ntok = len(self.tok(t, add_special_tokens=True)["input_ids"])
             if cur and cur_tok + min(ntok, MAX_CTX) > self.token_budget:
-                out.extend(self._encode_batch(cur))
+                v, f = self._encode_batch(cur)
+                out.extend(v)
+                flags.extend(f)
                 cur, cur_tok = [], 0
             cur.append(t)
             cur_tok += min(ntok, MAX_CTX)
         if cur:
-            out.extend(self._encode_batch(cur))
-        return out
+            v, f = self._encode_batch(cur)
+            out.extend(v)
+            flags.extend(f)
+        return out, flags
 
 
 def main(argv=None):
@@ -481,14 +524,16 @@ def main(argv=None):
         "written_shards": 0,
         "skipped_shards": 0,
         "dup_only_shards": 0,
+        "over_ctx": 0,
         "input_rows": 0,
         "bad_content_rows": 0,
     }
     for domain, paths in sorted(by_domain.items()):
         scan_shards(domain, paths, args.out_dir, predict, cfg, counters, force=args.force)
     # probe measured ~0 docs at 8192; nonzero means the length distribution moved and docs
-    # were silently truncated -- surfaced as the scan's closing line.
-    print(f"{counters} over_ctx(={MAX_CTX})={getattr(predict, 'over_ctx', 0)}", flush=True)
+    # were truncated. The durable sources are per-row enc_over_ctx + each marker's
+    # over_ctx_count; this line is only the run's human-readable closing summary.
+    print(f"{counters} over_ctx(={MAX_CTX})={counters['over_ctx']}", flush=True)
     # cross-SHARD / cross-worker audit: this worker only dedups the shards it scanned. After
     # all workers write the shared out_dir, identical content in two shard FILES (e.g. two
     # cards scanning files that hold the same bytes) is byte-identical double counting. A
@@ -820,6 +865,42 @@ def _selftest():
         assert not shard_output_path(bd, "code_py", d2).exists()
         assert not marker_path(shard_output_path(bd, "code_py", d2)).exists()
 
+        # ENCODER OVER-CTX: a doc at the 8192 input cap is flagged on ITS row and counted in
+        # the marker, so truncation is traceable after the process exits (not stdout-only).
+        long_doc = "tok " * 9000  # stands in for a doc whose bge-m3 tokenization hits 8192
+        oc_path = os.path.join(bd, "overctx.jsonl")
+        with open(oc_path, "w") as fh:
+            fh.write(json.dumps({"content": "short one"}) + "\n")
+            fh.write(json.dumps({"content": long_doc}) + "\n")
+            fh.write(json.dumps({"content": "also short"}) + "\n")
+
+        def over_pred(texts):
+            # stub the tokenizer's cap decision on byte length: the long doc is "truncated".
+            return [[2.0, 2.0, 2.0, 2.0] for _ in texts], [len(t) > 8192 for t in texts]
+
+        occ = {
+            "docs": 0,
+            "dup_docs": 0,
+            "written_shards": 0,
+            "skipped_shards": 0,
+            "dup_only_shards": 0,
+            "over_ctx": 0,
+            "input_rows": 0,
+            "bad_content_rows": 0,
+        }
+        scan_shards("code_py", [oc_path], bd, over_pred, cfg, occ)
+        assert occ["over_ctx"] == 1 and occ["docs"] == 3, occ
+        out_rows = load_rows(shard_output_path(bd, "code_py", oc_path))
+        assert [r["enc_over_ctx"] for r in out_rows] == [False, True, False], [
+            r["enc_over_ctx"] for r in out_rows
+        ]
+        mp = marker_path(shard_output_path(bd, "code_py", oc_path))
+        marker = json.loads(mp.read_text())
+        assert marker["over_ctx_count"] == 1, marker
+        assert marker["over_ctx_ctx"] == MAX_CTX, marker
+        # over_ctx_count is an output statistic, NOT a resume-fingerprint identity field
+        assert "over_ctx_count" not in expected_marker(cfg, head_fingerprint(over_pred))
+
     # DURABLE PUBLISH: file fsync before rename, parent-dir fsync after. Spy on THIS module's
     # globals (a fresh import would be a different module under `python l2_census_scan.py`).
     g = globals()
@@ -869,8 +950,8 @@ def _selftest():
         "resume (stale head/version/markerless refused without --force), canonical "
         "continuous rows unquantized (out-of-range kept), quota ranking separable, "
         "version-conflict guard, durable fsync publish, bad-row counting, empty/all-bad "
-        "shard refusal with all-duplicate shards skipped, domain-level + cross-shard dup "
-        "detection"
+        "shard refusal with all-duplicate shards skipped, per-row + marker-persisted "
+        "encoder over-ctx truncation flag, domain-level + cross-shard dup detection"
     )
 
 
