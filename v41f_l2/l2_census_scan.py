@@ -149,15 +149,22 @@ def scan_shards(domain, paths, out_dir, predict, cfg: ScanConfig, counters, *, f
     """Score a worker's assigned shards, one validated output file per shard.
 
     Idempotent: a finished (domain,shard) file is skipped. Each shard stages to a .tmp and
-    atomically renames, so a crash never leaves partial/duplicate rows; in-shard doc_ids
-    de-duplicate. Mutates the shared counters dict; returns rows_written_total."""
+    atomically renames, so a crash never leaves partial/duplicate rows. Dedup is DOMAIN-level
+    across this worker's shards: one content-id set is shared, so identical content appearing
+    in two shards is scored once and counted in dup_docs (doc_id is a content hash, so the
+    same bytes anywhere are the same doc). Mutates the shared counters dict; returns written.
+
+    Cross-worker duplicates (two cards scanning different files that hold identical content)
+    cannot share an in-memory set; audit them afterwards with find_domain_duplicates over the
+    shared out_dir."""
     written = 0
+    domain_seen: set[str] = set()
     for shard_path in paths:
         out_path = shard_output_path(out_dir, domain, shard_path)
         if out_path.exists() and not force:
             counters["skipped_shards"] += 1
             continue
-        rows = _score_one_shard(domain, shard_path, predict, cfg, counters)
+        rows = _score_one_shard(domain, shard_path, predict, cfg, counters, domain_seen)
         tmp = out_path.with_suffix(out_path.suffix + ".tmp")
         if tmp.exists():
             tmp.unlink()
@@ -169,14 +176,27 @@ def scan_shards(domain, paths, out_dir, predict, cfg: ScanConfig, counters, *, f
     return written
 
 
+def find_domain_duplicates(out_dir, domain):
+    """Read every scored file for a domain and return {doc_id: [output files]} for docs
+    appearing in MORE than one shard file. Works across workers because all shard outputs
+    land in one out_dir with domain-prefixed names. doc_id is a content hash, so a repeated id
+    is byte-identical content double-counted across shards — a census must surface it."""
+    prefix = domain.replace("/", "_")
+    files = sorted(glob.glob(os.path.join(out_dir, f"{prefix}__*.{SCORER}.jsonl")))
+    owners: dict[str, set] = {}
+    for fp in files:
+        for r in load_rows(fp):
+            owners.setdefault(r["doc_id"], set()).add(fp)
+    return {doc_id: sorted(fs) for doc_id, fs in owners.items() if len(fs) > 1}
+
+
 DOC_BATCH = 256  # unique docs per predictor call; bounds text held in memory
 
 
-def _score_one_shard(domain, shard_path, predict, cfg, counters):
+def _score_one_shard(domain, shard_path, predict, cfg, counters, domain_seen):
     # Stream the shard in bounded DOC_BATCH micro-batches: a shard can be GBs, so we never
     # hold all its text. Within a batch the predictor packs to the GPU token budget (the 131
-    # docs/s shape). Dedup is on the small content-id set; only compact rows survive a batch.
-    seen: set[str] = set()
+    # docs/s shape). domain_seen is the cross-shard content-id set for this worker.
     rows = []
 
     def flush(batch):
@@ -192,10 +212,10 @@ def _score_one_shard(domain, shard_path, predict, cfg, counters):
     batch = []
     for content, src_sha in read_corpus_docs(shard_path):
         cid = content_doc_id(content)
-        if cid in seen:
+        if cid in domain_seen:
             counters["dup_docs"] += 1
             continue
-        seen.add(cid)
+        domain_seen.add(cid)
         batch.append((content, src_sha))
         if len(batch) >= DOC_BATCH:
             flush(batch)
@@ -294,6 +314,26 @@ def main(argv=None):
     # probe measured ~0 docs at 8192; nonzero means the length distribution moved and docs
     # were silently truncated -- surfaced as the scan's closing line.
     print(f"{counters} over_ctx(={MAX_CTX})={getattr(predict, 'over_ctx', 0)}", flush=True)
+    # cross-SHARD / cross-worker audit: this worker only dedups the shards it scanned. After
+    # all workers write the shared out_dir, identical content in two shard FILES (e.g. two
+    # cards scanning files that hold the same bytes) is byte-identical double counting. A
+    # nonzero census duplicate count is a data-integrity failure, so the scan exits nonzero.
+    total_xdup = 0
+    for domain in sorted(by_domain):
+        xdups = find_domain_duplicates(args.out_dir, domain)
+        if xdups:
+            total_xdup += len(xdups)
+            sample = next(iter(xdups))
+            print(
+                f"CROSS-SHARD DUP {domain}: {len(xdups)} doc_id(s) in >1 shard file; "
+                f"e.g. {sample} -> {xdups[sample]}",
+                flush=True,
+            )
+    if total_xdup:
+        raise SystemExit(
+            f"{total_xdup} cross-shard duplicate doc_id(s) found in {args.out_dir}; the census "
+            "double-counted them. Re-dedup the corpus or shard assignment before selecting."
+        )
 
 
 def _selftest():
@@ -401,10 +441,65 @@ def _selftest():
         scan_shards("code_py", [s0], td, stub_predict, cfg, c3, force=True)
         assert c3["written_shards"] == 1 and len(load_rows(shard_output_path(td, "code_py", s0))) == 2
 
+    # DOMAIN-LEVEL dedup across shards (audit fix #4). Same content in two files scanned by ONE
+    # worker (shared set) is scored once and counted; the two output files do not both hold it.
+    with tempfile.TemporaryDirectory() as dd:
+
+        def any_predict(texts):
+            return [[3.0, 3.0, 3.0, 3.0] for _ in texts]
+
+        a = os.path.join(dd, "a.jsonl")
+        b = os.path.join(dd, "b.jsonl")
+        for p, docs in (
+            (a, ["shared content body\n", "alpha only\n"]),
+            (b, ["shared content body\n", "beta only\n"]),
+        ):
+            with open(p, "w") as fh:
+                fh.writelines(json.dumps({"content": c}) + "\n" for c in docs)
+        dc = {"docs": 0, "dup_docs": 0, "written_shards": 0, "skipped_shards": 0}
+        written = scan_shards("code_py", [a, b], dd, any_predict, cfg, dc)
+        assert dc["dup_docs"] == 1, dc  # the cross-file copy hit the shared domain set
+        # 3 unique docs, scored once each (shared one appears in exactly one output file)
+        assert written == 3, written
+        x = find_domain_duplicates(dd, "code_py")
+        assert x == {}, x  # within one worker, no doc_id lands in two files
+
+    # CROSS-WORKER case: two workers cannot share an in-memory set, so simulate two independent
+    # scan_shards calls over files holding identical content; both files keep the doc and the
+    # post-hoc audit MUST detect the double count.
+    with tempfile.TemporaryDirectory() as dd2:
+
+        def any_predict2(texts):
+            return [[2.0, 2.0, 2.0, 2.0] for _ in texts]
+
+        w0 = os.path.join(dd2, "w0.jsonl")
+        w1 = os.path.join(dd2, "w1.jsonl")
+        for p in (w0, w1):
+            with open(p, "w") as fh:
+                fh.write(json.dumps({"content": "same bytes on both cards\n"}) + "\n")
+        scan_shards(
+            "code_py",
+            [w0],
+            dd2,
+            any_predict2,
+            cfg,
+            {"docs": 0, "dup_docs": 0, "written_shards": 0, "skipped_shards": 0},
+        )
+        scan_shards(
+            "code_py",
+            [w1],
+            dd2,
+            any_predict2,
+            cfg,
+            {"docs": 0, "dup_docs": 0, "written_shards": 0, "skipped_shards": 0},
+        )
+        xdups = find_domain_duplicates(dd2, "code_py")
+        assert len(xdups) == 1 and len(next(iter(xdups.values()))) == 2, xdups
+
     print(
         "l2_census_scan selftest OK: disjoint sharding, idempotent resume, canonical "
         "continuous rows unquantized (out-of-range kept), quota ranking separable, "
-        "version-conflict guard, atomic write"
+        "version-conflict guard, atomic write, domain-level + cross-shard dup detection"
     )
 
 
