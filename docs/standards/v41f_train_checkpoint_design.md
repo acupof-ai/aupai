@@ -170,7 +170,7 @@ The truncation is impossible-by-construction, not merely untested:
    oracle must also prove the alias survives a real save (de verified `torch.save`/
    `os.replace` preserve storage aliasing, and `build_agentic_sft:1775-1826` /
    `build_p1_tokenizer:198-243` are the staging boundary) — i.e. the problem is confined to
-   the refresh, and M6 (§4) pins it.
+   the refresh, and M13 (§4) pins it.
 4. **Save master from `master.values()` (always fp32 by construction), save model weights
    from the bf16 run model.** A save asserts `master_fp32[name].dtype==float32` for every
    entry and `model[name].dtype == param_meta[name].dtype`; violation raises before writing.
