@@ -346,9 +346,12 @@ Correctness gates (green on the real code):
    and a missing blob vocab_id, are both refused (M6). The inference loader's only caller is
    the v41f test (`tests/v41f/test_p1_ckpt.py`), so adding keyword-only `tokenizer=None`
    (engram-off allows None; the train loader requires it) changes no production call site.
-   vocab_id reuses the sha256-over-sorted id→token-map convention (`scripts/loader.py`
-   `vocab_fingerprint`), implemented in a torch-free `v41f/vocab.py` so v41f never imports
-   scripts/.
+   vocab_id MUST be byte-identical to `scripts/loader.py:20 vocab_fingerprint`: iterate
+   `sorted(tok.get_vocab().items(), key=lambda kv: kv[1])` (id order), feed each
+   `token.encode()` into one sha256 with NO separator/prefix, take `hexdigest()[:16]`.
+   Reimplement this verbatim in a torch-free `v41f/vocab.py` (v41f must not import scripts/);
+   a gate cross-checks `v41f/vocab.fingerprint(tok) == scripts.loader.vocab_fingerprint(tok)`
+   on the synthetic tokenizer so the two cannot drift.
 
 Mutants (each must turn a NAMED assertion red — target assertion cited, not a generic crash):
 M1. drop/zero one master tensor on disk → master bit-exact + strict-set gate fails.
@@ -396,9 +399,12 @@ version 1 and the docstring/test must not imply they are.
 
 ## 5. Decisions
 
-1. **Single `.pt` blob** — one os.replace atomic point; also REQUIRED to preserve the
-   fp32_native model/master storage alias, which survives `torch.save` only when the same
-   object sits under both keys in one graph (G7). Directory/sharded layout deferred (YAGNI).
+1. **Single `.pt` blob at P0** — one os.replace atomic point. The binding constraint for G7 is
+   narrower than "one file": the fp32_native model/master entries must be saved inside ONE
+   `torch.save` object graph so the shared Parameter survives (saving them in two separate
+   blobs breaks the alias; a future directory layout could still hold them in one nested
+   file). The single file is the P0 form that satisfies this; directory/sharded deferred
+   (YAGNI).
 2. **Membership is `requires_grad`, enforced at build (#487 G5).** Merely being in
    `AdamW(model.parameters())` with a None grad is not dormant — the param is still in the
    group and silently gains m/v when STE later gives it grad. In faithful `off` mode the 6
