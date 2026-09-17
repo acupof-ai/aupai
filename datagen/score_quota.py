@@ -72,6 +72,20 @@ def _order_value(row, rubric_dim):
     return sum(dims.values()) / len(dims)
 
 
+def scorer_coverage(rows, scorer_name, rubric_kind=None, by_lang=True):
+    """All (domain, lang) groups this scorer+kind has rows for ACROSS EVERY version.
+
+    A version pin narrows selection to one version, but the ledger itself proves which
+    languages exist for the scorer; used to stop a domain-level quota from silently
+    emitting no decision for a language the pinned version happened not to rescore."""
+    keys = set()
+    for r in rows:
+        if r["scorer_name"] != scorer_name or r["rubric_kind"] != rubric_kind:
+            continue
+        keys.add((r["domain"], r["lang"]) if by_lang else (r["domain"], None))
+    return keys
+
+
 def pin_groups(rows, scorer_name, scorer_version=None, rubric_kind=None, rubric_dim=None, by_lang=True):
     """Filter validated ledger rows to one scorer/version/kind, refuse an unpinned version
     mix, and return {(domain, lang): [(doc_id, value), ...]} plus the resolved version."""
@@ -85,6 +99,24 @@ def pin_groups(rows, scorer_name, scorer_version=None, rubric_kind=None, rubric_
         sel = [r for r in sel if r["scorer_version"] == scorer_version]
     elif len(versions) > 1:
         raise VersionConflict(f"scorer {scorer_name} has versions {versions}; pin one")
+    # A multi-dim selection must rank every document over the SAME dimension set. The mean
+    # divides by len(dims), so one row carrying a 5th/extra (or missing) dim silently rewrites
+    # the cut; require one common key-set across the whole pinned selection (scalar rows with
+    # rubric_dims=None are exempt). This is rubric-schema-agnostic: it enforces consistency,
+    # and l2_dataset/l2_head_scores enforce the exact 4-name set against l3_rubric.
+    dim_keys = None
+    for r in sel:
+        if r["rubric_dims"] is None:
+            continue
+        ks = frozenset(r["rubric_dims"])
+        if dim_keys is None:
+            dim_keys = ks
+        elif ks != dim_keys:
+            raise QuotaError(
+                f"scorer {scorer_name}/{r['scorer_version']} mixes rubric_dims shapes within "
+                f"one selection: {sorted(dim_keys)} vs {sorted(ks)} (on {r['doc_id']}); a 5th "
+                "or missing dim changes the mean/ordering. Rebuild with one dim set"
+            )
     groups = {}
     # A document must appear at most once in the pinned scorer/version selection. An
     # append-only census ledger can carry a duplicate doc_id (re-run / double append); if it
@@ -115,9 +147,16 @@ def _quota_for(quotas, domain, lang):
 
 
 def select_thresholds(
-    groups, quotas, min_keep_frac=MIN_KEEP_FRAC_DEFAULT, min_keep_docs=MIN_KEEP_DOCS_DEFAULT
+    groups, quotas, min_keep_frac=MIN_KEEP_FRAC_DEFAULT, min_keep_docs=MIN_KEEP_DOCS_DEFAULT,
+    coverage=None,
 ):
-    """Per-group threshold to meet each quota; returns {group: decision dict}."""
+    """Per-group threshold to meet each quota; returns {group: decision dict}.
+
+    coverage, when given, is the set of (domain, lang) groups the scorer produced across
+    ALL its versions (scorer_coverage). A domain-LEVEL quota must then decide every language
+    in coverage for that domain, so a version pin that rescored only some languages can
+    not silently drop the rest. With coverage=None the check is off (library callers that
+    already pinned the population deliberately)."""
     decisions = {}
     for key, docs in sorted(groups.items()):
         domain, lang = key
@@ -149,14 +188,46 @@ def select_thresholds(
             "kept_doc_ids": [d for d, _ in chosen],
         }
 
-    present_domains = {d for d, _ in groups}
+    decided = set(decisions)
     for qk in quotas:
         if isinstance(qk, tuple):
             if qk not in groups:
-                raise EmptyDomain(f"quota names {qk} but the scorer scored none of it")
-        elif qk not in present_domains:
+                raise EmptyDomain(f"quota names {qk} but the pinned scorer/version scored none of it")
+            continue
+        # domain-level quota
+        if coverage is not None:
+            want = {g for g in coverage if g[0] == qk}
+        else:
+            want = {g for g in groups if g[0] == qk}
+        if not want:
             raise EmptyDomain(f"quota names domain {qk!r} but the scorer scored none of it")
+        missing = sorted(want - decided)
+        if missing:
+            raise EmptyDomain(
+                f"domain quota {qk!r} leaves language group(s) {missing} with no decision; "
+                "the pinned scorer/version did not score them though the ledger has them -- "
+                "rescore those languages for the pinned version or pin the complete version"
+            )
     return decisions
+
+
+def _assert_blob_identity(blob, scorer_name, version, rubric_kind, rubric_dim):
+    """The thresholds blob was produced by `select` for one scorer/version/kind/dim; a
+    review sample that pins a different identity would cut on unrelated numbers."""
+    want = {
+        "scorer_name": scorer_name,
+        "scorer_version": version,
+        "rubric_kind": rubric_kind,
+        "rubric_dim": rubric_dim,
+    }
+    for k, val in want.items():
+        got = blob.get(k)
+        if got != val:
+            raise QuotaError(
+                f"thresholds blob was built for {k}={got!r}, but the sample pins "
+                f"{val!r}; regenerate thresholds with the matching "
+                f"--scorer/--version/--rubric-kind/--rubric-dim"
+            )
 
 
 def export_review_sample(groups, decisions, per_group, mode="high"):
@@ -293,9 +364,70 @@ def _selftest():
     boundary = export_review_sample(groups, decs, 4, "boundary")
     assert all(r["doc_id"] in dict(groups[(r["domain"], r["lang"])]) for r in boundary)
 
+    # ---- F3: a version pin that rescored only one language must not let a DOMAIN quota
+    # silently drop the other. Coverage (groups the scorer has across ALL versions) makes the
+    # missing language loud; the same call with coverage=None (deliberate library selection)
+    # still works, so the check is opt-in, not a breaking behavior change.
+    partial = [
+        ScoreRow(doc_id="e1", domain="web", lang="en", scorer_name="kenlm", scorer_version="v1",
+                 ts="2026-09-16T00:00:00Z", score=0.4, stratum=None).to_dict(),
+        ScoreRow(doc_id="z1", domain="web", lang="zh", scorer_name="kenlm", scorer_version="v1",
+                 ts="2026-09-16T00:00:00Z", score=0.4, stratum=None).to_dict(),
+        ScoreRow(doc_id="e2", domain="web", lang="en", scorer_name="kenlm", scorer_version="v2",
+                 ts="2026-09-16T00:00:00Z", score=0.4, stratum=None).to_dict(),
+    ]
+    pg, _ = pin_groups(partial, "kenlm", "v2")
+    assert sorted(pg) == [("web", "en")]
+    cov = scorer_coverage(partial, "kenlm")
+    try:
+        select_thresholds(pg, {"web": 0.5}, coverage=cov)
+    except EmptyDomain:
+        pass
+    else:
+        raise AssertionError("domain quota over a partial-version pin must name the missing lang")
+    # coverage off -> library semantics unchanged (one en decision, no exception)
+    assert set(select_thresholds(pg, {"web": 0.5})) == {("web", "en")}
+
+    # ---- F5: within one pinned rubric selection the dim key-set must be identical; a 5th
+    # (or a missing) dim changes the mean denominator and silently rewrites the cut.
+    four = {"content_quality": 3, "factual_correctness": 3, "complexity": 3, "educational_or_code_value": 3}
+    shape_rows = [
+        ScoreRow(doc_id="s1", domain="py", lang="en", scorer_name="l3-rubric", scorer_version="r9",
+                 ts="2026-09-16T00:00:00Z", rubric_dims=dict(four), rubric_kind="code",
+                 stratum=None).to_dict(),
+    ]
+    # hand-written row carrying an extra dim (validate_row range-checks values, not the set)
+    five = dict(shape_rows[0], doc_id="s2", rubric_dims=dict(four, rogue_fifth=5))
+    try:
+        pin_groups(shape_rows + [five], "l3-rubric", "r9", rubric_kind="code")
+    except QuotaError:
+        pass
+    else:
+        raise AssertionError("mixed 4-dim/5-dim rows in one selection must raise QuotaError")
+    # a uniform 4-dim selection still ranks on the mean
+    ok_rows = [dict(shape_rows[0], doc_id=f"s{i}", rubric_dims=dict(four, content_quality=i + 1))
+               for i in range(4)]
+    gshape, _ = pin_groups(ok_rows, "l3-rubric", "r9", rubric_kind="code")
+    assert select_thresholds(gshape, {"py": 0.5})[("py", "en")]["keep"] == 2
+
+    # ---- F8: a thresholds blob must match the pinned sample identity.
+    blob = {"scorer_name": "kenlm", "scorer_version": "v1", "rubric_kind": None,
+            "rubric_dim": None, "decisions": []}
+    _assert_blob_identity(blob, "kenlm", "v1", None, None)  # match -> no raise
+    for field, val in (("scorer_name", "kenlm2"), ("scorer_version", "v9"),
+                       ("rubric_kind", "code"), ("rubric_dim", "complexity")):
+        try:
+            _assert_blob_identity(dict(blob, **{field: val}), "kenlm", "v1", None, None)
+        except QuotaError:
+            pass
+        else:
+            raise AssertionError(f"blob/pin mismatch on {field} must raise QuotaError")
+
     print(
         "score_quota selftest OK: quota conservation, conditional per-lang thresholds, "
-        "empty/wiped/version refusals, rubric-dim ordering, review export"
+        "empty/wiped/version refusals, rubric-dim ordering, review export; coverage names a "
+        "partial-version missing language, mixed rubric dim-set refused, thresholds-blob "
+        "identity cross-checked"
     )
 
 
@@ -331,8 +463,12 @@ def main(argv=None):
         return
     if a.cmd == "select":
         rows = load_rows(a.ledger)
-        groups, ver = pin_groups(rows, a.scorer, a.version, a.rubric_kind, a.rubric_dim, not a.no_lang)
-        decisions = select_thresholds(groups, parse_quota(a.quota), a.min_keep_frac, a.min_keep_docs)
+        by_lang = not a.no_lang
+        groups, ver = pin_groups(rows, a.scorer, a.version, a.rubric_kind, a.rubric_dim, by_lang)
+        coverage = scorer_coverage(rows, a.scorer, a.rubric_kind, by_lang)
+        decisions = select_thresholds(
+            groups, parse_quota(a.quota), a.min_keep_frac, a.min_keep_docs, coverage=coverage
+        )
         tmp = a.out + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(
@@ -354,9 +490,12 @@ def main(argv=None):
         )
     elif a.cmd == "sample":
         rows = load_rows(a.ledger)
-        groups, _ = pin_groups(rows, a.scorer, a.version, a.rubric_kind, a.rubric_dim, not a.no_lang)
+        groups, ver = pin_groups(rows, a.scorer, a.version, a.rubric_kind, a.rubric_dim, not a.no_lang)
         with open(a.thresholds, encoding="utf-8") as f:
             blob = json.load(f)
+        with open(a.thresholds, encoding="utf-8") as f:
+            blob = json.load(f)
+        _assert_blob_identity(blob, a.scorer, ver, a.rubric_kind, a.rubric_dim)
         decisions = {(d["domain"], d["lang"]): d for d in blob["decisions"]}
         sample = export_review_sample(groups, decisions, a.per_group, a.mode)
         with open(a.out, "w", encoding="utf-8") as f:
