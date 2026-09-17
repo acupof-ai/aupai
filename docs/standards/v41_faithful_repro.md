@@ -110,10 +110,12 @@ V4.1-Flash 有七处结构差异，每一处都改权重语义、无法靠开关
   （`forward_spec`），这些纯为推理加速、对训练无贡献，列为生成器阶段可选项。
 - 草稿层 MoE 配置复用主 MoE（`dspark_n_routed_experts=0` 走 fallback），不单独建 128 专家。
   计数经 `get_moe_config`（model_ref:142-148）回退主层，但 `DSparkBlock` 仍新建**独立参数**
-  的 MoE（权重不共享），位于 `mtp.*` checkpoint 命名空间（model_ref:1101）。
+  的 MoE（权重不共享）。这些参数**接入模型后**位于 `mtp.*` checkpoint 命名空间（model_ref:1101）；
+  本 PR 只交付独立模块，未接线进 `model_v41f.py`，故当前模型 `state_dict()` 还没有 `mtp.*` 键。
 - **训练注意力形态（v41f 自定，prereg，上游未给）**：训练走**并行 teacher-forced 因果**注意力，
-  一次前向出全部 `block_size` 个草稿位置，不逐步 decode。KV = concat（main 窗前缀，
-  draft 块自身 KV），Q/KV 的 RoPE 取 `[main_len : main_len+block_size]`，逆旋 + grouped oproj
+  一次前向出全部 `block_size` 个草稿位置，不逐步 decode。KV = concat（main **窗前缀（仅最近
+  `window_size` 个槽，对应 ref 的窗口环 model_ref:1046-1051）**，draft 块自身 KV），草稿 q 不触及
+  窗前缀更早的位置；Q/KV 的 RoPE 取 `[main_len : main_len+block_size]`，逆旋 + grouped oproj
   与 ref 完全相同。正确性判据：并行核必须与"忠实搬 ref `start_pos>0` decode 顺序分支、把
   :1153 `sample` 换成喂 gold 移位 id"的逐列结果在 fp32 下 ~1e-3 一致，即**训练并行 ≡ 喂 gold
   的顺序 decode**，二者无数值沟。ref 仓库只有推理前向、无训练并行核，这一等价是 v41f 定义，

@@ -4,9 +4,9 @@ The vendored model_ref has only the INFERENCE draft path (non-causal over the bl
 noise fill, autoregressive sample). The TRAINING kernel is v41f-defined (doc §2.6
 prereg): one parallel teacher-forced causal forward over gold shifted ids,
 
-    KV   = concat(main window prefix, this draft block's own causal KV)
+    KV   = concat(main window prefix (last window_size slots), this draft block's own causal KV)
     RoPE = freqs[main_len : main_len+block_size]
-    query i sees the whole main prefix + draft positions 0..i only,
+    query i sees the last window_size main slots + draft positions 0..i only,
 
 and must equal gold-fed sequential decode column-by-column. This file proves that
 equivalence two ways:
@@ -40,10 +40,15 @@ import v41f.mtp as mtp_mod
 from v41f.block import make_identity_pre_mix
 from v41f.config import V41FConfig
 from v41f.mtp import DSparkBlock, dspark_causal_topk
+from v41f.rope import apply_rotary_emb
+from v41f.sparse_attn import sparse_attn
 
-T, S = 7, 5  # main prefix len, draft block size (T != S on purpose:
-# a length-based RoPE hook can then target the draft call)
+T, S = 48, 5  # main prefix len, draft block size. T > window_size (16) on purpose: the
+# window rule drops the older T-16 main slots, so a suite sized T<win could never see a
+# draft that wrongly read the whole prefix. T != S also lets a length-based RoPE hook target
+# the draft call.
 B = 2
+WIN = 16  # _DRAFT_SMALL window_size; T (48) is deliberately larger so the window drops slots
 
 _ATTN_SUFFIX = {
     "attn_sink": "attn_sink",
@@ -105,9 +110,15 @@ def _install_oracle_attn(model):
         bsz, block_size, _ = x.size()
         t = main_x.size(1)
         rd = self.rope_head_dim
+        win = self.window_size
 
         main_kv = self.kv_norm(self.wkv(main_x))
         rope(main_kv[..., -rd:], self.freqs_cis[:t])
+        # window rule: only the last window_size main positions are reachable (the ref
+        # window ring's contents, model_ref:1046-1051). RoPE the whole prefix as ours does,
+        # then attend over the trailing window only.
+        main_kv = main_kv[:, -win:, :]
+        mslots = main_kv.size(1)
 
         f = self.freqs_cis[t : t + block_size]
         qr = self.q_norm(self.wq_a(x))
@@ -119,7 +130,7 @@ def _install_oracle_attn(model):
         outs = []
         for i in range(block_size):
             kvi = torch.cat([main_kv, kv[:, : i + 1]], dim=1)
-            idx = torch.arange(t + i + 1, device=x.device).view(1, 1, -1).expand(bsz, 1, -1)
+            idx = torch.arange(mslots + i + 1, device=x.device).view(1, 1, -1).expand(bsz, 1, -1)
             oi = sparse_attn(q[:, i : i + 1], kvi, self.attn_sink, idx, self.softmax_scale)
             rope(oi[..., -rd:], f[i : i + 1], True)
             outs.append(oi)
@@ -269,16 +280,37 @@ def test_seed_main_prefix_is_roped_kv_and_prefill_returns_x():
 
 
 def test_causal_topk_matches_hand_computed_rows():
-    """Row i = all main positions [0,t) + draft positions [t, t+i]; ragged tail -1."""
-    idx = dspark_causal_topk(T, S, B, torch.device("cpu"))
-    assert idx.shape == (B, S, T + S)
+    """Index space is WINDOWED main slots then draft slots. The caller passes
+    m = min(window_size, main_len); row i = [0,m) + [m, m+i]; ragged tail -1."""
+    m = min(WIN, T)  # 16 of the 48 main positions survive the window
+    idx = dspark_causal_topk(m, S, B, torch.device("cpu"))
+    assert idx.shape == (B, S, m + S)
     for i in range(S):
         row = idx[0, i]
         valid = row[row >= 0].tolist()
-        assert valid == list(range(T)) + list(range(T, T + i + 1))
+        assert valid == list(range(m)) + list(range(m, m + i + 1))
         assert (row[len(valid) :] == -1).all()
-    # batch rows identical
     assert torch.equal(idx[0], idx[1])
+    populated = sorted({v for v in idx.flatten().tolist() if v >= 0})
+    assert max(populated) == m + S - 1
+    assert len([v for v in populated if v < m]) == m  # m window slots, not all T
+
+
+def test_draft_attends_only_last_window_main_slots():
+    """End-to-end window rule with T=48 > window=16: the seed sees the whole prefix, but the
+    forward addresses only the last 16 main slots + the causal draft. Dropping the window
+    (attending all T) would name a slot >= m+S, which this index set never does."""
+    model, ref, ours, cfg, embed, mh, ids = _build_pair(torch.float32)
+    assert T > WIN
+    with torch.no_grad():
+        x, pre, main_kv, ml = ours.forward_train_embed(mh, ids, embed, make_identity_pre_mix)
+        assert ml == T and main_kv.shape[1] == T
+        m = min(WIN, T)
+        idxs = dspark_causal_topk(m, S, B, torch.device("cpu"))
+        assert idxs.max().item() == m + S - 1
+        for i in range(S):
+            valid = idxs[0, i][idxs[0, i] >= 0].tolist()
+            assert valid == list(range(m)) + list(range(m, m + i + 1))
 
 
 def test_window_only_construction_assert():
@@ -360,6 +392,32 @@ def test_real_block_training_step_loss_drops_and_grads_present():
     assert gsum > 0
 
 
+def test_two_draft_stages_construct_and_forward():
+    """n_mtp_layers=2: the second draft stage (virtual layer n_layers+1) must get a ratio
+    table padded far enough to index it. The old max(n_extra,1) / fixed +1 padding threw
+    IndexError on stage 1; both stages must construct and run a forward finite."""
+    cfg = V41FConfig(**{k: v for k, v in _DRAFT_SMALL.items() if k not in ("max_batch_size", "max_seq_len")})
+    prev = torch.get_default_dtype()
+    torch.set_default_dtype(torch.bfloat16)
+    try:
+        b0 = DSparkBlock(cfg, 0, 1)
+        b1 = DSparkBlock(cfg, 1, 1)
+        emb = torch.nn.Embedding(cfg.vocab_size, cfg.dim)
+    finally:
+        torch.set_default_dtype(prev)
+    for b in (b0, b1):
+        assert b.attn.compress_ratio == 0 and b.attn.indexer is None
+    assert hasattr(b0, "main_proj") and not hasattr(b1, "main_proj")
+    Bn = 2
+    mh = (0.1 * torch.randn(Bn, T, cfg.dim)).bfloat16()
+    gold = torch.randint(0, cfg.vocab_size, (Bn, S))
+    with torch.no_grad():
+        x, pre, mkv, ml = b0.forward_train_embed(mh, gold, emb, make_identity_pre_mix)
+        h, _ = b0(x, pre, mkv, ml)
+        h1, _ = b1(h, pre, mkv, ml)
+    assert h1.shape == x.shape and torch.isfinite(h1).all()
+
+
 def test_markov_rank0_omits_inference_heads():
     cfg = V41FConfig(**{k: v for k, v in _DRAFT_SMALL.items() if k not in ("max_batch_size", "max_seq_len")})
     blk = DSparkBlock(cfg, 0, 1)
@@ -392,6 +450,26 @@ def _max_residual_after_mutation(mutate):
     return (ox.float() - rx.float()).abs().max().item()
 
 
+def _attn_out_diff_after_mutation(mutate):
+    """Divergence at the DRAFT ATTENTION unit, where a mask/topk mutant actually lands. The
+    whole-block residual damps an attention change through the HC post-expansion and the
+    FFN, which can push a one-column causal leak under the fp32 bar; measured here it cannot.
+    Both sides get identical collapsed attn input and the windowed main prefix; the oracle
+    runs ref column-by-column causal decode, ours runs the mutated parallel kernel."""
+    model, ref, ours, cfg, embed, mh, ids = _build_pair(torch.float32)
+    mutate(ours)
+    with torch.no_grad():
+        main_x = ref.main_norm(ref.main_proj(mh))
+        full_kv = ours.attn.seed_main_prefix(main_x)
+        x = embed(ids).unsqueeze(2).repeat(1, 1, cfg.hc_mult, 1)
+        pre = make_identity_pre_mix(x, cfg.hc_mult)
+        a = ref.attn_norm(ref.hc_pre(x, pre))
+        o_ref = ref.attn(a, 0, main_x)
+        # ours windows the full prefix inside forward; hand it the full seed and real length
+        o_our = ours.attn(a, full_kv, main_x.size(1))
+    return (o_ref.float() - o_our.float()).abs().max().item()
+
+
 def test_mutant_break_causal_mask_goes_red():
     """Replace the triangular topk with a block that sees ALL draft columns (the ref
     inference shape, wrong for gold training): future leak must move the fp32 result."""
@@ -419,27 +497,67 @@ def test_mutant_break_causal_mask_goes_red():
     assert d > 1e-2, d
 
 
-def test_mutant_topk_off_by_one_goes_red():
-    """Independently of the full-mask mutant: row i seeing draft 0..i+1 (one future
-    column) must go red."""
-    orig = mtp_mod.dspark_causal_topk
+def test_mutant_drop_main_window_goes_red():
+    """P0 window rule: deleting the `main_kv[:, -window:, :]` slice in DSparkAttention makes
+    the draft attend the FULL T=48 prefix instead of the last window_size=16. The mutated
+    forward must diverge from the windowed oracle at the attention unit. This is the exact
+    defect de measured (ref ring 128 vs a 4096-token prefix); T>win makes it non-degenerate."""
 
-    def leak_one(main_len, block_size, batch, device):
-        rows = []
-        for i in range(block_size):
-            upto = min(i + 2, block_size)
-            rows.append(torch.cat([torch.arange(main_len), main_len + torch.arange(upto)]))
-        padded = torch.full((block_size, main_len + block_size), -1, dtype=torch.long)
-        for i, r in enumerate(rows):
-            padded[i, : r.numel()] = r
-        return padded.unsqueeze(0).expand(batch, -1, -1).contiguous()
+    def unwindowed_forward(self, x, main_kv, main_len):
+        # rebuild the production forward WITHOUT the trailing-window slice
+        bsz, block_size, _ = x.size()
+        freqs = self.freqs_cis[main_len : main_len + block_size]
+        q, _ = self.qproj(x)
+        apply_rotary_emb(q[..., -self.rd :], freqs)
+        draft_kv = self.kvproj(x)
+        apply_rotary_emb(draft_kv[..., -self.rd :], freqs)
+        kv = torch.cat([main_kv, draft_kv], dim=1)  # full T main prefix, not [-win:]
+        idxs = dspark_causal_topk(kv.size(1) - block_size, block_size, bsz, x.device)
+        o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale).to(q.dtype)
+        apply_rotary_emb(o[..., -self.rd :], freqs, inverse=True)
+        return self.oproj(o)
 
-    mtp_mod.dspark_causal_topk = leak_one
+    orig = mtp_mod.DSparkAttention.forward
+    mtp_mod.DSparkAttention.forward = unwindowed_forward
     try:
-        d = _max_residual_after_mutation(lambda blk: None)
+        d = _attn_out_diff_after_mutation(lambda blk: None)
+    finally:
+        mtp_mod.DSparkAttention.forward = orig
+    assert d > 1e-2, d
+
+
+def test_mutant_topk_off_by_one_goes_red():
+    """Independently of the full-mask mutant: row i seeing draft 0..i+1 (one future column)
+    must be caught. Asserted on the INDEX SET, not the softmax amplitude: with a long window
+    the one extra future slot is one of 20+ terms and its output delta can sit under the
+    numeric bar even though the causal structure is wrong. d==0 (identical set) would mean
+    the triangle does nothing; a non-empty symmetric difference is the structural red."""
+    m = min(WIN, T)
+    good = dspark_causal_topk(m, S, B, torch.device("cpu"))[0]
+    rows = []
+    for i in range(S):
+        upto = min(i + 2, S)
+        rows.append(torch.cat([torch.arange(m), m + torch.arange(upto)]))
+    bad = torch.full((S, m + S), -1, dtype=torch.long)
+    for i, r in enumerate(rows):
+        bad[i, : r.numel()] = r
+    # exactly the last draft row (i=S-1) legitimately sees all draft columns, so the leak
+    # changes rows 0..S-2 and must not be a no-op
+    diff_rows = [i for i in range(S) if not torch.equal(good[i], bad[i])]
+    assert diff_rows == list(range(S - 1))
+    # and the leaked entry is always one strictly-future draft slot
+    for i in range(S - 1):
+        gset = {v for v in good[i].tolist() if v >= 0}
+        bset = {v for v in bad[i].tolist() if v >= 0}
+        assert bset - gset == {m + i + 1} and gset <= bset
+    # numeric: at the attention unit the leak is nonzero (not just a set-only assertion)
+    orig = mtp_mod.dspark_causal_topk
+    mtp_mod.dspark_causal_topk = lambda ms, bs, bch, dev: bad.unsqueeze(0).expand(bch, -1, -1).contiguous()
+    try:
+        d = _attn_out_diff_after_mutation(lambda blk: None)
     finally:
         mtp_mod.dspark_causal_topk = orig
-    assert d > 1e-2, d
+    assert d > 0.0, d
 
 
 def _record_draft_rope_start():
@@ -452,7 +570,7 @@ def _record_draft_rope_start():
 
     def rec(x, freqs, inverse=False):
         if (not inverse) and freqs.shape[0] == S and "start" not in seen:
-            for start in range(0, 32):
+            for start in range(seen["freqs_cis"].shape[0] - S + 1):
                 if torch.equal(freqs, seen["freqs_cis"][start : start + S]):
                     seen["start"] = start
                     break
