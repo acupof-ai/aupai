@@ -260,12 +260,34 @@ def gate_step_a_engram():
             f"{cfg.engram_num_embeddings[0]}x{cfg.engram_head_dim}, 5 hash buffers absent")
 
 
+def _build_mtp_on_small():
+    """A DSpark-draft-ON v41f_small (assembly plan #468 step B, live after #484).
+
+    n_mtp_layers=1 wires self.mtp; the tied embed/head are call-site references, not
+    DSparkBlock registrations. Disk-free (no tokenizer), same small shape as baseline.
+    """
+    cfg = v41f_small(n_mtp_layers=1, dspark_block_size=5, dspark_target_layer_ids=(2,))
+    torch.set_default_dtype(torch.bfloat16)
+    try:
+        model = V41FModel(cfg, max_batch_size=2)
+    finally:
+        torch.set_default_dtype(torch.float32)
+    return model, cfg
+
+
 def gate_step_b_mtp():
-    """When DSpark draft is wired, mtp.0.* keeps its own backbone keys but the tied
-    embed/head register ONCE at the top — no mtp.0.embed.weight / mtp.0.head.weight."""
-    m = _build_baseline()
+    """DSpark draft wired ON: mtp.0.* keeps its own backbone keys but the tied embed/head
+    register ONCE at the top — no mtp.0.embed.weight / mtp.0.head.weight.
+
+    Armed: the gate builds the ON config itself, so a feature that fails to wire under
+    n_mtp_layers=1 is a regression AssertionError, NOT a _Skip (the old builder was all-off,
+    so this gate skipped on every run and printed [ok ] anyway).
+    """
+    m, _cfg = _build_mtp_on_small()
     if not getattr(m, "mtp", None):
-        raise _Skip("model has no self.mtp ModuleList — step B section pending")
+        raise AssertionError(
+            "step B armed but self.mtp is empty under n_mtp_layers=1: the DSpark draft did "
+            "not wire (an armed gate must not SKIP)")
     sd = m.state_dict()
     fail = []
     for dup in STEP_B_FORBIDDEN_TIED_KEYS:
@@ -364,13 +386,33 @@ def _selftest():
     msg = gate_baseline()
     print(f"[ok ] {msg}")
     print(f"[ok ] {gate_field_intersection()}")
-    # Future sections skip out loud (module not registered yet); they are not failures.
-    for name, fn in (("step A engram", gate_step_a_engram), ("step B mtp", gate_step_b_mtp)):
+    # Assembly gates, each tagged armed. An ARMED gate builds its own ON config, so a _Skip
+    # from it means a feature silently stopped wiring -- that FAILS, it must never print
+    # [ok ] with exit 0 (the green-but-blind bug: step B's builder was all-off, so it
+    # skipped on every run and the catch below reported it as ok). A not-yet-implemented
+    # section is registered armed=False: it prints a loud [SKIP-unarmed] marker and is not
+    # counted as ok, but does not fail. Distinguish "implemented but did not arm" from
+    # "not implemented" by the flag, not by catching _Skip into ok.
+    # Forward scaffolding: as of this commit BOTH members are armed=True; the armed=False
+    # branch has NO user yet. It exists only so a genuinely future, not-yet-wired assembly
+    # section can be registered loud-skip without weakening the A/B contract -- do not read
+    # the branch as evidence any live section is unimplemented.
+    armed_gates = (("step A engram", gate_step_a_engram, True),
+                   ("step B mtp", gate_step_b_mtp, True))
+    rc = 0
+    for name, fn, armed in armed_gates:
         try:
             print(f"[ok ] {fn()}")
         except _Skip as s:
-            print(f"[SKIP] {name}: {s}")
-    print("p1 assembly key/dtype gate OK: baseline frozen; A/B sections arm when wired")
+            if armed:
+                print(f"[FAIL] {name}: armed gate SKIPPED: {s}")
+                rc = 1
+            else:
+                print(f"[SKIP-unarmed] {name}: {s}")
+    if rc:
+        print("p1 assembly key/dtype gate FAIL: an armed section did not wire")
+        return rc
+    print("p1 assembly key/dtype gate OK: baseline frozen; A/B armed")
     return 0
 
 

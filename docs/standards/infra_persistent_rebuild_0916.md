@@ -182,6 +182,84 @@ container:
 2. `/mnt/data02` is a mountpoint and `scripts/pod_backup.sh --dry-run` accepts it; a real
    run writes MANIFEST whose sha-verified files read back from the disk.
 3. `scripts/harness.py check` has `root_durable` PASS with no `--force`.
-4. `nvidia-smi` shows 8 H20 and the grant file names the allocation.
+4. `nvidia-smi` shows 8 H20 and the grant file names the allocation. (GPU numerics are
+   gated separately — `docs/standards/gpu_smoke_gate_0917.md`, #469; this document owns only
+   disk/mount items.)
 5. `/data00/models/` and the token caches are accounted for (survived-and-verified or
    scheduled for fetch), and the surviving tokenizer passes its gates.
+
+## 8. Node-ready checklist — disk and mount (operator)
+
+The box-by-box version of §7's disk items. Tick every one before #404 starts. "Where" says
+HOST (a shell on the node, via `tn`/`crictl` on the host namespace) or CONTAINER (inside the
+`sglang-test` container, via `scripts/pod`). A mount is a **separate filesystem identified by
+a different `st_dev` from `/`** — never judge it by the directory existing or by `mountpoint`
+alone (`mountpoint` is absent/misleading across the two namespaces; the repo's own gates use
+`st_dev`). Do not proceed past a FAIL: accepting an overlay/emptyDir at the root, or a backup
+"disk" that is the same ephemeral fs, is exactly the 2026-09-16 loss.
+
+### A. AUPAI_ROOT survives pod removal (hard rule 1)
+
+- [ ] **A1 — host NVMe present (HOST).** `ls -ld /data00 /data01 /data02 /data03` and
+  `stat -c '%n %d' / /data00 /data01 /data02 /data03`.
+  Expect: the `/data0x` device numbers differ from `/` (separate filesystems) and the dirs
+  exist. FAIL action: attach/format the node NVMe before scheduling the pod; an empty dir on
+  `/` is not persistent.
+- [ ] **A2 — AUPAI_ROOT bound to persistent storage in the pod spec (HOST).** Inspect the
+  recovered static-pod spec (§3.1): the `/work/aupai` mount (or `AUPAI_ROOT`) is a
+  hostPath/volume on node NVMe, **not** an `emptyDir: {}`.
+  Expect: a hostPath/persistent volume entry; no `emptyDir` for the working tree. FAIL: fix
+  the spec and re-apply; never launch against an emptyDir root.
+- [ ] **A3 — root is a separate fs from inside (CONTAINER).**
+  `python3 -c "import os;print(os.stat('/work/aupai').st_dev, os.stat('/').st_dev)"`.
+  Expect: the two numbers differ. FAIL: the bind did not propagate into the mount namespace
+  (the documented private-/work case) — attach with `scripts/host_mount_into_container.py`
+  (`open_tree(CLONE)` + `move_mount`) or re-apply the spec; do not train.
+- [ ] **A4 — delete-pod persistence test (CONTAINER, decisive).** Write a sentinel:
+  `echo $$ > /work/aupai/PERSIST_PROBE`, then delete/recreate the test pod per the controller
+  (or have provisioning cycle it), and `cat /work/aupai/PERSIST_PROBE` from the new
+  container.
+  Expect: the file and its content are present after recreation. FAIL: root is still ephemeral
+  — stop, A2/A3 are wrong; nothing run against this tree is safe. (Remove the probe after.)
+- [ ] **A5 — `root_durable` PASS, no `--force` (CONTAINER).** From `/work/aupai`:
+  `python3 scripts/harness.py check 2>&1 | grep root_durable`.
+  Expect: `[PASS] root_durable …` (a fresh backup marker on a durable mount is what makes it
+  pass once the root itself stays on `/work`; see C). FAIL/WARN: do not waive; follow its
+  named move/backup instruction.
+
+### B. `/mnt/data02` is a real mounted filesystem (hard rule 2)
+
+- [ ] **B1 — distinct device from inside (CONTAINER).**
+  `python3 -c "import os;print(os.stat('/mnt/data02').st_dev==os.stat('/').st_dev)"`.
+  Expect: `False` (different device). FAIL: it is a directory on the container's own fs —
+  attach the backup disk (`scripts/attach_nvme_caches.py` host-side, then it is visible in the
+  container); a directory that merely exists is the 2026-08-30 failure.
+- [ ] **B2 — backup dry-run accepts the mount (CONTAINER).**
+  `bash scripts/pod_backup.sh --dry-run`.
+  Expect: `would back up N path(s) …` and exit 0 (no "not a mounted filesystem" refusal).
+  FAIL: the destination is not a separate fs; do not run a real backup until B1/B2 pass.
+- [ ] **B3 — real backup round-trip, sha-read back (CONTAINER).** Run
+  `bash scripts/pod_backup.sh`, then check the marker and read a listed file back:
+  `ls -l /mnt/data02/aupai_backup/MANIFEST` and verify one `sha256sum -c` entry from inside
+  `/mnt/data02/aupai_backup`.
+  Expect: MANIFEST present, fresh (within the 48h `root_durable` window), and the checksum
+  verifies. FAIL: backup landed on the wrong fs or bytes do not match — re-attach and rerun;
+  this confirmation must precede any GPU work.
+
+### C. Account for surviving persistent data before rebuilding (§2)
+
+- [ ] **C1 — teacher weights (HOST/CONTAINER).** `ls /data00/models/` for
+  `Qwen3.6-35B-A3B-FP8`; record present or to-fetch. Skip the re-download only if verified.
+- [ ] **C2 — token caches re-attached and sha-verified (CONTAINER).**
+  `python3 scripts/attach_nvme_caches.py --verify-only` (host-side attach first per §3.4).
+  Expect: `OK: already mounted and readable` with the recorded sha prefix matching; a dropped
+  mount otherwise survives as an empty look-alike and silently triggers a 247.8 GB rebuild.
+  FAIL: attach host-side, or schedule re-pretokenize in #404.
+- [ ] **C3 — prior-backup MANIFEST scan (HOST).** On every persistent disk, look for an
+  earlier `aupai_backup/MANIFEST` before treating any checkpoint as gone; list what it covers
+  to the controller.
+
+GPU/device numerics and the 8×H20 visibility acceptance are NOT here — they are
+`docs/standards/gpu_smoke_gate_0917.md` (#469). Data regeneration (tokenizer gates, corpora,
+KenLM, pools, labels) is `docs/standards/data_pipeline_rebuild_0916.md` (#404). This checklist
+is only the persistent-disk/mount block; all three must pass before the node is "done".
