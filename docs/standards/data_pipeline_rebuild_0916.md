@@ -91,7 +91,8 @@ Post-build gate (must all hold; read from the manifest + a real-BPE rescan):
 ## 5. Code pool (ae #399)
 
 `datagen/l2_code_chunk_pool.py` — parent-doc length band, `ppl=null`, every chunk ≤1024 by
-the same measured-BPE rule (de's #399 block). Only run after #399 merges; do not substitute.
+the same measured-BPE rule (de's #399 block, merged 2026-09-16). This is now unblocked; #399
+is on `main`, so the code pool step can run during rebuild without a substitute.
 
 ## 6. Locked κ sets + labels (after teacher is serving)
 

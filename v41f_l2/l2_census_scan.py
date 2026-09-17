@@ -63,6 +63,17 @@ from datagen.score_ledger import (  # noqa: E402
 MAX_CTX = 8192  # bge-m3 hard context; a doc tokenizing to this cap is counted, expected ~0
 
 
+def over_ctx_flags(mask_lengths, cap=MAX_CTX):
+    """Per-doc truncation flags from each doc's post-truncation token count.
+
+    The tokenizer reports one number per doc (attention_mask sum); a count of exactly the
+    cap is >=, not >: a doc whose complete special-inclusive length equals the cap is
+    indistinguishable from a clipped one from the mask alone, so it is counted
+    conservatively. Measured boundary on the real bge-m3: special-inclusive 8191 does not
+    flag, an 8195-length doc truncates to 8192 and flags."""
+    return [n >= cap for n in mask_lengths]
+
+
 @dataclass
 class ScanConfig:
     scorer_version: str
@@ -453,7 +464,7 @@ class HeadPredictor:
         enc = self.tok(texts, padding=True, truncation=True, max_length=MAX_CTX, return_tensors="pt")
         # a doc at the cap was truncated; probe measured ~0, so a nonzero count is a signal.
         # Return per-doc flags (not just the running total) so the flag rides on the row.
-        over = (enc["attention_mask"].sum(1) >= MAX_CTX).tolist()
+        over = over_ctx_flags(enc["attention_mask"].sum(1).tolist())
         self.over_ctx += int(sum(over))
         with torch.no_grad():
             pred = self.model(enc["input_ids"].to(self.device), enc["attention_mask"].to(self.device))
@@ -494,7 +505,7 @@ def main(argv=None):
     )
     ap.add_argument("--corpus-root", default="/work/aupai/data/corpus")
     ap.add_argument("--force", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if args.selftest:
         _selftest()
@@ -901,6 +912,13 @@ def _selftest():
         # over_ctx_count is an output statistic, NOT a resume-fingerprint identity field
         assert "over_ctx_count" not in expected_marker(cfg, head_fingerprint(over_pred))
 
+        # PREDICATE BOUNDARY, pinning the exact >= line the production tokenizer feeds. A
+        # doc truncated to the cap and a complete doc whose special-inclusive length equals
+        # the cap both mask-sum to 8192: the predicate must flag at EQUALITY (>=), not only
+        # above it. Deleting the >= (using >) is a missed truncation and must turn this red;
+        # the values come from the real bge-m3 boundary probe (8191 no flag, 8192 flag).
+        assert over_ctx_flags([8191, 8192, 8193, 1]) == [False, True, True, False]
+
     # DURABLE PUBLISH: file fsync before rename, parent-dir fsync after. Spy on THIS module's
     # globals (a fresh import would be a different module under `python l2_census_scan.py`).
     g = globals()
@@ -944,6 +962,55 @@ def _selftest():
             assert calls["file"] >= 1 and calls["dir"] >= 1 and calls["replace"] >= 1, calls
     finally:
         g["_fsync_file"], g["_fsync_dir"], os.replace = of_file, of_dir, of_repl
+
+    # CLI MISCONFIGURATION GUARDS (the main() argparse path). Both fire BEFORE HeadPredictor
+    # is constructed, so they are GPU-free with a nonexistent head path. main(argv) parses the
+    # passed list, which is what makes these two guards reachable from the selftest; deleting
+    # either guard makes run_cli below fail.
+    def run_cli(argv):
+        # A guard is only proven if main() SystemExits AT THE GUARD, before predictor
+        # construction. A clean return is a failure; so is reaching a LATER crash (e.g.
+        # HeadPredictor import/head-file error) -- that means the guard did not stop the run.
+        # Catching Exception (not just SystemExit) makes this deterministic whether or not
+        # torch is installed in the selftest environment.
+        try:
+            main(argv)
+        except SystemExit as e:
+            return e
+        except Exception as ex:  # ran past the guard into predictor setup
+            raise AssertionError(
+                "misconfigured CLI must SystemExit at the guard, but execution reached a "
+                f"later failure instead: {type(ex).__name__}: {ex}"
+            ) from ex
+        raise AssertionError("a misconfigured scan CLI must SystemExit, not return cleanly")
+
+    # glob0: a glob typo / empty corpus root matches no shards -> refuse, never a zero-score "success".
+    with tempfile.TemporaryDirectory() as empty_root:
+        e = run_cli([
+            "--out-dir", os.path.join(empty_root, "out"),
+            "--head-ckpt", os.path.join(empty_root, "unused_head.pt"),
+            "--scorer-version", "selftest-cli",
+            "--corpus-root", empty_root,
+            "--domains", "domain_with_no_shards",
+            "--shard", "0", "--num-shards", "1",
+        ])
+        assert isinstance(e.code, str) and "no corpus shards matched" in e.code, e.code
+
+    # worker assigned ZERO shards (its strided subset is empty) -> refuse rather than no-op.
+    with tempfile.TemporaryDirectory() as one_root:
+        dom = os.path.join(one_root, "d")
+        os.makedirs(dom)
+        with open(os.path.join(dom, "only.jsonl"), "w") as fh:
+            fh.write(json.dumps({"content": "one doc"}) + "\n")
+        e = run_cli([
+            "--out-dir", os.path.join(one_root, "out"),
+            "--head-ckpt", os.path.join(one_root, "unused_head.pt"),
+            "--scorer-version", "selftest-cli",
+            "--corpus-root", one_root,
+            "--domains", "d",
+            "--shard", "1", "--num-shards", "3",  # one shard total; shards[1::3] == []
+        ])
+        assert isinstance(e.code, str) and "was assigned 0 shards" in e.code, e.code
 
     print(
         "l2_census_scan selftest OK: disjoint sharding, idempotent fingerprint-checked "
