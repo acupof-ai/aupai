@@ -33,8 +33,7 @@ Gumbel in the file (`model_ref.py.ref:1285-1292`, a standalone `sample()` doing
 Gumbel-max token decoding after the MTP head) is unrelated to the indexer and must not be
 read as an upstream soft/straight-through indexer path; it is post-head sampling, not
 selection. **Any training signal for the indexer is a v41f-defined decision.** The prereg
-row states this explicitly; no claim is made that DeepSeek trains the indexer this way, and the inference numerics must stay
-bit-identical whether the training path is on or off (§3).
+row states this explicitly; no claim is made that DeepSeek trains the indexer this way, and the inference numerics must keep the hard selection identical (equal idxs/weight) with logits held to a sub-ULP bound whether the training path is on or off (§3).
 
 Scope: prefill training only. v41f trains teacher-forced prefill; the decode path
 (`start_pos != 0`) is inference-only and is never asked to carry gradients. Level-1
@@ -66,11 +65,19 @@ Concrete construction (de d4f, measured on the real path 2026-09-17):
 
 `p` is passed to `sparse_attn` as the selection weight in the softmax it already computes
 over the k gathered slots (plus the sink). Forward: `sf.detach()` cancels `sf`, so
-`torch.equal(p, a)` is True and attention numerics are bit-identical to the hard path.
-Backward: the `- sf.detach()` cancels in value but not in the graph, so gradient flows
-through the already-computed softmax `sf` into `sc`, into `score`, into `wq_b`/
-`weights_proj` — measured forward `torch.equal` True and `wq_b.weight.grad = 111.836`,
-finite. The selection the main CE used is still the hard one; only the gradient is soft.
+`torch.equal(p, a)` is True (the STE tensor IS the hard weight bit-for-bit). The attention
+output is then equal to the hard path within a sub-ULP bound, NOT bit-exact: `a` is the
+uniform weight `1/k` across the k selected slots, so it factors out of
+`exp/Σexp` algebraically, but `p` carries the non-constant fp expansion `(sf-sf.detach())`,
+and evaluating that expansion through `exp`/denom does not cancel bit-for-bit — measured
+(de d4f) logits max_abs fp32 **2.98e-8**, bf16 **2.44e-4**, a constant shift of every
+logit, not a relative redistribution. Gate 2 therefore asserts TWO things separately:
+`torch.equal(p, a)` and logits within a one-ULP tolerance (de's measured values), never
+bit-identical logits. Backward: the `- sf.detach()` cancels in value but not in the graph,
+so gradient flows through the already-computed softmax `sf` into `sc`, into `score`, into
+`wq_b`/`weights_proj` — measured forward `torch.equal(p,a)` True and
+`wq_b.weight.grad = 111.836`, finite. The selection the main CE used is still the hard one;
+only the gradient is soft.
 
 `wq_b` / `weights_proj` then learn "raise the indexer score of entries the attended output
 found useful," differentiated through the real attention and the real main CE — not a
@@ -89,6 +96,12 @@ Known weakness (labeled, not hidden): STE is a biased estimator — gradient mag
 that selection is a step function, and non-selected entries get exactly zero signal even
 when they were a near-tie. It trains the selected slots, never the margin against rejected
 slots. It also cannot regularize *which* entries are picked (no diversity/collapse term).
+A second, subtler bias specific to this construction: the hard weight `a = 1/k` is UNIFORM,
+and adding a value-cancelling soft term leaves the forward a pure constant rescale — so in
+forward the chosen entries receive no relative preference, and in backward the signal says
+"the attended output was sensitive to these slots' scores," not "entry X should outrank
+entry Y within the chosen set." It is a relevance signal on the selected set, not a ranking
+signal; that ranking margin is exactly what an Option B1 aux loss would add if ever needed.
 
 ### Option B — auxiliary differentiable objective over `score`
 
@@ -114,8 +127,8 @@ STE carries the main-CE signal to the selected slots; B2 is added only with a sm
 coefficient and only if an ablation shows selection collapse and a downstream gain. This is
 the recommended target but **in two separately-gated landings**, not one change:
 
-1. STE alone, on/off switch, default **off**, proven bit-identical forward and dead-grad
-   → live-grad backward.
+1. STE alone, on/off switch, default **off**, proven to keep the hard forward (equal
+   idxs/weight, sub-ULP logits) and turn dead grads into live finite grads;
 2. Balance aux later, its own prereg amendment and ablation, default off. No balance term
    is written in the first change (YAGNI; the collapse it prevents is unmeasured).
 
@@ -182,9 +195,14 @@ the real default path leaves `wq_b`/`weights_proj` unused.
   instantiate is **absent** (never in the blob). Turning the mode on is the only thing that
   moves `wq_b`/`weights_proj` present-dormant → in-group, with no format migration; #447's
   membership rule ("in optimizer group ⇒ has master") covers them with no special case.
-- STE changes only the **backward**. Assertions:
-  - forward: hard-selected idxs and attended logits identical between off and ste
-    (`torch.equal(idxs)` off-vs-ste, `torch.equal(p, hard_weight_a)`, logits bit-exact on CPU fp32);
+- STE changes only the **backward**; the forward idxs are hard and the STE weight bit-equals
+  the hard weight, but the downstream logits are NOT claimed bit-exact (see Option A: a
+  uniform `1/k` cancels through softmax only algebraically, not bit-for-bit). Assertions:
+  - forward idxs/weight: hard-selected idxs identical off-vs-ste (`torch.equal(idxs)`), and
+    `torch.equal(p, hard_weight_a)` — the STE tensor is bit-for-bit the hard uniform weight;
+  - forward logits: within a ONE-ULP bound of the off path, not bit-exact — measured de d4f
+    max_abs fp32 2.98e-8, bf16 2.44e-4 (a constant shift). A genuinely soft M2 mutant moves
+    logits by 5–6 orders of magnitude more, so the ULP gate still separates hard from soft;
   - backward off: `wq_b.weight.grad is None` or zeros (dead, as today);
   - backward ste: `wq_b.weight.grad` / `weights_proj.weight.grad` are non-zero and finite,
     and reach them THROUGH the `p -> sparse_attn softmax -> CE` consumer graph — proven by
@@ -211,10 +229,16 @@ assertion red, not merely crash.
 Correctness (green on real code):
 
 1. **off = today**: with `indexer_train_mode="off"`, selected idxs and logits are
-   bit-identical to a run on the unmodified selector; both indexer grads are None/zero.
-2. **STE forward hard**: with `"ste"`, `torch.equal` of hard idxs vs off,
-   `torch.equal(p, hard_weight_a)` (the `+(sf-sf.detach())` term is exactly zero in value),
-   and logits bit-identical (forward does not soften).
+   bit-identical to a run on the unmodified selector (the STE path is never built); both
+   indexer grads are None/zero.
+2. **STE forward: hard tensor + sub-ULP logits (two separate assertions).** With `"ste"`:
+   (a) `torch.equal` of hard idxs vs off AND `torch.equal(p, hard_weight_a)` — the STE
+   tensor is bit-for-bit the hard uniform weight `1/k` (M1c kills this); (b) logits differ
+   from the off path by at most a ONE-ULP bound, NOT bit-exact — de d4f measured max_abs
+   fp32 2.98e-8 / bf16 2.44e-4. The same ULP bound must reject a genuinely soft M2 mutant
+   by 5–6 orders of magnitude, proving it separates "hard weight, sub-ULP eval" from
+   "softened forward." Asserting bit-identical logits here is WRONG and must not be written:
+   the uniform weight cancels through softmax only algebraically.
 3. **STE backward soft/nonzero**: finite, non-zero grads on both `wq_b.weight` and
    `weights_proj.weight`; shapes equal the parameter shapes; grad reaches indexer params
    through the `p -> sparse_attn softmax -> CE` consumer graph, from CE alone.
@@ -241,12 +265,13 @@ Mutants (each names the assertion that dies):
   nonzero-grad fails.
 - **M1b compute `sc`/`p` but never pass `p` into `sparse_attn` (dangling surrogate) ⇒ gate
   9 fails — the exact first-draft defect that left the as-written grads None.**
-- M1c drop the `-sf.detach()` cancellation (`p = a + sf`) ⇒ gate 2 `torch.equal(p,a)` and
-  bit-exact logits fail (forward no longer hard).
+- M1c drop the `-sf.detach()` cancellation (`p = a + sf`) ⇒ gate 2(a) `torch.equal(p,a)`
+  fails (p is no longer the hard weight) and logits leave the sub-ULP bound.
 - M1d replace the additive STE with a multiplicative `score * log_softmax(...)` coupling ⇒
   NaN/non-finite at gate 3/6 (the form de measured bad).
-- M2 make the forward soft (weighted gather instead of hard) ⇒ gate 2 `torch.equal(idxs)`
-  and logits bit-exact fail — pins "forward stays hard."
+- M2 make the forward soft (weighted gather instead of hard) ⇒ gate 2(a) idxs/weight
+  equality and gate 2(b)'s sub-ULP logit bound both fail (the soft form moves logits 5–6
+  orders beyond the ULP tolerance) — pins "forward stays hard."
 - M3 recompute score on the training side instead of reusing the seam tensor ⇒ gate 5
   (object identity) fails; this is the fed-dead-weight regression.
 - M4 route STE grad into `index_key`/compressor ⇒ gate 4 (scope) fails.
