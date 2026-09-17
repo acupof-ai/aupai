@@ -328,7 +328,7 @@ class DSparkBlock(Block):
         draft shares the backbone's LM head and embedding without either module registering
         the other's parameters, so a tied weight cannot appear twice in state_dict under two
         names. That is a structural invariant, not a workaround -- see
-        test_mtp_tied_head_is_not_registered.
+        test_tied_embed_head_are_not_registered.
         """
         if not self.is_last_stage:
             raise ValueError(
@@ -395,11 +395,11 @@ class DSparkBlock(Block):
         """Parallel teacher-forced TRAINING entry (v41f-defined, ref has no training path).
 
         Unlike forward_embed's inference noise fill, training feeds GOLD shifted ids:
-        draft_input_ids is [b, block_size] with position 0 = anchor token, position i =
-        the real main token at anchor-1+i (the label one step left). The causal mask in
-        DSparkAttention keeps each query at or before its own column, so this is the
-        gold-fed sequential decode made parallel. Returns the same tuple as
-        forward_embed."""
+        draft_input_ids is [b, block_size] with position 0 = the anchor token (the LAST
+        prefix token) and position i = the real main token at anchor+i (the label one step
+        left). The causal mask in DSparkAttention keeps each query at or before its own
+        column, so this is the gold-fed sequential decode made parallel. Returns the same
+        tuple as forward_embed."""
         x = embed(draft_input_ids)
         x = x.unsqueeze(2).repeat(1, 1, self.hc_mult, 1)
         pre_mix = identity_pre_mix(x, self.hc_mult)
