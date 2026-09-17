@@ -4902,7 +4902,7 @@ def _stamp_world_nonancestor_synthetic():
 
     The check then runs against the SUBJECT (its refs, its object store), so the sha is real
     and non-ancestor without any reference to ROOT. The subject is marked self-contained via
-    SELF_CONTAINED_STAMP_WORLD so the reality guard validates the sha in the world's own repo
+    SELF_CONTAINED_STAMP_WORDS so the reality guard validates the sha in the world's own repo
     rather than in ROOT. Returns (subject_dir, divergent_sha).
     """
     import shutil
@@ -4965,7 +4965,7 @@ def _broken_pod_stamp_is_main():
     ROOT-ref path (it never builds here in CI): empty result is a legitimate skip, a sha is
     used, and a git FAILURE (rc!=0, e.g. no resolvable main in a detached checkout) is a loud
     NOT-VERIFIED, never read as "empty" (the f19a9474 fail-open). Returns the subject tree;
-    the removable root is recorded in SELF_CONTAINED_STAMP_WORLD for cleanup."""
+    the removable root is recorded in SELF_CONTAINED_STAMP_WORDS for cleanup."""
     try:
         subject, root = _stamp_world_nonancestor_synthetic()
         SELF_CONTAINED_STAMP_WORDS.add(subject)
