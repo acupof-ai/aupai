@@ -426,20 +426,23 @@
     "path": "data/scan_ledger.jsonl",
     "key": [
      "path",
-     "bytes",
-     "mtime",
+     "cand_fp",
      "holdout_hash",
-     "threshold"
+     "threshold",
+     "baseline_fp"
     ],
     "verified": "9/9 shards served from cache on re-run, verdicts and exit codes preserved",
-    "holdout_change": "invalidates every entry -> full rescan"
+    "holdout_change": "invalidates every entry -> full rescan",
+    "key_changed_2026_09_18": "key was [path, bytes, mtime, holdout_hash, threshold] until 2026-09-18 (genB). bytes/mtime described the CANDIDATE shard and baseline_id the baseline, both by mtime, so a cp/rsync/podput rebuilt every cached verdict without a byte changing, and a same-size in-place rewrite preserved both and was missed (the uncertainty below, now closed). Both sides are now content fingerprints via corpus_fingerprint._shard_line (name, size, sha256 of first/last 64KB), stored as cand_fp and baseline_fp. The 9/9 measurement above was taken under the OLD key and is not re-measured here.",
+    "migration": "a row written before 2026-09-18 carries bytes+mtime and no content identity, so it is UNCACHEABLE and rescanned once. The first run after this change re-scans every shard by construction; that is the conservative direction and the reason the count above cannot be compared across the change."
    },
    "measured": "2026-08-30",
    "source": "datagen/scan_math_contamination.py --jobs 9, second run over data/corpus/math/*.jsonl",
    "config": {
-    "fingerprint": "bytes+mtime, make-style; --force bypasses; FPR baseline runs are not ledgered"
+    "fingerprint": "cand_fp+baseline_fp content hashes (was bytes+mtime, make-style) since 2026-09-18; --force bypasses; FPR baseline runs are not ledgered",
+    "measured_under": "the pre-2026-09-18 key: path+bytes+mtime+holdout_hash+threshold"
    },
-   "uncertainty": "bytes+mtime misses an in-place rewrite that preserves both -- content-hash if shards can be replaced adversarially",
+   "uncertainty": "PARTIALLY CLOSED 2026-09-18: the key is content now, but the content hashed is corpus_fingerprint._shard_line -- shard name, size, sha256 of the FIRST and LAST 64KB only. Measured: a same-size edit landing after the first 64KB and before the last 64KB leaves the fp UNCHANGED. So the adversarial middle-edit this entry named is narrower, not closed: an edit confined to a shard's interior is still invisible, and the old key missed it too (it missed everything same-size). Read this as 'sampled content', never as full-content coverage. Closing it fully means hashing whole shards, which costs the full byte count per shard instead of 128KB -- a deliberate trade, not an oversight, and the same boundary fp_dir has repo-wide. OLD KEY: size+mtime, which also missed any same-size rewrite and additionally rebuilt every verdict on a content-preserving transfer.",
    "status": "measured"
   },
   {

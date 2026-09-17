@@ -53,39 +53,103 @@ def _shard_line(name, path):
 PIPELINE_FILTERS = ("pass1_garbage.py", "pass2_garbage.py", "pass3_garbage.py")
 
 
+def _patterns_of(path, name):
+    """The PATTERNS list a filter file contributes, read by AST rather than exec.
+
+    This is EXACTLY what build_corpus.load_garbage_patterns consumes (it execs the file and
+    takes ns["PATTERNS"], concatenating across the tuple in order), minus the exec: the list is
+    a module-level literal of string constants in every pipeline filter, and the assertion below
+    keeps that true. exec would import nothing, but it would also run whatever else the file
+    holds; AST reads only the value the pipeline actually concatenates into GARBAGE."""
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), filename=path)
+    for node in tree.body:
+        if not (isinstance(node, ast.Assign) and len(node.targets) == 1):
+            continue
+        tgt = node.targets[0]
+        if not (isinstance(tgt, ast.Name) and tgt.id == "PATTERNS"):
+            continue
+        if not isinstance(node.value, (ast.List, ast.Tuple)):
+            raise AssertionError(
+                f"{path}: PATTERNS is not a literal list, so its value cannot be read without "
+                f"exec and fp_filters cannot describe what the pipeline compiles"
+            )
+        pats = []
+        for elt in node.value.elts:
+            if not (isinstance(elt, ast.Constant) and isinstance(elt.value, str)):
+                raise AssertionError(
+                    f"{path}: PATTERNS holds a non-string-constant element ({ast.dump(elt)[:60]}); "
+                    f"a computed pattern would enter GARBAGE without entering the fingerprint"
+                )
+            pats.append(elt.value)
+        return pats
+    raise AssertionError(
+        f"{path}: no module-level PATTERNS assignment found; build_corpus.load_garbage_patterns "
+        f"would contribute nothing from {name} and fp_filters would describe a build that "
+        f"does not exist"
+    )
+
+
 def fp_filters(root=ROOT):
-    """Hash of the filter sources that produced a corpus. Content-based, not the git sha: an
-    uncommitted edit to filters/ changes what a build keeps, and a commit sha would not see it.
+    """Fingerprint of the RULES that produced a corpus: sha1 over the flattened PATTERNS lists of
+    the pipeline filters, in the order build_corpus concatenates them. Content-based, not the git
+    sha: an uncommitted edit to filters/ changes what a build keeps, and a commit sha would not
+    see it.
 
     The gap this closes: PROVENANCE records the Build COMMAND, and the same command run before
     and after a filter change produces different corpora that nothing distinguishes.
     corpus_fingerprint says the content changed; this says what produced it.
 
-    SCOPED TO THE PIPELINE, not to the directory listing. It used to hash every *.py in
-    filters/, which made the fingerprint a property of what the directory CONTAINS rather than
-    of what produced the shards: adding filters/secrets.py on 2026-09-06 -- a corpus-row
-    credential redactor that build_corpus.py does not import -- moved the fingerprint from
-    33462c13868a2194 to 9c0c1fd3160ebd27 and turned four stage-2 domains stale, though not one
-    byte of any shard would differ if they were rebuilt. A fingerprint that changes when the
-    output cannot is a false positive, and the corpus_filters_fp red it raised is a red nobody
-    can act on except by rebuilding nine domains for nothing.
+    HASHES THE PATTERNS, NOT THE FILE BYTES. It hashed bytes until 2026-09-17, and `filters/secrets.py`
+    was not the only false positive that admits: a semantics-preserving edit to a pipeline filter
+    moved it while the drop decision could not change. Measured: commit 3a972f57 hoisted
+    `COMPILED = [re.compile(p) for p in PATTERNS]` and added a shared `drops()` -- same regexes,
+    same order, same behavior -- and the byte hash went 88ee503b -> 9bbed36b. Every corpus built
+    before that commit then read as stale for a refactor that removes no document. A fingerprint
+    that changes when the output cannot is a false positive, and the red it raises is a red
+    nobody can act on except by rebuilding nine domains for nothing. The earlier scoping fix
+    (hash only the pipeline files, not the directory) removed the same class one level up;
+    this removes it for real.
+
+    WHAT IT CANNOT SEE, stated because a narrower fingerprint must not be mistaken for a wider
+    one: it covers the PATTERNS lists of the three pipeline filters and nothing else. Code in
+    those files that changes the drop decision WITHOUT changing a pattern -- a different
+    normalization, a threshold read from the environment, an early return -- is outside it. No
+    such code exists today (the files are a PATTERNS literal plus a predicate that iterates it,
+    and the predicate is asserted by filters/test_l0_garbage_known.py), and the boundary is
+    recorded in the PR and in facts/corpus_supply.json rather than left to be discovered.
 
     The scoping is verified, not asserted: build_corpus.py:62 iterates a literal tuple of three
-    names and exec's each, so those three are the whole input, and the assertion below fails if
-    that tuple and this one drift apart."""
+    names and exec's each, so those three files' PATTERNS are the whole input, and
+    _assert_pipeline_filters_current() fails if that tuple and this one drift apart."""
     d = os.path.join(root, "filters")
     if not os.path.isdir(d):
         return None
-    h = hashlib.sha1()
+    pats = []
     for name in PIPELINE_FILTERS:
         p = os.path.join(d, name)
         if not os.path.exists(p):
             # build_corpus.py raises FileNotFoundError on the same condition. Hashing "absent"
             # would let a build whose filter file vanished carry a valid-looking fingerprint.
             raise FileNotFoundError(f"{p} missing; fp_filters cannot describe a build without it")
-        with open(p, "rb") as f:
-            h.update(name.encode() + b"\0" + hashlib.sha256(f.read()).digest())
-    return h.hexdigest()[:16]
+        pats.extend(_patterns_of(p, name))
+    # ONE hash over the FLATTENED list, not one per file. build_corpus compiles a single
+    # alternation -- re.compile("|".join(f"(?:{p})" for p in pats)) -- so the file a rule came
+    # from is not part of the drop decision, and mixing it in would report a change for a move
+    # that cannot alter a byte of output. json.dumps, not a join: an unambiguous encoding, so a
+    # pattern containing whatever separator a join would use cannot alias a different list.
+    # List order is NOT sorted, so the value keeps whatever stability the load order has; the
+    # compiled alternation's hit-set is order-independent under search(), so this is a choice
+    # about readability, not a claim that order changes the drop decision.
+    #
+    # THE "p1-" PREFIX IS THE MIGRATION MARKER, not decoration. Until 2026-09-17 this returned a
+    # bare 16-hex sha1 over the filter FILES' bytes; both generations are 16 hex characters, so
+    # without a marker an old stamp and a new one are indistinguishable by value and a stale
+    # domain would compare equal-looking-but-meaningless values. Every stamp written by that
+    # byte hash carries no prefix and is therefore visibly UNMIGRATED: it must be re-stamped by a
+    # rebuild, never compared against a live pattern hash. check_corpus_filters_fp treats an
+    # unprefixed stamp as the baselined debt it is.
+    return "p1-" + hashlib.sha1(json.dumps(pats, ensure_ascii=False).encode()).hexdigest()[:16]
 
 
 def _assert_pipeline_filters_current(root=ROOT):
@@ -212,16 +276,113 @@ def self_check():
             "adding a non-pipeline .py to filters/ moved the fingerprint; the scoping is not "
             "in effect and every corpus goes stale on an unrelated file"
         )
-        # 2. A PIPELINE file's content MUST move it, or the fingerprint is blind to real change.
-        with open(os.path.join(froot, "filters", PIPELINE_FILTERS[0]), "a") as f:
-            f.write("\nPATTERNS.append('a real filter edit')\n")
-        assert fp_filters(froot) != only_pipeline, (
-            f"editing {PIPELINE_FILTERS[0]} did not move the fingerprint"
+        # 2. A PIPELINE file's PATTERNS MUST move it, or the fingerprint is blind to real change.
+        #    Four mutations per file, each changing what GARBAGE matches: append a rule, edit a
+        #    rule in place, remove a rule, and empty the list. EVERY pipeline file is mutated --
+        #    a version that hashed only the first would pass an all-files-mutated test only by
+        #    accident, and would read green while the other two files' edits went unseen.
+        f0 = os.path.join(froot, "filters", PIPELINE_FILTERS[0])
+        with open(f0, encoding="utf-8") as f:
+            orig = f.read()
+        mutants = {
+            "append": orig.replace("\n]\n", "\n    r'a real filter edit',\n]\n", 1),
+            "edit": orig.replace("PATTERNS = [", "PATTERNS = [\n    r'edited rule',", 1),
+            "remove": orig.replace("\n    r", "\n    # r", 1),
+            "empty": orig.split("PATTERNS = [")[0] + "PATTERNS = []\n",
+        }
+        for label, body in mutants.items():
+            assert body != orig, f"mutation {label} did not change the file; the test is dead"
+            with open(f0, "w", encoding="utf-8") as f:
+                f.write(body)
+            assert fp_filters(froot) != only_pipeline, (
+                f"PATTERNS mutation '{label}' on {PIPELINE_FILTERS[0]} did not move the "
+                f"fingerprint -- a real change to the rules would read as the same build"
+            )
+        with open(f0, "w", encoding="utf-8") as f:
+            f.write(orig)
+        for extra in PIPELINE_FILTERS[1:]:
+            fe = os.path.join(froot, "filters", extra)
+            with open(fe, encoding="utf-8") as f:
+                eorig = f.read()
+            with open(fe, "w", encoding="utf-8") as f:
+                f.write(eorig.replace("PATTERNS = [", "PATTERNS = [\n    r'extra-file rule',", 1))
+            assert fp_filters(froot) != only_pipeline, (
+                f"a PATTERNS edit in {extra} did not move the fingerprint: the hash covers only "
+                f"{PIPELINE_FILTERS[0]}, so {extra}'s rules enter GARBAGE unseen"
+            )
+            with open(fe, "w", encoding="utf-8") as f:
+                f.write(eorig)
+        # 2b. The flattened list must be what build_corpus actually compiles. It execs each file
+        #     and concatenates ns['PATTERNS'] in tuple order; the AST reader above must agree with
+        #     that, or the fingerprint describes a different rule set than the pipeline runs.
+        ns_pats = []
+        for name in PIPELINE_FILTERS:
+            ns = {}
+            with open(os.path.join(ROOT, "filters", name), encoding="utf-8") as f:
+                exec(compile(f.read(), name, "exec"), ns)
+            ns_pats.extend(ns.get("PATTERNS", []))
+        ast_pats = []
+        for name in PIPELINE_FILTERS:
+            ast_pats.extend(_patterns_of(os.path.join(ROOT, "filters", name), name))
+        assert ast_pats == ns_pats, (
+            f"the AST reader and build_corpus's exec disagree: {len(ast_pats)} vs {len(ns_pats)} "
+            f"patterns; fp_filters would describe rules the pipeline does not compile"
         )
+        # 2c. A pipeline file whose PATTERNS cannot be read as a literal list must RAISE, not
+        #     contribute nothing. build_corpus's exec takes ns.get('PATTERNS', []), so a quiet []
+        #     here would describe a reduced build as the same build -- and the reduction is
+        #     invisible in the shards' content too. Three shapes: renamed list, computed list,
+        #     and a list holding a non-constant element.
+        for label, body in (
+            ("no-PATTERNS", orig.replace("PATTERNS = [", "RULES = [", 1)),
+            ("non-literal", orig.replace("PATTERNS = [", "PATTERNS = _load() or [", 1)),
+            ("computed-element", orig.replace("PATTERNS = [", "PATTERNS = [\n    'x' + 'y',", 1)),
+        ):
+            with open(f0, "w", encoding="utf-8") as f:
+                f.write(body)
+            try:
+                fp_filters(froot)
+            except AssertionError:
+                continue
+            raise AssertionError(
+                f"a pipeline file in the '{label}' shape did not raise: fp_filters returned a "
+                f"value for a rule set it cannot read, so a reduced build fingerprints as the "
+                f"same build"
+            )
+        with open(f0, "w", encoding="utf-8") as f:
+            f.write(orig)
+        assert fp_filters(froot) == only_pipeline, "restoring the file must restore the value"
+        # 3. SEMANTICS-PRESERVING EDITS MUST NOT MOVE IT. This is the whole point of hashing
+        #    patterns rather than bytes: 3a972f57 hoisted COMPILED, added a shared drops(), and
+        #    the byte hash moved 88ee503b -> 9bbed36b with the same regexes in the same order, so
+        #    nine domains read stale for a refactor that removes no document. Each variant below
+        #    keeps PATTERNS identical and changes only the file's bytes around it.
+        sem = {
+            "hoisted-compiled": orig.replace(
+                "COMPILED = [re.compile(p) for p in PATTERNS]",
+                "COMPILED = tuple(re.compile(p) for p in PATTERNS)  # hoist rewritten"),
+            "comment": orig.replace("#!/usr/bin/env python3", "#!/usr/bin/env python3\n# a comment"),
+            "import-order": orig.replace("import json\nimport re", "import re\nimport json"),
+            "blank-lines": orig.replace("\n\n\n", "\n\n\n\n\n"),
+        }
+        for label, body in sem.items():
+            if body == orig:
+                continue  # this file's shape does not hold that construct; nothing to assert
+            with open(f0, "w", encoding="utf-8") as f:
+                f.write(body)
+            assert fp_filters(froot) == only_pipeline, (
+                f"semantics-preserving edit '{label}' on {PIPELINE_FILTERS[0]} MOVED the "
+                f"fingerprint ({only_pipeline} -> {fp_filters(froot)}): the fingerprint is still "
+                f"reading bytes, so a refactor that drops no document reds every corpus"
+            )
+        with open(f0, "w", encoding="utf-8") as f:
+            f.write(orig)
+        assert fp_filters(froot) == only_pipeline, "restoring the file must restore the value"
     print(
         f"self-check OK (mutate {fp1} -> {fp2}, utime invariant, delete -> {fp3}, train.py "
         f"parity, fp_filters scoped to {len(want)} pipeline filters: non-pipeline file inert, "
-        f"pipeline edit caught)"
+        f"{len(mutants)} PATTERNS mutations x {len(PIPELINE_FILTERS)} files caught, AST==exec, "
+        f"{len(sem)} semantics-preserving edits inert)"
     )
     return 0
 

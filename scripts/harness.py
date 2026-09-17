@@ -4856,7 +4856,15 @@ def check_pod_stamp_is_main(root):
         return subprocess.run(["git", "-C", root, *a], capture_output=True, text=True)
     if _git("cat-file", "-e", f"{sha}^{{commit}}").returncode:
         return WARN, f"the stamp names {sha[:12]}, which is no commit in this repository"
-    main = _git("rev-parse", "main").stdout.strip()
+    # ORIGIN/MAIN, NOT THE LOCAL REF (de-99). Since the 2026-09-07 code-PR flip, code reaches
+    # main by `gh pr merge`, which advances origin/main and NO local ref in any worktree --
+    # local main moves only under merge_main.sh's CAS, i.e. only for ledger commits. A stamp a
+    # merger pushed therefore names a commit the LOCAL ref does not contain, and the local form
+    # reported its louder branch falsely ("a tree on no branch"). MEASURED 2026-09-10: the
+    # stamp b4a8a41d WAS origin/main; `git fetch origin main:main` cleared the WARN.
+    # Fall back to local main on a remote-less tree (fixtures/CI) so the check still answers.
+    main = (_git("rev-parse", "--verify", "--quiet", "origin/main").stdout.strip()
+            or _git("rev-parse", "--verify", "--quiet", "main").stdout.strip())
     if not main:
         return SKIP, "no main in this repository"
     if sha == main:
@@ -4877,9 +4885,16 @@ def _broken_pod_stamp_is_main():
     Built from this repository's own refs rather than a made-up hex string, because a made-up
     sha fails at `cat-file -e` and would exercise the wrong branch -- the check would report
     "no such commit" and the ancestor comparison, which is the thing being tested, would never
-    run. If no such commit exists here, the world cannot be built and says so."""
+    run. If no such commit exists here, the world cannot be built and says so.
+
+    THE EXCLUSION REF MUST BE THE REF THE CHECK COMPARES AGAINST (de-99 second half).
+    `--not main` alone excluded the local ref, which lags origin/main in every un-fetched
+    worktree, so the picked commit WAS an ancestor of origin/main and read PASS once the check
+    moved to the remote ref. Excluding both refs makes the world non-ancestor under either
+    resolution, which the reality guard also asserts."""
     d = _tmp_repo()
-    r = subprocess.run(["git", "-C", ROOT, "rev-list", "--all", "--not", "main", "-n", "1"],
+    r = subprocess.run(["git", "-C", ROOT, "rev-list", "--all",
+                        "--not", "main", "origin/main", "-n", "1"],
                        capture_output=True, text=True)
     sha = r.stdout.strip()
     if not sha:
@@ -4894,6 +4909,74 @@ def _broken_pod_stamp_is_main():
     os.environ["HARNESS_POD_STAMP"] = stamp
     os.symlink(os.path.join(ROOT, ".git"), os.path.join(d, ".git"))
     return d
+
+
+def _stamp_world_origin_ahead():
+    """A stamp naming ORIGIN/main while the LOCAL main ref lags: the normal post-flip shape.
+
+    SELF-CONTAINED, deliberately not cloned from ROOT. The first version cloned this
+    repository, which fails on a shallow detached checkout with no local `main` branch (the
+    GitHub runner): `clone -b main` has nothing to check out and the world was unbuildable
+    exactly where CI runs. Here a synthetic bare origin is built from scratch -- init, seed
+    one commit, clone subject and pusher, advance main in the pusher, then have the subject
+    FETCH without merging -- so the subject's origin/main is genuinely ahead of its local
+    main with no dependence on this repository's ref layout or the network.
+
+    Returns the subject tree (its parent tempdir is removed by the caller), or raises
+    SelftestSkip(environment) if git itself cannot build the world.
+    """
+    import shutil
+    import tempfile
+    d = tempfile.mkdtemp(prefix="originstamp_")
+    bare, seed = os.path.join(d, "origin.git"), os.path.join(d, "seed")
+    subject = os.path.join(d, "subject")   # never pushes; only fetches -- the lagging worktree
+    pusher = os.path.join(d, "pusher")     # stands in for the PR merger advancing origin/main
+
+    def g(*a, **kw):
+        return subprocess.run(["git", *a], capture_output=True, text=True, **kw)
+
+    def _bail(why, rc=None):
+        shutil.rmtree(d, ignore_errors=True)
+        raise SelftestSkip(f"{why}; the origin-ahead world is unbuildable"
+                           + (f" (rc={rc})" if rc is not None else ""), reason="environment")
+
+    for cmd in (["init", "-q", "--bare", "-b", "main", bare],
+                ["init", "-q", "-b", "main", seed]):
+        if g(*cmd).returncode:
+            _bail(f"git {' '.join(cmd[:3])} failed")
+    g("-C", seed, "config", "user.email", "st@st")
+    g("-C", seed, "config", "user.name", "st")
+    with open(os.path.join(seed, "SEED"), "w") as fh:
+        fh.write("seed\n")
+    g("-C", seed, "add", "SEED")
+    if g("-C", seed, "commit", "-qm", "seed").returncode:
+        _bail("could not seed the origin")
+    if g("-C", seed, "remote", "add", "origin", bare).returncode or \
+            g("-C", seed, "push", "-q", "-u", "origin", "main").returncode:
+        _bail("could not publish the seed to the bare origin")
+    # two clones from the bare origin so the subject advancing is impossible (it never pushes)
+    for dest in (subject, pusher):
+        if g("clone", "-q", "-b", "main", bare, dest).returncode:
+            _bail(f"cannot clone the bare origin into {os.path.basename(dest)}")
+        g("-C", dest, "config", "user.email", "st@st")
+        g("-C", dest, "config", "user.name", "st")
+    with open(os.path.join(pusher, "ORIGIN_AHEAD"), "w") as fh:
+        fh.write("one commit ahead of the subject's local main\n")
+    g("-C", pusher, "add", "ORIGIN_AHEAD")
+    if g("-C", pusher, "commit", "-qm", "origin-ahead fixture").returncode or \
+            g("-C", pusher, "push", "-q", "origin", "main").returncode:
+        _bail("could not advance origin/main from the pusher")
+    if g("-C", subject, "fetch", "-q", "origin").returncode:
+        _bail("could not fetch in the subject")
+    local = g("-C", subject, "rev-parse", "main").stdout.strip()
+    front = g("-C", subject, "rev-parse", "origin/main").stdout.strip()
+    if not local or not front or front == local:
+        _bail("the subject's origin/main did not move ahead of its local main")
+    os.makedirs(os.path.join(subject, "data"), exist_ok=True)
+    with open(os.path.join(subject, "data", "pod_synced_head"), "w", encoding="utf-8") as fh:
+        fh.write(f"{front} 0 2026-09-10T00:00:00Z\n")
+    os.environ["HARNESS_POD_STAMP"] = os.path.join(subject, "data", "pod_synced_head")
+    return subject
 
 
 def check_pod_ledger_rows_home(root):
@@ -7726,18 +7809,44 @@ def check_corpus_filters_fp(root):
         return SKIP, "no mix-domain corpus on this machine"
     baseline_path = os.path.join(root, CORPUS_FILTERS_BASELINE)
     baseline = json.load(open(baseline_path, encoding="utf-8")) if os.path.exists(baseline_path) else {}
-    stale, new_unstamped, baselined, ok = [], [], [], 0
+    stale, new_unstamped, baselined, unmigrated, packer_only, ok = [], [], [], [], [], 0
+    # GENERATION MARKER. fp_filters hashes the compiled PATTERNS and prefixes the value "p1-";
+    # until 2026-09-17 it returned a bare 16-hex sha1 over the filter FILES' bytes. Both shapes
+    # are 16 hex characters, so an old stamp and a new one are indistinguishable BY VALUE, and
+    # comparing them would report "built with filters X, tree is Y" for two numbers that were
+    # never on the same scale -- a red that names the wrong cause and sends the reader to look
+    # for a filters edit that did not happen. An unprefixed stamp is old generation: it needs a
+    # REBUILD to be re-stamped, which no comparison can decide for it. That is exactly the
+    # baselined-debt shape, so it is reported as debt rather than as a mismatch.
+    live_gen = live.split("-", 1)[0] if "-" in live else ""
     for dom in present:
-        stats = os.path.join(corpus, dom, "build_corpus_stats.json")
-        got = None
-        if os.path.isfile(stats):
-            with open(stats, encoding="utf-8") as f:
-                got = json.load(f).get("filters_fp")
+        stats_p = os.path.join(corpus, dom, "build_corpus_stats.json")
+        stamp = {}
+        if os.path.isfile(stats_p):
+            with open(stats_p, encoding="utf-8") as f:
+                stamp = json.load(f)
+        got = stamp.get("filters_fp")
         if got is None:
-            if dom in baseline:
+            # A PACKER-ONLY domain records the content hash of the script that produced its
+            # bytes under packer_fp and never runs the filters/ pipeline (its filtering is
+            # inline in that script). There is no pipeline value it could match, so it is not
+            # compared and not counted as filters debt. A domain that passes through filters/
+            # must stamp filters_fp instead; packer_fp is no escape hatch (it is unreachable
+            # when filters_fp is present), and an EMPTY packer_fp still falls through to
+            # new_unstamped.
+            if stamp.get("packer_fp"):
+                packer_only.append(dom)
+            elif dom in baseline:
                 baselined.append(dom)
             else:
                 new_unstamped.append(dom)
+        elif live_gen and _OLD_GEN_STAMP.match(str(got)):
+            # Old-generation stamp: built by the byte-hash definition, which returned a bare
+            # 16-hex value. Not comparable to a pattern hash and not a filters edit -- a rebuild
+            # re-stamps it. Keyed on the EXACT old shape rather than on "no prefix": an
+            # unrecognized or corrupt value must not land here and pass quietly, so anything that
+            # is not the known old generation falls through to the comparison and FAILs.
+            unmigrated.append(dom)
         elif got != live:
             # A ruled mismatch is forgiven only when the baseline names THIS exact pair and
             # cites the fact that measured it. Keyed on both fingerprints, so the next
@@ -7760,26 +7869,38 @@ def check_corpus_filters_fp(root):
             f"{len(new_unstamped)} domain(s) have no filters_fp and are not in the baseline "
             f"({', '.join(new_unstamped)}) -- rebuild to stamp, or register in {CORPUS_FILTERS_BASELINE}"
         )
-    if ok == 0 and not baselined:
+    if ok == 0 and not baselined and not unmigrated and not packer_only:
         return FAIL, f"0/{len(present)} mix domain(s) match filters {live}"
     note = ""
     if baselined:
         note = (f"; BASELINED debt: {len(baselined)} domain(s) built before filters_fp existed "
                 f"({', '.join(baselined)}) -- rebuild to stamp and shrink the baseline")
+    if unmigrated:
+        note += (f"; UNMIGRATED debt: {len(unmigrated)} domain(s) carry a pre-p1 stamp from the "
+                 f"byte-hash definition ({', '.join(unmigrated)}) -- not comparable to a pattern "
+                 f"hash and not a filters edit; a rebuild re-stamps them in the new generation")
+    if packer_only:
+        note += (f"; PACKER-ONLY (no filters/ pipeline, packer_fp stamped): {len(packer_only)} "
+                 f"({', '.join(packer_only)}) -- not compared to filters_fp")
     return PASS, f"{ok}/{len(present)} domain(s) match filters {live}{note}"
 
 
 def _broken_corpus_filters_fp():
-    """Two failure modes: a stale stamp (mismatch with live filters) and a no-stamp
-    domain that is NOT in the baseline (new debt). Both must FAIL.
+    """Failure modes, all of which must FAIL: a stale stamp (current generation, wrong value),
+    a no-stamp domain NOT in the baseline (new debt), an UNRECOGNIZED stamp (neither the current
+    generation nor the known old shape -- garbage in the stamp field), and a stamp from a
+    DIFFERENT generation marker (a future definition's value reaching a check that does not
+    understand it). The UNMIGRATED case is deliberately NOT here -- it reports as debt, i.e.
+    PASS-with-note, so it belongs in the positive world, not in broken().
 
     The mix written here is the GATE mix (all _dc domains), because check_corpus_filters_fp
     reads data/mix_v41_gate.json when present (ae-10), not train.py's mix_500m default. A
     world that wrote only mix_500m would no longer be read by the check it is supposed to
     break."""
     d = _tmp_repo()
-    # gate mix the check now selects: one domain gets a stale stamp, one gets no stamp.
-    gate_mix = {"domains": {"code_py_starcoder_dc": 1.0, "en_c4_stage2_dc": 1.0}}
+    # gate mix the check now selects: stale / no-stamp / unrecognized / wrong-generation.
+    gate_mix = {"domains": {"code_py_starcoder_dc": 1.0, "en_c4_stage2_dc": 1.0,
+                            "zh_web_dc": 1.0, "cot_dc": 1.0}}
     os.makedirs(os.path.join(d, "data"), exist_ok=True)
     json.dump(gate_mix, open(os.path.join(d, GATE_RUN_MIX), "w"))
     os.makedirs(os.path.join(d, "filters"), exist_ok=True)
@@ -7799,21 +7920,44 @@ def _broken_corpus_filters_fp():
         shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(d, "filters", _n))
     dom = os.path.join(d, "data", "corpus", "code_py_starcoder_dc")
     os.makedirs(dom, exist_ok=True)
+    # A CURRENT-generation stamp that disagrees with the live value: the stale-mismatch world.
+    # It must carry the live generation marker, or it reads as unmigrated debt (an old-generation
+    # stamp, reported not-FAIL) and this world stops testing the mismatch path it was written for.
+    # Read from `live`, never restated -- the marker is the migration signal and a literal here
+    # would go stale the moment it changes.
+    _live = cfp.fp_filters(ROOT)
     with open(os.path.join(dom, "build_corpus_stats.json"), "w") as fh:
-        json.dump({"fingerprint": "deadbeef", "filters_fp": "0000000000000000"}, fh)
+        json.dump({"fingerprint": "deadbeef",
+                   "filters_fp": f"{_live.split('-', 1)[0]}-0000000000000000"}, fh)
     # en_c4_stage2_dc: no stamp at all, no baseline file in this world -> new unstamped domain
     os.makedirs(os.path.join(d, "data", "corpus", "en_c4_stage2_dc"), exist_ok=True)
+    # zh_web_dc: an UNRECOGNIZED stamp -- neither the current generation nor the known old shape.
+    # It must FAIL, not be waved through as unmigrated debt: "not comparable" and "not a known
+    # hash definition at all" are different facts, and only the second means something wrote
+    # garbage into the stamp field.
+    dom_z = os.path.join(d, "data", "corpus", "zh_web_dc")
+    os.makedirs(dom_z, exist_ok=True)
+    with open(os.path.join(dom_z, "build_corpus_stats.json"), "w") as fh:
+        json.dump({"fingerprint": "deadbeef", "filters_fp": "not-a-hash-at-all"}, fh)
+    # cot_dc: CURRENT-shape but a DIFFERENT generation marker -- a future definition's value
+    # reaching a check that does not understand it. Must FAIL: not debt, and not equal.
+    dom_c = os.path.join(d, "data", "corpus", "cot_dc")
+    os.makedirs(dom_c, exist_ok=True)
+    with open(os.path.join(dom_c, "build_corpus_stats.json"), "w") as fh:
+        json.dump({"fingerprint": "deadbeef", "filters_fp": "p9-0000000000000000"}, fh)
     return d
 
 
 def _selftest_corpus_filters_fp_gate_mix():
     """An all-_dc GATE mix reaches the filter gate via INHERITED filters_fp (ae-10).
 
-    Three states on one shaped root, all read through data/mix_v41_gate.json:
+    States on one shaped root, all read through data/mix_v41_gate.json:
       - a _dc dir whose stamp carries the LIVE filters_fp -> PASS (the inherited value equals
         what the source build recorded);
       - a _dc dir carrying a STALE value -> FAIL;
-      - a _dc dir with NO stamp -> FAIL (new-unstamped, not baselined).
+      - a _dc dir with NO stamp -> FAIL (new-unstamped, not baselined);
+      - a _dc dir carrying a pre-p1 stamp -> PASS-with-debt (unmigrated, needs a rebuild);
+      - a _dc dir carrying an unrecognized value -> FAIL.
     The live value is whatever fp_filters returns for the copied pipeline filters, so this
     tracks genB's byte->pattern hash change without restating it."""
     import shutil
@@ -7826,17 +7970,27 @@ def _selftest_corpus_filters_fp_gate_mix():
     import corpus_fingerprint as _cfp
 
     live = _cfp.fp_filters(d)
-    json.dump({"domains": {"ok_dc": 1.0, "stale_dc": 1.0, "nostamp_dc": 1.0}},
+    gen = live.split("-", 1)[0]
+    json.dump({"domains": {"ok_dc": 1.0, "stale_dc": 1.0, "nostamp_dc": 1.0,
+                           "old_dc": 1.0, "junk_dc": 1.0}},
               open(os.path.join(d, GATE_RUN_MIX), "w"))
     base = os.path.join(d, "data", "corpus")
-    for name, fp in (("ok_dc", live), ("stale_dc", "0" * 16)):
+    for name, fp in (("ok_dc", live),
+                     # CURRENT generation, wrong value. NOT "0"*16: a bare 16-hex value is the
+                     # pre-p1 shape and would be reported as unmigrated debt rather than as the
+                     # mismatch this case exists to test (genB).
+                     ("stale_dc", f"{gen}-" + "0" * 16),
+                     # The pre-p1 byte-hash shape: unmigrated debt, must PASS-with-note.
+                     ("old_dc", "0" * 16),
+                     # Not a fingerprint of any generation: corruption, must FAIL.
+                     ("junk_dc", "not-a-hash-at-all")):
         os.makedirs(os.path.join(base, name))
         json.dump({"fingerprint": "f" * 16, "filters_fp": fp},
                   open(os.path.join(base, name, "build_corpus_stats.json"), "w"))
     os.makedirs(os.path.join(base, "nostamp_dc"))  # no stamp -> new-unstamped
 
-    # stale and no-stamp must each FAIL independently; build two single-domain worlds so one
-    # bad domain does not hide the verdict on the other.
+    # Each bad state must FAIL independently; build single-domain worlds so one bad domain does
+    # not hide the verdict on another.
     only_ok = _tmp_repo()
     os.makedirs(os.path.join(only_ok, "filters"), exist_ok=True)
     for _n in cfp.PIPELINE_FILTERS:
@@ -7850,8 +8004,82 @@ def _selftest_corpus_filters_fp_gate_mix():
     state, ev = check_corpus_filters_fp(only_ok)
     assert state == PASS, ("inherited live filters_fp on an all-_dc gate mix must PASS", state, ev)
 
-    state, _ = check_corpus_filters_fp(d)
-    assert state == FAIL, ("stale + no-stamp _dc domains must FAIL", state)
+    # The pre-p1 shape alone: PASS, and the evidence must SAY it is unmigrated. A PASS whose
+    # evidence does not name the debt is the silent-green this case exists to prevent.
+    only_old = _tmp_repo()
+    os.makedirs(os.path.join(only_old, "filters"), exist_ok=True)
+    for _n in cfp.PIPELINE_FILTERS:
+        shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(only_old, "filters", _n))
+    sys.path.insert(0, os.path.join(only_old, "scripts"))
+    json.dump({"domains": {"ok_dc": 1.0}}, open(os.path.join(only_old, GATE_RUN_MIX), "w"))
+    ob2 = os.path.join(only_old, "data", "corpus", "ok_dc")
+    os.makedirs(ob2)
+    json.dump({"fingerprint": "f" * 16, "filters_fp": "0" * 16},
+              open(os.path.join(ob2, "build_corpus_stats.json"), "w"))
+    state, ev = check_corpus_filters_fp(only_old)
+    assert state == PASS, ("a pre-p1 stamp is unmigrated debt, not a mismatch", state, ev)
+    assert "UNMIGRATED" in ev and "ok_dc" in ev, (
+        "the pre-p1 verdict passed without naming the unmigrated domain in its evidence", ev)
+
+    state, ev = check_corpus_filters_fp(d)
+    assert state == FAIL, ("stale + no-stamp + junk _dc domains must FAIL", state)
+    assert "junk_dc" in ev, ("the unrecognized stamp must be named in the FAIL evidence", ev)
+
+    # JUNK ALONE. The multi-domain world above cannot see a predicate that classifies EVERY
+    # non-matching value as unmigrated debt: the current-generation stale_dc still mismatches,
+    # so FAIL survives and the run stays red for the wrong reason. Measured -- widening the
+    # predicate to `got != live` leaves that world FAILing while this one silently PASSes.
+    # One domain, one bad state.
+    for label, fp in (("unrecognized", "not-a-hash-at-all"), ("wrong-generation", "p9-" + "0" * 16)):
+        only_bad = _tmp_repo()
+        os.makedirs(os.path.join(only_bad, "filters"), exist_ok=True)
+        for _n in cfp.PIPELINE_FILTERS:
+            shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(only_bad, "filters", _n))
+        sys.path.insert(0, os.path.join(only_bad, "scripts"))
+        json.dump({"domains": {"bad_dc": 1.0}}, open(os.path.join(only_bad, GATE_RUN_MIX), "w"))
+        bb = os.path.join(only_bad, "data", "corpus", "bad_dc")
+        os.makedirs(bb)
+        json.dump({"fingerprint": "f" * 16, "filters_fp": fp},
+                  open(os.path.join(bb, "build_corpus_stats.json"), "w"))
+        state, ev = check_corpus_filters_fp(only_bad)
+        assert state == FAIL, (
+            f"a lone {label} stamp ({fp!r}) must FAIL, not be waved through as unmigrated debt",
+            state, ev)
+
+    # PACKER-ONLY (A1): a domain whose bytes never pass through filters/ stamps a non-empty
+    # packer_fp and no filters_fp. It must PASS without being compared to the pipeline -- the
+    # pre-A1 builder wrote its packer hash under filters_fp and would mismatch forever. An
+    # EMPTY packer_fp is not a declaration and stays new-unstamped FAIL.
+    def _packer_world(dom, stamp_obj):
+        w = _tmp_repo()
+        os.makedirs(os.path.join(w, "filters"), exist_ok=True)
+        for _n in cfp.PIPELINE_FILTERS:
+            shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(w, "filters", _n))
+        sys.path.insert(0, os.path.join(w, "scripts"))
+        json.dump({"domains": {dom: 1.0}}, open(os.path.join(w, GATE_RUN_MIX), "w"))
+        wb = os.path.join(w, "data", "corpus", dom)
+        os.makedirs(wb)
+        json.dump(stamp_obj, open(os.path.join(wb, "build_corpus_stats.json"), "w"))
+        return check_corpus_filters_fp(w)
+
+    st, ev = _packer_world("code_tests_v1",
+                           {"fingerprint": "f" * 16, "packer_fp": "abcdef0123456789"})
+    assert st == PASS and "PACKER-ONLY" in ev, (
+        "a packer_fp-stamped domain that never used filters/ must PASS by name", st, ev)
+    st, _ = _packer_world("code_tests_v1", {"fingerprint": "f" * 16, "packer_fp": ""})
+    assert st == FAIL, "an empty packer_fp is not a valid packer-only declaration"
+
+    # NOT AN ESCAPE HATCH: a CURRENT-generation stale filters_fp beside a non-empty packer_fp
+    # must still FAIL (judged by filters_fp; packer_fp is read only in the `got is None` arm).
+    # The stale value carries the live generation marker so it exercises `got != live`, not
+    # the unmigrated-debt branch. Mutation `elif got != live and not packer_fp` must red this.
+    st, ev = _packer_world(
+        "twofaced_dc",
+        {"fingerprint": "f" * 16, "filters_fp": f"{gen}-" + "0" * 16,
+         "packer_fp": "fedcba9876543210"})
+    assert st == FAIL and "built with filters" in ev and "twofaced_dc" in ev, (
+        "a stale current-generation filters_fp must fail even beside a non-empty packer_fp",
+        st, ev)
 
 
 def check_score_input_fresh(root):
@@ -8719,6 +8947,11 @@ CORPUS_FILTERS_BASELINE = os.path.join("facts", "corpus_filters_baseline.json")
 # must verify the domains THIS run trains on, not train.py's historical default data/mix_500m:
 # the v41 gate mix is all `_dc` domains (ae-10), while mix_500m names nine pre-decontam dirs.
 GATE_RUN_MIX = os.path.join("data", "mix_v41_gate.json")
+# The pre-2026-09-17 filters_fp shape: a bare 16-hex sha1 over the pipeline filter FILES' bytes.
+# Current values are prefixed "p1-" (see corpus_fingerprint.fp_filters). Naming the exact old
+# shape rather than "anything unprefixed" keeps an unrecognized value out of the debt path, where
+# it would pass as a known migration instead of failing as the corruption it is.
+_OLD_GEN_STAMP = re.compile(r"^[0-9a-f]{16}$")
 
 
 
@@ -18990,14 +19223,29 @@ EVIDENCE = {
 }
 
 
-def assert_evidence_covers_checks():
-    # Equality, not subset: both directions fail loudly. A check added without a declaration
-    # is classified by nobody; a stale name is noise. Cheap enough to run in the hook's
-    # scoped path, where the full _demo() guard never fires for a CHECKS/EVIDENCE-only diff.
+def evidence_parity():
+    """(ok, message) for `set(EVIDENCE) == the CHECKS table's names`. No side effects.
+
+    Equality, not subset: both directions fail loudly. A check added without a declaration
+    is classified by nobody; a stale name is noise.
+
+    ONE PREDICATE, THREE CONSUMERS: the hook's scoped path asserts on it, `harness check`
+    turns it into a counted FAIL and so into an exit code (de-83), and the selftest drives
+    both. A second copy of this comparison is how those two paths drift apart, which is the
+    shape the task was filed for -- the guard existed, in one place, and the exit code
+    everyone actually read was decided in another.
+    """
     check_names = {n for n, *_ in CHECKS}
-    assert set(EVIDENCE) == check_names, (
+    if set(EVIDENCE) == check_names:
+        return True, f"{len(check_names)} checks, every one declared"
+    return False, (
         f"EVIDENCE stale: {sorted(set(EVIDENCE) - check_names)}; "
         f"undeclared: {sorted(check_names - set(EVIDENCE))}")
+
+
+def assert_evidence_covers_checks():
+    ok, msg = evidence_parity()
+    assert ok, msg
 
 
 # -------------------------------------------------------------------------- stages
@@ -21894,6 +22142,60 @@ def _selftest_flagless_test_is_gated():
               "as a false FAIL")
 
 
+def _selftest_stamp_ref_is_origin():
+    """Both halves of de-99, on a world that can tell the two refs apart.
+
+    PAIRED -- the pairing is the test. Clearing the cry-wolf means nothing unless the branch
+    the check exists for still WARNs. World A (a correct pod push naming origin/main while the
+    local main lags) must PASS; world B (a real non-ancestor commit) must still report the
+    louder WARN. Each world's SelftestSkip(environment) is caught PER CASE: one unbuildable
+    world skips only its own case, out loud -- it must not propagate out of _demo and fail the
+    whole run (the de-99 CI failure was exactly that propagation).
+    """
+    import shutil
+
+    def _refs_differ(a):
+        g = lambda *x: subprocess.run(["git", "-C", a, *x],
+                                      capture_output=True, text=True).stdout.strip()
+        return g("rev-parse", "main") != g("rev-parse", "origin/main")
+
+    saved = os.environ.pop("HARNESS_POD_STAMP", None)
+    a = b = None
+    try:
+        # WORLD A: origin/main ahead of a lagging local main.
+        try:
+            a = _stamp_world_origin_ahead()
+        except SelftestSkip as s:
+            print(f"  pod stamp ref: SKIP world A (origin-ahead unbuildable): {s}")
+        else:
+            assert _refs_differ(a), (
+                "world A's local main equals origin/main, so the PASS below is vacuous")
+            st_a, why_a = check_pod_stamp_is_main(a)
+            assert st_a == PASS, (
+                f"a stamp naming origin/main while local main lags reads {st_a}, not PASS -- "
+                f"de-99 cry-wolf ({why_a[:130]})")
+            print("  pod stamp ref A: origin/main ahead of a lagging local main PASSes")
+        # WORLD B: a real commit outside BOTH refs must still WARN.
+        os.environ.pop("HARNESS_POD_STAMP", None)
+        try:
+            b = _broken_pod_stamp_is_main()
+        except SelftestSkip as s:
+            print(f"  pod stamp ref: SKIP world B (no non-ancestor commit available): {s}")
+        else:
+            st_b, why_b = check_pod_stamp_is_main(b)
+            assert st_b == WARN and "main does NOT contain" in why_b, (
+                f"the non-ancestor world reads {st_b} ({why_b[:130]}) -- the fix weakened the "
+                f"branch this check exists for")
+            print("  pod stamp ref B: a real non-ancestor commit still WARNs")
+    finally:
+        os.environ.pop("HARNESS_POD_STAMP", None)
+        if saved is not None:
+            os.environ["HARNESS_POD_STAMP"] = saved
+        for w in (a, b):
+            if w:
+                shutil.rmtree(os.path.dirname(w), ignore_errors=True)
+
+
 def _selftest_core_reexports_are_identical():
     """Every name harness re-exports from harness_core is the SAME OBJECT, not a second copy.
 
@@ -22139,6 +22441,65 @@ def _selftest_repo_auth_mirror():
               f"TIMEOUT stays visible and an ordinary repo FAIL still mirrors")
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+
+def _selftest_evidence_parity_is_an_invariant():
+    """A parity break moves `harness check`'s EXIT CODE, and the exit code is what is read.
+
+    THE MUTANT IS THE INCIDENT. #115 added a CHECKS entry with no EVIDENCE line; CI went red
+    and `harness check` printed "0 FAIL of 87" and exited 0 on that same tree. Deleting a REAL
+    EVIDENCE key is the only faithful world: a hand-written CHECKS/EVIDENCE pair would assert
+    against the same fiction the fix was written from.
+
+    Run through main(), not by calling the helper. The defect was never in the comparison --
+    it was that the comparison's verdict reached no exit code, so a test of evidence_parity()
+    would have passed on the broken tree and reported green for exactly the reason the task
+    was filed. run_checks is stubbed to [] so the FAIL is unambiguously this line's: with the
+    real checks in the list a red could come from any of 118 and the assertion would not
+    discriminate.
+
+    Both directions, because the negative one alone is satisfied by making every run red.
+    """
+    import contextlib
+    import io
+
+    _real = globals()["run_checks"]
+    _argv = sys.argv
+    _victim = _saved = None
+    try:
+        globals()["run_checks"] = lambda *a, **k: []
+        sys.argv = ["harness.py", "check"]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            green_rc = main()
+        assert green_rc == 0, (
+            f"a green tree exits {green_rc} -- every commit would be refused: "
+            f"{out.getvalue()[-200:]}")
+        assert "evidence_parity" in out.getvalue(), (
+            "the parity line is not printed on a clean run, so nobody reading the output "
+            "knows it was evaluated at all")
+        # A REAL KEY, removed. Not a fabricated name appended to EVIDENCE: the register has
+        # to be the one this tree carries, or the world tests a shape no commit can make.
+        _victim = [n for n, *_ in CHECKS if n in EVIDENCE][0]
+        _saved = EVIDENCE.pop(_victim)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            red_rc = main()
+        _text = out.getvalue()
+        assert red_rc != 0, (
+            f"harness check exits {red_rc} with {_victim} undeclared in EVIDENCE -- this is "
+            f"#115: the invariant is visible but not in the exit code: {_text[-300:]}")
+        assert "evidence_parity" in _text and _victim in _text, (
+            f"the refusal does not name the undeclared check, so it cannot be acted on: "
+            f"{_text[-300:]}")
+    finally:
+        globals()["run_checks"] = _real
+        sys.argv = _argv
+        if _victim:
+            EVIDENCE[_victim] = _saved
+    print("  evidence parity: a dropped EVIDENCE key exits nonzero from `harness check` and "
+          "names the check; a clean tree still exits 0; driven through main() with run_checks "
+          "stubbed, so the FAIL is this line's")
 
 
 def _selftest_commit_delivers_fact_ref():
@@ -23991,6 +24352,13 @@ def _demo(only=None):
                           capture_output=True).returncode == 0:
             return (f"{sha[:12]} IS an ancestor of the real main, so the world does not hold "
                     f"the condition the check exists to catch")
+        # THE REMOTE REF TOO (de-99): that is the one check_pod_stamp_is_main now compares
+        # against, so a world excluded only from local main can still hold an origin/main
+        # ancestor and must be caught here as stale.
+        if subprocess.run(["git", "-C", ROOT, "merge-base", "--is-ancestor", sha, "origin/main"],
+                          capture_output=True).returncode == 0:
+            return (f"{sha[:12]} IS an ancestor of origin/main, the ref the check now compares "
+                    f"against, so the world does not hold the condition it must catch")
         return None
 
     # Same exemption, same reason, different artifact: this check reads git's own reflog at
@@ -24361,6 +24729,8 @@ def _demo(only=None):
     _selftest_repo_auth_mirror()
     _selftest_flagless_test_is_gated()
     _selftest_core_reexports_are_identical()
+    _selftest_stamp_ref_is_origin()
+    _selftest_evidence_parity_is_an_invariant()
 
     # The other half of the selftest: a PASS must have verified something. A check that
     # examined zero items and returned PASS is vacuous -- the shape shared by score_matrix_present
@@ -28395,6 +28765,21 @@ def main():
     if cmd in ("all", "check"):
         print("INVARIANTS  (a check that cannot run is a FAILURE, never a pass)")
         res = run_checks()
+        # THE PARITY IS AN INVARIANT, SO IT BELONGS IN THE EXIT CODE (de-83). It ran only on
+        # the --selftest path and inside the hook's scoped branch, and #115 is what that
+        # bought: a CHECKS entry landed with no EVIDENCE line, CI went red, and this command
+        # printed "0 FAIL of 87" and exited 0 on that same tree. Printed in a check row's own
+        # shape and appended to `res`, so it is counted in the FAIL line and decides the exit
+        # code -- which is also what lets the hook's harness-check gate refuse on it.
+        _ok, _why = evidence_parity()
+        _state = PASS if _ok else FAIL
+        print(f"  [{_state:^4}] {'evidence_parity':<22} {_why}  (0.0s) auth=repo")
+        if not _ok:
+            print("         asserts: every CHECKS entry declares where its evidence lives, and "
+                  "every EVIDENCE key names a check that exists")
+            print("         prevents: #115 -- a check added without its EVIDENCE line went red in "
+                  "CI while every local signal, this command included, read green")
+        res = res + [("evidence_parity", _state, _why, "", "")]
         bad = [n for n, s, *_ in res if s == FAIL]
         warns = [n for n, s, *_ in res if s == WARN]
         timed = [n for n, s, *_ in res if s == TIMEOUT]

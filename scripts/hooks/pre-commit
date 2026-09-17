@@ -1778,6 +1778,11 @@ def main():
         # guards breaks in either direction -- a non-pipeline file in filters/ must NOT move
         # the fingerprint (the false positive that re-failed nine already-ruled domains), and
         # an edit to a pipeline filter MUST move it (the blindness that would replace it).
+        # 2026-09-17: fp_filters now hashes the compiled PATTERNS, not the files' bytes, so the
+        # self-check also pins the SEMANTIC line -- a semantics-preserving edit (hoisted
+        # COMPILED, comment, import order) must NOT move it, four PATTERNS mutations x all
+        # three pipeline files MUST, the AST reader must equal build_corpus's exec, and a
+        # PATTERNS the reader cannot read must raise rather than contribute nothing.
         "datagen/corpus_fingerprint.py",
         # The Fable CoT renderer. Its selftest holds keep() equal to the predicates
         # measure_fable5_supply.py counted with: a drift makes the fold land a different row
@@ -1794,6 +1799,17 @@ def main():
         # hand read actually reads and the one a careless guard would blank.
         "datagen/code_dedup_handread.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
+        # The two contamination scanners. Registered with the ledger-key fix (genB, 2026-09-18):
+        # their --self-check now carries a corpus-free section over the ledger cache key, which
+        # was size+mtime and is now a content fingerprint on BOTH sides. A transfer
+        # (cp/rsync/podput) used to rebuild every cached verdict -- the transfer-invariance
+        # failure corpus_fingerprint was written to avoid -- and a same-size in-place rewrite
+        # was missed, which facts/contamination.json#cont.ledger already recorded as the
+        # uncertainty. The section is the four cases in both directions plus the legacy-row
+        # rule; each is mutation-verified red (revert the key to bytes+mtime, drop baseline_fp,
+        # drop cand_fp, accept a legacy row as fresh). ~0.7s each, no corpus.
+        "datagen/scan_code_contamination.py",
+        "datagen/scan_math_contamination.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "datagen/near_dedup_scale.py",
         "probes/t71_depth_lr_rule.py",
@@ -2799,10 +2815,30 @@ def main():
         # descendant to resolve, waits the deadline and exits before torchrun. The test runs
         # the launcher with torchrun stubbed and asserts training is reached with no acquire.
         "runs/v42_phi_sft.sh": {"scripts/test_phisft_launcher.py"},
+        # Orphan tests with a real prod module under them but no exact subject key (0e blind-spot
+        # scan 2026-09-18): each test was SELFTEST-registered and green CPU, so editing the prod
+        # module fired none. Keyed to the module the test actually imports.
+        "filters/pass1_garbage.py": {"filters/test_l0_garbage_known.py"},
+        "filters/pass2_garbage.py": {"filters/test_l0_garbage_known.py"},
+        "filters/pass3_garbage.py": {"filters/test_l0_garbage_known.py"},
+        "algorithms/rlvr_trainer.py": {"algorithms/test_gspo_ratio.py"},
+        "datagen/l2_code_chunk_pool.py": {"datagen/test_l2_code_chunks_edges.py"},
+        "datagen/l3_rubric.py": {"datagen/test_l3_label_pipeline.py"},
+        "datagen/l3_stratified_sample.py": {"datagen/test_l3_label_pipeline.py"},
     }
+    # v41f path-level trigger (ae): a v41f/<mod>.py production edit selects both faithful-repro
+    # suites. The map is exact-key, so without this prefix a pure v41f production change selected
+    # NO test (the v41f tests ran only when the commit staged the tests themselves). The two
+    # runners glob-discover every test_p0_*/test_p1_* per-module file, so they already cover the
+    # changed module; the per-module files are not SELFTEST_FILES-registered and are filtered by
+    # the intersection below.
+    _V41F_SUBJECT_TESTS = {"tests/v41f/p0_selftest.py", "tests/v41f/p1_selftest.py",
+                          "tests/v41f/test_p1_assembly_keys.py"}
     _subject_tests = set()
     for _subj in staged("AM"):
         _subject_tests |= TESTS_FOR_SUBJECT.get(_subj, set())
+        if _subj.startswith("v41f/") and _subj.endswith(".py"):
+            _subject_tests |= _V41F_SUBJECT_TESTS
     # Restricted to the map: a test pulled in this way still has to be one the hook can run here,
     # or a NEEDS_DATA file would be launched on a box without its data and fail for the wrong
     # reason. Its own staged-ness is irrelevant, so `git show :<f>` cannot be used for those --
