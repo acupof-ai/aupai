@@ -159,3 +159,82 @@ def parse_scores(raw: str, rubric: dict) -> dict:
     if extra:
         raise ValueError(f"unexpected extra keys {sorted(extra)}: {s[:200]!r}")
     return out
+
+
+def _selftest() -> int:
+    # Known answers for the two funnel contracts fb hardened 2026-09-17:
+    #  A. truncation: build_prompt flags a >TRUNC_CHARS document and a prefix-only document
+    #     EXACTLY at the boundary, in both rubric kinds; the prompt tells the teacher what it
+    #     saw. A whole-chunk trainer excludes truncated rows, so a missed flag silently feeds a
+    #     prefix label as if it covered the whole chunk.
+    #  B. parse_scores refuses every malformed teacher reply (a silent garbage label is the
+    #     funnel's repeated failure class): missing dim, non-int, bool, out-of-range, extra
+    #     key, no-JSON, empty.
+    short = "x" * TRUNC_CHARS
+    over = "x" * (TRUNC_CHARS + 1)
+
+    def trunc_flag(text, rubric):
+        _prompt, truncated = build_prompt(text, rubric)
+        return truncated
+
+    # exact boundary, both rubric kinds: == limit is whole, limit+1 is a prefix
+    for rub in (CODE_RUBRIC, NL_RUBRIC):
+        assert trunc_flag(short, rub) is False, f"{rub['kind']}: at-limit must be whole"
+        assert trunc_flag(over, rub) is True, f"{rub['kind']}: over-limit must flag prefix"
+        p_full, _ = build_prompt(short, rub)
+        p_tr, t_tr = build_prompt(over, rub)
+        assert t_tr is True and "FIRST" in p_tr and "longer than" in p_tr, \
+            f"{rub['kind']}: truncated prompt must tell the teacher it saw only a prefix"
+        assert "FIRST" not in p_full, f"{rub['kind']}: whole doc must not carry the prefix notice"
+        # the shown body is capped at TRUNC_CHARS (the long doc's tail is never sent)
+        assert p_tr.endswith("x" * 400), "prompt body is the capped prefix"
+
+    valid = json.dumps({d: 3 for d in _DIMS})
+    good = parse_scores(valid, NL_RUBRIC)
+    assert good == {d: 3 for d in _DIMS} and set(good) == set(_DIMS)
+    # a lone ```json fence is tolerated, nothing else
+    assert parse_scores("```json\n" + valid + "\n```", NL_RUBRIC) == good
+
+    def must_raise(label, raw):
+        try:
+            parse_scores(raw, NL_RUBRIC)
+        except ValueError:
+            return
+        raise AssertionError(f"{label}: malformed teacher reply must refuse, got accepted")
+
+    must_raise("empty", "")
+    must_raise("no-json", "the answer is unclear")
+    for dim in _DIMS:
+        must_raise(f"missing {dim}", json.dumps({d: 3 for d in _DIMS if d != dim}))
+        must_raise(f"non-int {dim}", json.dumps({**good, dim: 3.0}))
+        must_raise(f"bool {dim}", json.dumps({**good, dim: True}))
+        must_raise(f"string {dim}", json.dumps({**good, dim: "3"}))
+        must_raise(f"zero {dim}", json.dumps({**good, dim: 0}))
+        must_raise(f"six {dim}", json.dumps({**good, dim: 6}))
+    must_raise("extra-key", json.dumps({**good, "note": "x"}))
+    must_raise("bad-json", '{"content_quality": 3,')
+
+    # rubric routing: a code-marked problem statement selects the code rubric, plain prose NL
+    code_stmt = "def solve(x):\n    return x\n\nimport os\nclass A:\n    pass\n"
+    assert select_rubric(code_stmt)["kind"] == "code", "strong code signal must route to code"
+    assert select_rubric("an ordinary paragraph about history with no code marks")["kind"] \
+        == "natural_language"
+    print("selftest ok: truncation flags at TRUNC_CHARS both rubrics with prefix notice; "
+          "parse_scores accepts the one valid shape and refuses missing/non-int/bool/"
+          "out-of-range/extra/no-json/empty; rubric routing code vs NL")
+    return 0
+
+
+def main() -> int:
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--selftest", action="store_true")
+    a = ap.parse_args()
+    if a.selftest:
+        return _selftest()
+    ap.print_help()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
