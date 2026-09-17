@@ -603,6 +603,68 @@ def _selftest() -> int:
         assert json.load(jf) == {"k": 3}
     assert not os.path.exists(aj_path + ".tmp")
 
+    # ATOMIC-PUBLISH MECHANISM, not just the happy-path artifact. The "no .tmp / complete
+    # target" checks above cannot tell a tmp+fsync+rename publish from a direct write to the
+    # target (a direct write also leaves no .tmp), and cannot see a skipped flush/fsync. Spy
+    # the .tmp file's flush, os.fsync, and os.replace for both helpers and require the exact
+    # sequence flush -> fsync -> replace(tmp, target) with a DISTINCT .tmp source. Removing
+    # fsync/flush, or writing the target directly, must fail here.
+    import builtins
+
+    ev = []
+    real_open, real_fsync, real_replace = builtins.open, os.fsync, os.replace
+
+    class _Spy:
+        def __init__(self, raw):
+            self.raw = raw
+
+        def flush(self):
+            ev.append("flush")
+            return self.raw.flush()
+
+        def __getattr__(self, name):
+            return getattr(self.raw, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.raw.close()
+
+    def spy_open(path_, *a, **k):
+        r = real_open(path_, *a, **k)
+        mode = a[0] if a else k.get("mode", "r")
+        return _Spy(r) if str(path_).endswith(".tmp") and "w" in mode else r
+
+    def spy_fsync(fd):
+        ev.append("fsync")
+        return real_fsync(fd)
+
+    def spy_replace(src, dst):
+        ev.append(("replace", str(src), str(dst)))
+        return real_replace(src, dst)
+
+    def expect_durable_publish(fn, target):
+        ev.clear()
+        builtins.open, os.fsync, os.replace = spy_open, spy_fsync, spy_replace
+        try:
+            fn()
+        finally:
+            builtins.open, os.fsync, os.replace = real_open, real_fsync, real_replace
+        assert ev[0] == "flush" and ev[1] == "fsync", ev
+        rep = ev[2]
+        assert rep[0] == "replace" and rep[1] != rep[2] and rep[1].endswith(".tmp") \
+            and os.path.abspath(rep[2]) == os.path.abspath(target), ev
+
+    expect_durable_publish(
+        lambda: _atomic_write_jsonl(os.path.join(tmp, "mech.jsonl"), ['{"z":9}\n']),
+        os.path.join(tmp, "mech.jsonl"),
+    )
+    expect_durable_publish(
+        lambda: _atomic_write_json(os.path.join(tmp, "mech.json"), {"z": 9}),
+        os.path.join(tmp, "mech.json"),
+    )
+
     # end-to-end WIRING test for the quota-feasibility gate (a unit test of
     # _check_quota_feasible alone cannot prove build() calls it). Enough docs land in one
     # char band/PPL band to earn a positive per-stratum floor quota, but the chunker yields
