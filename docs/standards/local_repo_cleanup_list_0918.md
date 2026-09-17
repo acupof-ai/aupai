@@ -17,13 +17,14 @@ origin/main; tip at audit `11bcde71`). Sizes are local working-tree `du`; the sh
 ## TL;DR
 | bucket | what | count | reclaim | recommendation |
 |---|---|---|---|---|
-| A | clean worktrees in `/Users/bytedance/code/...` on branches already merged to origin/main, no uncommitted files | 58 | **~5.3 GiB** | delete after user yes (worktree + merged branch) |
+| A | clean merged worktrees in `/Users/bytedance/code/...`, no uncommitted files | 58 at snapshot (re-enumerate; was 60 at re-count) | **~5.3 GiB** | delete after user yes (worktree + merged branch) |
 | B | worktrees on MERGED branches but with uncommitted/dirty files | 9 | ~1.2 GiB (incl. one 1.1G) | **keep until each owner confirms the dirty files are junk** — do not auto-delete |
 | C | worktrees on UNMERGED (live) branches | 22 | ~11.7 GiB (two big: enc-probe 9.2G, 98 1.1G) | **keep** — active/WIP; owner sign-off each |
-| D | local branches already merged to main with NO worktree | 51 | ~0 disk (refs only) | `git branch -d` safe; delete after user yes |
+| D | local branches already merged to main with NO worktree | 51 at snapshot (re-enumerate; was 54) | ~0 disk (refs only) | `git branch -d` safe; delete after user yes |
 | E | detached worktrees in `/Users/...` (scratch reviews left behind) | 8 | ~0.6 GiB | delete after user yes (named by commit) |
-| — | detached scratch worktrees under `/tmp` and the system temp | 49 | ephemeral | auto-reaped on reboot; nothing to do |
-| data | uncommitted/ignored local `data/` files | — | 722M dir, **only ~8 MiB git-ignored + ~0.1 MiB tracked manifests** is plainly expendable; **the big dirs are conservative-KEEP after the pod loss** | see §4; do not delete the 134M/190M/60M corpus copies without a provenance decision |
+| F | `/tmp` worktrees holding UNCOMMITTED work on a main-ancestor HEAD | 2 (98-owned design docs) | ~0.2 MiB text | **KEEP — owner 98 must commit/discard; a reboot DELETES them, it does not reap them** |
+| — | other detached scratch worktrees under `/tmp` / system temp | 49 | ephemeral scratch | reboot-reaped; but see F — the dirty ones are NOT safe, re-verify status at action time |
+| data | uncommitted/ignored local `data/` files | — | 723 MiB dir = 24.6 MiB tracked-present (223 files) + **697 MiB untracked-ignored (762 files)** + ~8 MiB tracked-but-ignored; **none of the 697 MiB is plainly expendable** | see §4; conservative-KEEP the corpus/quarantine bytes after the pod loss |
 
 ## Why merged-and-clean is safe to remove (A/D/E)
 - A merged branch's tip is an ancestor of `origin/main` (`git merge-base --is-ancestor <b>
@@ -88,47 +89,86 @@ list in `D_merged_branches_no_worktree.txt`. Recommend delete after yes.
 **E (detached persistent scratch; 8, ~0.6 GiB):** detached-HEAD review archives in
 `/Users/...` from past second-reads (`aupai-0e-r500/r497/r506`, `aupai-0e-pr441`,
 `v41f-model-read-wt`, `main-probe-wt`, `aupai-de-mg3/mg4`). Each is pinned to a specific
-commit; all those commits are on main or on merged PRs. Recommend delete after a per-row
-glance at the commit (`E_detached_persistent.txt` lists the sha). No branch is lost because
-there was no branch.
+commit. These are safe to delete NOT because the commit sha is an ancestor of main in every
+case, but because the patch content is already on main: e.g. `aupai-gena-gpu41f`'s detached
+tip `97388c3a` is **not** an ancestor of `origin/main` and hangs off no ref (reflog-only), yet
+`git patch-id` is `e51d01b8…`, identical to `c34170b3` which IS on main — same change. So the
+safety basis is "the work is on main by content (patch-id / merged PR), re-pushable", and each
+row should be confirmed by that content check (or the PR it reviewed) before delete. Full
+list with shas in `E_detached_persistent.txt`.
+
+## 3b. F — `/tmp` worktrees with UNCOMMITTED design work (KEEP, owner 98; NOT reboot-safe)
+
+Two `/private/tmp/wt-*` worktrees have a clean main-ancestor HEAD but a **dirty tracked design
+document** — real edits that exist in NO commit and on no branch. Calling these "ephemeral,
+auto-reaped on reboot" is wrong: a reboot DESTROYS the file, it does not recycle tracked work.
+
+| path | uncommitted diff | owner |
+|---|---|---|
+| `/private/tmp/wt-98-idx-trainability-design` | `docs/standards/v41f_indexer_trainability_design.md` +88/-43 | 98 |
+| `/private/tmp/wt-98-v41f-train-ckpt-design` | `docs/standards/v41f_train_checkpoint_design.md` +102/-24 | 98 |
+
+Both HEADs are ancestors of current `origin/main`, so these are edits pressed onto a fresh
+base, not stale-base leftovers. Note for the owner: the working copies look like EARLIER
+drafts of docs that have since landed in revised form on main — main's step-D design carries
+the newer G1–G7 revision (#489) and the indexer design carries the refined sub-ULP STE text,
+so the dirty content may already be superseded. That is a content call only 98 can make; the
+safe action is for 98 to diff each against current main and either commit the still-wanted
+parts or `git restore`/remove. This list must NOT delete them and must not assume the reboot
+handles it. The other dirty `/tmp` review trees (`eng493`, `eng493base`, `idx494`) are
+harmless: their only diffs are cosmetic re-wraps of files already fixed on main and untracked
+test files that already landed — still confirmed with the owner, but no design content.
 
 The 49 detached worktrees under `/private/tmp` and the system temp dir are scratch and are
 reclaimed automatically on reboot; no action.
 
-## 4. Local `data/` — mostly conservative-KEEP after the 2026-09-16 pod loss
-`data/` is 722 MiB locally, but most of it is **not** plainly disposable. The repo's own rule
-(`docs/standards/data_pipeline_rebuild_0916.md`, `data/PROVENANCE.md`) is "frozen sources
-have NO reproduction script; verify, do not delete — re-fetching introduces contamination
-drift." After the pod was wiped, a local copy may be the only surviving copy, so the safe
-default is to keep until the corpus machine is rebuilt and sha-verified.
+## 4. Local `data/` — 723 MiB, almost all conservative-KEEP after the 2026-09-16 pod loss
+The repo's own rule (`docs/standards/data_pipeline_rebuild_0916.md`, `data/PROVENANCE.md`)
+is "frozen sources have NO reproduction script; verify, do not delete — re-fetching introduces
+contamination drift." After the pod was wiped, a local copy may be the only surviving copy.
 
-| path | size | tracked? | recommendation | basis |
-|---|---|---|---|---|
-| `data/sft/*.gate_exclude_manifest.jsonl` (8 files) | 0.1 MiB | **tracked** | KEEP | committed; gate manifests |
-| `data/synthetic/math_hard_eval_1k.jsonl` | 0.36 MiB | **tracked** | KEEP | the one tracked synthetic file |
-| other git-ignored files under `data/` (incl. ignored `data/sft/*`, sample shards) | **~8 MiB** | ignored | may delete | regenerable/ignored; user yes |
-| `data/tokenizer*.json` | ~7.6 MiB | local | **KEEP** | the gate tokenizer (2.5M) + variants; called out in the rebuild runbook |
-| `data/math/` | 60 MiB | ignored, 0 tracked | KEEP for now | regenerable via `datagen/fetch_math_data.py`/`build_math_expand.sh`, but refetch after pod loss carries contamination drift; delete only once corpus machine re-fetches & sha-checks |
-| `data/synthetic/` (rest) | 190 MiB | ignored except the eval file | KEEP for now | generated SFT/eval material; same rebuild-then-delete ordering |
-| `data/_corpus_unsanitized/math_530k_20260830` | 134 MiB | ignored | KEEP pending ruling | a deliberately retained UNSANITIZED pre-image; confirm it is still referenced by an audit before deleting |
-| `data/_quarantine/rlvr_math_UNFILTERED.jsonl` | 38 MiB | ignored | KEEP pending ruling | quarantine is a hold, not trash; owner confirms release/delete |
-| `data/alpaca_gpt4_zh.jsonl` | 33 MiB | ignored | KEEP | frozen SFT source class; re-fetch drift rule |
-| `data/s1k.jsonl` | 12 MiB | local | verify then decide | confirm tracked/regenerable before any delete |
+Measured accounting (correct git split; the earlier draft's "~8 MiB ignored" used the wrong
+flag and is withdrawn):
+- **24.6 MiB tracked files present (223 files)** — committed, KEEP.
+- **697.3 MiB UNTRACKED-IGNORED files (762 files, `git ls-files --others -i
+  --exclude-standard`)** — the real bulk; none of it is plainly expendable today.
+- ~8.2 MiB tracked-but-now-ignored (159 files, `-ci`) — already in git history.
+- 0 untracked non-ignored (nothing would be lost silently by `git clean` semantics — but do
+  NOT run `git clean`, the ignored corpus is exactly what it would erase).
 
-So the "~722M reclaimable" figure from the earlier pass overstates what is safe TODAY: only
-**~8 MiB of git-ignored regenerables** is unambiguous. The remaining corpus/quarantine bytes
-should be deleted (if at all) as part of the post-provisioning data rebuild in
-`data_pipeline_rebuild_0916.md` §8/§0, after fresh copies exist and match the recorded
-facts — not by a local tidy-up that could erase a sole surviving frozen file.
+| ignored path | size | untracked-ignored files | recommendation / basis |
+|---|---|---|---|
+| `data/sft/` (ignored content beside the tracked gate manifests) | 201 MiB | 10 | KEEP — generated gate/decontam SFT material; rebuild-then-delete |
+| `data/synthetic/` (besides tracked `math_hard_eval_1k.jsonl`) | 190 MiB | 12 | KEEP — generated SFT/eval; same ordering |
+| `data/_corpus_unsanitized/math_530k_20260830` | 134 MiB | 9 | KEEP pending ruling — deliberate UNSANITIZED pre-image; confirm still referenced by an audit |
+| `data/math/` | 60 MiB | 3 | KEEP — regenerable via `fetch_math_data.py`/`build_math_expand.sh`, but post-loss refetch carries contamination drift |
+| `data/_quarantine/rlvr_math_UNFILTERED.jsonl` | 38 MiB | 1 | KEEP pending owner — quarantine is a hold, not trash |
+| `data/alpaca_gpt4_zh.jsonl` + other ignored roots | remainder | — | KEEP — frozen SFT source class, re-fetch drift rule |
+| tracked: 8 `data/sft/*.gate_exclude_manifest.jsonl`, `data/synthetic/math_hard_eval_1k.jsonl`, `data/tokenizer*.json` | ~32 MiB | tracked | KEEP — committed manifests + the gate tokenizer (the 2.5M gate file named in the rebuild runbook) |
+
+Conclusion: there is **no sizeable data bucket safe to delete today**. The 697 MiB should be
+removed, if at all, as part of the post-provisioning rebuild in
+`data_pipeline_rebuild_0916.md` (§0/§8), AFTER fresh copies exist on the new node and match
+the recorded sha/facts. A local tidy-up that `git clean -x`s or `rm -rf`s these could erase a
+sole surviving frozen file. Even the ~8 MiB tracked-but-ignored files should be left for that
+pass rather than hand-deleted.
+
+## Snapshot is moving — re-enumerate at action time, do not execute these lists as-is
+The worktree set changed during the audit (155→159 worktrees in minutes): between the first
+and second enumeration bucket A moved by a couple of rows, E by a few, and D gained newly
+merged branches (e.g. `0e-packer-fp-a1`, `3b-review-rows-0917`, `pr507`). The attached
+A–E lists are the evidence snapshot at `11bcde71`; the actual remove/delete step MUST
+re-derive each set on the then-current `origin/main` with the same three predicates
+(`worktree list --porcelain`, `merge-base --is-ancestor <branch> origin/main`,
+`status --porcelain` empty) and re-check every `/tmp` tree for dirty files. Never pipe the
+committed text list straight into a removal.
 
 ## What I need from the user (yes/no per bucket)
-1. **A** — remove the 58 clean merged worktrees + their merged branches (~5.3 GiB)? (list A)
-2. **D** — `git branch -d` the 51 merged ref-only branches? (list D)
-3. **E** — remove the 8 detached persistent scratch worktrees after a sha glance? (list E)
-4. **B** — for each of the 9 dirty-merged worktrees, route to its owner for a keep/delete call.
-5. **C** — leave all 22 live worktrees (recommended); separately decide enc-probe (9.2G) and
-   aupai-98 (1.1G) with their owners.
-6. **data** — approve deleting only the ~8 MiB ignored regenerables now; defer the
-   134M/190M/60M/38M/33M corpus + quarantine bytes to the post-provisioning rebuild.
+1. **A** — remove the clean merged worktrees + merged branches (re-enumerated; ~5.3 GiB at snapshot)?
+2. **D** — `git branch -d` the merged ref-only branches (re-enumerated)?
+3. **E** — remove the detached persistent scratch worktrees after a per-row content/PR check?
+4. **F** — do NOT touch the two 98 dirty `/tmp` design worktrees; route to 98 to commit/discard.
+5. **B/C** — route the 9 dirty-merged and 22 live worktrees to their owners (enc-probe 9.2G, aupai-98 1.1G).
+6. **data** — defer all 697 MiB of untracked-ignored corpus/quarantine/SFT bytes to the post-provisioning rebuild; delete nothing locally.
 
-No command in any bucket runs without the corresponding yes.
+No command in any bucket runs without the corresponding yes and a fresh enumeration.
