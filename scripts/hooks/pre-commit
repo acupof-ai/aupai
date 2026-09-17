@@ -2213,6 +2213,12 @@ def main():
         # DeepSeek-V4.1 reference, so a new P0 module needs no map entry (the runner does),
         # and the suite is the oracle-equivalence proof for the whole v41f build.
         "tests/v41f/p0_selftest.py",
+        # CPU parity skeleton for the future GPU torch._grouped_mm MoE dispatch (66, P4
+        # preresearch; design docs/standards/moe_grouped_mm_dispatch.md). --selftest pins the
+        # grouped flatten/sort/batch_sizes/index_add expansion to the per-expert where-loop at
+        # max_abs 0.0 in fp32 and bf16 (weight-before-w2), an empty group, and a bf16
+        # weight-order guard. Standalone until the GPU branch joins it to p1 discovery.
+        "tests/v41f/test_p1_grouped_dispatch.py",
         # v41f-S config-formula total/active parameter counter (3b); --selftest pins a
         # hand-computed tiny config so the total=sum-of-modules identity cannot silently rot.
         "scripts/v41f_param_count.py",
