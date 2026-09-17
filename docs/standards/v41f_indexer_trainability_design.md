@@ -27,11 +27,13 @@ path is added.
 **Faithfulness ruling (per prereg rules, not attributed upstream).** The vendored model
 has no differentiable path through the indexer and no auxiliary objective for it. The ref
 module ends in hard `topk(...).int()` and hard bool scatter; there is no straight-through,
-soft, Gumbel, or load-balancing term anywhere in `model_ref.py.ref`. The mechanism's
-provenance note (ref `:94`, "Names match DeepSeek-V3.2-Exp, where this mechanism first
-appeared") is a literature pointer, not a training recipe. **Any training signal for the
-indexer is a v41f-defined decision.** The prereg row states this explicitly; no claim is
-made that DeepSeek trains the indexer this way, and the inference numerics must stay
+soft, Gumbel, or load-balancing term anywhere in `model_ref.py.ref`. The mechanism's provenance note (ref `:94`, "Names match DeepSeek-V3.2-Exp, where this
+mechanism first appeared") is a literature pointer, not a training recipe. The single
+Gumbel in the file (`model_ref.py.ref:1285-1292`, a standalone `sample()` doing
+Gumbel-max token decoding after the MTP head) is unrelated to the indexer and must not be
+read as an upstream soft/straight-through indexer path; it is post-head sampling, not
+selection. **Any training signal for the indexer is a v41f-defined decision.** The prereg
+row states this explicitly; no claim is made that DeepSeek trains the indexer this way, and the inference numerics must stay
 bit-identical whether the training path is on or off (§3).
 
 Scope: prefill training only. v41f trains teacher-forced prefill; the decode path
