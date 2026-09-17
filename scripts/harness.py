@@ -26653,8 +26653,13 @@ def cmd_claim_file(argv):
         ok, msg = file_claim.release(path)
         print(msg)
         return 0 if ok else 1
-    for p, r in file_claim.claims().items():
-        print(f"{p:16s} owner={r.get('owner')} t={time.strftime('%H:%M', time.gmtime(r.get('time')))} UTC")
+    # ONE FORMATTER (file_claim.status_lines), not a second copy of the print. This line used
+    # to carry its own `%H:%M` format, and because THIS is the entry point a session runs, the
+    # duplicate meant a fix to file_claim's printer would not have reached the command people
+    # use. Measured 2026-09-18: two claims 10 days old (TTL 6h, both dead to the hook) printed
+    # as live holders here, with no date and no stale marker to say otherwise.
+    for line in file_claim.status_lines():
+        print(line)
     return 0
 
 
