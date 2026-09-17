@@ -123,6 +123,75 @@ class V41FModel(nn.Module):
             [DSparkBlock(cfg, i, len(self.target_layer_ids), max_batch_size=max_batch_size)
              for i in range(cfg.n_mtp_layers)]
         ) if cfg.n_mtp_layers else nn.ModuleList()
+        self._freeze_dead_and_dormant_params(cfg)
+
+    def permanently_dead_param_names(self, cfg) -> tuple[str, ...]:
+        """The index keys: the one family that is PERMANENTLY gradient-less.
+
+        These leaves are built on every kv-source layer and feed the indexer's scores, but
+        the indexer's selection is discrete (`topk(...).indices`), so no gradient can reach
+        them through the main CE -- measured on every layer of `v41f_small`: `index_key.wk`
+        and `index_key.k_norm` are `grad is None` in BOTH `indexer_train_mode` values, while
+        every other indexer-side family gets gradient (`compressor.*` has ~1.7e-2, because
+        the compressed KV is what sparse attention actually attends; `indexer.wq_b`/
+        `weights_proj` have it under STE).
+
+        Derived from cfg rather than listed per layer, so a config with different
+        `kv_source_layers` needs no edit.
+        """
+        return tuple(
+            f"layers.{layer}.attn.index_key.{leaf}.weight"
+            for layer in cfg.kv_source_layers
+            for leaf in ("wk", "k_norm")
+        )
+
+    def indexer_projection_names(self, cfg) -> tuple[str, ...]:
+        """The leaves STE exists to train: the indexer's two projections on every
+        index-source layer.
+
+        These are trainable under `ste` and frozen under `off`. Freezing them under `off` is
+        what makes `off` genuinely present-dormant: without it they carry `requires_grad=True`
+        and are counted in-group by a census while the faithful path gives them no gradient at
+        all, so an optimizer built from that census would carry two dead leaves with master
+        state.
+        """
+        return tuple(
+            f"layers.{layer}.attn.indexer.{leaf}.weight"
+            for layer in cfg.index_source_layers
+            for leaf in ("wq_b", "weights_proj")
+        )
+
+    def _freeze_dead_and_dormant_params(self, cfg) -> None:
+        """Make `requires_grad` mean optimizer membership. Two rules, both structural.
+
+        RULE 1 -- the permanently-dead family (`index_key`) is frozen in BOTH modes. Its
+        gradient is absent by construction (the selection is discrete), so a leaf left
+        `requires_grad=True` is "in group but with no state": AdamW allocates no master/m/v
+        for it. Measured on the STE stack, that mismatch is exactly this family --
+        `requires_grad=True` gave 15 names where AdamW created state for 13; freezing them
+        closes it to 13 == 13.
+
+        The absent gradient is a RUNTIME accident of the current selection path, not a
+        declared property: a future differentiable path, or an STE that reaches further,
+        would silently start training these leaves and nothing would raise.
+        `requires_grad_(False)` states the intent at build time, where a checkpoint and an
+        optimizer group can both see it.
+
+        RULE 2 -- the indexer projections are frozen when `indexer_train_mode == "off"` and
+        live under `"ste"`. That is the mode's whole meaning, expressed where a census can
+        read it.
+
+        NOT keyed on `grad is None` as the predicate, deliberately: an unrouted MoE expert
+        legitimately has no gradient and no state in a given step, so a gradient-derived
+        criterion would evict a live parameter. Freezing is for what is dead BY
+        CONSTRUCTION.
+        """
+        dead = set(self.permanently_dead_param_names(cfg))
+        if cfg.indexer_train_mode == "off":
+            dead |= set(self.indexer_projection_names(cfg))
+        for name, param in self.named_parameters():
+            if name in dead:
+                param.requires_grad_(False)
 
     def forward(self, input_ids: torch.Tensor):
         engram_hashes = self.engram_hash(input_ids, 0, None) if self.engram_hash is not None else None
