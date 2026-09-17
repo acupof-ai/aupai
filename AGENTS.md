@@ -377,6 +377,14 @@ Facts (fingerprint, sizes, gate values, frontier, sweeps): `facts/tokenizer.json
 
 ## Pod
 
+> **⚠️ 2026-09-16 — POD DESTROYED, 8×H20 OFFLINE. The `sglang-test` static pod and its `/work`
+> emptyDir were deleted and the 8 H20 cards were decommissioned. No `pod`/`tn`/launch/eval
+> command in this section is executable until a fresh node is provisioned and the data is
+> rebuilt. Do not run any of the steps below from memory against a missing tunnel. Follow
+> `docs/standards/infra_persistent_rebuild_0916.md` (node/infra) and
+> `docs/standards/data_pipeline_rebuild_0916.md` (corpus/checkpoints) before doing anything on
+> a pod. The bullets below are retained as the post-rebuild operating rules.**
+
 - **The wrappers are `scripts/pod` and `scripts/podput`, tracked in this repo since 2026-09-04.** They used to live only in `~/bin`, untracked, while every session and five tracked scripts depended on them — a tree that does not contain its own entry points cannot be split, and that is the reason they were vendored ahead of the `aupai-infra` cut. One-time per laptop: `ln -sf "$PWD/scripts/pod" ~/bin/pod && ln -sf "$PWD/scripts/podput" ~/bin/podput`. Both carry the `infra-layer:` header and move to `aupai-infra` at the split; `scripts/test_pod_wrappers.sh` is their gate (8 refuse, 14 accept, 2 flag, with two negative controls in opposite directions: restoring the old end-of-string predicate must fail exactly the five `&`-not-at-end cases, and removing the quote/escape strip must fail the hard negatives such as `2>&1`). It runs on the LAPTOP only: `scripts/pod` has no file extension, so pod_drift's `*.py`/`*.sh` SCOPE never matched it, and the wrappers are the transport TO the pod -- a container that ran them would be calling `tn exec` into itself. The test is in SCOPE and its subject is not, so on the pod it fails by construction (`No such file or directory` for scripts/pod, measured 2026-09-05); that is a validator separated from what it validates, §182's shape.
 - `pod` refuses a `cd … &` shape: the `cd` does not reach the backgrounded half, so a relative path resolves under the container default and the redirect silently does not run — no log file at all, not an empty one (shape 166). Write the command to a file on the pod and `setsid bash runs/<name>.sh > runs/<name>.log 2>&1 &` (`scripts/launch_30b.sh:141`). `POD_ALLOW_BG_CD=1` overrides. **It does not catch a command with no `cd` in it at all** — the two 17-hour loops live on 2026-09-04 are that shape, and nothing in the command string reveals a `cd` that was never typed. Those are caught at runtime by the sweep, not at launch.
 - `pod --view` prints which filesystem the next command sees, because the wrong view does not error — it answers.
@@ -548,12 +556,18 @@ The domain files, named here because `facts_well_formed` requires it in both dir
   ```bash
   git push -u origin HEAD
   gh pr create --base main --head <branch>
-  # CI must be green on the PR's HEAD sha
+  # Gate first: nonzero rc means do NOT merge (2=pending check, 1=fail/cancel, 3=gh error/empty)
+  python3 scripts/pr_merge_gate.py <pr>   # rc 0 only when EVERY check is settled-passing
   # your second reader approves ON THE PR as a COMMENT with `artifact:` or `case:` in it, plus a
   # runs/review.jsonl row: every session shares one gh identity, so `gh pr review --approve` is
   # refused ("Can not approve your own pull request") and review_present reads the ledger row
   # THE REVIEWER, never the author: gh pr merge --merge
   ```
+
+  The gate reads `gh pr checks --json` and fails closed: it decides on the whole settled set,
+  not one CI event, so a check still QUEUED/IN_PROGRESS blocks the merge (the #441 race) and an
+  empty/gh-error set is NO-GO, never green. It is a pre-merge convention, not a hook — there is
+  no wrapper around `gh pr merge`; the reviewer runs it and only merges on rc 0.
 
   Ledger-only commits still merge with `scripts/merge_main.sh <branch>` — immediate, union-merged,
   CAS. That split is the ruling and not a shortcut: the union driver and the compare-and-swap are

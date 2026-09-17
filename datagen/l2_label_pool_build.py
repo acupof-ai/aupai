@@ -37,6 +37,7 @@ import random
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from atomic_io import durable_publish  # noqa: E402
 from l1_ppl_kenlm import InterpolatedKneserNey, tokenize  # noqa: E402
 from l3_stratified_sample import language_of, length_band  # noqa: E402
 
@@ -93,6 +94,39 @@ def _cap_segments(segments, lo, hi, measure, split):
     return segments
 
 
+def _bpe_chunks(tok, lo=512, hi=1024):
+    """Build the measured-BPE chunk closure over an ALREADY-LOADED tokenizer. The cap is
+    checked on decode->re-ENCODED text, so an injectable fake that reproduces the real +4
+    cut drift can exercise the walk-back without the gate vocabulary."""
+
+    def ntok(text):
+        return len(tok.encode(text).ids)
+
+    def measured(ids):
+        return len(tok.encode(tok.decode(ids)).ids)
+
+    def chunks(text):
+        ids = tok.encode(text).ids
+        if not ids or len(ids) < MIN_FRAGMENT_TOKENS:
+            return []
+        segs, start = [], 0
+        while start < len(ids):
+            end = min(start + hi, len(ids))
+            # shrink to a boundary whose DECODED text re-encodes within the max
+            while end > start and measured(ids[start:end]) > hi:
+                end -= 1
+            if end == start:
+                end = start + 1  # forward progress on a pathological token
+            segs.append(ids[start:end])
+            start = end
+        if len(segs) == 1 and measured(segs[0]) < lo:
+            return [tok.decode(segs[0])]  # lone 128-511 doc: keep as one short chunk
+        segs = _cap_segments(segs, lo, hi, measured, lambda s, k: (s[:k], s[k:]))
+        return [tok.decode(s) for s in segs]
+
+    return chunks, ntok
+
+
 def _chunk_fn(tokenizer_path, allow_word_count=False):
     """text -> list[chunk_text] each measuring 512-1024 tokens under the GATE
     TOKENIZER. The cap is checked on decode->re-ENCODED text, not on sliced token ids:
@@ -109,33 +143,7 @@ def _chunk_fn(tokenizer_path, allow_word_count=False):
     try:
         from tokenizers import Tokenizer
         tok = Tokenizer.from_file(tokenizer_path)
-
-        def ntok(text):
-            return len(tok.encode(text).ids)
-
-        def measured(ids):
-            return len(tok.encode(tok.decode(ids)).ids)
-
-        def chunks(text, lo=512, hi=1024):
-            ids = tok.encode(text).ids
-            if not ids or len(ids) < MIN_FRAGMENT_TOKENS:
-                return []
-            segs, start = [], 0
-            while start < len(ids):
-                end = min(start + hi, len(ids))
-                # shrink to a boundary whose DECODED text re-encodes within the max
-                while end > start and measured(ids[start:end]) > hi:
-                    end -= 1
-                if end == start:
-                    end = start + 1  # forward progress on a pathological token
-                segs.append(ids[start:end])
-                start = end
-            if len(segs) == 1 and measured(segs[0]) < lo:
-                return [tok.decode(segs[0])]  # lone 128-511 doc: keep as one short chunk
-            segs = _cap_segments(
-                segs, lo, hi, measured, lambda s, k: (s[:k], s[k:]))
-            return [tok.decode(s) for s in segs]
-
+        chunks, ntok = _bpe_chunks(tok)
         return chunks, "hf-tokenizer", ntok
     except Exception as e:
         if not allow_word_count:
@@ -160,17 +168,16 @@ def _chunk_fn(tokenizer_path, allow_word_count=False):
 
 
 def _atomic_write_jsonl(path, lines):
-    """Write JSONL atomically: temp file in the same dir, fsync, then os.replace so a
-    crash can never leave a half-written pool at `path` (the restartability promise)."""
+    """Write JSONL atomically: temp file in the same dir, then a durable publish
+    (file fsync -> os.replace -> parent-dir fsync) so a crash can never leave a
+    half-written pool at `path` (the restartability promise)."""
     d = os.path.dirname(os.path.abspath(path))
     os.makedirs(d, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         for ln in lines:
             fh.write(ln)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+        durable_publish(fh, tmp, path)
 
 
 def _atomic_write_json(path, obj):
@@ -179,9 +186,7 @@ def _atomic_write_json(path, obj):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(obj, fh, indent=2, ensure_ascii=False)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+        durable_publish(fh, tmp, path)
 
 
 def _iter_paths(kind2glob):
@@ -510,6 +515,28 @@ def _selftest() -> int:
     drift_out = _cap_segments([list(s) for s in drift_in], 512, 1024, drift,
                               drift_split)
     assert all(drift(s) <= 1024 for s in drift_out), [drift(s) for s in drift_out]
+    # REAL DRIFT THROUGH THE CLOSURE, NOT AN ADDITIVE MEASURE: drive _bpe_chunks with the
+    # shared _FakeTokenizer (ae #406), whose decode stamps a marker that encode expands by a
+    # real +4, so a raw 1024-id cut RE-ENCODES to 1028 through tok.encode().ids -- the exact
+    # path the walk-back protects. Deleting the walk-back while must emit a >1024 chunk and
+    # turn the cap line red; this is what the numeric `drift` emulation above cannot prove
+    # (it never calls the production closure).
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from datagen.l2_code_chunk_pool import _FakeTokenizer, _clean  # noqa: E402
+
+    ftok = _FakeTokenizer()
+    fchunks, fn = _bpe_chunks(ftok)
+    # two FULL windows plus a tail: without the walk-back both interior slices re-encode to
+    # 1028 and _cap_segments only repairs the LAST two, leaving the first over cap (its own
+    # assert fires). One over-cap window plus a short tail is repaired by the tail fold and
+    # would mask a deleted walk-back, so the doc needs >=2 raw windows.
+    fline = "a" * (2 * 1024 + 80)
+    fout = fchunks(fline)
+    assert "".join(_clean(c, ftok) for c in fout) == fline, "fake-drift cut does not partition"
+    assert len(fout) >= 2, f"expected walk-back splits, got {len(fout)} chunk(s)"
+    assert all(fn(c) <= 1024 for c in fout), \
+        ["%d re-encodes over 1024 (walk-back missing)" % fn(c) for c in fout if fn(c) > 1024]
+
     # the word-fallback chunker itself honors the cap on a tail-triggering doc
     wchunks, wkind, _ = _chunk_fn("", allow_word_count=True)
     assert wkind == "word-fallback"
@@ -602,6 +629,77 @@ def _selftest() -> int:
     with open(aj_path, encoding="utf-8") as jf:
         assert json.load(jf) == {"k": 3}
     assert not os.path.exists(aj_path + ".tmp")
+
+    # ATOMIC-PUBLISH MECHANISM, not just the happy-path artifact. The "no .tmp / complete
+    # target" checks above cannot tell a tmp+fsync+rename publish from a direct write to the
+    # target (a direct write also leaves no .tmp), and cannot see a skipped flush/fsync. Spy
+    # the .tmp file's flush, os.fsync (file vs parent DIRECTORY), and os.replace for both
+    # helpers and require the exact ordered sequence
+    #   flush -> fsync(FILE) -> os.replace(tmp, target) -> fsync(parent DIR)
+    # with a distinct .tmp source. Removing fsync/flush, writing the target directly,
+    # dropping the parent-dir fsync, or renaming before the file fsync must fail here.
+    import builtins
+    import stat
+
+    ev = []
+    real_open, real_fsync, real_replace, real_fstat = (
+        builtins.open, os.fsync, os.replace, os.fstat,
+    )
+
+    class _Spy:
+        def __init__(self, raw):
+            self.raw = raw
+
+        def flush(self):
+            ev.append("flush")
+            return self.raw.flush()
+
+        def __getattr__(self, name):
+            return getattr(self.raw, name)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.raw.close()
+
+    def spy_open(path_, *a, **k):
+        r = real_open(path_, *a, **k)
+        mode = a[0] if a else k.get("mode", "r")
+        return _Spy(r) if str(path_).endswith(".tmp") and "w" in mode else r
+
+    def spy_fsync(fd):
+        # classify the fsynced descriptor: the temp FILE bytes vs the parent DIRECTORY entry
+        ev.append("fsync_dir" if stat.S_ISDIR(real_fstat(fd).st_mode) else "fsync_file")
+        return real_fsync(fd)
+
+    def spy_replace(src, dst):
+        ev.append(("replace", str(src), str(dst)))
+        return real_replace(src, dst)
+
+    def expect_durable_publish(fn, target):
+        ev.clear()
+        builtins.open, os.fsync, os.replace = spy_open, spy_fsync, spy_replace
+        try:
+            fn()
+        finally:
+            builtins.open, os.fsync, os.replace = real_open, real_fsync, real_replace
+        # exact ordered sequence: flush, file-bytes fsync, rename, then parent-dir fsync
+        assert ev[:2] == ["flush", "fsync_file"], ev
+        rep = ev[2]
+        assert isinstance(rep, tuple) and rep[0] == "replace" and rep[1] != rep[2] \
+            and rep[1].endswith(".tmp") \
+            and os.path.abspath(rep[2]) == os.path.abspath(target), ev
+        assert ev[3:] == ["fsync_dir"], ev
+
+    expect_durable_publish(
+        lambda: _atomic_write_jsonl(os.path.join(tmp, "mech.jsonl"), ['{"z":9}\n']),
+        os.path.join(tmp, "mech.jsonl"),
+    )
+    expect_durable_publish(
+        lambda: _atomic_write_json(os.path.join(tmp, "mech.json"), {"z": 9}),
+        os.path.join(tmp, "mech.json"),
+    )
 
     # end-to-end WIRING test for the quota-feasibility gate (a unit test of
     # _check_quota_feasible alone cannot prove build() calls it). Enough docs land in one
