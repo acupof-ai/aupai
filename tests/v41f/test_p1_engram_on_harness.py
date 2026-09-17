@@ -74,9 +74,51 @@ def test_on_path_builds_with_engram_on_one_layer():
     # the hash state exists, exactly one layer carries an Engram module
     assert ref.engram_hash is not None
     assert [l.engram is not None for l in ref.layers] == [False, True, False]
-    # rows derived from primes (not a literal); compressed vocab measured off the tokenizer
-    assert len(num_emb) == 1 and num_emb[0] > 0
+    # compressed vocab measured off the tokenizer
     assert csize == 6  # the synthetic known-answer pieces fold to 6 classes
+    # table rows must EQUAL that layer's bucket-prime sum, not merely be positive. Hash ids
+    # land in [0, prime_sum), so extra rows are unreachable dead weight that only surfaces
+    # later as a wrong parameter count -- pin the exact value here (de's required gate).
+    layout = engram_mod.EngramLayout.from_args(args)
+    prime_sum = sum(p for ngram in layout.primes[0] for p in ngram)
+    assert num_emb == (prime_sum,), (
+        f"table rows {num_emb} != bucket-prime sum ({prime_sum},): extra rows are unreachable "
+        "dead weight")
+
+
+def test_num_embeddings_off_by_one_goes_red():
+    """Mutant: make the derivation return prime_sum + 1. The five functional tests still
+    pass (a hash id lands in [0, prime_sum), so the extra table row is never indexed -- pure
+    dead weight visible only later as a wrong param count). The build gate's exact-value
+    assertion must reject it by NAME. Patch the derivation the way a +1 typo would and run
+    the real build path."""
+    import ref_oracle
+
+    model, engram_mod = load_reference()
+    tok = synthetic_tokenizer()
+    real_derive = ref_oracle._engram_num_embeddings
+
+    def plus_one(engram_mod_arg, over):
+        rows = real_derive(engram_mod_arg, over)
+        return tuple(r + 1 for r in rows)
+
+    ref_oracle._engram_num_embeddings = plus_one
+    try:
+        args, bad_num, _ = engram_on_args(
+            model, engram_mod, engram_layer_ids=(ENGRAM_LAYER,), tokenizer=tok, **_SHAPE)
+        layout = engram_mod.EngramLayout.from_args(args)
+        prime_sum = sum(p for ngram in layout.primes[0] for p in ngram)
+        # this is the exact assertion test_on_path_builds uses; it MUST fire on the mutant
+        try:
+            assert bad_num == (prime_sum,), (
+                f"table rows {bad_num} != bucket-prime sum ({prime_sum},): extra rows are "
+                "unreachable dead weight")
+        except AssertionError as e:
+            assert "bucket-prime sum" in str(e) and "dead weight" in str(e)
+        else:
+            raise AssertionError("+1 num_embeddings mutant was not rejected by the named gate")
+    finally:
+        ref_oracle._engram_num_embeddings = real_derive
 
 
 def test_on_hash_state_matches_ours():
