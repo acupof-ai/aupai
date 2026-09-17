@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Second-pass Cosmopedia garbage filter."""
-import json, re, sys
+import json
+import re
+import sys
 
 PATTERNS = [
     r"(苏晏霈|台湾女演员).{0,30}(演艺生涯|参演电视剧|广告作品|粉丝交流群)",
@@ -46,15 +48,23 @@ PATTERNS = [
     r"轴承品牌LHZ|LHZ是一家专业生产轴承的企业|30315轴承尺寸参数",
 ]
 
+COMPILED = [re.compile(p) for p in PATTERNS]
+
+
+def drops(content):
+    """True when any L0 garbage rule matches (the document is dropped). The single predicate
+    the CLI and the selftest share so the gate tests the exact production decision."""
+    return any(p.search(content) for p in COMPILED)
+
+
 def main():
     inp, out = sys.argv[1], sys.argv[2]
-    compiled = [re.compile(p) for p in PATTERNS]
     kept, dropped = 0, 0
     with open(inp) as f, open(out, 'w') as fo:
         for line in f:
             d = json.loads(line)
             content = d.get('content', '')
-            if any(p.search(content) for p in compiled):
+            if drops(content):
                 dropped += 1
             else:
                 fo.write(line)
