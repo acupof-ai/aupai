@@ -492,12 +492,15 @@ print(state + ' ' + sha + ' ' + str(r.get('databaseId') or '?'))
 # holds pre-fix files (so the pre-merge hook validates the wrong world), the CAS merge can land
 # a tree that omits commits already on origin, and the post-CAS push then fails non-fast-forward
 # -- a confusing failure that pointed at the patch, when the real cause was an unfetched main.
-# Measured 2026-09-08. Fetching SILENTLY and continuing is deliberately not done: it quietly
-# changes "I merged X but published Y"; the operator must re-run from a tree they can see.
-# Args: $1=MAIN integration tree. Returns 0 when level/ahead (ahead is the merge itself), 1 when
-# behind, after printing the count and the recovery. Network/fetch failure does NOT silently
-# continue: it returns 2 so an offline laptop (where origin is genuinely unreachable) is told the
-# freshness is unknown rather than merging on an assumed-current main.
+# Measured 2026-09-08; revised 2026-09-18. A strict-ancestor lag is now auto-repaired by
+# fast-forwarding the main REF (the detached integration checkout is not on main, so the ref
+# update leaves HEAD and the working tree untouched); the move is announced on stderr, not
+# silent. What is still never done: forcing past a diverged ref, or continuing on an unknown
+# freshness state.
+# Args: $1=MAIN integration tree. Returns 0 when level/ahead (ahead is the merge itself) or
+# strict-ancestor-behind (auto ff to origin), 1 when the refs DIVERGED (local-only commits,
+# never force-moved), 2 on a fetch/compare failure so an offline laptop is told freshness is
+# unknown rather than merging on an assumed-current main.
 _fetch_and_check_behind() {
   _fm="$1"
   _fm_err="$(mktemp 2>/dev/null || mktemp -t mmfetch)"
@@ -516,13 +519,45 @@ _fetch_and_check_behind() {
     ''|*[!0-9]*) echo "merge_main: REFUSING: could not compare local main to origin/main" >&2; return 2 ;;
     0) return 0 ;;
     *)
-      echo "merge_main: REFUSING: local main is behind origin/main by $_behind_n commit(s)." >&2
-      echo "  The merge must not read a stale base (it validates the wrong pre-merge world and" >&2
-      echo "  the push then fails non-fast-forward). Bring the integration tree current WITHOUT" >&2
-      echo "  merging in it, then re-run:" >&2
-      echo "    git -C $_fm fetch origin main && git -C $_fm checkout --detach origin/main" >&2
-      echo "    bash scripts/merge_main.sh <branch>" >&2
-      return 1 ;;
+      # Local main is behind. Distinguish STRICT ANCESTOR (fast-forwardable) from DIVERGED.
+      # The integration tree is normally on a detached HEAD, so the checked-out branch is not
+      # main and `git fetch origin main:main` moves the main REF ONLY -- it never touches the
+      # working tree or HEAD (a checkout would, which is the advice this replaces and which
+      # people mistook for the fix). Measured 2026-09-18: after a PR merge the local main ref
+      # sat 13 commits behind origin/main and blocked the next ledger merge; a detached
+      # "checkout to newest" moved HEAD and left the compared ref stale (de-80, de, 3b).
+      _ahead_n=$(git -C "$_fm" rev-list --count origin/main..main 2>/dev/null)
+      case "$_ahead_n" in
+        ''|*[!0-9]*) echo "merge_main: REFUSING: could not compare local main ahead-count to origin/main" >&2; return 2 ;;
+        0)
+          # Strict ancestor: ff the ref only. Refuse on ANY non-fast-forward result; never
+          # force and never `|| true`, because silently swallowing a failure here is exactly
+          # the sideways move the ancestry hook exists to stop.
+          if ! git -C "$_fm" fetch -q origin main:main 2>&1; then
+            echo "merge_main: REFUSING: local main was fast-forwardable but 'git fetch origin main:main' failed" >&2
+            echo "  Run it by hand in the integration tree and re-run merge_main:" >&2
+            echo "    git -C $_fm fetch origin main:main" >&2
+            return 2
+          fi
+          if [ "$(git -C "$_fm" rev-parse main)" != "$(git -C "$_fm" rev-parse origin/main)" ]; then
+            echo "merge_main: REFUSING: after fetch origin main:main the local main ref still does not equal origin/main" >&2
+            echo "  Inspect the refs manually; do not force:" >&2
+            echo "    git -C $_fm rev-list --left-right --count main...origin/main" >&2
+            return 2
+          fi
+          echo "merge_main: local main was $_behind_n commit(s) behind; fast-forwarded the ref to origin/main (working tree untouched)." >&2
+          return 0 ;;
+        *)
+          # Both behind and ahead: the refs DIVERGED. A fetch refspec would reject non-ff, and
+          # forcing it would sideways-move main past a local commit -- the precise move the
+          # ancestry hook forbids. Refuse loud, change nothing, hand over the diagnosis.
+          echo "merge_main: REFUSING: local main DIVERGED from origin/main ($_behind_n behind, $_ahead_n ahead)." >&2
+          echo "  This is not a fast-forward, so it is not auto-synced and will never be forced." >&2
+          echo "  Inspect both sides; the local-only commit(s) must be merged or deliberately dropped by a human:" >&2
+          echo "    git -C $_fm log --oneline origin/main..main   # local-only" >&2
+          echo "    git -C $_fm log --oneline main..origin/main   # origin-only" >&2
+          return 1 ;;
+      esac
   esac
 }
 
@@ -1566,39 +1601,76 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
   esac
   rm -rf "$_n"
 
-  # W4 BEHIND-MAIN REFUSE (de-80 part B), against the REAL _fetch_and_check_behind with a bare
-  # origin, in two worlds. W4-behind: integration main is an ancestor of origin/main after a
-  # second clone lands a commit -> returns nonzero and names the commit count. W4-level: a fresh
-  # clone that is current -> returns 0 and prints nothing. The function fetches itself, so the
-  # worlds differ only by whether origin advanced, which is the property under test.
+  # W4 BEHIND-MAIN AUTO FAST-FORWARD (de-80 evolved 2026-09-18). The integration tree is a
+  # DETACHED checkout whose local main REF lags origin/main after a PR merge. The helper now
+  # fast-forwards the REF ONLY (`git fetch origin main:main`); it must not move HEAD or the
+  # working tree. Three worlds:
+  #   W4-ff:  local main is a strict ancestor of origin/main -> rc0, refs/heads/main becomes
+  #           origin/main, but HEAD stays pinned at the old commit (ref-only update).
+  #   W4-ff2: the same tree immediately re-run is level -> rc0, silent (behind count 0).
+  #   W4-div: the refs DIVERGE (one local-only AND one origin-only commit off the same base)
+  #           -> rc1 naming DIVERGED, and the local main ref is NOT force-moved to origin.
   _h=$(mktemp -d 2>/dev/null || mktemp -t mmbehind)
   git init -q --bare -b main "$_h/origin.git" >/dev/null 2>&1
   git clone -q "$_h/origin.git" "$_h/integ" >/dev/null 2>&1
   ( cd "$_h/integ" && git config user.email t@t && git config user.name T
-    git checkout -q -b main 2>/dev/null || git symbolic-ref HEAD refs/heads/main
     echo base > f.txt && git add f.txt && git commit -qm base && git push -q origin main )
+  _base=$(git -C "$_h/integ" rev-parse main)
+  # A second clone advances ORIGIN only.
   git clone -q --branch main "$_h/origin.git" "$_h/adv" >/dev/null 2>&1
   ( cd "$_h/adv" && git config user.email t@t && git config user.name T
     echo new > f2.txt && git add f2.txt && git commit -qam advance && git push -q origin main )
+  _origin_new=$(git --git-dir="$_h/origin.git" rev-parse main)
+
+  # --- W4-ff: detach the integration HEAD so refs/heads/main is NOT the checked-out branch
+  # (this is the production shape; fetch into a checked-out branch is refused by git). The
+  # local main ref is left at the stale base.
+  ( cd "$_h/integ" && git checkout -q --detach "$_base" )
   _hbout=$( _fetch_and_check_behind "$_h/integ" 2>&1 ) && _hbrc=0 || _hbrc=$?
-  if [ "$_hbrc" -ne 0 ] && echo "$_hbout" | grep -q "1 commit"; then
-    echo "  ok   behind W4 a stale local main refuses nonzero and names the count"
+  _ff_main=$(git -C "$_h/integ" rev-parse main)
+  _ff_head=$(git -C "$_h/integ" rev-parse HEAD)
+  if [ "$_hbrc" -eq 0 ] && echo "$_hbout" | grep -q "fast-forwarded the ref" \
+     && [ "$_ff_main" = "$_origin_new" ] && [ "$_ff_head" = "$_base" ]; then
+    echo "  ok   behind W4-ff a strict-ancestor local main auto-fast-forwards the ref (HEAD/worktree untouched)"
   else
-    echo "  FAIL behind W4: want nonzero naming 1 commit, got rc=$_hbrc: $_hbout" >&2
+    echo "  FAIL behind W4-ff: want rc0 + ref to origin ($_origin_new) + HEAD pinned at base ($_base); got rc=$_hbrc main=$_ff_main HEAD=$_ff_head: $_hbout" >&2
     _fails=$((_fails + 1))
   fi
-  # bring the local main REF level with origin (the legitimate catch-up the recovery prescribes;
-  # a checkout only moves HEAD, not the main branch ref the helper compares). Now the SAME helper
-  # must return 0 and print nothing.
-  ( cd "$_h/integ" && git update-ref refs/heads/main origin/main )
+  # W4-ff2: now level, the SAME helper returns 0 and prints nothing.
   _hlout=$( _fetch_and_check_behind "$_h/integ" 2>&1 ) && _hlrc=0 || _hlrc=$?
   if [ "$_hlrc" -eq 0 ] && [ -z "$_hlout" ]; then
-    echo "  ok   behind W4-control a level local main passes with no output"
+    echo "  ok   behind W4-ff2 a level local main passes with no output"
   else
-    echo "  FAIL behind W4-control: level main should pass silently, got rc=$_hlrc: $_hlout" >&2
+    echo "  FAIL behind W4-ff2: level main should pass silently, got rc=$_hlrc: $_hlout" >&2
     _fails=$((_fails + 1))
   fi
   rm -rf "$_h"
+
+  # --- W4-div: diverged refs refuse and nothing is force-moved.
+  _d=$(mktemp -d 2>/dev/null || mktemp -t mmdiv)
+  git init -q --bare -b main "$_d/origin.git" >/dev/null 2>&1
+  git clone -q "$_d/origin.git" "$_d/integ" >/dev/null 2>&1
+  ( cd "$_d/integ" && git config user.email t@t && git config user.name T
+    echo base > f.txt && git add f.txt && git commit -qm base && git push -q origin main
+    git checkout -q --detach HEAD )
+  _dbase=$(git -C "$_d/integ" rev-parse main)
+  git clone -q --branch main "$_d/origin.git" "$_d/adv" >/dev/null 2>&1
+  ( cd "$_d/adv" && git config user.email t@t && git config user.name T
+    echo origin > o.txt && git add o.txt && git commit -qam originonly && git push -q origin main )
+  _dorigin=$(git --git-dir="$_d/origin.git" rev-parse main)
+  # A LOCAL-ONLY commit on integ's main (HEAD detached, so move the ref without checkout).
+  ( cd "$_d/integ" && _l=$(echo local | git commit-tree HEAD^{tree} -p "$_dbase" -m localonly) \
+    && git update-ref refs/heads/main "$_l" )
+  _dlocal=$(git -C "$_d/integ" rev-parse main)
+  _dvout=$( _fetch_and_check_behind "$_d/integ" 2>&1 ) && _dvrc=0 || _dvrc=$?
+  _dafter=$(git -C "$_d/integ" rev-parse main)
+  if [ "$_dvrc" -ne 0 ] && echo "$_dvout" | grep -q "DIVERGED" && [ "$_dafter" = "$_dlocal" ]; then
+    echo "  ok   behind W4-div diverged local main refuses nonzero and is not force-moved"
+  else
+    echo "  FAIL behind W4-div: want nonzero + DIVERGED + ref kept at local ($_dlocal); got rc=$_dvrc ref=$_dafter: $_dvout" >&2
+    _fails=$((_fails + 1))
+  fi
+  rm -rf "$_d"
 
   # W5 BEHIND-GATE WIRING, source-level (de-80 part B). W4 above drives the real helper (behind
   # refuses, level passes), but reaching the merge path needs a whole two-repo integration world
