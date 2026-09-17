@@ -425,6 +425,64 @@ def _selftest() -> int:
                         timeout=10, limit=None, ledger=ledger)
     assert kept2 == 0, "resume did not skip done sample_ids"
 
+    # fsync ORDERING, deterministic (the crash-count test cannot see it: a tiny 4-row file is
+    # in the OS page cache after os._exit, so dropping the ledger fsync left counts green).
+    # Record the write/fsync call order on fake handles and assert the ledger is durable
+    # BEFORE the out commit marker; removing or reordering the ledger fsync fails here.
+    class _RecFH:
+        def __init__(self, log, tag):
+            self._log, self._tag = log, tag
+            self._fd = os.open(os.devnull, os.O_RDWR)  # a real fd so os.fsync(fileno()) runs
+            self.tag = tag
+
+        def write(self, s):
+            self._log.append((self._tag, "write"))
+
+        def flush(self):
+            self._log.append((self._tag, "flush"))
+
+        def fileno(self):
+            return self._fd
+
+    # production calls os.fsync(fh.fileno()) directly; wrap os.fsync so the call is attributed
+    # to whichever handle's fd it fsyncs, preserving the exact ordering.
+    _real_fsync = os.fsync
+
+    def _rec_fsync(fd):
+        for tag, fh in (("ledger", led_fh), ("out", out_fh)):
+            if fh is not None and fh.fileno() == fd:
+                order_log.append((tag, "fsync"))
+                break
+        return _real_fsync(fd)
+
+    order_log = []
+    _valid_ledger_row = {
+        "doc_id": "x", "domain": "en_c4_stage2_dc", "lang": "en",
+        "scorer_name": "l3-rubric", "scorer_version": RUBRIC_VERSION, "ts": "2026-09-17T00:00:00Z",
+        "score": None, "rubric_dims": {"content_quality": 3}, "cut": None,
+        "model": "m", "backend": "openai", "stratum": {}, "rubric_kind": "natural_language",
+        "record_id": "lab", "src_sha": None, "truncated": False}
+    out_fh = _RecFH(order_log, "out")
+    led_fh = _RecFH(order_log, "ledger")
+    os.fsync = _rec_fsync
+    try:
+        _write_durable(out_fh, led_fh, {"sample_id": "x"}, _valid_ledger_row)
+    finally:
+        os.fsync = _real_fsync
+    assert [f"{t}.{o}" for t, o in order_log] == \
+        ["ledger.write", "ledger.flush", "ledger.fsync",
+         "out.write", "out.flush", "out.fsync"], order_log
+    # no-ledger path: only the out write/fsync happens
+    order_log.clear()
+    out_fh = _RecFH(order_log, "out")
+    led_fh = None
+    os.fsync = _rec_fsync
+    try:
+        _write_durable(out_fh, None, {"sample_id": "y"}, None)
+    finally:
+        os.fsync = _real_fsync
+    assert [f"{t}.{o}" for t, o in order_log] == ["out.write", "out.flush", "out.fsync"], order_log
+
     # duplicate pool sample_ids -> loud nonzero refusal BEFORE any teacher call or write;
     # the canonical builder guarantees uniqueness, so this is a foreign/hand-edited pool.
     # Placed while stub servers are up so that disabling the guard actually labels the dup
