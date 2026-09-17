@@ -214,7 +214,12 @@ The truncation is impossible-by-construction, not merely untested:
      bf16 model is refreshed on the next forward.
    This is the standard bf16-mixed-with-fp32-master pattern. Membership is `requires_grad`,
    so the off-mode indexer leaves must be built `requires_grad_(False)` (present-dormant) and
-   STE flips exactly those 6 to True — no hand-maintained name list in the trainer (#487 G5).
+   the STE switch flips exactly those 6 to True — no hand-maintained name list in the
+   trainer (#487 G5). IMPORTANT (verified on #485 @920e2504): #485 does NOT own this flip —
+   both modes leave the leaves `requires_grad=True` and differ only by grad presence, so
+   "in group but grad None" is exactly the G5 defect and the `requires_grad_(False)` at build
+   is NEW code, a small standalone change (step D-PRE, de owns) that must merge before the
+   step-D code relies on it, not part of the frozen #485.
 3. **The bf16 refresh must never touch an aliased fp32-native parameter — this is a named,
    measured hazard.** For the fp32-native params (87 pre-assembly, 94 in the default — §1.1)
    `model[name]` and master share storage (one source of truth). If the §2.2 refresh is applied to them by
@@ -426,9 +431,9 @@ version 1 and the docstring/test must not imply they are.
    buffers (12 backbone, 13 with MTP); buffers never enter master/optim (G6).
 
 This revision is doc-only and addresses prereview #487 (G1–G7). Code (PR-1) opens only
-after #485 (indexer STE, which owns decision 2's `requires_grad` flip) and the v41f
-test-wiring PR land; it must not edit v41f/model.py/config.py while de's branch is open.
-Gates M1–M14 stand.
+after #485 (indexer STE) and the v41f test-wiring PR land, plus the small standalone
+G5 `requires_grad` flip (step D-PRE, de owns — the flip is NOT in #485); it must not edit
+v41f/model.py/config.py while de's branch is open. Gates M1–M14 stand.
 
 ---
 
@@ -444,9 +449,11 @@ checkpoint use the same three states so the two docs cannot disagree:
 | **present-dormant** | False, but the module is built and saved | none | saved bf16 + `param_meta grad=False`, absent from `param_names` | the 6 hard-topk indexer leaves in faithful `off` mode |
 | **absent** | module not instantiated on this config | none | not in the blob | level-1 candidate indexer when `candidate_source_layer<0` (v41f-S) |
 
-STE (#485) flips exactly the 6 index-source `wq_b`/`weights_proj` leaves from
-present-dormant to in-group by setting `requires_grad` with no format migration: membership
-is what turns on the fp32 master and m/v, the census and `optim_named.param_names` are
-derived, and M14 pins the exact 6-name delta. A param that is merely un-stepped (grad None)
-but still `requires_grad=True` is NOT dormant — that is the #487 G5 defect. Absent params
-never appear and a loader must not require them.
+The STE mode (introduced by #485) is what makes exactly the 6 index-source
+`wq_b`/`weights_proj` leaves trainable; a separate, small change (step D-PRE, de owns) reads
+that mode and sets `requires_grad` — off→False (present-dormant), ste→True (in-group) — with
+no format migration. #485 itself does not set the flag (both modes read True today).
+Membership is what turns on the fp32 master and m/v, the census and
+`optim_named.param_names` are derived, and M14 pins the exact 6-name delta. A param that is
+merely un-stepped (grad None) but still `requires_grad=True` is NOT dormant — that is the
+#487 G5 defect. Absent params never appear and a loader must not require them.
