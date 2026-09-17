@@ -1169,6 +1169,15 @@ def main():
         # brace, and one here truncates the parse (measured 2026-09-17: gates fell to 42 and
         # 218 gated files reported missing). The quote guard above does not cover braces.
         "filters/test_l0_garbage_known.py",
+        # Liveness probe for the tmux team. Registered because its selftest is the only
+        # thing that can say the three verdicts still mean what they name -- and the
+        # failure mode it replaces was a probe that read green while blind. Each
+        # known-answer case asserts its OWN signal, and removing that signal must move
+        # the verdict, so a case cannot pass for a reason other than the one it claims.
+        # It also pins the two measured traps: caffeinate is not a worker, and STALE is
+        # keyed on the transcript alone -- the first version took max(status_age,
+        # tr_age) and called an actively-writing pane (rev-8d, +22KB/20s) STALE.
+        "scripts/aupai_liveness.py",
         # merge_main.sh's lock predicate. Registered because the rule it replaces is exactly the
         # kind someone reinstates for looking simpler: `find -mmin +10` reads as an obviously
         # correct stale-lock cleanup, and it silently expired 4c's quiet window on 2026-09-05 while
