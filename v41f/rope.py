@@ -31,7 +31,10 @@ def precompute_freqs_cis(dim: int, seqlen: int, *, original_seq_len: int = 0,
 
 
 def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor, inverse: bool = False):
-    """In-place-free rotation. Accepts [b,s,d] or [b,s,h,d]; mirrors upstream exactly."""
+    """In-place rotation (mirrors upstream): writes the rotated values back into x and
+    returns the same storage. The five attention.py call sites invoke it for the side
+    effect (a sliced q/kv tail rotated in place) and discard the return, so a functional
+    no-copy return would silently leave q/kv unrotated on the real forward path."""
     y = x
     xc = torch.view_as_complex(x.float().unflatten(-1, (-1, 2)))
     if inverse:
@@ -41,4 +44,5 @@ def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor, inverse: bool = F
     else:
         freqs_cis = freqs_cis.view(1, xc.size(1), 1, xc.size(-1))
     out = torch.view_as_real(xc * freqs_cis).flatten(-2)
-    return out.to(y.dtype)
+    y.copy_(out.to(y.dtype))  # in-place, matching model_ref apply_rotary_emb (return discarded by callers)
+    return y

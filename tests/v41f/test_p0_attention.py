@@ -235,3 +235,49 @@ def test_shared_state_two_backwards_do_not_alias():
         worst = max(worst, d)
     assert worst < 1e-3, f"two-backward gradient contamination, max diff {worst}"
     print(f"  two-backward no-alias max diff={worst:.3e}")
+
+
+def test_attention_applies_rope_end_to_end():
+    """End-to-end guard the leaf return-test cannot give: after a REAL Attention.forward,
+    the q and window kv that reach sparse_attn MUST be the RoPE-rotated tensors. The five
+    apply_rotary_emb call sites are statement-form (return discarded) and rely on in-place
+    mutation; a functional regression leaves them unrotated while attention allclose still
+    passes at small width. Captures the arguments at the sparse_attn boundary and compares
+    to an explicit rotation of the projected q/kv."""
+    import v41f.attention as amod
+    from v41f.rope import apply_rotary_emb
+
+    ref, ours = _build_pair(0)
+    b, s = 2, 8
+    torch.manual_seed(0)
+    x = (0.2 * torch.randn(b, s, _SMALL["dim"])).bfloat16()
+
+    captured = {}
+    real_sparse = amod.sparse_attn
+
+    def capture_sparse(q, kv, sink, idxs, scale):
+        captured["q"] = q.detach().clone()
+        captured["kv"] = kv.detach().clone()
+        return real_sparse(q, kv, sink, idxs, scale)
+
+    amod.sparse_attn = capture_sparse
+    try:
+        with torch.no_grad():
+            ours(x, None)
+    finally:
+        amod.sparse_attn = real_sparse
+
+    rd = ours.rd
+    freqs = ours.freqs_cis[:s]
+    with torch.no_grad():
+        # expected: project q/kv then rotate exactly the tail, as the forward must
+        q0, _ = ours.qproj(x)
+        q_want = q0.clone()
+        q_want_tail = apply_rotary_emb(q0[..., -rd:], freqs)
+        q_want = torch.cat([q0[..., :-rd], q_want_tail], dim=-1)
+        kv_want = ours.kvproj(x).clone()
+        kv_want_tail = apply_rotary_emb(kv_want[..., -rd:], freqs)
+        kv_want = torch.cat([kv_want[..., :-rd], kv_want_tail], dim=-1)
+
+    cmp("real-forward q is rope-rotated", captured["q"], q_want, atol=2e-3)
+    cmp("real-forward window kv is rope-rotated", captured["kv"], kv_want, atol=2e-3)
