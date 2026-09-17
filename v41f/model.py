@@ -41,6 +41,12 @@ class V41FHead(nn.Module):
     def __init__(self, vocab_size: int, dim: int):
         super().__init__()
         self.weight = nn.Parameter(torch.empty(vocab_size, dim, dtype=torch.float32))
+        # Training-side init: upstream allocates torch.empty because inference loads the head
+        # from a checkpoint (convert.py) and specifies no init, so an unloaded head is an
+        # uninitialized parameter. Left as empty it happens to read zero -> constant logits
+        # -> the fp32 head severs every upstream gradient. Initialise the LM head at the
+        # standard projection scale; the checkpoint loader overwrites it for inference.
+        nn.init.normal_(self.weight, std=dim**-0.5)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(x.float(), self.weight)
