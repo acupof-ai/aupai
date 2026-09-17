@@ -1635,6 +1635,70 @@ print(f"_n_active_params: dense denominator identical ({_pa_old}); MoE {_CfgPaMo
       f"{_pa_act} of {_pa_total} ({_pa_routed} routed); top_k == experts is the full total OK")
 
 
+# de-74: THE SHORT_CONV FALSE MATCH, and it needs its OWN world because the one above cannot see it.
+#
+# The predicate is shape AND module; each half covers a failure the other cannot. The worlds above
+# exercise the module half (a substring test understates the mixed model) but NOT the shape half's
+# insufficiency -- they all have d_in != moe_experts, so short_conv never matches and a shape-only
+# predicate gives the same answer. MEASURED: reverting train.py to `p.dim() == 3 and
+# p.shape[0] == e` leaves every assertion above green.
+#
+# So the world must satisfy d_in == moe_experts. `short_conv` is nn.Conv1d(d_in, d_in, k=4,
+# groups=d_in) (model.py:140) whose `.weight` is (d_in, 1, 4); with d == moe_experts it enters the
+# routed sum and is discounted by k/e as though it were an expert most tokens skip. That is a
+# non-routed tensor moving the MFU denominator, which is the defect class de-71 exists to close.
+#
+# THE ASSERTION IS AGAINST THE ROUTED SET, NOT A NUMBER. A count would pass if the fix swapped one
+# wrong tensor for another; the set equality names what is charged and what is not. Dense FFN
+# blocks are included in the world (layers 4, moe_layers "0-1") so the two predicates can disagree.
+class _CfgPaSmallD(_CfgPaDense):
+    d = 8                       # == moe_experts below: the whole point of this world
+    layers = 4
+    vocab = 64
+    heads = 2
+    ffn_hidden = 8
+    moe_experts = 8
+    moe_top_k = 1
+    moe_shared = 1
+    moe_expert_ffn = 4          # (top_k + shared) * 4 == ffn_hidden 8, as MoEFFN enforces
+    moe_layers = "0-1"
+
+
+_pa_sd = HybridLM(_CfgPaSmallD)
+_pa_sd_e = _CfgPaSmallD.moe_experts
+# the two predicates, side by side, so a future edit that drops either half is caught by name
+_pa_sd_shape = {n for n, p in _pa_sd.named_parameters() if p.dim() == 3 and p.shape[0] == _pa_sd_e}
+_pa_sd_both = {n for n, p in _pa_sd.named_parameters()
+               if p.dim() == 3 and p.shape[0] == _pa_sd_e and "ffn." in n}
+_pa_sd_conv = {n for n, _ in _pa_sd.named_parameters() if n.endswith("short_conv.weight")}
+assert _pa_sd_conv, (
+    "the d == moe_experts world built no short_conv; this world has no subject and the shape "
+    "half's insufficiency is UNGUARDED")
+assert _pa_sd_conv <= _pa_sd_shape, (
+    f"short_conv ({sorted(_pa_sd_conv)}) is not 3-D with leading dim {_pa_sd_e}, so this world "
+    f"does not reproduce the false match it exists for -- check d and moe_experts are still equal")
+assert not (_pa_sd_conv & _pa_sd_both), (
+    f"the ffn test admits short_conv ({sorted(_pa_sd_conv & _pa_sd_both)}): the module half of "
+    f"the predicate has been weakened back to a shape test, and a mixer tensor is charged as a "
+    f"routed expert on any config where d == moe_experts")
+assert _pa_sd_shape != _pa_sd_both, (
+    "the shape-only and shape+module predicates agree on this world, so they cannot separate and "
+    "the short_conv coverage is vacuous")
+# the routed SET the count must be built from, derived from the model rather than typed
+_pa_sd_routed = _pa_sd_both
+_pa_sd_routed_n = sum(dict(_pa_sd.named_parameters())[n].numel() for n in _pa_sd_routed)
+_pa_sd_total = sum(p.numel() for p in _pa_sd.parameters())
+_pa_sd_conv_n = sum(dict(_pa_sd.named_parameters())[n].numel() for n in _pa_sd_conv)
+assert _train._n_active_params(_pa_sd, _CfgPaSmallD) == (
+    _pa_sd_total - _pa_sd_routed_n + _pa_sd_routed_n * _CfgPaSmallD.moe_top_k // _pa_sd_e
+), (f"the d == moe_experts world's active count is not total - routed + its top_k share. A "
+    f"shape-only predicate charges the mixer's short_conv ({_pa_sd_conv_n} numel) as routed and "
+    f"discounts it, moving the MFU denominator on a tensor no token routes through")
+print(f"_n_active_params: short_conv excluded at d == experts ({_pa_sd_e}); "
+      f"shape-only would charge {len(_pa_sd_shape)} tensors, shape+module {len(_pa_sd_both)}; "
+      f"mixer conv {_pa_sd_conv_n} numel not discounted OK")
+
+
 # ---------------------------------------------------------------------------------------------
 # b0-35 CSA: compressed coarse attention + top-k block selection + sliding window.
 #
