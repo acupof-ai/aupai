@@ -93,6 +93,39 @@ def _cap_segments(segments, lo, hi, measure, split):
     return segments
 
 
+def _bpe_chunks(tok, lo=512, hi=1024):
+    """Build the measured-BPE chunk closure over an ALREADY-LOADED tokenizer. The cap is
+    checked on decode->re-ENCODED text, so an injectable fake that reproduces the real +4
+    cut drift can exercise the walk-back without the gate vocabulary."""
+
+    def ntok(text):
+        return len(tok.encode(text).ids)
+
+    def measured(ids):
+        return len(tok.encode(tok.decode(ids)).ids)
+
+    def chunks(text):
+        ids = tok.encode(text).ids
+        if not ids or len(ids) < MIN_FRAGMENT_TOKENS:
+            return []
+        segs, start = [], 0
+        while start < len(ids):
+            end = min(start + hi, len(ids))
+            # shrink to a boundary whose DECODED text re-encodes within the max
+            while end > start and measured(ids[start:end]) > hi:
+                end -= 1
+            if end == start:
+                end = start + 1  # forward progress on a pathological token
+            segs.append(ids[start:end])
+            start = end
+        if len(segs) == 1 and measured(segs[0]) < lo:
+            return [tok.decode(segs[0])]  # lone 128-511 doc: keep as one short chunk
+        segs = _cap_segments(segs, lo, hi, measured, lambda s, k: (s[:k], s[k:]))
+        return [tok.decode(s) for s in segs]
+
+    return chunks, ntok
+
+
 def _chunk_fn(tokenizer_path, allow_word_count=False):
     """text -> list[chunk_text] each measuring 512-1024 tokens under the GATE
     TOKENIZER. The cap is checked on decode->re-ENCODED text, not on sliced token ids:
@@ -109,33 +142,7 @@ def _chunk_fn(tokenizer_path, allow_word_count=False):
     try:
         from tokenizers import Tokenizer
         tok = Tokenizer.from_file(tokenizer_path)
-
-        def ntok(text):
-            return len(tok.encode(text).ids)
-
-        def measured(ids):
-            return len(tok.encode(tok.decode(ids)).ids)
-
-        def chunks(text, lo=512, hi=1024):
-            ids = tok.encode(text).ids
-            if not ids or len(ids) < MIN_FRAGMENT_TOKENS:
-                return []
-            segs, start = [], 0
-            while start < len(ids):
-                end = min(start + hi, len(ids))
-                # shrink to a boundary whose DECODED text re-encodes within the max
-                while end > start and measured(ids[start:end]) > hi:
-                    end -= 1
-                if end == start:
-                    end = start + 1  # forward progress on a pathological token
-                segs.append(ids[start:end])
-                start = end
-            if len(segs) == 1 and measured(segs[0]) < lo:
-                return [tok.decode(segs[0])]  # lone 128-511 doc: keep as one short chunk
-            segs = _cap_segments(
-                segs, lo, hi, measured, lambda s, k: (s[:k], s[k:]))
-            return [tok.decode(s) for s in segs]
-
+        chunks, ntok = _bpe_chunks(tok)
         return chunks, "hf-tokenizer", ntok
     except Exception as e:
         if not allow_word_count:
@@ -510,6 +517,28 @@ def _selftest() -> int:
     drift_out = _cap_segments([list(s) for s in drift_in], 512, 1024, drift,
                               drift_split)
     assert all(drift(s) <= 1024 for s in drift_out), [drift(s) for s in drift_out]
+    # REAL DRIFT THROUGH THE CLOSURE, NOT AN ADDITIVE MEASURE: drive _bpe_chunks with the
+    # shared _FakeTokenizer (ae #406), whose decode stamps a marker that encode expands by a
+    # real +4, so a raw 1024-id cut RE-ENCODES to 1028 through tok.encode().ids -- the exact
+    # path the walk-back protects. Deleting the walk-back while must emit a >1024 chunk and
+    # turn the cap line red; this is what the numeric `drift` emulation above cannot prove
+    # (it never calls the production closure).
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from datagen.l2_code_chunk_pool import _FakeTokenizer, _clean  # noqa: E402
+
+    ftok = _FakeTokenizer()
+    fchunks, fn = _bpe_chunks(ftok)
+    # two FULL windows plus a tail: without the walk-back both interior slices re-encode to
+    # 1028 and _cap_segments only repairs the LAST two, leaving the first over cap (its own
+    # assert fires). One over-cap window plus a short tail is repaired by the tail fold and
+    # would mask a deleted walk-back, so the doc needs >=2 raw windows.
+    fline = "a" * (2 * 1024 + 80)
+    fout = fchunks(fline)
+    assert "".join(_clean(c, ftok) for c in fout) == fline, "fake-drift cut does not partition"
+    assert len(fout) >= 2, f"expected walk-back splits, got {len(fout)} chunk(s)"
+    assert all(fn(c) <= 1024 for c in fout), \
+        ["%d re-encodes over 1024 (walk-back missing)" % fn(c) for c in fout if fn(c) > 1024]
+
     # the word-fallback chunker itself honors the cap on a tail-triggering doc
     wchunks, wkind, _ = _chunk_fn("", allow_word_count=True)
     assert wkind == "word-fallback"
