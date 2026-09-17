@@ -4886,6 +4886,53 @@ SELF_CONTAINED_STAMP_WORDS = set()
 SELF_CONTAINED_STAMP_ROOTS = {}
 
 
+def _stamp_world_is_real(world):
+    """Reality guard for a pod_stamp_is_main broken world: None if the world truly holds the
+    condition, else a string naming why it is fake. Module-level (it was nested in _demo) so it
+    can be unit-tested directly. Self-contained worlds are validated against their OWN object
+    store and refs; ROOT-symlinked worlds against the real main AND origin/main (de-99)."""
+    p = os.path.join(world, "data", "pod_synced_head")
+    if not os.path.exists(p):
+        return "the world holds no stamp at data/pod_synced_head"
+    sha = (open(p, encoding="utf-8").read().split() or [""])[0]
+    if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
+        return f"the stamp holds {sha!r}, not a full 40-char hex sha"
+    # SELF-CONTAINED worlds hold the commit in their OWN git object store (the synthetic
+    # origin-ahead and non-ancestor repos), never in ROOT. Validate against the world's
+    # own refs: the sha must resolve there and, for the non-ancestor world, fail the
+    # ancestor test against that world's main. Resolving it in ROOT would wrongly call a
+    # real synthetic commit "invented".
+    if world in SELF_CONTAINED_STAMP_WORDS:
+        if subprocess.run(["git", "-C", world, "cat-file", "-e", f"{sha}^{{commit}}"],
+                          capture_output=True).returncode:
+            return f"{sha[:12]} does not resolve in the self-contained world's own repo"
+        if subprocess.run(["git", "-C", world, "merge-base", "--is-ancestor", sha, "main"],
+                          capture_output=True).returncode == 0:
+            # origin-ahead world's stamp IS its origin/main (allowed); only flag when the
+            # world's origin/main does not contain it either.
+            if subprocess.run(["git", "-C", world, "merge-base", "--is-ancestor",
+                               sha, "origin/main"], capture_output=True).returncode == 0:
+                return None
+            return (f"{sha[:12]} IS an ancestor of the self-contained world's main, so it "
+                    f"does not hold the non-ancestor condition")
+        return None
+    if subprocess.run(["git", "-C", ROOT, "cat-file", "-e", f"{sha}^{{commit}}"],
+                      capture_output=True).returncode:
+        return f"{sha[:12]} is no commit in the real repository -- invented, not taken"
+    if subprocess.run(["git", "-C", ROOT, "merge-base", "--is-ancestor", sha, "main"],
+                      capture_output=True).returncode == 0:
+        return (f"{sha[:12]} IS an ancestor of the real main, so the world does not hold "
+                f"the condition the check exists to catch")
+    # THE REMOTE REF TOO (de-99): that is the one check_pod_stamp_is_main now compares
+    # against, so a world excluded only from local main can still hold an origin/main
+    # ancestor and must be caught here as stale.
+    if subprocess.run(["git", "-C", ROOT, "merge-base", "--is-ancestor", sha, "origin/main"],
+                      capture_output=True).returncode == 0:
+        return (f"{sha[:12]} IS an ancestor of origin/main, the ref the check now compares "
+                f"against, so the world does not hold the condition it must catch")
+    return None
+
+
 def _stamp_world_nonancestor_synthetic():
     """A stamp naming a commit that is NOT an ancestor of the world's main -- SELF-CONTAINED.
 
@@ -22291,6 +22338,89 @@ def _selftest_stamp_ref_is_origin():
         SELF_CONTAINED_STAMP_ROOTS.clear()
 
 
+def _selftest_stamp_world_is_real_unit():
+    """Direct unit tests for the module-level _stamp_world_is_real (it was nested in _demo and
+    so unreachable). Self-contained synthetic repos, process-private temp, no ROOT refs:
+
+      1. a stamp naming the world's main sha (rc0 ancestor) is REJECTED -- the guard must catch
+         a world that holds a main ancestor as "does not hold the non-ancestor condition";
+      2. a typed/garbage sha that does not resolve (cat-file rc!=0) is REJECTED as invented;
+      3. a genuine divergent sha (non-ancestor) passes (returns None).
+    The rc0-vs-rc!=0 distinction is the one de verified by hand and is now a formal test.
+    """
+    import shutil
+    import tempfile
+
+    def g(*a, **k):
+        return subprocess.run(["git", *a], capture_output=True, text=True, **k)
+
+    roots = []
+    try:
+        # case 1 (rc0 ancestor): a commit on the world's LOCAL main that origin/main does NOT
+        # contain -- a local-only commit. The guard rejects it: is-ancestor(main) rc0 and
+        # is-ancestor(origin/main) rc!=0 together must name the stale condition.
+        d = tempfile.mkdtemp(prefix="guardreal_"); roots.append(d)
+        bare, seed = os.path.join(d, "o.git"), os.path.join(d, "seed")
+        subj = os.path.join(d, "s")
+        assert not g("init", "-q", "--bare", "-b", "main", bare).returncode
+        assert not g("init", "-q", "-b", "main", seed).returncode
+        g("-C", seed, "config", "user.email", "st@st"), g("-C", seed, "config", "user.name", "st")
+        open(os.path.join(seed, "B"), "w").write("b\n"); g("-C", seed, "add", "B")
+        assert not g("-C", seed, "commit", "-qm", "b").returncode
+        g("-C", seed, "remote", "add", "origin", bare)
+        assert not g("-C", seed, "push", "-q", "-u", "origin", "main").returncode
+        assert not g("clone", "-q", "-b", "main", bare, subj).returncode
+        g("-C", subj, "config", "user.email", "st@st"), g("-C", subj, "config", "user.name", "st")
+        open(os.path.join(subj, "LOCAL"), "w").write("local-only\n"); g("-C", subj, "add", "LOCAL")
+        assert not g("-C", subj, "commit", "-qm", "local only").returncode
+        local_sha = g("-C", subj, "rev-parse", "main").stdout.strip()
+        assert g("-C", subj, "merge-base", "--is-ancestor", local_sha, "main").returncode == 0
+        assert g("-C", subj, "merge-base", "--is-ancestor", local_sha, "origin/main").returncode != 0
+        os.makedirs(os.path.join(subj, "data"), exist_ok=True)
+        with open(os.path.join(subj, "data", "pod_synced_head"), "w") as fh:
+            fh.write(f"{local_sha} 0 2026-09-03T00:00:00Z\n")
+        SELF_CONTAINED_STAMP_WORDS.add(subj)
+        why = _stamp_world_is_real(subj)
+        SELF_CONTAINED_STAMP_WORDS.discard(subj)
+        assert why and "ancestor" in why, f"a local-main-only sha (rc0) must be rejected: {why}"
+
+        # case 2 (real divergent): a side-branch tip not on main nor origin/main -> passes.
+        d = tempfile.mkdtemp(prefix="guardreal_"); roots.append(d)
+        r = os.path.join(d, "r")
+        assert not g("init", "-q", "-b", "main", r).returncode
+        g("-C", r, "config", "user.email", "st@st"), g("-C", r, "config", "user.name", "st")
+        open(os.path.join(r, "BASE"), "w").write("base\n"); g("-C", r, "add", "BASE")
+        assert not g("-C", r, "commit", "-qm", "base").returncode
+        g("-C", r, "checkout", "-q", "-b", "side")
+        open(os.path.join(r, "DIV"), "w").write("div\n"); g("-C", r, "add", "DIV")
+        assert not g("-C", r, "commit", "-qm", "div").returncode
+        stamp_sha = g("-C", r, "rev-parse", "side").stdout.strip()
+        os.makedirs(os.path.join(r, "data"), exist_ok=True)
+        with open(os.path.join(r, "data", "pod_synced_head"), "w") as fh:
+            fh.write(f"{stamp_sha} 0 2026-09-03T00:00:00Z\n")
+        SELF_CONTAINED_STAMP_WORDS.add(r)
+        why = _stamp_world_is_real(r)
+        SELF_CONTAINED_STAMP_WORDS.discard(r)
+        assert why is None, f"a genuine non-ancestor sha must pass, got: {why}"
+
+        # case 3 (rc!=0 invented): well-formed hex with no such commit in the world.
+        d = tempfile.mkdtemp(prefix="guardreal_"); roots.append(d)
+        r = os.path.join(d, "r")
+        assert not g("init", "-q", "-b", "main", r).returncode
+        os.makedirs(os.path.join(r, "data"), exist_ok=True)
+        with open(os.path.join(r, "data", "pod_synced_head"), "w") as fh:
+            fh.write(f"{'0'*40} 0 2026-09-03T00:00:00Z\n")
+        SELF_CONTAINED_STAMP_WORDS.add(r)
+        why = _stamp_world_is_real(r)
+        SELF_CONTAINED_STAMP_WORDS.discard(r)
+        assert why and "does not resolve" in why, f"an unresolvable sha (rc!=0) must be rejected: {why}"
+        print("  stamp world guard: local-main ancestor (rc0) rejected, rc!=0 invented rejected, "
+              "real divergent passes")
+    finally:
+        for d in roots:
+            shutil.rmtree(d)
+
+
 def _selftest_core_reexports_are_identical():
     """Every name harness re-exports from harness_core is the SAME OBJECT, not a second copy.
 
@@ -24433,47 +24563,8 @@ def _demo(only=None):
     # asserts the world's stamp names a commit REAL git resolves and that main REALLY does not
     # contain -- the two properties a hand-written hex string cannot have. A world that passes
     # this could not have been invented.
-    def _stamp_world_is_real(world):
-        p = os.path.join(world, "data", "pod_synced_head")
-        if not os.path.exists(p):
-            return "the world holds no stamp at data/pod_synced_head"
-        sha = (open(p, encoding="utf-8").read().split() or [""])[0]
-        if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
-            return f"the stamp holds {sha!r}, not a full 40-char hex sha"
-        # SELF-CONTAINED worlds hold the commit in their OWN git object store (the synthetic
-        # origin-ahead and non-ancestor repos), never in ROOT. Validate against the world's
-        # own refs: the sha must resolve there and, for the non-ancestor world, fail the
-        # ancestor test against that world's main. Resolving it in ROOT would wrongly call a
-        # real synthetic commit "invented".
-        if world in SELF_CONTAINED_STAMP_WORDS:
-            if subprocess.run(["git", "-C", world, "cat-file", "-e", f"{sha}^{{commit}}"],
-                              capture_output=True).returncode:
-                return f"{sha[:12]} does not resolve in the self-contained world's own repo"
-            if subprocess.run(["git", "-C", world, "merge-base", "--is-ancestor", sha, "main"],
-                              capture_output=True).returncode == 0:
-                # origin-ahead world's stamp IS its origin/main (allowed); only flag when the
-                # world's origin/main does not contain it either.
-                if subprocess.run(["git", "-C", world, "merge-base", "--is-ancestor",
-                                   sha, "origin/main"], capture_output=True).returncode == 0:
-                    return None
-                return (f"{sha[:12]} IS an ancestor of the self-contained world's main, so it "
-                        f"does not hold the non-ancestor condition")
-            return None
-        if subprocess.run(["git", "-C", ROOT, "cat-file", "-e", f"{sha}^{{commit}}"],
-                          capture_output=True).returncode:
-            return f"{sha[:12]} is no commit in the real repository -- invented, not taken"
-        if subprocess.run(["git", "-C", ROOT, "merge-base", "--is-ancestor", sha, "main"],
-                          capture_output=True).returncode == 0:
-            return (f"{sha[:12]} IS an ancestor of the real main, so the world does not hold "
-                    f"the condition the check exists to catch")
-        # THE REMOTE REF TOO (de-99): that is the one check_pod_stamp_is_main now compares
-        # against, so a world excluded only from local main can still hold an origin/main
-        # ancestor and must be caught here as stale.
-        if subprocess.run(["git", "-C", ROOT, "merge-base", "--is-ancestor", sha, "origin/main"],
-                          capture_output=True).returncode == 0:
-            return (f"{sha[:12]} IS an ancestor of origin/main, the ref the check now compares "
-                    f"against, so the world does not hold the condition it must catch")
-        return None
+    # _stamp_world_is_real is module-level (directly unit-tested); world_reality
+    # below calls the same function unchanged.
 
     # Same exemption, same reason, different artifact: this check reads git's own reflog at
     # logs/refs/heads/main, which is inside .git and is not a tracked path, so no world built in
@@ -24844,6 +24935,7 @@ def _demo(only=None):
     _selftest_flagless_test_is_gated()
     _selftest_core_reexports_are_identical()
     _selftest_stamp_ref_is_origin()
+    _selftest_stamp_world_is_real_unit()
     _selftest_evidence_parity_is_an_invariant()
 
     # The other half of the selftest: a PASS must have verified something. A check that
