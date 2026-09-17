@@ -133,10 +133,12 @@ not data backups and need no copy beyond what git carries.
 ## 5. Branch notes
 
 - The data rebuild and all current labeler/ledger code are on `main` (`#400`, `#404`).
-- **v41f architecture work is on `fb-v41f-integrate`, not `main`.** Hyper-Connections
-  (`v41f/hyperconn.py`) and the v41f MoE (`v41f/moe.py`) live on that branch family; check
-  out the integration branch if the new node must build v41f. Do not assume main has them.
-  `[OPEN-PR]`
+- **v41f P0/P1 are on `main` (no longer branch-only).** Hyper-Connections (`v41f/hyperconn.py`),
+  the v41f MoE (`v41f/moe.py`), the MTP **loss** pieces (`v41f/mtp.py`), the assembled
+  `v41f/block.py` and whole-net `v41f/model.py`, plus engram/compressor/indexer/rope/window/
+  norm_gate and `tests/v41f/p0_*` / `p1_*` are merged and green — a rebuilt node that checks out
+  `main` can build v41f. The only remaining piece is the **DSpark draft-block (P3)**, still
+  `[OPEN-PR]` in #454 (`0e-v41f-mtp`); do not assume the draft/decode block is on main.
 - The L3 multi-endpoint/`reason`/ledger labeler WIP on session 66's local branch
   (`66-l3-locked-ledger`) is superseded by `datagen/l3_label_drive.py` on `main` (#400);
   keep the branch for history, do not deploy it. The 50k drive in #404 §7 uses the merged
@@ -155,7 +157,8 @@ not data backups and need no copy beyond what git carries.
 | AUPAI_ROOT tree, checkpoints, runs, facts on `/work` | `[LOST-REDO]` | persistent remount prevents recurrence; contents per #404 / facts re-record |
 | corpora `en_c4_stage2_dc`, `code_py_starcoder_dc` | `[LOST-REDO]` + `[EXTERNAL-FETCH]` | #404 §2 |
 | KenLM, L2 pools, locked κ sets, 50k labels | `[LOST-REDO]` | #404 §3–7 |
-| v41f hyperconn/MoE | `[OPEN-PR]` | branch `fb-v41f-integrate` |
+| v41f P0/P1 (HC/MoE/MTP loss/Block/整网) | `[ON-MAIN]` | merged; build v41f from `main` |
+| v41f DSpark draft-block (P3) | `[OPEN-PR]` | #454 branch `0e-v41f-mtp` |
 
 ## 7. What "done" means for provisioning
 
