@@ -1603,29 +1603,36 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
   # W5 BEHIND-GATE WIRING, source-level (de-80 part B). W4 above drives the real helper (behind
   # refuses, level passes), but reaching the merge path needs a whole two-repo integration world
   # for one line of branchless shell -- the same ceiling push W3 documents. What this catches is
-  # the wiring mutation: the helper defined but never invoked before the merge. COUNTED AT 2,
-  # not searched-for-a-string: the call text appears in this assertion line too, so a bare
-  # grep -c>=1 passes with the real call deleted; >=2 requires the actual merge-path invocation.
-  _n=$(grep -c '_fetch_and_check_behind "$MAIN" || exit 1' "$0" || true)
-  if [ "${_n:-0}" -ge 2 ]; then
-    echo "  ok   behind W5 the merge path invokes the behind guard (source-level)"
+  # the wiring mutation: the helper defined but never invoked before the merge.
+  #
+  # COUNT ONLY THE PRODUCTION CALL, AND REQUIRE EXACTLY ONE. The earlier form grepped the whole
+  # file for a substring with floor >=2, but that substring also appears on TWO of this test's
+  # own lines (the count and the order grep), so deleting the real call took 3 -> 2 and STILL
+  # PASSED (98, 2026-09-17). Restricting to the post-selftest production body and demanding
+  # exactly one `^    _fetch... || exit 1$` line makes the deletion 1 -> 0, a named FAIL.
+  _body=$(awk 'NR>1750' "$0")
+  _n=$(printf '%s\n' "$_body" | grep -c '^    _fetch_and_check_behind "$MAIN" || exit 1$' || true)
+  if [ "${_n:-0}" -eq 1 ]; then
+    echo "  ok   behind W5 the merge path invokes the behind guard exactly once (source-level)"
   else
-    echo "  FAIL behind W5: _fetch_and_check_behind is defined but not called on the merge path" >&2
+    echo "  FAIL behind W5: _fetch_and_check_behind is not called exactly once on the merge path (got $_n)" >&2
     _fails=$((_fails + 1))
   fi
   # ORDER: the guard must run AFTER _old is read and BEFORE the merge that reads the base. A
   # guard after the merge would validate the wrong world. Match the PRODUCTION lines (4-space
-  # indent, real invocation) and only consider the file body after the selftest block, so the
-  # strings quoted inside this test cannot be mistaken for the call sites. Byte offsets from awk.
-  _body=$(awk 'NR>1750' "$0")
-  _o_old=$(printf '%s\n' "$_body" | grep -n '^    _old=$(git -C "$MAIN" rev-parse main)$' | head -1 | cut -d: -f1)
-  _o_fetch=$(printf '%s\n' "$_body" | grep -n '^    _fetch_and_check_behind "$MAIN" || exit 1$' | head -1 | cut -d: -f1)
-  _o_merge=$(printf '%s\n' "$_body" | grep -n '^    if ! git merge --no-edit -m "merge main into $1 ($1)" main; then$' | head -1 | cut -d: -f1)
+  # indent, real invocation) in the post-selftest body. Each offset is wrapped in `( ... || true )`
+  # so under set -e/pipefail a NO-MATCH (the real call deleted) yields an EMPTY string instead of
+  # aborting the command substitution mid-selftest -- the existing order-if then prints a NAMED
+  # FAIL and the run continues (98, 2026-09-17: without it the script died here at 85 of 98 lines
+  # and every later world was silently skipped).
+  _o_old=$(printf '%s\n' "$_body" | { grep -n '^    _old=$(git -C "$MAIN" rev-parse main)$' || true; } | head -1 | cut -d: -f1)
+  _o_fetch=$(printf '%s\n' "$_body" | { grep -n '^    _fetch_and_check_behind "$MAIN" || exit 1$' || true; } | head -1 | cut -d: -f1)
+  _o_merge=$(printf '%s\n' "$_body" | { grep -n '^    if ! git merge --no-edit -m "merge main into $1 ($1)" main; then$' || true; } | head -1 | cut -d: -f1)
   if [ -n "$_o_old" ] && [ -n "$_o_fetch" ] && [ -n "$_o_merge" ] \
      && [ "$_o_old" -lt "$_o_fetch" ] && [ "$_o_fetch" -lt "$_o_merge" ]; then
     echo "  ok   behind W5 guard is ordered after _old and before the merge"
   else
-    echo "  FAIL behind W5: order must be _old < fetch-behind < merge (got $_o_old < $_o_fetch < $_o_merge)" >&2
+    echo "  FAIL behind W5: order must be _old < fetch-behind < merge (got ${_o_old:-none} < ${_o_fetch:-none} < ${_o_merge:-none})" >&2
     _fails=$((_fails + 1))
   fi
 
