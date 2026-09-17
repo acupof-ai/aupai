@@ -346,6 +346,10 @@ def _selftest():
     # section is registered armed=False: it prints a loud [SKIP-unarmed] marker and is not
     # counted as ok, but does not fail. Distinguish "implemented but did not arm" from
     # "not implemented" by the flag, not by catching _Skip into ok.
+    # Forward scaffolding: as of this commit BOTH members are armed=True; the armed=False
+    # branch has NO user yet. It exists only so a genuinely future, not-yet-wired assembly
+    # section can be registered loud-skip without weakening the A/B contract -- do not read
+    # the branch as evidence any live section is unimplemented.
     armed_gates = (("step A engram", gate_step_a_engram, True),
                    ("step B mtp", gate_step_b_mtp, True))
     rc = 0
