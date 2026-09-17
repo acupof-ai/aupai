@@ -7705,7 +7705,15 @@ def check_corpus_filters_fp(root):
     live = cf.fp_filters(root)
     if live is None:
         return SKIP, "no filters/ directory"
-    doms, err = read_mix(os.path.join(root, cfg_default("mix")))
+    # Verify the domains the GATE RUN actually selects, not train.py's historical default
+    # data/mix_500m. The v41 gate mix (data/mix_v41_gate.json) is all `_dc` domains whose
+    # filters_fp is inherited from their source build (ae-10); mix_500m names nine
+    # pre-decontam dirs and would mask an un-stamped _dc corpus entirely. Fall back to the
+    # configured default only where the gate mix is absent (a pre-v41 checkout), so a box
+    # without either mix stays a mix-check-owned SKIP rather than silently switching sets.
+    gate_mix_p = os.path.join(root, GATE_RUN_MIX)
+    mix_p = gate_mix_p if os.path.isfile(gate_mix_p) else os.path.join(root, cfg_default("mix"))
+    doms, err = read_mix(mix_p)
     if err:
         return SKIP, f"mix unreadable ({err}); mix checks own that"
     corpus = os.path.join(root, "data", "corpus")
@@ -7763,8 +7771,17 @@ def check_corpus_filters_fp(root):
 
 def _broken_corpus_filters_fp():
     """Two failure modes: a stale stamp (mismatch with live filters) and a no-stamp
-    domain that is NOT in the baseline (new debt). Both must FAIL."""
-    d = _tmp_repo(mix_obj={"domains": {"web_hq": 1.0, "en": 1.0}})
+    domain that is NOT in the baseline (new debt). Both must FAIL.
+
+    The mix written here is the GATE mix (all _dc domains), because check_corpus_filters_fp
+    reads data/mix_v41_gate.json when present (ae-10), not train.py's mix_500m default. A
+    world that wrote only mix_500m would no longer be read by the check it is supposed to
+    break."""
+    d = _tmp_repo()
+    # gate mix the check now selects: one domain gets a stale stamp, one gets no stamp.
+    gate_mix = {"domains": {"code_py_starcoder_dc": 1.0, "en_c4_stage2_dc": 1.0}}
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    json.dump(gate_mix, open(os.path.join(d, GATE_RUN_MIX), "w"))
     os.makedirs(os.path.join(d, "filters"), exist_ok=True)
     # EVERY member of cfp.PIPELINE_FILTERS, imported rather than restated, and copied from the
     # real tree. fp_filters raises FileNotFoundError on a missing member
@@ -7780,13 +7797,61 @@ def _broken_corpus_filters_fp():
     import shutil
     for _n in cfp.PIPELINE_FILTERS:
         shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(d, "filters", _n))
-    dom = os.path.join(d, "data", "corpus", "web_hq")
+    dom = os.path.join(d, "data", "corpus", "code_py_starcoder_dc")
     os.makedirs(dom, exist_ok=True)
     with open(os.path.join(dom, "build_corpus_stats.json"), "w") as fh:
         json.dump({"fingerprint": "deadbeef", "filters_fp": "0000000000000000"}, fh)
-    # en: no stamp at all, no baseline file in this world -> new unstamped domain
-    os.makedirs(os.path.join(d, "data", "corpus", "en"), exist_ok=True)
+    # en_c4_stage2_dc: no stamp at all, no baseline file in this world -> new unstamped domain
+    os.makedirs(os.path.join(d, "data", "corpus", "en_c4_stage2_dc"), exist_ok=True)
     return d
+
+
+def _selftest_corpus_filters_fp_gate_mix():
+    """An all-_dc GATE mix reaches the filter gate via INHERITED filters_fp (ae-10).
+
+    Three states on one shaped root, all read through data/mix_v41_gate.json:
+      - a _dc dir whose stamp carries the LIVE filters_fp -> PASS (the inherited value equals
+        what the source build recorded);
+      - a _dc dir carrying a STALE value -> FAIL;
+      - a _dc dir with NO stamp -> FAIL (new-unstamped, not baselined).
+    The live value is whatever fp_filters returns for the copied pipeline filters, so this
+    tracks genB's byte->pattern hash change without restating it."""
+    import shutil
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "filters"), exist_ok=True)
+    for _n in cfp.PIPELINE_FILTERS:
+        shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(d, "filters", _n))
+    sys.path.insert(0, os.path.join(d, "scripts"))
+    import corpus_fingerprint as _cfp
+
+    live = _cfp.fp_filters(d)
+    json.dump({"domains": {"ok_dc": 1.0, "stale_dc": 1.0, "nostamp_dc": 1.0}},
+              open(os.path.join(d, GATE_RUN_MIX), "w"))
+    base = os.path.join(d, "data", "corpus")
+    for name, fp in (("ok_dc", live), ("stale_dc", "0" * 16)):
+        os.makedirs(os.path.join(base, name))
+        json.dump({"fingerprint": "f" * 16, "filters_fp": fp},
+                  open(os.path.join(base, name, "build_corpus_stats.json"), "w"))
+    os.makedirs(os.path.join(base, "nostamp_dc"))  # no stamp -> new-unstamped
+
+    # stale and no-stamp must each FAIL independently; build two single-domain worlds so one
+    # bad domain does not hide the verdict on the other.
+    only_ok = _tmp_repo()
+    os.makedirs(os.path.join(only_ok, "filters"), exist_ok=True)
+    for _n in cfp.PIPELINE_FILTERS:
+        shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(only_ok, "filters", _n))
+    sys.path.insert(0, os.path.join(only_ok, "scripts"))
+    json.dump({"domains": {"ok_dc": 1.0}}, open(os.path.join(only_ok, GATE_RUN_MIX), "w"))
+    ob = os.path.join(only_ok, "data", "corpus", "ok_dc")
+    os.makedirs(ob)
+    json.dump({"fingerprint": "f" * 16, "filters_fp": live},
+              open(os.path.join(ob, "build_corpus_stats.json"), "w"))
+    state, ev = check_corpus_filters_fp(only_ok)
+    assert state == PASS, ("inherited live filters_fp on an all-_dc gate mix must PASS", state, ev)
+
+    state, _ = check_corpus_filters_fp(d)
+    assert state == FAIL, ("stale + no-stamp _dc domains must FAIL", state)
 
 
 def check_score_input_fresh(root):
@@ -8650,7 +8715,10 @@ EPHEMERAL_SOURCE_PREFIX = re.compile(r"(?<![\w/])(?:/tmp/|/var/tmp/|\$HOME/)[\w.
 # shrink -- a new missing source is a FAIL, not a baseline entry. Reported in `gaps`.
 FACT_SOURCE_BASELINE = os.path.join("facts", "source_baseline.json")
 CORPUS_FILTERS_BASELINE = os.path.join("facts", "corpus_filters_baseline.json")
-
+# The mix the gate run actually selects (runs/v41_gate_0911.sh --mix). check_corpus_filters_fp
+# must verify the domains THIS run trains on, not train.py's historical default data/mix_500m:
+# the v41 gate mix is all `_dc` domains (ae-10), while mix_500m names nine pre-decontam dirs.
+GATE_RUN_MIX = os.path.join("data", "mix_v41_gate.json")
 
 
 
@@ -24816,6 +24884,7 @@ def _demo(only=None):
         _selftest_inline_citations_are_scanned,
         _selftest_skip_reasons_classified,
         _selftest_fact_refs_scan_provenance,
+        _selftest_corpus_filters_fp_gate_mix,
     ):
         try:
             _fn()
