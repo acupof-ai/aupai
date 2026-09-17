@@ -83,6 +83,17 @@ def release(path):
     return True, f"released {path}"
 
 
+def is_stale(rec):
+    """True when rec is older than FILE_CLAIM_TTL, i.e. the hook no longer honours it.
+
+    One predicate, two callers: claim() drops a stale record, and status must SAY it is stale
+    rather than print it as though it were live. Before this, only claim() applied the TTL and
+    status listed the raw directory, so a claim 10 days old (TTL is 6h) read as an active
+    holder -- a reader deciding whether a file is free got an answer the hook would not give.
+    """
+    return time.time() - rec.get("time", 0) > FILE_CLAIM_TTL
+
+
 def claim(path):
     """Live claim for path, or None. A stale claim reads as no claim (the hook ignores it)."""
     cp = claim_path(path)
@@ -92,7 +103,7 @@ def claim(path):
         rec = json.load(open(cp, encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if time.time() - rec.get("time", 0) > FILE_CLAIM_TTL:
+    if is_stale(rec):
         return None
     return rec
 
@@ -142,6 +153,28 @@ def release_all(owner, paths=None):
     return removed
 
 
+def status_lines():
+    """The status report as a list of lines, so every caller prints ONE format.
+
+    THE FORMAT LIVES HERE BECAUSE IT WAS DUPLICATED AND ONLY ONE COPY GOT FIXED. `harness
+    claim-file status` (harness.py:26656) carried its own copy of the old `%H:%M` print, and
+    that is the entry point a session actually runs -- so fixing only this file's printer would
+    have left the defect visible on the command people use. A second copy of a display format is
+    the same shape as a second copy of the cache-dir rule: the two drift, and the one that keeps
+    being read is whichever the caller happens to invoke. Both now call this.
+    """
+    out = []
+    for p, rec in claims().items():
+        age_h = (time.time() - rec.get("time", 0)) / 3600
+        stamp = time.strftime("%Y-%m-%d %H:%M", time.gmtime(rec.get("time", 0)))
+        mark = "  STALE" if is_stale(rec) else ""
+        out.append(
+            f"{p:16s} owner={rec.get('owner')} t={stamp}Z "
+            f"({age_h:.1f}h old, TTL {FILE_CLAIM_TTL // 3600}h){mark}"
+        )
+    return out
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="file_claim")
     # The pre-commit hook's SELFTEST_FILES invoker passes `--selftest` (the repo-standard
@@ -168,8 +201,11 @@ def main(argv=None):
         removed = release_all(a.owner or _owner())
         print(f"released {len(removed)} claim(s): {', '.join(removed) if removed else 'none'}")
         return 0
-    for p, rec in claims().items():
-        print(f"{p:16s} owner={rec.get('owner')} t={time.strftime('%H:%M', time.gmtime(rec.get('time')))} UTC")
+    if not claims():
+        print("no claims")
+        return 0
+    for line in status_lines():
+        print(line)
     return 0
 
 
@@ -207,6 +243,23 @@ def _selftest():
         with open(claim_path("sft.py"), "w") as fh:
             json.dump({"path": "sft.py", "owner": "old", "time": int(time.time()) - FILE_CLAIM_TTL - 10}, fh)
         if claim("sft.py"): fails.append("stale claim must read as absent")
+        # AND STATUS MUST SAY SO. The same stale record that claim() drops was still PRINTED
+        # as a live holder by `status`, which is the command a session runs to decide whether a
+        # file is free -- so the reader got the opposite answer from the hook. Asserted on the
+        # rendered line, not on is_stale(): the defect was in the display, and a test of the
+        # predicate would have been green throughout it (the first version of this fix was
+        # exactly that shape -- it fixed file_claim's printer and left harness's duplicate).
+        stale_lines = [ln for ln in status_lines() if ln.startswith("sft.py")]
+        if not stale_lines:
+            fails.append("status printed no line for a stale claim that exists on disk")
+        elif "STALE" not in stale_lines[0]:
+            fails.append(f"status printed a stale claim as live: {stale_lines[0]}")
+        elif "(" not in stale_lines[0] or "h old" not in stale_lines[0]:
+            # THE AGE IS THE PART THAT WAS UNREADABLE. Printing only HH:MM made a claim from
+            # any date look like one from today at the same hour; the age and the full date
+            # are what tell a reader which. Asserted on the rendered line because the defect
+            # was in the display.
+            fails.append(f"status printed no age or no date: {stale_lines[0]}")
         # an unlisted path still records but the hook only guards SHARED_FILES
         # release-all hands back only OWNER claims, leaves others
         rc, _ = run("acquire", "--path", "AGENTS.md", "--owner", "st_owner")
