@@ -352,6 +352,50 @@ def _selftest():
         assert calls, "append_rows must fsync before close"
         assert len(load_rows(p)) == 4
 
+        # durability ORDER: the buffered writer must flush into the kernel BEFORE fsync, or
+        # fsync can persist an empty/partial userspace buffer. Spy the append file's flush
+        # and os.fsync for this one path; removing f.flush() must fail here (the fsync-only
+        # check above cannot see a skipped flush).
+        import builtins
+
+        order = []
+        real_open, real_fsync2 = builtins.open, os.fsync
+
+        class _FlushSpy:
+            def __init__(self, raw):
+                self.raw = raw
+
+            def flush(self):
+                order.append("flush")
+                return self.raw.flush()
+
+            def __getattr__(self, name):
+                return getattr(self.raw, name)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.raw.close()
+
+        def spy_open(path_, *a, **k):
+            r = real_open(path_, *a, **k)
+            mode = a[0] if a else k.get("mode", "r")
+            target = os.path.abspath(str(path_)) == os.path.abspath(p)
+            return _FlushSpy(r) if target and "a" in mode else r
+
+        def spy_fsync(fd):
+            order.append("fsync")
+            return real_fsync2(fd)
+
+        builtins.open, os.fsync = spy_open, spy_fsync
+        try:
+            append_rows(p, [row("g5")])
+        finally:
+            builtins.open, os.fsync = real_open, real_fsync2
+        assert order and order[0] == "flush" and "fsync" in order, order
+        assert len(load_rows(p)) == 5
+
     print(
         "l2_head_scores selftest OK: float dims unquantized (out-of-range kept), schema "
         "rejections, mean/single-dim adapter through score_quota, version conflict, round-trip, "
