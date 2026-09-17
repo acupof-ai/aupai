@@ -42,10 +42,13 @@ The grouped form computes every expert at once. Flatten the `(token, k)` assignm
 **sort by expert**, so rows for one expert are contiguous:
 
 1. `flat = indices.flatten()` (length `Mtot = n_tokens * top_k`); `order = argsort(flat,
-   stable=True)`; `exp = flat[order]`; `tok = order // top_k`; `cho = order % top_k`. The
-   sort **must be stable**: `torch.where(indices == i)` lists an expert's rows in flattened
-   row-major order, and an unstable sort permutes rows inside a group, which silently
-   scrambles bf16 outputs (this cost a debugging pass).
+   stable=True)`; `exp = flat[order]`; `tok = order // top_k`; `cho = order % top_k`. The sort
+   is `stable=True` for a **deterministic row order** across devices/runs. It is NOT a
+   numeric requirement: the GEMM is row-wise (`x_g`/`w_g` are gathered in the same order, so
+   a permuted group pairs each row with its own weight) and the scatter is by token, so an
+   unstable sort produces the same grouped *values*, just in a different order — measured 98
+   over 12 shapes: unstable vs loop max_abs 9e-8, and a forced-tie world gave a different
+   order with an identical value multiset. Use stable for reproducibility, not correctness.
 2. `batch_sizes = bincount(exp, minlength=E).to(int32)` — rows per group; `sum = Mtot`.
 3. `x_g = x[tok]` `[Mtot,dim]`, grouped-contiguous by expert; `w_g = weights[tok, cho, None]`.
 4. Stack expert weights and run three grouped GEMMs:
@@ -105,11 +108,13 @@ Probed on local torch 2.12.0. The op exists and runs on CPU, but see the warning
   **batch sizes, int32** (positional). Confirmed semantics against a manual per-group matmul.
 - **The CPU test does NOT feed a transposed operand.** A pre-transposed contiguous `[E,K,N]`
   matrix makes the CPU bf16 GEMM round at a different point than the loop's `F.linear` over
-  `weight.T` (measured max_abs 0.18): that is operand-LAYOUT rounding inside the kernel, not
-  dispatch math, and it would make the CPU gate measure the wrong thing. The skeleton's
-  `_grouped_linear` stacks weights in the native `[E,N,K]` layout and calls `F.linear`, so
-  it isolates grouping (exact 0.0). The GPU kernel's mandatory `[E,K,N]` repack gets its own
-  bf16 layout-parity check on the GPU under prereg #3; it is not asserted on CPU.
+  `weight.T`: operand-LAYOUT rounding inside the kernel, not dispatch math, which would make
+  the CPU gate measure the wrong thing. This is SHAPE-DEPENDENT and near-zero at small dims:
+  measured bf16 `dim=1024/inter=1728` gives max_abs 0.031–0.25 across seeds, while
+  `dim=8/inter=16` and `dim=64/inter=128` give 0.0. (Not a constant — quote the shape.) The
+  skeleton's `_grouped_linear` stacks weights in the native `[E,N,K]` layout and calls
+  `F.linear`, so it isolates grouping (exact 0.0); the GPU kernel's mandatory `[E,K,N]`
+  repack gets its own on-GPU bf16 layout-parity check under prereg #3.
 - Offsets (alternative third arg) must be **int32**; a `[0, …, Mtot]` prefix form int64 is
   rejected.
 - Alignment: strides must be multiples of 16 bytes (an SM-grouped kernel constraint). Small
@@ -120,10 +125,12 @@ Probed on local torch 2.12.0. The op exists and runs on CPU, but see the warning
   needs it, confirmed on GPU before relying on it — **prereg**.
 
 **WARNING — do not call the op in the CPU test.** On CPU the built-in `_grouped_mm` output
-did not match a per-group reference for a small case (max_abs 8.2, mean 0.93 — the CPU path
-is not the faithful kernel; it is a shape/registration shim). The skeleton therefore defines
-its own pure-torch `_grouped_linear` (an explicit per-group slice matmul over the contiguous
-layout) as the CPU grouped semantics and compares **that** to the where-loop. The GPU
+does not match a per-group reference: measured fp32 `E=3, Mtot=48, K=N=16` (torch 2.12.0
+CPU) max_abs 13.6–22.0, mean 2.1–3.2 across seeds (98 measured 14.96/3.36 on this config).
+The CPU path is a shape/dtype shim, not the faithful kernel, and the divergence is
+shape-dependent — do not read it as a constant. The skeleton therefore defines its own
+pure-torch `_grouped_linear` (an explicit per-group slice matmul over the contiguous layout)
+as the CPU grouped semantics and compares **that** to the where-loop. The GPU
 implementation swaps only this one function for `torch._grouped_mm`; the math around it
 (sort, batch_sizes, fp32 weight point, index_add) is identical and is what the CPU gate
 pins. Never point a CI atol at the CPU `_grouped_mm` op.
