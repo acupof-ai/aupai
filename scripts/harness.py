@@ -10126,24 +10126,36 @@ def check_fact_refs(root):
         except Exception as e:
             return FAIL, f"cannot parse {f}: {e}"
     bad, retracted, n = [], [], 0
+    # ONLY TRACKED FILES ARE SCANNED. (source-label, path) for every tracked doc that may cite
+    # a fact. docs/lessons and docs/audits are the population; data/PROVENANCE.md is tracked
+    # prose outside docs/ that cites facts too (de-81) and was silently skipped. data/eval/
+    # PROVENANCE.md is tracked but has 0 facts/...#id citations, so it is deliberately not a
+    # source. PR/issue bodies and other GitHub text are non-tracked and out of scope: they are
+    # not part of the checkout the gate ships, so a missing fact id there cannot rot the repo.
+    # A missing fact id in a tracked source is the same rot as in a lesson.
+    sources = []
     for sub in DOCS_SUBDIRS:
         d = os.path.join(root, "docs", sub)
         if not os.path.isdir(d):
             continue
         for f in sorted(os.listdir(d)):
-            if not f.endswith(".md"):
-                continue
-            for m in FACT_REF_RE.finditer(open(os.path.join(d, f), encoding="utf-8").read()):
-                n += 1
-                fname, fid = m.group(1) + ".json", m.group(2)
-                if fname not in index:
-                    # fname already carries .json; appending it again printed
-                    # "facts/base_eval.json.json does not exist", a path nobody can act on.
-                    bad.append(f"docs/{sub}/{f}: facts/{fname} does not exist")
-                elif fid not in index[fname]:
-                    bad.append(f"docs/{sub}/{f}: {fid} not in facts/{fname}")
-                elif index[fname][fid].get("status") == "retracted":
-                    retracted.append(f"docs/{sub}/{f} cites retracted {fname}#{fid}")
+            if f.endswith(".md"):
+                sources.append((f"docs/{sub}/{f}", os.path.join(d, f)))
+    provenance = os.path.join(root, "data", "PROVENANCE.md")
+    if os.path.isfile(provenance):
+        sources.append(("data/PROVENANCE.md", provenance))
+    for label, path in sources:
+        for m in FACT_REF_RE.finditer(open(path, encoding="utf-8").read()):
+            n += 1
+            fname, fid = m.group(1) + ".json", m.group(2)
+            if fname not in index:
+                # fname already carries .json; appending it again printed
+                # "facts/base_eval.json.json does not exist", a path nobody can act on.
+                bad.append(f"{label}: facts/{fname} does not exist")
+            elif fid not in index[fname]:
+                bad.append(f"{label}: {fid} not in facts/{fname}")
+            elif index[fname][fid].get("status") == "retracted":
+                retracted.append(f"{label} cites retracted {fname}#{fid}")
     if bad:
         return FAIL, "; ".join(bad[:5])
     if retracted:
@@ -10455,6 +10467,42 @@ def _broken_fact_ref():
     with open(os.path.join(d, "docs", "lessons", "kept_methods.md"), "a", encoding="utf-8") as f:
         f.write("\n\nSee facts/tokenizer.json#tok.does_not_exist.\n")
     return d
+
+
+def _fact_ref_world(provenance_extra=""):
+    """Real docs + facts, plus the tracked data/PROVENANCE.md, optionally with a citation
+    appended. The real PROVENANCE cites one fact that resolves, so the unmutated world
+    passes; the appended string is the only bad citation in the mutated world."""
+    import shutil
+
+    d = _tmp_repo()
+    shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
+    shutil.copytree(os.path.join(ROOT, "facts"), os.path.join(d, "facts"))
+    src = os.path.join(ROOT, "data", "PROVENANCE.md")
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    text = open(src, encoding="utf-8").read() if os.path.exists(src) else ""
+    open(os.path.join(d, "data", "PROVENANCE.md"), "w", encoding="utf-8").write(
+        text + provenance_extra)
+    return d
+
+
+def _selftest_fact_refs_scan_provenance():
+    """data/PROVENANCE.md is part of the fact-citation population (de-81).
+
+    A tracked data/PROVENANCE.md citing a nonexistent fact must FAIL and NAME that file;
+    dropping the PROVENANCE scan from check_fact_refs makes the broken world pass, which is
+    the green-on-a-bad-citation hole. The unmutated world (real PROVENANCE, whose one fact
+    citation resolves) must PASS -- the positive control that the new scan does not fire on
+    the real file."""
+    clean = _fact_ref_world()
+    state, evidence = check_fact_refs(clean)
+    assert state != FAIL, f"real data/PROVENANCE.md must not fail the fact-ref check: {evidence}"
+
+    bad = _fact_ref_world("\n\nSee facts/tokenizer.json#tok.provenance_does_not_exist.\n")
+    state, evidence = check_fact_refs(bad)
+    assert state == FAIL, ("a bogus fact id in data/PROVENANCE.md must FAIL", state, evidence)
+    assert "data/PROVENANCE.md" in evidence, ("the FAIL must name data/PROVENANCE.md", evidence)
+    assert "provenance_does_not_exist" in evidence, evidence
 
 
 DATA_PATH_RE = re.compile(r"data/[A-Za-z0-9_][A-Za-z0-9_./-]*")
@@ -24767,6 +24815,7 @@ def _demo(only=None):
         _selftest_review_present_legacy,
         _selftest_inline_citations_are_scanned,
         _selftest_skip_reasons_classified,
+        _selftest_fact_refs_scan_provenance,
     ):
         try:
             _fn()
