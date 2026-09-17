@@ -2338,6 +2338,12 @@ def main():
         # The v41f P1 assembly suite (de): whole-Block (then whole-Model) allclose against
         # the same vendored reference, proving the P0 leaf modules are wired together.
         "tests/v41f/p1_selftest.py",
+        # CPU parity skeleton for the future GPU torch._grouped_mm MoE dispatch (66, P4
+        # preresearch; design docs/standards/moe_grouped_mm_dispatch.md). --selftest pins the
+        # grouped flatten/sort/batch_sizes/index_add expansion to the per-expert where-loop at
+        # max_abs 0.0 in fp32 and bf16 (weight-before-w2), an empty group, and a bf16
+        # weight-order guard. Standalone until the GPU branch joins it to p1 discovery.
+        "tests/v41f/test_p1_grouped_dispatch.py",
         # v41f-S config-formula total/active parameter counter (3b); --selftest pins a
         # hand-computed tiny config so the total=sum-of-modules identity cannot silently rot.
         "scripts/v41f_param_count.py",
