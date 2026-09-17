@@ -4878,34 +4878,120 @@ def check_pod_stamp_is_main(root):
                   f"on no branch (the FILES are main's -- pod_push refuses any that differ)")
 
 
+# Self-contained stamp worlds created inside _demo: subject path -> the private temp ROOT the
+# test owns and must remove. ROOT-based worlds (symlinked .git) clean the subject itself. The
+# cleanup reads these rather than guessing a dirname depth (the f19a9474 bug deleted a shared
+# temp root via dirname() of a _tmp_repo world).
+SELF_CONTAINED_STAMP_WORDS = set()
+SELF_CONTAINED_STAMP_ROOTS = {}
+
+
+def _stamp_world_nonancestor_synthetic():
+    """A stamp naming a commit that is NOT an ancestor of the world's main -- SELF-CONTAINED.
+
+    The older `_broken_pod_stamp_is_main` fished a real non-ancestor sha out of THIS
+    repository (`git rev-list --all --not main origin/main`) and symlinked ROOT/.git. That
+    reachability depended on the checkout happening to carry a ref outside main: a PR's
+    detached merge checkout had none, the probe returned EMPTY, the world was skipped, and the
+    dangerous cleanup never ran -- a green that depended on runner ref layout (the f19a9474
+    escape). This world builds its own git repo so world B is reachable on EVERY checkout:
+
+      bare origin -> seed commit on main -> subject clone; then a second branch commits a
+      divergent file and is NEVER merged, and the subject fetches it. Its tip resolves in the
+      subject's OWN object store and is a real commit that is not an ancestor of main.
+
+    The check then runs against the SUBJECT (its refs, its object store), so the sha is real
+    and non-ancestor without any reference to ROOT. The subject is marked self-contained via
+    SELF_CONTAINED_STAMP_WORDS so the reality guard validates the sha in the world's own repo
+    rather than in ROOT. Returns (subject_dir, divergent_sha).
+    """
+    import shutil
+    import tempfile
+    d = tempfile.mkdtemp(prefix="nonanc_")
+    bare, seed = os.path.join(d, "origin.git"), os.path.join(d, "seed")
+    subject = os.path.join(d, "subject")
+
+    def g(*a, **kw):
+        return subprocess.run(["git", *a], capture_output=True, text=True, **kw)
+
+    def _bail(why):
+        shutil.rmtree(d, ignore_errors=False)
+        raise SelftestSkip(f"{why}; the non-ancestor world is unbuildable", reason="environment")
+
+    if g("init", "-q", "--bare", "-b", "main", bare).returncode or \
+            g("init", "-q", "-b", "main", seed).returncode:
+        _bail("could not init the synthetic origin")
+    g("-C", seed, "config", "user.email", "st@st"), g("-C", seed, "config", "user.name", "st")
+    with open(os.path.join(seed, "SEED"), "w") as fh:
+        fh.write("seed on main\n")
+    g("-C", seed, "add", "SEED")
+    if g("-C", seed, "commit", "-qm", "seed").returncode or \
+            g("-C", seed, "remote", "add", "origin", bare).returncode or \
+            g("-C", seed, "push", "-q", "-u", "origin", "main").returncode:
+        _bail("could not publish the seed main")
+    # a divergent branch from the seed: a commit main will never contain.
+    if g("-C", seed, "checkout", "-q", "-b", "side").returncode:
+        _bail("could not create the divergent branch")
+    with open(os.path.join(seed, "DIVERGE"), "w") as fh:
+        fh.write("off-main commit\n")
+    g("-C", seed, "add", "DIVERGE")
+    if g("-C", seed, "commit", "-qm", "off main").returncode or \
+            g("-C", seed, "push", "-q", "origin", "side").returncode:
+        _bail("could not publish the divergent commit")
+    if g("clone", "-q", "-b", "main", bare, subject).returncode:
+        _bail("could not clone the subject")
+    if g("-C", subject, "fetch", "-q", "origin", "side").returncode:
+        _bail("could not fetch the divergent ref into the subject")
+    sha = g("-C", subject, "rev-parse", "FETCH_HEAD").stdout.strip()
+    main_sha = g("-C", subject, "rev-parse", "main").stdout.strip()
+    if not sha or not main_sha or sha == main_sha:
+        _bail("did not obtain a divergent sha distinct from main")
+    if g("-C", subject, "merge-base", "--is-ancestor", sha, "main").returncode == 0:
+        _bail("the synthetic divergent commit is unexpectedly an ancestor of main")
+    os.makedirs(os.path.join(subject, "data"), exist_ok=True)
+    stamp = os.path.join(subject, "data", "pod_synced_head")
+    with open(stamp, "w", encoding="utf-8") as fh:
+        fh.write(f"{sha} 0 2026-09-03T00:00:00Z\n")
+    os.environ["HARNESS_POD_STAMP"] = stamp
+    return subject, d
+
+
 def _broken_pod_stamp_is_main():
-    """A stamp naming a commit main does not contain: the real ledger of shas is git itself, so
-    the world takes a REAL commit that is not an ancestor of main.
+    """A stamp naming a commit main does not contain, built from a REAL non-ancestor commit.
 
-    Built from this repository's own refs rather than a made-up hex string, because a made-up
-    sha fails at `cat-file -e` and would exercise the wrong branch -- the check would report
-    "no such commit" and the ancestor comparison, which is the thing being tested, would never
-    run. If no such commit exists here, the world cannot be built and says so.
-
-    THE EXCLUSION REF MUST BE THE REF THE CHECK COMPARES AGAINST (de-99 second half).
-    `--not main` alone excluded the local ref, which lags origin/main in every un-fetched
-    worktree, so the picked commit WAS an ancestor of origin/main and read PASS once the check
-    moved to the remote ref. Excluding both refs makes the world non-ancestor under either
-    resolution, which the reality guard also asserts."""
-    d = _tmp_repo()
+    SELF-CONTAINED form: prefers the synthetic repo `_stamp_world_nonancestor_synthetic`,
+    which is reachable on every checkout. Falls back to a real ROOT sha ONLY when git itself
+    cannot build the synthetic world -- and distinguishes three probe outcomes on the
+    ROOT-ref path (it never builds here in CI): empty result is a legitimate skip, a sha is
+    used, and a git FAILURE (rc!=0, e.g. no resolvable main in a detached checkout) is a loud
+    NOT-VERIFIED, never read as "empty" (the f19a9474 fail-open). Returns the subject tree;
+    the removable root is recorded in SELF_CONTAINED_STAMP_WORDS for cleanup."""
+    try:
+        subject, root = _stamp_world_nonancestor_synthetic()
+        SELF_CONTAINED_STAMP_WORDS.add(subject)
+        SELF_CONTAINED_STAMP_ROOTS[subject] = root
+        return subject
+    except SelftestSkip:
+        pass  # synthetic git unavailable; try the real-ref fallback below
     r = subprocess.run(["git", "-C", ROOT, "rev-list", "--all",
                         "--not", "main", "origin/main", "-n", "1"],
                        capture_output=True, text=True)
+    if r.returncode != 0:
+        # THE PROBE ITSELF FAILED (no resolvable main in this checkout, etc). That is not an
+        # empty set and must not be skipped: the check cannot verify the non-ancestor arm.
+        raise AssertionError(
+            "pod_stamp_is_main world B NOT VERIFIED: the non-ancestor probe "
+            f"`git rev-list --all --not main origin/main` failed (rc={r.returncode}): "
+            f"{r.stderr.strip()[:160]}")
     sha = r.stdout.strip()
     if not sha:
-        raise SelftestSkip("no commit outside main here; cannot build a non-ancestor stamp", reason="environment")
+        raise SelftestSkip("synthetic world unbuildable and no commit outside main here; "
+                           "cannot build a non-ancestor stamp", reason="environment")
+    d = _tmp_repo()
     os.makedirs(os.path.join(d, "data"), exist_ok=True)
     stamp = os.path.join(d, "data", "pod_synced_head")
     with open(stamp, "w", encoding="utf-8") as fh:
         fh.write(f"{sha} 0 2026-09-03T00:00:00Z\n")
-    # HARNESS_POD_STAMP so the world does not depend on the pod being reachable: a verdict
-    # that is right only when the tunnel is up proves nothing (same reason as
-    # HARNESS_POD_LEDGERS).
     os.environ["HARNESS_POD_STAMP"] = stamp
     os.symlink(os.path.join(ROOT, ".git"), os.path.join(d, ".git"))
     return d
@@ -22152,14 +22238,16 @@ def _selftest_stamp_ref_is_origin():
     world skips only its own case, out loud -- it must not propagate out of _demo and fail the
     whole run (the de-99 CI failure was exactly that propagation).
     """
-    import shutil
-
     def _refs_differ(a):
         g = lambda *x: subprocess.run(["git", "-C", a, *x],
                                       capture_output=True, text=True).stdout.strip()
         return g("rev-parse", "main") != g("rev-parse", "origin/main")
 
     saved = os.environ.pop("HARNESS_POD_STAMP", None)
+    # One private root per world, recorded explicitly -- never inferred by dirname depth.
+    # Reset at entry so repeated selftest runs in one process cannot clean a stale entry.
+    SELF_CONTAINED_STAMP_WORDS.clear()
+    SELF_CONTAINED_STAMP_ROOTS.clear()
     a = b = None
     try:
         # WORLD A: origin/main ahead of a lagging local main.
@@ -22168,6 +22256,8 @@ def _selftest_stamp_ref_is_origin():
         except SelftestSkip as s:
             print(f"  pod stamp ref: SKIP world A (origin-ahead unbuildable): {s}")
         else:
+            SELF_CONTAINED_STAMP_WORDS.add(a)
+            SELF_CONTAINED_STAMP_ROOTS[a] = os.path.dirname(a)  # originstamp_<x> root
             assert _refs_differ(a), (
                 "world A's local main equals origin/main, so the PASS below is vacuous")
             st_a, why_a = check_pod_stamp_is_main(a)
@@ -22175,25 +22265,30 @@ def _selftest_stamp_ref_is_origin():
                 f"a stamp naming origin/main while local main lags reads {st_a}, not PASS -- "
                 f"de-99 cry-wolf ({why_a[:130]})")
             print("  pod stamp ref A: origin/main ahead of a lagging local main PASSes")
-        # WORLD B: a real commit outside BOTH refs must still WARN.
+        # WORLD B: a real commit outside BOTH refs must still WARN (self-contained synthetic
+        # repo so it is reachable even on a PR's detached checkout; never a ref-luck skip).
         os.environ.pop("HARNESS_POD_STAMP", None)
-        try:
-            b = _broken_pod_stamp_is_main()
-        except SelftestSkip as s:
-            print(f"  pod stamp ref: SKIP world B (no non-ancestor commit available): {s}")
-        else:
-            st_b, why_b = check_pod_stamp_is_main(b)
-            assert st_b == WARN and "main does NOT contain" in why_b, (
-                f"the non-ancestor world reads {st_b} ({why_b[:130]}) -- the fix weakened the "
-                f"branch this check exists for")
-            print("  pod stamp ref B: a real non-ancestor commit still WARNs")
+        b = _broken_pod_stamp_is_main()
+        st_b, why_b = check_pod_stamp_is_main(b)
+        assert st_b == WARN and "main does NOT contain" in why_b, (
+            f"the non-ancestor world reads {st_b} ({why_b[:130]}) -- the fix weakened the "
+            f"branch this check exists for")
+        print("  pod stamp ref B: a real non-ancestor commit still WARNs")
     finally:
         os.environ.pop("HARNESS_POD_STAMP", None)
         if saved is not None:
             os.environ["HARNESS_POD_STAMP"] = saved
-        for w in (a, b):
-            if w:
-                shutil.rmtree(os.path.dirname(w), ignore_errors=True)
+        # Remove only the worlds' OWN private roots. No ignore_errors: a failed cleanup must
+        # be loud (a leak or a wrong target path must never pass silently).
+        import shutil
+        for root in SELF_CONTAINED_STAMP_ROOTS.values():
+            shutil.rmtree(root)
+        # ROOT-symlink fallback worlds are the mkdtemp subject itself, not its dirname.
+        for w in (b,):
+            if w is not None and w not in SELF_CONTAINED_STAMP_WORDS:
+                shutil.rmtree(w)
+        SELF_CONTAINED_STAMP_WORDS.clear()
+        SELF_CONTAINED_STAMP_ROOTS.clear()
 
 
 def _selftest_core_reexports_are_identical():
@@ -24345,6 +24440,25 @@ def _demo(only=None):
         sha = (open(p, encoding="utf-8").read().split() or [""])[0]
         if len(sha) != 40 or any(c not in "0123456789abcdef" for c in sha):
             return f"the stamp holds {sha!r}, not a full 40-char hex sha"
+        # SELF-CONTAINED worlds hold the commit in their OWN git object store (the synthetic
+        # origin-ahead and non-ancestor repos), never in ROOT. Validate against the world's
+        # own refs: the sha must resolve there and, for the non-ancestor world, fail the
+        # ancestor test against that world's main. Resolving it in ROOT would wrongly call a
+        # real synthetic commit "invented".
+        if world in SELF_CONTAINED_STAMP_WORDS:
+            if subprocess.run(["git", "-C", world, "cat-file", "-e", f"{sha}^{{commit}}"],
+                              capture_output=True).returncode:
+                return f"{sha[:12]} does not resolve in the self-contained world's own repo"
+            if subprocess.run(["git", "-C", world, "merge-base", "--is-ancestor", sha, "main"],
+                              capture_output=True).returncode == 0:
+                # origin-ahead world's stamp IS its origin/main (allowed); only flag when the
+                # world's origin/main does not contain it either.
+                if subprocess.run(["git", "-C", world, "merge-base", "--is-ancestor",
+                                   sha, "origin/main"], capture_output=True).returncode == 0:
+                    return None
+                return (f"{sha[:12]} IS an ancestor of the self-contained world's main, so it "
+                        f"does not hold the non-ancestor condition")
+            return None
         if subprocess.run(["git", "-C", ROOT, "cat-file", "-e", f"{sha}^{{commit}}"],
                           capture_output=True).returncode:
             return f"{sha[:12]} is no commit in the real repository -- invented, not taken"
