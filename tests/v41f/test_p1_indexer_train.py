@@ -207,37 +207,47 @@ def test_dangling_surrogate_leaves_grads_none():
 
 
 def test_score_seam_is_the_same_tensor_the_topk_consumed():
-    """Gate 5: no recomputation. The gathered scores must be a view of the score tensor the
-    hard topk read, not a second projection.
+    """Gate 5: no recomputation. One `select()` call must call `score()` exactly ONCE.
 
-    Proven by object identity on the underlying storage: the seam's `sc` shares `data_ptr`
-    with a score tensor computed by the same call path.
+    THE CALL COUNT IS THE DETECTOR, and the first version of this test did not have it. That
+    version compared `sc` element-wise against an independently computed `raw` -- and it
+    PASSED on the M3 mutant that recomputes the score inside `select()`, because `score()` is
+    deterministic and a second call returns identical values. Measured: M3 survived, 13
+    passed. A value comparison cannot distinguish "read the consumed tensor" from "computed
+    the same numbers again", which is exactly the distinction this gate exists to make.
+
+    Counting the calls can, and the doc's M3 expectation ("gate 5 (object identity) fails")
+    is met by it. `gather` is NOT a view either (98 caught that in my docstring): measured,
+    `sc._base is score` is False and `sc._is_view()` is False -- the result has its own
+    storage. So provenance, not storage identity, is what this asserts: the values came from
+    the one `score()` call the topk also consumed, and no second projection was run.
     """
     layer = _layer("ste").eval()
     torch.manual_seed(0)
     x = 0.2 * torch.randn(_B, _S, _SMALL["dim"], dtype=torch.bfloat16)
     q, qr = layer.qproj(x)
-    # the index keys must be a REAL tensor of the module's own width; a random one of the
-    # right shape is enough because the seam is about WHERE the values come from, not what
-    # they are. `offset` must be the compressed position base (kv.size(1)), as in forward.
     ik = torch.randn(_B, 4, _SMALL["index_head_dim"], dtype=torch.bfloat16)
-    with torch.no_grad():
-        raw = layer.indexer.score(x, qr, ik, layer.freqs_cis[:_S])
-        idxs, sc = layer.indexer.select(x, qr, ik, layer.freqs_cis[:_S], 0, 8)
+
+    calls = []
+    real_score = layer.indexer.score
+
+    def counting_score(*a, **k):
+        calls.append(1)
+        return real_score(*a, **k)
+
+    layer.indexer.score = counting_score
+    try:
+        with torch.no_grad():
+            idxs, sc = layer.indexer.select(x, qr, ik, layer.freqs_cis[:_S], 0, 8)
+    finally:
+        layer.indexer.score = real_score
+    assert len(calls) == 1, (
+        f"select() called score() {len(calls)} times: a training side path that recomputes "
+        f"the score is the fed-dead-weight shape -- the second projection's values are not "
+        f"the ones the hard topk selected on")
     assert idxs.size(-1) == sc.size(-1), (
         f"the seam returned {sc.size(-1)} scores for {idxs.size(-1)} selected slots")
-    for b in range(_B):
-        for m in range(_S):
-            for j in range(idxs.size(-1)):
-                col = int(idxs[b, m, j]) - 8  # select() offsets visible cols by `offset`
-                if col < 0:
-                    continue
-                want = raw[b, m, col]
-                got = sc[b, m, j]
-                assert got == want or (torch.isinf(want) and torch.isinf(got)), (
-                    f"seam score at ({b},{m},{j}) is {got}, raw at col {col} is {want}: the "
-                    f"seam recomputed instead of gathering the consumed tensor")
-    print("  seam: gathered scores match the topk-consumed tensor element-wise")
+    print(f"  seam: score() called exactly {len(calls)} time(s) per select()")
 
 
 def test_only_indexer_params_receive_new_gradient():

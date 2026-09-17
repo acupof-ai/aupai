@@ -107,7 +107,13 @@ class Indexer(nn.Module):
         oracles see the same integers they saw before. The second value is what the
         training-only straight-through path needs: `score` is the SAME tensor the hard topk
         consumed (post-visibility-mask, in-place masked), and `sc = score.gather(-1, idxs)`
-        is a view of it at the selected slots -- NOT a recomputation.
+        reads it at the selected slots -- NOT a recomputation.
+
+        `gather` is NOT a view: it allocates a new tensor with its own storage (measured:
+        `sc._base is score` is False, `sc._is_view()` is False). What it preserves is
+        provenance and the graph -- one `score()` call produced the values, and `sc` keeps a
+        `grad_fn` back into that same score tensor, so the straight-through gradient reaches
+        `wq_b`/`weights_proj` without a second projection.
 
         Recomputing the score on a training side path is the fed-dead-weight shape: an
         allclose over fed values goes green while the real default path leaves
