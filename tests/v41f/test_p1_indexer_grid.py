@@ -300,6 +300,13 @@ def test_key_ratio_derivation_errs_only_restrictive():
     that is a fidelity boundary against the reference, not a rounding detail.
 
     If a future change makes this assertion fail in the other direction, stop: that is #494 back.
+
+    WHAT THIS TEST IS AND IS NOT. It pins the DIRECTION of the formula as arithmetic; it does not
+    read `v41f/indexer.py`, because the derivation is inline in `select()`. Verified by mutation:
+    an under-estimating `key_ratio` in the real code leaves THIS test green and turns
+    `test_selected_columns_are_causal_prefill` red. That causal test is the code-level detector;
+    this one is the arithmetic bound. They are kept separate on purpose -- a single test that
+    claimed both would let either half rot unnoticed.
     """
     unsafe = []
     for end_pos in range(1, 5000):
@@ -312,4 +319,35 @@ def test_key_ratio_derivation_errs_only_restrictive():
     assert not unsafe, (
         f"the ratio derivation under-estimates at {unsafe[:3]}: an under-estimated key_ratio "
         f"grows compress_lens and admits FUTURE columns, which is exactly the #494 defect")
-    print("  derivation: never under-estimates over end_pos<5000, r<=32 (over-restrictive only)")
+
+    # POSITIVE CONTROL. The assertion above passes by finding nothing, so show the scan is able
+    # to find an under-estimate when one exists -- otherwise "never under-estimates" is a
+    # statement about this loop, not about the derivation. Injecting the inverse formula must
+    # make the same predicate fire.
+    def _scan(fn):
+        out = []
+        for e in range(1, 500):
+            for r in range(1, 33):
+                rows = e // r
+                if not rows:
+                    continue
+                if fn(e, rows) < r:
+                    out.append((e, r, rows, fn(e, rows)))
+        return out
+
+    assert _scan(lambda e, rows: e // rows) == [], "the real derivation must stay clean"
+    injected = _scan(lambda e, rows: e // (rows + 1) if rows + 1 else 1)
+    assert injected, (
+        "NEGATIVE CONTROL FAILED: the scan found no under-estimate even for an injected "
+        "under-estimating formula, so the assertion above would pass on a broken derivation too")
+
+    # THE BOUNDARY, ASSERTED RATHER THAN DESCRIBED. The residual is over-restrictive (it can
+    # HIDE reachable columns at non-divisible lengths) -- a recall-side fidelity gap against the
+    # reference, never a correctness one. For the training shape it is EMPTY: seq=4096 divides
+    # every compress ratio in the gate config, so `end_pos % r == 0` and the derivation is exact.
+    for r in (1, 2, 4):
+        assert 4096 % r == 0
+    assert all(4096 // (4096 // r) == r for r in (1, 2, 4)), (
+        "the derivation is not exact at seq=4096 for a gate ratio: the training shape has entered "
+        "the over-restrictive regime, which it must not")
+    print("  derivation: never under-estimates (end_pos<5000, r<=32); exact at seq=4096 for r in {1,2,4}")
