@@ -120,6 +120,27 @@ def filter_domain(domain, root, out_root, workers):
     from datagen.corpus_fingerprint import fp_dir
     from filters.decontam_ngram import decontam_fp
 
+    # INHERIT the garbage-filter provenance from the SOURCE domain. Decontam runs no
+    # pass1/2/3_garbage filter itself: a clean shard is a byte-for-byte hardlink and a hit
+    # shard is a subset with 13-gram rows dropped, so every surviving byte already passed the
+    # source build's garbage filters. The _dc domain's filters_fp is therefore the source's
+    # value, copied -- NOT re-derived. A source that never recorded filters_fp means its
+    # garbage provenance is unknown; silently writing nothing would make check_corpus_filters_fp
+    # read the _dc domain as "built before stamps existed" or, worse, let it inherit a value
+    # we guessed, so the decontam run FAILs loud (ae-10, no false inheritance).
+    source_stats_p = os.path.join(src, "build_corpus_stats.json")
+    source_filters_fp = None
+    if os.path.isfile(source_stats_p):
+        with open(source_stats_p, encoding="utf-8") as sf:
+            source_filters_fp = json.load(sf).get("filters_fp")
+    if not source_filters_fp:
+        return {
+            "domain": domain,
+            "error": (f"source {domain}/build_corpus_stats.json has no filters_fp; cannot "
+                      "inherit garbage-filter provenance into {domain}_dc -- rebuild the "
+                      "source with current filters first (no false inheritance)"),
+        }
+
     # "fingerprint" is the field train.py _assert_mix_domains compares to the live dir at
     # launch. fp_dir excludes build_corpus_stats.json, so compute it over the finished
     # shards BEFORE writing the stamp; the stamp must not hash itself.
@@ -138,6 +159,9 @@ def filter_domain(domain, root, out_root, workers):
         "problems": per_problem,
         "corpus_fp_source": _corpus_fp(files),
         "workers": workers,
+        # garbage-filter provenance inherited from the source build (decontam adds none);
+        # a stale source value mismatches through check_corpus_filters_fp's pair logic.
+        "filters_fp": source_filters_fp,
         # module fp is vocab-independent (module + gate files), attached explicitly
         "decontam_fp": decontam_fp(os.path.join(root, HUMANEVAL_REL),
                                    os.path.join(root, MBPP_REL)),
@@ -214,6 +238,10 @@ def _selftest():
             fh.write(json.dumps(clean) + "\n")
         with open(os.path.join(src, "s1.jsonl"), "w") as fh:
             fh.write(json.dumps(clean) + "\n")
+        # The source build records the garbage-filter provenance the _dc domain must INHERIT.
+        source_filters_fp = "srcfp0123456789ab"
+        with open(os.path.join(src, "build_corpus_stats.json"), "w") as fh:
+            json.dump({"filters_fp": source_filters_fp}, fh)
 
         st = filter_domain("dom", root, os.path.join(root, "data", "corpus"), 1)
         assert st["rows_scanned"] == 3, st
@@ -226,6 +254,31 @@ def _selftest():
         assert stamp["fingerprint"], "stamp lacks the fingerprint train guard reads"
         from datagen.corpus_fingerprint import fp_dir
         assert stamp["fingerprint"] == fp_dir(dst)
+        # ae-10: the _dc stamp carries the SOURCE garbage filters_fp verbatim (inherited, not
+        # recomputed) beside its own decontam_fp.
+        assert stamp["filters_fp"] == source_filters_fp, stamp
+        assert stamp["decontam_fp"], "stamp must keep its own decontam_fp"
+
+        # SOURCE MISSING filters_fp -> the decontam run FAILs loud (no false inheritance);
+        # no _dc stamp is written, so the launch guard cannot be faked on unknown provenance.
+        src2 = os.path.join(root, "data", "corpus", "dom_nofp")
+        os.makedirs(src2)
+        with open(os.path.join(src2, "s0.jsonl"), "w") as fh:
+            fh.write(json.dumps(clean) + "\n")
+        with open(os.path.join(src2, "build_corpus_stats.json"), "w") as fh:
+            json.dump({"fingerprint": "x" * 16}, fh)  # deliberately no filters_fp
+        bad = filter_domain("dom_nofp", root, os.path.join(root, "data", "corpus"), 1)
+        assert "error" in bad and "filters_fp" in bad["error"], bad
+        assert not os.path.exists(os.path.join(root, "data", "corpus", "dom_nofp_dc",
+                                               "build_corpus_stats.json")), \
+            "a source with no filters_fp must not publish a _dc stamp"
+        # a source with NO stamp file at all fails the same way (not just an empty field)
+        src3 = os.path.join(root, "data", "corpus", "dom_nostamp")
+        os.makedirs(src3)
+        with open(os.path.join(src3, "s0.jsonl"), "w") as fh:
+            fh.write(json.dumps(clean) + "\n")
+        bad2 = filter_domain("dom_nostamp", root, os.path.join(root, "data", "corpus"), 1)
+        assert "error" in bad2 and "filters_fp" in bad2["error"], bad2
 
         try:
             import train
