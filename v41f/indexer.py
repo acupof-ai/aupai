@@ -120,7 +120,9 @@ class Indexer(nn.Module):
         `wq_b`/`weights_proj` unused. The caller must not call `score()` again.
         """
         bsz, seqlen, _ = x.size()
-        ratio = self.compress_ratio
+        # `self.compress_ratio` is this layer's OWN ratio; the selection grid below uses the
+        # published key's (see the comment there). The attribute stays on the module for the
+        # compressor/owner side, which genuinely builds at this layer's ratio.
         end_pos = start_pos + seqlen
 
         # THE SCORE'S INPUTS ARE DETACHED, which makes the training gradient
@@ -138,17 +140,33 @@ class Indexer(nn.Module):
         # on its input's VALUE, which detach does not touch.
         index_score = self.score(x.detach(), qr.detach(), index_k.detach(), freqs)
 
+        # THE SELECTION GRID IS THE PUBLISHED KEY'S, NOT THIS LAYER'S. `index_k` is built by
+        # the kv-source layer and may have been produced at a DIFFERENT compress ratio than
+        # this consumer's own -- production does exactly that (kv_source=(2,) publishes at
+        # ratio 2, while layer 8 is an index source at ratio 1 and reuses it). Every quantity
+        # below that counts or masks compressed positions must therefore be expressed in the
+        # key grid; using `self.compress_ratio` here makes a ratio-1 consumer treat 64
+        # published rows as if there were 128, which raises on the mask and -- if only the
+        # mask were fixed -- admits FUTURE columns (query 10 keeping column 10, whose source
+        # tokens are [20,21]). The query-side RoPE `freqs` stay on this layer's ratio: they
+        # describe the QUERY positions, which are genuinely this layer's.
+        #
+        # Derived from the tensor rather than the config: the key's ratio is a property of
+        # what the owner published, and reading it back from `index_k.size(1)` means a config
+        # change cannot desynchronize the two.
+        key_rows = index_k.size(1)
+        key_ratio = max(1, end_pos // key_rows) if key_rows else 1
+
         if start_pos == 0:
-            compress_lens = (torch.arange(1, seqlen + 1, device=x.device) // ratio).unsqueeze(-1)
-            index_score.masked_fill_(
-                torch.arange(seqlen // ratio, device=x.device) >= compress_lens, -torch.inf)
+            compress_lens = (torch.arange(1, seqlen + 1, device=x.device) // key_ratio).unsqueeze(-1)
+            index_score.masked_fill_(torch.arange(key_rows, device=x.device) >= compress_lens, -torch.inf)
         else:
-            compress_lens = end_pos // ratio
+            compress_lens = end_pos // key_ratio
 
         if candidates is not None:
             index_score = index_score.masked_fill(~candidates, -torch.inf)
 
-        topk = min(self.index_topk, end_pos // ratio)
+        topk = min(self.index_topk, key_rows)
         idxs = index_score.topk(topk, dim=-1, sorted=False).indices.sort(dim=-1).values
         # gather on the -inf-padded row must not read an out-of-range column; the shift is a
         # no-op in value (-inf stays -inf) and keeps every index in range.
