@@ -224,13 +224,28 @@ _CHECK_TIMEOUTS = {
     # had passed all evening, which is a load sensor wearing a supply check's label -- cost growth,
     # not a hang. 15s is ~2.4x the measured cold cost under load.
     #
-    # RAISING THE BUDGET IS THE INTERIM FIX, NOT THE FIX (4c ruling, 2026-09-06). Having
-    # _token_cache_dir answer from the env var or an NVMe-dir test BEFORE importing train was
-    # refused: a branch here that can answer without train is a SECOND definition of the cache dir,
-    # and "fall back to train only when neither answers" is precisely where the two disagree in
-    # silence -- the 2026-09-02 incident rebuilt in the tool that exists to catch it. Root fix is
-    # de-66: move _token_cache_dir into a torch-free module both sides import. Blocked on the
-    # run's stop window; reviewer tilerl.
+    # RAISING THE BUDGET WAS THE INTERIM FIX (4c ruling, 2026-09-06). That ruling refused a
+    # branch that answers WITHOUT importing train, on the ground that such a branch is a SECOND
+    # definition of the cache dir and the two disagree in silence -- the 2026-09-02 incident
+    # rebuilt in the tool that exists to catch it. The named root fix was de-66: move the
+    # accessor into a torch-free module both sides import.
+    #
+    # WHAT ACTUALLY HAPPENED (2026-09-07, commit 1bd9ed76, de): de-66 was never built. Instead the
+    # torch-free path was placed INSIDE _token_cache_dir and tried FIRST, with TOKEN_CACHE read
+    # from train.py's SOURCE instead of an imported module. So the second definition the ruling
+    # refused DOES now exist, and this comment said otherwise for eleven days while the code did
+    # it. Two things make the current arrangement defensible rather than a repeat of 09-02, and
+    # both are conditions, not assurances:
+    #   * the scrape may only answer when it can read the SAME inputs -- it is train's own three
+    #     steps in the same order (env, NVMe-if-present, dirname of the constant), and it FALLS
+    #     THROUGH to the import when the constant is not a literal, so a computed TOKEN_CACHE
+    #     sends the caller to the authority (measured: 5.408s and train enters sys.modules);
+    #   * the equivalence is pinned by a gate rather than by inspection
+    #     (scripts/test_token_cache_dir.py), which fails when the two paths diverge -- the
+    #     mutation that drops the NVMe step turns it red on exactly the 2026-09-05 case.
+    # de-66 is retired as superseded: its premise was that this import cost the check its budget,
+    # and the scrape removed that cost, so building it now would add a module and two exemption
+    # layers to save a fallback path's latency.
     "mix_supply": 15,
     # 0.2s on the laptop, 10.20s on the pod -- and the pod is where it was timing out. Measured
     # 2026-09-06 by walking the same 8 extensions check_no_conflict_markers walks: 0.00s to file
@@ -12387,8 +12402,14 @@ def _token_cache_dir():
     reported the overlay's copy: stale or absent, either way an answer about the wrong file.
 
     The source-scrape had one virtue worth keeping: it does not import train, which pulls in torch.
-    So train is imported lazily and the scrape stays as the FALLBACK, for a host with no torch --
-    with AUPAI_TOKEN_CACHE_DIR still honoured there, which is the half that was missing.
+    On 2026-09-07 (commit 1bd9ed76) that virtue was promoted to the DEFAULT: the scrape is tried
+    FIRST and `import train` becomes the authority it falls through to when the scrape cannot read
+    the same inputs (a non-literal TOKEN_CACHE). The docstring here said "the scrape stays as the
+    FALLBACK" for eleven days after that reversal -- the code was right and this paragraph was not,
+    which is the worse direction, since a reader checking the rule against the prose would have
+    concluded the fast path was the rare one. Measured with the constant a literal: 0.0011s and no
+    torch; with it computed: 5.408s and train enters sys.modules. AUPAI_TOKEN_CACHE_DIR is honoured
+    on both paths by the `forced` branch above, which is the half the old order existed to dodge.
 
     HARNESS_TOKEN_CACHE_DIR is kept as an alias because one live caller sets it: this file's own
     selftest fixture at the call below. Grepped 2026-09-05 -- no other setter exists outside
