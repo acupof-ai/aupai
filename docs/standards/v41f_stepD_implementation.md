@@ -17,7 +17,7 @@ itself is what is wrong.
 | build (v41f_s under bf16 default) | params | fp32 | state_dict | persistent buffers |
 |---|---|---|---|---|
 | pre-assembly: engram (), n_mtp 0 | 1982 | 87 | 1994 | 12 |
-| MTP only: engram (), n_mtp 1 | 2149 | 94 | — | — |
+| MTP only: engram (), n_mtp 1 | 2149 | 94 | 2162 | 13 |
 | **default: engram (1,), n_mtp 1** | **2153** | **94** | **2166** | **13** |
 
 - Default→MTP-only delta = 4 engram bf16 params (`engrams.1.{q_weight,k_weight,embed.weight,wkv.weight}`),
