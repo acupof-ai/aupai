@@ -494,7 +494,7 @@ def main(argv=None):
     )
     ap.add_argument("--corpus-root", default="/work/aupai/data/corpus")
     ap.add_argument("--force", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     if args.selftest:
         _selftest()
@@ -944,6 +944,55 @@ def _selftest():
             assert calls["file"] >= 1 and calls["dir"] >= 1 and calls["replace"] >= 1, calls
     finally:
         g["_fsync_file"], g["_fsync_dir"], os.replace = of_file, of_dir, of_repl
+
+    # CLI MISCONFIGURATION GUARDS (the main() argparse path). Both fire BEFORE HeadPredictor
+    # is constructed, so they are GPU-free with a nonexistent head path. main(argv) parses the
+    # passed list, which is what makes these two guards reachable from the selftest; deleting
+    # either guard makes run_cli below fail.
+    def run_cli(argv):
+        # A guard is only proven if main() SystemExits AT THE GUARD, before predictor
+        # construction. A clean return is a failure; so is reaching a LATER crash (e.g.
+        # HeadPredictor import/head-file error) -- that means the guard did not stop the run.
+        # Catching Exception (not just SystemExit) makes this deterministic whether or not
+        # torch is installed in the selftest environment.
+        try:
+            main(argv)
+        except SystemExit as e:
+            return e
+        except Exception as ex:  # ran past the guard into predictor setup
+            raise AssertionError(
+                "misconfigured CLI must SystemExit at the guard, but execution reached a "
+                f"later failure instead: {type(ex).__name__}: {ex}"
+            ) from ex
+        raise AssertionError("a misconfigured scan CLI must SystemExit, not return cleanly")
+
+    # glob0: a glob typo / empty corpus root matches no shards -> refuse, never a zero-score "success".
+    with tempfile.TemporaryDirectory() as empty_root:
+        e = run_cli([
+            "--out-dir", os.path.join(empty_root, "out"),
+            "--head-ckpt", os.path.join(empty_root, "unused_head.pt"),
+            "--scorer-version", "selftest-cli",
+            "--corpus-root", empty_root,
+            "--domains", "domain_with_no_shards",
+            "--shard", "0", "--num-shards", "1",
+        ])
+        assert isinstance(e.code, str) and "no corpus shards matched" in e.code, e.code
+
+    # worker assigned ZERO shards (its strided subset is empty) -> refuse rather than no-op.
+    with tempfile.TemporaryDirectory() as one_root:
+        dom = os.path.join(one_root, "d")
+        os.makedirs(dom)
+        with open(os.path.join(dom, "only.jsonl"), "w") as fh:
+            fh.write(json.dumps({"content": "one doc"}) + "\n")
+        e = run_cli([
+            "--out-dir", os.path.join(one_root, "out"),
+            "--head-ckpt", os.path.join(one_root, "unused_head.pt"),
+            "--scorer-version", "selftest-cli",
+            "--corpus-root", one_root,
+            "--domains", "d",
+            "--shard", "1", "--num-shards", "3",  # one shard total; shards[1::3] == []
+        ])
+        assert isinstance(e.code, str) and "was assigned 0 shards" in e.code, e.code
 
     print(
         "l2_census_scan selftest OK: disjoint sharding, idempotent fingerprint-checked "
