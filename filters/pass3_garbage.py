@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-import json, re, sys
+import json
+import re
+import sys
+
 PATTERNS = [
     r"帕尔哈提|中国好声音|吉他天才",
     r"考研政治|徐涛|腿姐|复习策略",
@@ -52,15 +55,23 @@ PATTERNS = [
     r"(教案|课件|导学案|学习任务单|电子课本|复习(拓展|资料|提纲))",
     r"(?:^|\n)[ \t　]*第[一二三四五六七八九十百0-9]+[章节卷部][^\n]{0,60}\n[ \t　]*第[一二三四五六七八九十百0-9]+[章节卷部]",
 ]
+COMPILED = [re.compile(p) for p in PATTERNS]
+
+
+def drops(content):
+    """True when any L0 garbage rule matches (the document is dropped). The single predicate
+    the CLI and the selftest share so the gate tests the exact production decision."""
+    return any(p.search(content) for p in COMPILED)
+
+
 def main():
     inp, out = sys.argv[1], sys.argv[2]
-    compiled = [re.compile(p) for p in PATTERNS]
     kept, dropped = 0, 0
     with open(inp) as f, open(out, 'w') as fo:
         for line in f:
             d = json.loads(line)
             content = d.get('content', '')
-            if any(p.search(content) for p in compiled):
+            if drops(content):
                 dropped += 1
             else:
                 fo.write(line)
