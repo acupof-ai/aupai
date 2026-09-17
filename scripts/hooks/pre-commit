@@ -1154,6 +1154,14 @@ def main():
         # document with <REDACTED_KEY> and nothing downstream ever reports it. The 9 negatives are
         # the load-bearing half, and the reconstructed row-44 case must yield exactly 3.
         "filters/secrets.py",
+        # genB: known-answer coverage for the three live PIPELINE_FILTERS Cosmopedia
+        # garbage passes (build_corpus calls pass1/2/3). A flagless test file: it asserts one
+        # real drop witness PER listed regex (171 total) -- each witness matches exactly its
+        # own rule so deleting that rule leaks it (exhaustively mutation-verified: all 171
+        # deletions go red, which also catches dead/backwards patterns) -- plus 6 normal
+        # Chinese/English/code strings no rule may drop (false-kill guard). The passes gained
+        # a shared drops() predicate that this test and the CLI both call.
+        "filters/test_l0_garbage_known.py",
         # merge_main.sh's lock predicate. Registered because the rule it replaces is exactly the
         # kind someone reinstates for looking simpler: `find -mmin +10` reads as an obviously
         # correct stale-lock cleanup, and it silently expired 4c's quiet window on 2026-09-05 while
