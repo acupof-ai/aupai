@@ -91,10 +91,28 @@ A 与 B 都改 `v41f/model.py`，**串行**；C 不动 `model.py`，可在 B 之
    顺带一条干净的基线：今天 `V41FConfig` 的字段**全部**存在于 `ModelArgs`，交集丢弃集合为空
    （实测 `[]`），所以这条纪律在此之前从没暴露过短板——engram 是第一个。
 
-3. **`Engram.q_weight` / `k_weight` 的精度是"默认 dtype 的产物"，不是指定的。**
+3. **`Engram.q_weight` / `k_weight` 的精度是"默认 dtype 的产物"，不是指定的；而 ref 的忠实值是 bf16。**
    `v41f/engram.py:197-198` 用 `torch.ones(...)` 建，实测在 bf16 默认下是 **bfloat16**（同
-   `embed.weight`/`wkv.weight`）。`head` 是显式 `dtype=torch.float32`，这两个不是。接线时要么给
-   显式 dtype，要么确认它们本就该跟 run dtype——但不能让它们随"谁设了 default dtype"漂移。
+   `embed.weight`/`wkv.weight`）。**ref 侧同样如此，且这是可证的**：
+
+   - ref `Engram.__init__`（`model_ref.py.ref:345-346`）也是 `nn.Parameter(torch.ones(...))`，
+     **不在任何 `set_dtype` 块里**；
+   - ref 全文只有一个 `set_dtype` 用在模型构造上：`model_ref.py.ref:940` 的
+     `with set_dtype(torch.float32):`，包的是 **HC 的六张表**（`:941-946` 的 `torch.empty(...)`）；
+   - ref 的 `Linear` 是显式的（`:218` `dtype = dtype or default_dtype`，`default_dtype` 在
+     `:1191` 定为 fp8 或 bf16）；
+   - ref 的进程默认 dtype 是 bf16（`:1296`）。
+
+   所以 ref 里三类的处理**各不相同**：Linear 走 `default_dtype` 显式、HC 表 `set_dtype(fp32)`
+   显式、engram 的 `q_weight/k_weight` 走 ambient。忠实值因此是 **bf16**，
+   `q_weight.float() * k_weight.float()`（ref `:348`，我们 `engram.py:208`）就是 ref 在数学里
+   把 bf16 提回 fp32 的地方。
+
+   **要修的是"隐式"，不是"精度"**：给显式 `dtype=torch.bfloat16`，让它不随谁的 ambient 漂。
+   若为了训练稳定性决定改成 fp32，那是一条**偏离忠实**的 v41f 自定决定，要按 DSpark 训练形态
+   那样记为自定并给理由——不能写成"对齐 head/HC 的原生 fp32 处理"，因为 ref 并没有把两者同等
+   对待（HC 显式包了 `set_dtype`，engram 没有）。这条差异我们在 `v41f/hyperconn.py:60` 的注释里
+   已经记录过一次，是同一个判据的正例。
 
 代价记录：786,862 × 128 = **100.7M 参数**落在层的 engram 表里，是当前 904.6M 的约 11%。charter §3
 写的是"engram 表当前 rows=0（待 tokenizer 素数桶，计 0）"，接线时必须重跑
@@ -218,8 +236,10 @@ o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale)
 **前置：#447 合并** + A/B/C 全部落定（参数集合已定形）。#447 的 §1.1 分组需要在接线后重算：
 - compressor 的 fp32 分组（#447 评审 P0-1）；
 - **engram 参数**：表（`embed.weight`）与 `wkv`、`q_weight`、`k_weight` 实测在 bf16 默认下都是
-  bf16（`v41f/engram.py:194-198`，只有 `head` 是显式 fp32）。接线要**显式**决定 `q_weight`/
-  `k_weight` 归哪组——今天是"谁设了 default dtype"的产物，不能这样进 ckpt。
+  bf16（`v41f/engram.py:194-198`，只有 `head` 是显式 fp32）。**这四项的忠实值就是 bf16**（ref 的
+  `q_weight/k_weight` 是 ambient，而 ref 进程默认是 bf16，见 §2.2 前置 3）。要加的是显式
+  `dtype=torch.bfloat16`，让它不随 ambient 漂；分组按 `param.dtype` 派生即自动归 bf16-native，
+  无需在 #447 的名单里单列。
 - **`NgramHashState` 的 buffer 全部 `persistent=False`**（`primes/offsets/multipliers/token_map/cache`），
   即重建、不进 ckpt。这与现在的 `ckpt.py` 行为一致，但 #447 的 `param_meta` 生成器如果按
   `state_dict()` 枚举，会**漏掉**它们——不会有错，但要确认是"设计如此"而不是"没看见"。
@@ -307,14 +327,28 @@ v41f/attention.py
 
 ## 7. 本设计不回答的问题（留给实现 PR 或裁决）
 
-1. `NgramHashState` 的 tokenizer 来源：`V41FModel(cfg, tokenizer=...)` 显式传入（本文推荐）vs 一个
-   `v41f/tokenizer.py` 加载器。**需要 fb 裁**，因为它决定 `model.py` 会不会读磁盘。
+### 7.0 已裁（fb，2026-09-17）
+
+1. **tokenizer 显式传参，不建 `v41f/tokenizer.py` 磁盘加载器，`model.py` 绝不读磁盘。**
+   模型构造收 tokenizer 对象（或已构建好的 compressed map + 派生行数），加载由训练/推理入口做一次
+   再注入。理由与 `build_compressed_token_map(tokenizer)` 的纯函数签名一致，且避免单测为了构造模型
+   先落一个 tokenizer 文件。
+2. **§7.3 tied embed/head 双 key：倾向"衔接时显式只注册一份、两模块共享同一注册名"**，让
+   `state_dict()` 保持一个参数一个名字（与 #447 严格键集自洽）。具体写法在步 D 的实现 PR 里对着
+   `state_dict().keys()` 实测敲定；判据是**不留两个 `data_ptr` 相同的 key**。
+3. **engram `q_weight/k_weight`：必须显式 dtype。** ⚠️ fb 给的理由是"按忠实参考该是 fp32 就 fp32
+   （对齐 head/HC 的原生 fp32 处理）"——**这条前提经查不成立**，见 §2.2 前置 3：ref 的 HC 表显式
+   包在 `set_dtype(torch.float32)`（`model_ref.py.ref:940-946`）里，engram 的 `q_weight/k_weight`
+   没有，走的是 ambient bf16。**要修的是隐式，忠实值仍是 bf16**；若定要改 fp32，是一条需记为自定
+   的偏离。这一条在接线 PR 里仍需 fb 确认一次。
+
+### 7.1 其余待裁项
+
+1. （已裁，见 §7.0.1）
 2. MTP 多 token loss 的加权与 target 层选取：charter §6 已标注"官方未给，需自定并 prereg"，本文件
    只接线不算 loss。
-3. `mtp.*.embed/head` 在 ckpt 中的去重方式（排除 vs 存 alias）：实测 `torch.save/load` **保留
-   storage 共享**（round-trip 后 `data_ptr` 相同），所以"存两份 alias"在磁盘上不翻倍；但
-   `state_dict()` 确实有**两个 key**，且 `strict=True` 的 load 要求两份都在。这会与 #447 §1.3 的
-   严格集合断言、以及 `param_meta` 的键集校验互相打架（同一个参数两个名字，算一个还是两个）。
-   **本文件不替 #447 作者决定**，但接线前必须定，因为步 D 的 G-D1 依赖它。
+3. （已裁方向，见 §7.0.2；实现细节留步 D）
+4. 步 C 与步 A/B 的并行度：C 不动 `model.py`，理论上可与 B 并行，但两者都要跑 `v41f_small` 整网
+   对拍。若 fb 要压缩日历时间，C 可以先行（它默认 off，风险最低）。
 4. 步 C 与步 A/B 的并行度：C 不动 `model.py`，理论上可与 B 并行，但两者都要跑 `v41f_small` 整网
    对拍。若 fb 要压缩日历时间，C 可以先行（它默认 off，风险最低）。
