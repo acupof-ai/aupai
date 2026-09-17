@@ -77,6 +77,11 @@ class V41FConfig:
     dspark_block_size: int = 5
     dspark_target_layer_ids: tuple[int, ...] = (8,)
     dspark_markov_rank: int = 0             # 0 = Markov head not built (P3 omits it)
+    dspark_noise_token_id: int = 0
+    # draft-block experts; 0 falls back to the backbone counts (ref get_moe_config `or`)
+    dspark_n_routed_experts: int = 0
+    dspark_n_activated_experts: int = 0
+    # rank>0 builds the inference Markov/confidence heads (later PR); rank 0 omits them
 
     def validate(self) -> None:
         if len(self.compress_ratios) != self.n_layers:
