@@ -27,6 +27,7 @@ from torch import nn
 
 from v41f.compressor import Compressor
 from v41f.indexer import Indexer
+from v41f.indexer_ste import ste_slot_weight
 from v41f.norm_gate import RMSNorm
 from v41f.projections import GroupedOProj, KVProj, QProj
 from v41f.rope import apply_rotary_emb, precompute_freqs_cis
@@ -49,6 +50,7 @@ class SharedAttnState:
         self.index_k = None  # [b, n_compressed, index_head_dim], published by owner
         self.topk_idxs = None  # [b, s, index_topk], published by an index source
         self.candidates = None  # level-one block mask, from the candidate source
+        self.sel_scores = None  # continuous scores at the published slots (training only)
 
 
 class IndexKeyProj(nn.Module):
@@ -172,7 +174,11 @@ class Attention(nn.Module):
         if self.is_index_source:
             # the leaf indexer scores against the published keys and returns local positions
             assert state.index_k is not None, "index source reached with no published keys"
-            idxs = self.indexer(x, qr, state.index_k, freqs, 0, window_len)
+            if self.cfg.indexer_train_mode == "ste":
+                idxs, sc = self.indexer.select(x, qr, state.index_k, freqs, 0, window_len)
+                state.sel_scores = sc
+            else:
+                idxs = self.indexer(x, qr, state.index_k, freqs, 0, window_len)
             state.topk_idxs = idxs
             return state.compress_kv, idxs
 
@@ -191,13 +197,31 @@ class Attention(nn.Module):
         apply_rotary_emb(q[..., -self.rd :], freqs)
 
         kv, idxs = self._window_kv(x, freqs, bsz)
+        sel_scores = None
         if self.compress_ratio:
             comp_kv, comp_idxs = self._compress(x, qr, freqs, kv.size(1), bsz, state)
             if comp_kv is not None and comp_idxs is not None:
                 kv = torch.cat([kv, comp_kv], dim=1)
                 idxs = torch.cat([idxs, comp_idxs], dim=-1)
+                # The window slots LEAD the concatenated selection and are not indexer-chosen,
+                # so they carry no straight-through weight. Pad the front with ones (the
+                # identity) to line the indexer's own scores up with their slots: the whole
+                # tensor is then 1.0 in forward and only the tail carries a softmax gradient.
+                if state.sel_scores is not None:
+                    pad = idxs.size(-1) - state.sel_scores.size(-1)
+                    ones = torch.ones(
+                        *state.sel_scores.shape[:-1], pad,
+                        device=x.device, dtype=state.sel_scores.dtype)
+                    sel_scores = torch.cat([ones, state.sel_scores], dim=-1)
 
-        o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale)
+        if sel_scores is None:
+            # THE OFF PATH MAKES THE IDENTICAL CALL. Not `slot_weight=None`: passing the
+            # keyword at all changes the call signature every inference stub and monkeypatch
+            # sees, so the faithful path is kept literally byte-for-byte the old call.
+            o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale)
+        else:
+            o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale,
+                            slot_weight=ste_slot_weight(sel_scores))
         # the kernel accumulates in fp32 against the fp32 attn_sink but stores empty_like(q),
         # so its output is the activation dtype; match that boundary before wo_a (bf16).
         o = o.to(q.dtype)
