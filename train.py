@@ -2121,39 +2121,31 @@ def _sample_seed():
 
 
 def _token_cache_dir():
-    """Directory holding the token caches: AUPAI_TOKEN_CACHE_DIR, else the NVMe dir if it exists,
-    else dirname(TOKEN_CACHE).
+    """Directory holding the token caches.
 
-    scripts/test_domain_loss_val.py set HARNESS_TOKEN_CACHE_DIR to redirect its cache and train.py
-    read no such variable, so the test wrote a real cache into the pod's shared /data00 beside the
-    live run's (2026-09-02); it only stopped mattering because probe_domain is not in mix_500m.
+    THE DEFINITION MOVED TO eval/token_paths.py (de-66). It lived here, so every caller that
+    wanted one string paid `import train`, which reaches model.py and then fla. Measured on this
+    checkout 2026-09-18: `import train` from cold is 6.16s, and even with harness.py's own torch
+    already imported it still adds 4.69s, while the accessor call itself is 0.000s. harness.py's
+    mix_supply check paid that to resolve one path, and its deadline was crossed by the import
+    under host-IO contention -- a supply check timing out because torch was loading. The module
+    is torch-free, so that cost is gone.
 
-    The NVMe step exists because the env var alone encoded the location in run_ddp.sh:104-108, which
-    exports it AFTER harness launch's gate has already run _token_cache_dir() in its own unset
-    environment. On 2026-09-05 that gate counted /data00, emptied hours earlier by the move, and
-    refused E1 with "no token caches on disk for 9 domain(s)" while all 22 caches sat on NVMe. Same
-    order as run_ddp.sh, so the two agree by construction rather than by which runs first.
+    Kept as a re-export rather than deleted: `train._token_cache_dir` is called from several
+    places in this file and from eval/cache_guard.py, and a silent removal would turn each into
+    an AttributeError at runtime. The order and its reasoning now live in one place, the module.
 
-    The isdir guard is the load-bearing half: unconditionally returning the NVMe path would hand a
-    laptop or a fresh pod the absent-cache refusal at line 1867, where tokenizing is correct. The
-    string is cache_guard's, not a third copy -- run_ddp.sh's literal is the second, and it cannot
-    import python.
-
-    No try/except around the import, and that is deliberate: the first version wrapped it, `sys` has
-    no module-level import in this file, and the bare except swallowed the NameError and returned the
-    old default -- reproducing the bug being fixed, inside the fix, with the test reporting only the
-    wrong answer. cache_guard is tracked beside train.py; if it cannot be imported the checkout is
-    broken and that should raise here rather than resolve to a directory nobody chose."""
+    THIS MODULE'S `TOKEN_CACHE` GLOBAL IS PASSED IN, not read from the other module: three test
+    files assign `train.TOKEN_CACHE` and expect this function to see the new value. A version
+    that read token_paths' own literal would make those assignments inert while the tests kept
+    passing -- the silent-inert-patch shape this repo has an incident for.
+    """
     import sys
 
-    env = os.environ.get("AUPAI_TOKEN_CACHE_DIR")
-    if env:
-        return env
-    sys.path.insert(0, os.path.join(ROOT, "eval"))
-    import cache_guard
-    if os.path.isdir(cache_guard.NVME_CACHE_DIR):
-        return cache_guard.NVME_CACHE_DIR
-    return os.path.dirname(TOKEN_CACHE)
+    if os.path.join(ROOT, "eval") not in sys.path:
+        sys.path.insert(0, os.path.join(ROOT, "eval"))
+    import token_paths
+    return token_paths.token_cache_dir(TOKEN_CACHE)
 
 
 _CACHE_EXCLUDE = {}
