@@ -63,6 +63,13 @@ Rules, each bought with a case from 2026-09-02:
   claim retracted next to the number; do not delete or move the number (de, 2026-09-02).
 - **Say what you cannot see.** Every message that reports state names its view (host,
   container, main, worktree) and its time in UTC.
+- **A subset count names its population and its bound.** A "N of X" conclusion carries the
+  denominator X (the whole population and how it was bounded), not just N, and says whether
+  N is a total or a lower bound. Unmeasured members are "not tried / unknown", never folded
+  into "no". The 62-domain reproducibility rerun is the case: 2 yes, 1 no, 59 not_tried —
+  "2 of 62 proven" is a **lower bound**; the 59 are ignorance, not failure, so "2 of 62, 59
+  unknown" is correct and "only 2 rebuildable" is wrong
+  (`facts/corpus_supply.json#cs.reproducibility_table_0908`).
 
 Messages between sessions: the first line is the whole conclusion in one sentence; the body
 is evidence in the forms above; a disagreement names a failing case or an artifact, never a
