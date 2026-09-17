@@ -63,6 +63,17 @@ from datagen.score_ledger import (  # noqa: E402
 MAX_CTX = 8192  # bge-m3 hard context; a doc tokenizing to this cap is counted, expected ~0
 
 
+def over_ctx_flags(mask_lengths, cap=MAX_CTX):
+    """Per-doc truncation flags from each doc's post-truncation token count.
+
+    The tokenizer reports one number per doc (attention_mask sum); a count of exactly the
+    cap is >=, not >: a doc whose complete special-inclusive length equals the cap is
+    indistinguishable from a clipped one from the mask alone, so it is counted
+    conservatively. Measured boundary on the real bge-m3: special-inclusive 8191 does not
+    flag, an 8195-length doc truncates to 8192 and flags."""
+    return [n >= cap for n in mask_lengths]
+
+
 @dataclass
 class ScanConfig:
     scorer_version: str
@@ -453,7 +464,7 @@ class HeadPredictor:
         enc = self.tok(texts, padding=True, truncation=True, max_length=MAX_CTX, return_tensors="pt")
         # a doc at the cap was truncated; probe measured ~0, so a nonzero count is a signal.
         # Return per-doc flags (not just the running total) so the flag rides on the row.
-        over = (enc["attention_mask"].sum(1) >= MAX_CTX).tolist()
+        over = over_ctx_flags(enc["attention_mask"].sum(1).tolist())
         self.over_ctx += int(sum(over))
         with torch.no_grad():
             pred = self.model(enc["input_ids"].to(self.device), enc["attention_mask"].to(self.device))
@@ -900,6 +911,13 @@ def _selftest():
         assert marker["over_ctx_ctx"] == MAX_CTX, marker
         # over_ctx_count is an output statistic, NOT a resume-fingerprint identity field
         assert "over_ctx_count" not in expected_marker(cfg, head_fingerprint(over_pred))
+
+        # PREDICATE BOUNDARY, pinning the exact >= line the production tokenizer feeds. A
+        # doc truncated to the cap and a complete doc whose special-inclusive length equals
+        # the cap both mask-sum to 8192: the predicate must flag at EQUALITY (>=), not only
+        # above it. Deleting the >= (using >) is a missed truncation and must turn this red;
+        # the values come from the real bge-m3 boundary probe (8191 no flag, 8192 flag).
+        assert over_ctx_flags([8191, 8192, 8193, 1]) == [False, True, True, False]
 
     # DURABLE PUBLISH: file fsync before rename, parent-dir fsync after. Spy on THIS module's
     # globals (a fresh import would be a different module under `python l2_census_scan.py`).
