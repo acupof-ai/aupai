@@ -85,10 +85,19 @@ are `group="bf16"` (run+master differ).
   master/m/v.
 
 `param_meta` is generated from the live model by the dtype rule above, never hand-written,
-and is the contract the loader validates against (§2). A census assertion pins
-{total=1982, fp32=87 = head1 + hc72 + sink12 + compressor2}; any change in module dtype
-construction turns it red so the fp32 set cannot silently gain or lose a member. Key set
-must be identical across `model`, `master_fp32` (except none — master covers all optimizer
+and is the contract the loader validates against (§2). A census assertion pins the fp32 set
+computed by the dtype rule, not a frozen absolute count: the 1982/87 numbers above are the
+**pre-assembly** network (gate backbone + MoE, no engram, no MTP). The assembly plan
+(`docs/standards/v41f_assembly_plan.md` #468, steps A/B/D) adds engram (step A; ambient
+bf16 `q_weight`/`k_weight` that become EXPLICIT bf16, engram table `embed.weight`/`wkv` also
+bf16 — all auto-classify bf16-native under the dtype rule, no fp32 addition) and tied MTP
+embed/head (step B, one registration name, §6 of the assembly plan). After each assembly
+step the census is re-derived from the same `param.dtype` rule and its assertion updated;
+what stays invariant is the RULE (fp32 iff constructed fp32: head, six HC tables, sink, and
+the ratio>1 compressor softmax projections), not 1982/87. Any change in module dtype
+construction turns the current-step census red so the fp32 set cannot silently gain or lose
+a member. Key set must be identical across `model`, `master_fp32` (except none — master
+covers all optimizer
 params), and `optim.state` indices.
 
 ### 1.2 Atomic group write — no reader ever sees a torn/half group
