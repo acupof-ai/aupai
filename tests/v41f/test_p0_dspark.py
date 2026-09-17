@@ -45,8 +45,14 @@ from v41f.sparse_attn import sparse_attn
 
 T, S = 48, 5  # main prefix len, draft block size. T > window_size (16) on purpose: the
 # window rule drops the older T-16 main slots, so a suite sized T<win could never see a
-# draft that wrongly read the whole prefix. T != S also lets a length-based RoPE hook target
-# the draft call.
+# draft that wrongly read the whole prefix.
+#
+# WHY 48, NOT JUST ">win". The drop-window mutant's output delta GROWS with T/WIN, and the
+# fp32 bar is 1e-2, so a barely-over-window T sits below the bar and silently passes the
+# mutant (de measured WIN=16: T=16 -> 0.0 exactly, T=20 -> 8.4e-3 FAILS TO FIRE, T=32 ->
+# 1.56e-2, T=48 -> 2.42e-2). T=48 gives the window-drop gate ~2.4x headroom over the bar,
+# not a marginal 1.0x; a future widening of the bar or a smaller win keeps it red. T != S
+# also lets a length-based RoPE hook target the draft call.
 B = 2
 WIN = 16  # _DRAFT_SMALL window_size; T (48) is deliberately larger so the window drops slots
 
