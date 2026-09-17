@@ -93,6 +93,20 @@
    "ref": "f7ea6b",
    "listagents": "aupai-74",
    "label": "aupai-74"
+  },
+  {
+   "name": "genB",
+   "socket": "uds:/tmp/cc-socks/25387.sock",
+   "role": "implement",
+   "topics": [
+    "corpus",
+    "selftests"
+   ],
+   "note": "Added 2026-09-18 (3b-roster-gena-genb). Active this round on the L3 funnel selftests and second reads, but absent from members[], so `harness review add --reviewer genB` refused with 'not on the roster' -- the guard reads membership from THIS file, and an active reviewer who is not in it cannot write a review row at all. Socket and ListAgents ref SELF-REPORTED by the session (read from `lsof -U` on its own pid, not transcribed from a message): socket 25387, genb-62 [d3dd45]. Commit marker (genB); worktree /Users/bytedance/code/aupai/.claude/worktrees/genB, branch genb-l3-funnel-selftests.",
+   "listagents_name": "genb-62",
+   "listagents_ref": "d3dd45",
+   "ref": "d3dd45",
+   "label": "genb-62"
   }
  ],
  "not_on_this_team": [
@@ -178,7 +192,8 @@
   "98": "fb",
   "ae": "de",
   "0e": "3b",
-  "66": "3b"
+  "66": "3b",
+  "genB": "3b"
  },
  "refreshed": "2026-09-11T02:1xZ by fb: roster reconciled against ListAgents; ae socket corrected 83243->89510 (read from ae's from= address); four departed members moved out of members[]. | 2026-09-11 02:3xZ fb: fb socket corrected 99800->34049 (99800 ENOENT; peers read 34049 from fb's from= address); listagents_name aligned to label for all seven.",
  "pairs_note": "2026-09-11 02:1xZ fb: seven live members only. Pairs: fb<->de, 3b->fb, 98->fb, ae->de, 0e->3b, 66->3b. tilerl/b0/e1/44 departed; every pair that named them is re-pointed. A reviewer is the pair above; a second reader for a PR may be any other live member if the pair is busy, named in the review row."
