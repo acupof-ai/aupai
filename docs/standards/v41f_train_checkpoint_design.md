@@ -54,21 +54,42 @@ that would narrow fp32 master state.
 }
 ```
 
-Dtype groups (derived from how v41f actually constructs parameters — verified on main):
-- **bf16-native** (`group="bf16"`, run+master differ): embed, all attention linears
-  (q/kv/wo_b), grouped wo_a, RMSNorm weights, MoE gate.weight, all routed+shared expert
-  weights, compressor weights. These are created under the bf16 default dtype.
-- **fp32-native** (`group="fp32_native"`, run IS fp32): `head.weight`, the six HyperConn
-  tables (`hc_attn_fn/hc_ffn_fn/hc_attn_base/hc_ffn_base/hc_attn_scale/hc_ffn_scale`),
-  `attn_sink`. For these `model[name]` and `master_fp32[name]` are the same value/dtype.
+Dtype groups are DERIVED FROM EACH PARAMETER'S `.dtype` on the live bf16-build model, never
+hand-enumerated. A hand list rots the day a module promotes one projection (the miss this
+revision fixes): the grouping code is `group = "fp32_native" if p.dtype==float32 else
+"bf16"` over `model.named_parameters()`, and a census test pins the exact counts so a silent
+membership change fails. Verified census on the production 12-layer config built under the
+bf16 default dtype (independent `named_parameters` sweep, 2026-09-17): **1982 parameters,
+87 fp32, 1895 bf16**. The 87 fp32 are exactly:
+
+- `head.weight` (1),
+- the six HyperConn tables `hc_attn_fn/hc_ffn_fn/hc_attn_base/hc_ffn_base/hc_attn_scale/hc_ffn_scale` (12 each = 72),
+- `attn_sink` (12),
+- **the compressor softmax-pool projections `compressor.wkv` and `compressor.wgate` on the
+  shared compressed-KV source layer (2: `layers.2.attn.compressor.*`).** `Compressor` builds
+  these two `nn.Linear` explicitly in fp32 when `compress_ratio > 1` (`v41f/compressor.py`,
+  `dtype=torch.float32 if compress_ratio > 1 else bfloat16`); only layers 2-5 carry a
+  compressor and the KV source is one shared layer, so the fp32 projection exists once per
+  name. (`compressor.norm` and every ratio-1 path are bf16.)
+
+For all 87 fp32-native params `model[name]` and `master_fp32[name]` alias one fp32 tensor
+(§2.3 handles the refresh hazard that makes this safe). The other 1895 — embed, attention
+q/kv/wo linears, grouped wo_a, all RMSNorm weights including `compressor.norm`, MoE
+gate.weight, every routed+shared expert weight — are created under the bf16 default dtype and
+are `group="bf16"` (run+master differ).
 - **buffers, not in master/optim**: the persistent fp32 `gate.bias` (selection-only), and
   non-persistent runtime caches (window/compress kv, freqs_cis) which are rebuilt, never
-  saved. hard-topk indexer params are real parameters with no CE grad today (see §4 note);
-  they are not in the optimizer group (the master criterion, per fb ruling), so they get bf16 weights + param_meta grad=False and NO master/m/v.
+  saved. hard-topk indexer params are real parameters with no CE grad today (see §4 note and
+  the aligned three-state terminology in §6); they are not in the optimizer group (the
+  master criterion, per fb ruling), so they get bf16 weights + param_meta grad=False and NO
+  master/m/v.
 
-`param_meta` is generated from the live model, never hand-written, and is the contract the
-loader validates against (§2). Key set must be identical across `model`, `master_fp32`
-(except none — master covers all trainable params), and `optim.state` indices.
+`param_meta` is generated from the live model by the dtype rule above, never hand-written,
+and is the contract the loader validates against (§2). A census assertion pins
+{total=1982, fp32=87 = head1 + hc72 + sink12 + compressor2}; any change in module dtype
+construction turns it red so the fp32 set cannot silently gain or lose a member. Key set
+must be identical across `model`, `master_fp32` (except none — master covers all optimizer
+params), and `optim.state` indices.
 
 ### 1.2 Atomic group write — no reader ever sees a torn/half group
 
@@ -118,17 +139,33 @@ The truncation is impossible-by-construction, not merely untested:
    - `master: dict[str, nn.Parameter(fp32)]`, one entry per trainable param;
    - optimizer is constructed over `master.values()` (AdamW sees only fp32);
    - before forward: `model_param.data.copy_(master[name].to(bfloat16))` for bf16-native
-     params; fp32-native params share/alias master directly (no copy);
+     params ONLY. fp32-native params (the §1.1 set of 87) alias one fp32 tensor shared
+     between `model[name]` and `master_fp32[name]`, and the refresh loop MUST skip them;
    - after backward: grads are computed against bf16 weights; cast each grad to fp32 into
      the corresponding master param (`master.grad = model_param.grad.float()`), then
      `optimizer.step()` advances master; bf16 model is refreshed on the next forward.
    This is the standard bf16-mixed-with-fp32-master pattern and matches train.py's stated
    contract ("production runs bf16 forward with fp32 master weights; the optimizer owns the
    fp32 copy").
-3. **Save master from `master.values()` (always fp32 by construction), save model weights
+3. **The bf16 refresh must never touch an aliased fp32-native parameter — this is a named,
+   measured hazard.** For the 87 fp32-native params `model[name]` and master share storage
+   (the §1.1/§5.3 "one source of truth" alias). If the §2.2 refresh is applied to them by
+   mistake — `model_param.data.copy_(master[name].to(bfloat16))` where model_param IS
+   master — the `.to(bfloat16)` rounds in a temporary and `.copy_` writes that rounded value
+   back into the SAME fp32 storage: a 32-bit param holding `1.0000305` becomes `1.0` while
+   `.dtype` STILL reads float32 (independently reproduced, torch CPU, 2026-09-17). No dtype
+   assertion can see it; the value is silently truncated and the alias then propagates the
+   truncation into both `model` and `master_fp32`. The guard is structural, not a dtype
+   check: the refresh is dispatched on the same `group=="bf16"` membership used to build
+   master, so an fp32_native/aliased param is unreachable by the bf16 copy branch. The
+   oracle must also prove the alias survives a real save (de verified `torch.save`/
+   `os.replace` preserve storage aliasing, and `build_agentic_sft:1775-1826` /
+   `build_p1_tokenizer:198-243` are the staging boundary) — i.e. the problem is confined to
+   the refresh, and M6 (§4) pins it.
+4. **Save master from `master.values()` (always fp32 by construction), save model weights
    from the bf16 run model.** A save asserts `master_fp32[name].dtype==float32` for every
    entry and `model[name].dtype == param_meta[name].dtype`; violation raises before writing.
-4. **Load rejects mixed/narrowing paths explicitly:**
+5. **Load rejects mixed/narrowing paths explicitly:**
    - there is no API to "load master into a bf16-default model"; the trainer checkpoint
      loader returns `(model, master_state, optimizer, cfg, step)` together, never a bare
      model; the inference-only `load_checkpoint` stays bf16-only and cannot open a train
@@ -137,7 +174,7 @@ The truncation is impossible-by-construction, not merely untested:
      `{key: expected fp32}` assignment (not `load_state_dict` on the module, which would
      follow default dtype) — copy tensor-by-tensor and assert `tensor.dtype is float32`.
    - a mutant that drops the dtype assertion or casts master to bf16 must fail a test (§4).
-5. The persistent fp32 `gate.bias` and runtime buffers follow their own explicit handling
+6. The persistent fp32 `gate.bias` and runtime buffers follow their own explicit handling
    and are never silently promoted into master.
 
 Net: a tensor's restored dtype is decided by `param_meta` + the dedicated master map, never
@@ -199,6 +236,16 @@ Correctness gates (green on the real code):
    version replaces atomically and a reader never observes a missing/partial file (the fsync
    itself is labeled not-unit-tested, per repo convention).
 5. inference interop: bf16 `model` group loads in the inference loader and reproduces logits.
+6. **dtype census is structural.** On the production 12-layer config under the bf16 default
+   dtype, `named_parameters()` reports total=1982 and fp32=87, and the fp32 name set equals
+   exactly {head.weight, six hc_* tables (72), attn_sink (12), layers.2 compressor.wkv/wgate
+   (2)}. `param_meta`'s `fp32_native` group, derived by the dtype rule, must equal that set.
+7. **alias identity.** For every fp32_native param `model[name].data_ptr() ==
+   master_fp32[name].data_ptr()` (one storage), and the §2 refresh branch is never applied to
+   it. For every bf16 param the two are distinct storages.
+8. M1/M3/M8/M9 are each run TWICE — once on a bf16-native param and once on the aliased
+   `head.weight` — so the alias class (self-referential model==master) is actually exercised,
+   not only the distinct-storage bf16 path.
 
 Mutants (each must turn a NAMED assertion red — target assertion cited, not a generic crash):
 M1. drop/zero one master tensor on disk → master bit-exact + strict-set gate fails.
@@ -220,6 +267,15 @@ M11. point the inference loader at a train blob (and vice versa) → format guar
      proving the two paths cannot be crossed (the structural #441 fix).
 M12. bypass process-private temp cleanup → leak gate (reuse #441's loud-rm-tree harness;
      injection of rmtree failure must surface).
+M13. **alias×refresh truncation (de, d4f).** Point the pre-forward bf16 refresh at an
+     fp32-native ALIASED param (`head.weight`, where model and master are one storage): the
+     faulty path does `model["head.weight"].data.copy_(master["head.weight"].to(bfloat16))`,
+     rounding 1.0000305 → 1.0 in place while `.dtype` stays float32. Gate 7's data_ptr alias
+     holds and no dtype check trips, so ONLY a value oracle catches it — the §3 resume oracle
+     must diverge from the uninterrupted control at **atol 0** (fp32 CPU), and a lazy save
+     after one forward/step must already carry the truncated value. The correct code dispatches
+     the refresh on `group=="bf16"` and leaves the alias untouched (master head.weight stays
+     1.0000305). This is the truncation a dtype-only assertion cannot see.
 
 Non-targets recorded as N/A: hard-topk indexer has no CE gradient today (so its m/v are
 moot until STE/aux), but it must still round-trip structurally; LR scheduler/RNG/data cursor
@@ -233,17 +289,39 @@ explicitly not restored in version 1 and the docstring/test must not imply they 
    point). Directory/sharded layout deferred until a real >single-file need (YAGNI).
 2. **Hard-topk indexer params are NOT given a master copy or m/v.** The criterion is
    optimizer-group membership, not a hand-maintained name list: they are not in the AdamW
-   param group (#440 already asserts they receive no CE grad), so AdamW state for them is
-   naturally empty. Save only their bf16 model weights plus a `param_meta` flag
+   param group (they receive no CE grad through the hard selection), so AdamW state for them
+   is naturally empty. Save only their bf16 model weights plus a `param_meta` flag
    `grad=False`; if a future STE/aux loss puts them in the group they get master state with
-   no migration of the format.
-3. **fp32-native parameters (head, six HC tables, attn_sink) ALIAS master storage** — the
-   parameter itself is the fp32 master; no second copy. Only bf16-native params get a
-   distinct fp32 master. Avoids two sources of truth for tensors that are already fp32.
+   no migration of the format. Their exact lifecycle uses the three-state vocabulary of §6,
+   shared with `docs/standards/v41f_indexer_trainability_design.md` (#456).
+3. **All 87 fp32-native parameters ALIAS master storage** — the §1.1 set (head, six HC
+   tables, attn_sink, and the two ratio>1 compressor softmax projections on the shared source
+   layer); the parameter itself is the fp32 master, no second copy. Only bf16-native params
+   get a distinct fp32 master. Avoids two sources of truth for tensors already fp32. The §2
+   refresh MUST skip aliased params (the M13 truncation).
 4. **New file `v41f/master.py`** owns `TrainState` (master map + bf16 cast hooks) and the
    TRAINING save/load, kept physically separate from the inference-only `ckpt.py`. The two
    format strings must be disjoint so a train blob cannot be opened by the inference loader
    or vice versa (mutant M11).
 
 Implementation is scheduled AFTER de's engram and 0e's MTP land, to avoid editing
-v41f/*.py concurrently. This PR is the design + test list only; M1-M12 stand.
+v41f/*.py concurrently. This PR is the design + test list only; M1-M13 stand.
+
+---
+
+## 6. Parameter lifecycle — three optimizer-group states (shared with #456)
+
+A trainable tensor's checkpoint treatment is decided solely by optimizer-group membership;
+the indexer STE design (#456) and this checkpoint use the same three states so the two docs
+cannot disagree:
+
+| state | in AdamW group | master/m/v | model weights | example |
+|---|---|---|---|---|
+| **in-group** | yes | fp32 master (distinct, or alias if fp32-native) + m/v | bf16, or fp32 alias | the 1895 bf16 + 87 fp32-native params today |
+| **present-dormant** | no, but the module is built and saved | none | saved bf16 + `param_meta grad=False` | hard-topk indexer params before STE lands |
+| **absent** | module not instantiated on this config | none | not in the blob | level-1 candidate indexer when `candidate_source_layer<0` (v41f-S) |
+
+The STE landing (#456) moves `wq_b`/`weights_proj` from present-dormant to in-group with no
+format migration: membership is what flips on the fp32 master and m/v, and the census/groups
+are derived, so no name list is edited. Absent params never appear and a loader must not
+require them.
