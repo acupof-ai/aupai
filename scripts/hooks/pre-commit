@@ -1156,12 +1156,18 @@ def main():
         "filters/secrets.py",
         # genB: known-answer coverage for the three live PIPELINE_FILTERS Cosmopedia
         # garbage passes (build_corpus calls pass1/2/3). A flagless test file: it asserts one
-        # real drop witness PER listed regex (171 total). Each witness matches its own paired
-        # rule (it may also match siblings); the guarantee is from the exhaustive deletion
-        # mutation -- all 171 rule deletions leak their witness (a witness kept alive only by
-        # a sibling is a redundant rule and is caught), which also catches dead/backwards
+        # real drop witness PER listed regex (170 total). Each witness matches its own paired
+        # rule; the guarantee is the exhaustive deletion mutation, now RUN IN the selftest
+        # rather than out of band -- deleting any one rule must leak its witness, so a witness
+        # kept alive only by a sibling is reported as a REDUNDANT RULE and the run goes red.
+        # That is what caught pass1 rule 11 (the 足球运动员 rule, gap 0-20, tails
+        # 个人简介/职业生涯/生涯分析), deleted 2026-09-17 as provably subsumed by rule 10;
+        # its witness is merged into rule 10's. The check also catches dead/backwards
         # patterns -- plus 6 normal Chinese/English/code strings no rule may drop (false-kill
-        # guard). The passes gained a shared drops() predicate that this test and CLI both call.
+        # guard). The passes gained a shared drops() predicate that this test and CLI both
+        # call. NO BRACE CHARACTERS IN THIS COMMENT: the map regex stops at the first closing
+        # brace, and one here truncates the parse (measured 2026-09-17: gates fell to 42 and
+        # 218 gated files reported missing). The quote guard above does not cover braces.
         "filters/test_l0_garbage_known.py",
         # merge_main.sh's lock predicate. Registered because the rule it replaces is exactly the
         # kind someone reinstates for looking simpler: `find -mmin +10` reads as an obviously
