@@ -2114,9 +2114,12 @@ def main():
         # sha1 over whitespace/punctuation-normalized text. The selftest pins that
         # re-flowed/punctuated re-crawls share a key while case/word-order/content do not,
         # that a cross-source duplicate points at the FIRST occurrence, that dedup_fp moves
-        # with every param, and that normalized-empty docs are skipped. Each guard is
-        # mutation-verified (raw-text key, rep overwrite, dup removal, constant fp, and
-        # dropping the empty skip all turn the selftest red).
+        # with every param, and that normalized-empty docs are skipped; all four outputs
+        # (manifest/kept/stats/per-domain marker) publish via atomic_io.durable_publish,
+        # spy-verified, and a torn global manifest under complete markers rebuilds instead
+        # of JSONDecodeError. Each guard is mutation-verified (raw-text key, rep overwrite,
+        # dup removal, constant fp, dropping the empty skip, a direct non-atomic write, and
+        # an existence-only resume check all turn the selftest red).
         "datagen/dedup_corpus.py",
         # de-36: the pod ledger puller. Its selftest is cardless and podless -- every case
         # is fabricated rows plus a stubbed pod reader, because the live numbers change
