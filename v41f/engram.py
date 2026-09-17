@@ -153,7 +153,18 @@ class NgramHashState(nn.Module):
             persistent=False,
         )
 
-    @torch.inference_mode()
+    # NO `torch.inference_mode()` HERE. It returns INFERENCE tensors, and the caller feeds
+    # them to `Engram.forward`'s `self.embed(...)` inside an autograd-tracked graph, which
+    # raises "Inference tensors cannot be saved for backward" -- so an engram-on config could
+    # not complete a training step at all (the default config sets engram_layer_ids=(1,), so
+    # this blocked the production shape, not an exotic one).
+    #
+    # `no_grad()` is what this wants: the hash ids are a pure function of `input_ids` with no
+    # grad-worthy input, so no graph should be built over them -- but the RESULT must be an
+    # ordinary tensor the caller can use in a graph. `no_grad` leaves the same values and the
+    # same memory behaviour without the inference flag. (A `.clone()` at the return would also
+    # work and is more invasive: it copies a [B, L, n_hashes] int64 tensor every call.)
+    @torch.no_grad()
     def forward(
         self, input_ids: torch.Tensor, start_pos: int, token_mask: torch.Tensor | None = None
     ) -> torch.Tensor:
