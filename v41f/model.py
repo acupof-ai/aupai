@@ -30,6 +30,7 @@ from torch import nn
 from .attention import SharedAttnState
 from .block import Block, make_identity_pre_mix
 from .engram import Engram, EngramLayout, NgramHashState
+from .mtp import DSparkBlock
 from .norm_gate import RMSNorm
 
 
@@ -100,6 +101,28 @@ class V41FModel(nn.Module):
             )
         self.norm = RMSNorm(cfg.dim, cfg.norm_eps)
         self.head = V41FHead(cfg.vocab_size, cfg.dim)
+        # DSpark draft stages, registered under the mtp.* checkpoint namespace (ref
+        # Transformer :1207-1211). Empty when n_mtp_layers is 0, so the OFF path is
+        # structurally identical rather than specially cased.
+        #
+        # THE DRAFT SHARES embed/head WITHOUT REGISTERING THEM. The reference assigns
+        # `mtp[i].embed = self.embed`, which makes both names live in state_dict() over one
+        # storage; DSparkBlock instead takes `embed` and `head` as forward arguments, so the
+        # tie is a call-site fact and state_dict() keeps one name per tensor. Nothing here
+        # rebinds a module to share it.
+        # THE GATE IS n_mtp_layers, THE FLAG THAT SAYS "BUILD DRAFTS". target_layer_ids
+        # gates the main_hidden COLLECTION (a separate concern: a model may record target
+        # hiddens without carrying draft stages), and using it here would make the draft
+        # appear for a config that asked for none. Also require targets when stages exist,
+        # since a draft with nothing to condition on cannot be built.
+        if cfg.n_mtp_layers:
+            assert self.target_layer_ids, (
+                f"n_mtp_layers={cfg.n_mtp_layers} needs dspark_target_layer_ids: the draft's "
+                f"main_proj is sized by the number of target layers")
+        self.mtp = nn.ModuleList(
+            [DSparkBlock(cfg, i, len(self.target_layer_ids), max_batch_size=max_batch_size)
+             for i in range(cfg.n_mtp_layers)]
+        ) if cfg.n_mtp_layers else nn.ModuleList()
 
     def forward(self, input_ids: torch.Tensor):
         engram_hashes = self.engram_hash(input_ids, 0, None) if self.engram_hash is not None else None
