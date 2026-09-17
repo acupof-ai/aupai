@@ -25,6 +25,7 @@ jobs:
       # glob runner loads it without executing it. Run it explicitly: it is the armed A/B
       # wiring gate (an implemented section that fails to arm exits nonzero).
       - run: python tests/v41f/test_p1_assembly_keys.py --selftest
+      - run: python tests/v41f/test_p1_indexer_freeze.py --selftest
       - run: python scripts/shape_audit.py --selftest
       - run: python scripts/shape_audit.py
       - run: python scripts/pod_drift.py --selftest
