@@ -409,8 +409,16 @@ def _selftest():
                 rc = 1
             else:
                 print(f"[SKIP-unarmed] {name}: {s}")
+        except AssertionError as e:
+            # An armed gate's contract failing is a FAILURE, not a crash: print the named
+            # section and keep going so every broken section reports in one run, then exit
+            # nonzero. Letting it propagate printed only a traceback -- rc was already 1 but
+            # there was no [FAIL] <section> line, so a reader/grep could not see which gate
+            # failed (loudness gap, 2026-09-18).
+            print(f"[FAIL] {name}: {e}")
+            rc = 1
     if rc:
-        print("p1 assembly key/dtype gate FAIL: an armed section did not wire")
+        print("p1 assembly key/dtype gate FAIL: an armed section did not wire or its contract failed")
         return rc
     print("p1 assembly key/dtype gate OK: baseline frozen; A/B armed")
     return 0
