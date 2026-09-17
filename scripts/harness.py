@@ -255,9 +255,85 @@ _TIMEOUT_STRIKES = 2
 
 
 
+#: A broken world cannot run on THIS checkout, not a defect in the check under test.
+SKIP_ENVIRONMENT = "environment"
+#: The construct this guard watches has been retired/moved (a call, strip anchor, or
+#: coverage row the world mutates is gone). The guard is dead until the world is re-pointed.
+SKIP_DEAD_GUARD = "dead_guard"
+#: The artifact is present but currently holds no qualifying record / cannot express the
+#: defect (empty ledger, grant shape, too few real entries). Nothing is retired.
+SKIP_EMPTY_POPULATION = "empty_population"
+SKIP_REASONS = (SKIP_ENVIRONMENT, SKIP_DEAD_GUARD, SKIP_EMPTY_POPULATION)
+
+
 class SelftestSkip(Exception):
     """A broken world cannot be built on this checkout (missing untracked file).
-    The check itself SKIPs for the same reason, so the selftest skips too, out loud."""
+    The check itself SKIPs for the same reason, so the selftest skips too, out loud.
+
+    `reason` is REQUIRED and names WHY the world cannot be built, because a dead-guard skip
+    (the watched construct was retired; the test protects nothing until re-pointed) must not
+    be indistinguishable from an environmental skip (no GPU / shallow clone / gitignored
+    input here) in the summary. A skip without a reason in SKIP_REASONS is counted as a
+    FAILURE by the selftest runner -- see _selftest_skip_reasons_classified."""
+
+    def __init__(self, *args, reason=None):
+        super().__init__(*args)
+        self.reason = reason
+
+    @property
+    def classified(self):
+        return self.reason in SKIP_REASONS
+
+
+def _unclassified_skip_failures(items):
+    """Structural classifier for caught SelftestSkips. `items` is (name, SelftestSkip)
+    pairs. A skip whose reason is not one of SKIP_REASONS is returned as a failure string;
+    classification reads the structured `reason` field, never the message text, so a
+    dead-guard skip cannot masquerade as environmental by wording."""
+    return [f"{name}: SelftestSkip without a reason in {SKIP_REASONS}"
+            for name, e in items if not e.classified]
+
+
+def _selftest_skip_reasons_classified():
+    """The skip classifier itself must fail on a skip that should be classified but is not,
+    and classify by the `reason` FIELD, not the message wording. Also asserts the selftest
+    runner wires the classifier into BOTH skip populations (broken-world + direct): a helper
+    that exists but is never called would leave an unclassified skip green again -- the exact
+    2026-09-07 incident where a dead guard printed `self-test OK` for 4.5h."""
+    # AST gate (fires without waiting for the world to trigger): EVERY SelftestSkip raised
+    # in this file must carry a reason kwarg. A new skip site without one would otherwise
+    # stay latent until its environment happens to skip it, then print UNCLASSIFIED silently.
+    tree = ast.parse(open(__file__, encoding="utf-8").read())
+    missing = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call):
+            f = node.exc.func
+            nm = f.id if isinstance(f, ast.Name) else getattr(f, "attr", "")
+            if nm == "SelftestSkip" and not any(k.arg == "reason" for k in node.exc.keywords):
+                missing.append(node.lineno)
+    assert not missing, f"SelftestSkip raised without reason= at lines {missing}"
+    # classified skips are not failures, all three reasons
+    classified = [(f"c_{r}", SelftestSkip("x", reason=r)) for r in SKIP_REASONS]
+    assert _unclassified_skip_failures(classified) == []
+    # unclassified is a failure even when its message pretends to carry a reason
+    bad = [("guard_z", SelftestSkip("no GPU here; dead_guard environment"))]
+    out = _unclassified_skip_failures(bad)
+    assert len(out) == 1 and "guard_z" in out[0], out
+    # wording cannot promote an unclassified skip, and cannot demote a classified one
+    assert _unclassified_skip_failures(
+        [("g", SelftestSkip("environment wording", reason=SKIP_DEAD_GUARD))]) == []
+    # runner wiring: both skip lists must be passed through the classifier into _deferred.
+    src = inspect.getsource(_demo)
+    for call in ("_unclassified_skip_failures(skipped)",
+                 "_unclassified_skip_failures(skipped_direct)"):
+        assert call in src, (f"runner no longer classifies skips via {call!r}; "
+                             "an unclassified skip would print OK")
+    # every reason category is actually populated, so the split summary is reporting real
+    # populations rather than constant zeros
+    body = open(__file__, encoding="utf-8").read()
+    for r in SKIP_REASONS:
+        assert f'reason="{r}"' in body, f"no skip site is classified {r!r}"
+
 
 # --------------------------------------------------------------------------- workspace root
 # One root, configured once. AUPAI_ROOT resolves to an absolute path; every data
@@ -782,7 +858,7 @@ def _broken_reported_path():
                        capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if r.returncode or not r.stdout:
         raise SelftestSkip("47cb01c2~1 is not in this repository; the historical defect is "
-                           "unavailable and a reconstructed world is what just failed")
+                           "unavailable and a reconstructed world is what just failed", reason="environment")
     src = r.stdout
     # The world must hold the defect, not merely an old file: assert the three parts.
     assert "preds_path = os.path.join(" in src, "the historical file does not bind preds_path"
@@ -893,7 +969,7 @@ def _broken_snapshot_logs_say_so_at_the_tail():
         "-- and this check reads the live pod through ~/bin/pod with a hardcoded /work/aupai. "
         "Staging it would mean truncating a real pod log. The FAIL path is exercised instead by "
         "the mutation recorded in the commit: dropping the trailer from "
-        "runs/data_leg_206m_8b.log turns this check red while its header still says 'excerpt'.")
+        "runs/data_leg_206m_8b.log turns this check red while its header still says 'excerpt'.", reason="environment")
 
 
 def check_cited_artifacts_attested(root):
@@ -1008,7 +1084,7 @@ def _broken_cited_artifacts_attested():
         if hit:
             break
     if not hit:
-        raise SelftestSkip("no fact cites a data/eval artifact yet")
+        raise SelftestSkip("no fact cites a data/eval artifact yet", reason="empty_population")
     fp, obj, e = hit
     for other in glob.glob(os.path.join(ROOT, "facts", "*.json")):
         _sh.copy(other, os.path.join(d, "facts", os.path.basename(other)))
@@ -1085,10 +1161,10 @@ def _broken_milestone_ckpt_pinned():
     d = _tmp_repo()
     src = os.path.join(ROOT, "runs", "milestones.jsonl")
     if not os.path.exists(src):
-        raise SelftestSkip("no milestones ledger to mutate")
+        raise SelftestSkip("no milestones ledger to mutate", reason="environment")
     rows = [json.loads(x) for x in open(src, encoding="utf-8") if x.strip()]
     if not rows:
-        raise SelftestSkip("milestones ledger is empty")
+        raise SelftestSkip("milestones ledger is empty", reason="empty_population")
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
     rows[0] = dict(rows[0], ckpt="ckpt_rotated_away.pt.step3500", milestone="3.24b")
     with open(os.path.join(d, "runs", "milestones.jsonl"), "w", encoding="utf-8") as f:
@@ -1792,13 +1868,13 @@ def _broken_launcher_states_anneal_frac():
     src = os.path.join(ROOT, "scripts", "lr_probe.sh")
     mix = os.path.join(ROOT, "data", "mix_probe_lr.json")
     if not (os.path.exists(src) and os.path.exists(mix)):
-        raise SelftestSkip("scripts/lr_probe.sh or data/mix_probe_lr.json absent here")
+        raise SelftestSkip("scripts/lr_probe.sh or data/mix_probe_lr.json absent here", reason="environment")
     shutil.copy(mix, os.path.join(d, "data", "mix_probe_lr.json"))
     txt = open(src, encoding="utf-8").read()
     # Strip the flag and its value wherever it appears, leaving everything else byte-identical.
     stripped = re.sub(r"\s*--anneal_frac\s+\S+", "", txt)
     if "--anneal_frac" in stripped:
-        raise SelftestSkip("could not strip --anneal_frac from lr_probe.sh")
+        raise SelftestSkip("could not strip --anneal_frac from lr_probe.sh", reason="dead_guard")
     with open(os.path.join(d, "scripts", "lr_probe.sh"), "w") as f:
         f.write(stripped)
     return d
@@ -1828,14 +1904,14 @@ def _broken_launcher_outside_scripts():
     probe_mix = os.path.join(ROOT, "data", "mix_200m_8b.json")
     for p in (clean, clean_mix, probe, probe_mix):
         if not os.path.exists(p):
-            raise SelftestSkip(f"{os.path.relpath(p, ROOT)} absent here")
+            raise SelftestSkip(f"{os.path.relpath(p, ROOT)} absent here", reason="environment")
     shutil.copy(clean, os.path.join(d, "scripts", "lr_probe.sh"))
     shutil.copy(clean_mix, os.path.join(d, "data", "mix_probe_lr.json"))
     shutil.copy(probe_mix, os.path.join(d, "data", "mix_200m_8b.json"))
     txt = open(probe, encoding="utf-8").read()
     stripped = re.sub(r"\s*--anneal_frac\s+\S+", "", txt)
     if "--anneal_frac" in stripped:
-        raise SelftestSkip("could not strip --anneal_frac from runs/mem_probe_base.sh")
+        raise SelftestSkip("could not strip --anneal_frac from runs/mem_probe_base.sh", reason="dead_guard")
     with open(os.path.join(d, "runs", "mem_probe_base.sh"), "w") as f:
         f.write(stripped)
     return d
@@ -2185,7 +2261,7 @@ def _broken_probe_numbers_unique():
             real = f
             break
     if real is None:
-        raise SelftestSkip("no tNN_*.py probe in the repo to build a collision from")
+        raise SelftestSkip("no tNN_*.py probe in the repo to build a collision from", reason="environment")
     _sh.copy(os.path.join(ROOT, "probes", real), os.path.join(d, "probes", real))
     num = re.match(r"^(t\d+)_", real).group(1)
     with open(os.path.join(d, "probes", f"{num}_collision.py"), "w", encoding="utf-8") as f:
@@ -2420,7 +2496,7 @@ def _broken_deletion_list_no_tracked():
     src = next((n for n in sorted(os.listdir(os.path.join(ROOT, "runs")))
                 if re.search(r"deletion_candidates.*\.md$", n)), None)
     if src is None:
-        raise SelftestSkip("no deletion-candidate list in runs/ to mutate")
+        raise SelftestSkip("no deletion-candidate list in runs/ to mutate", reason="environment")
 
     # A tracked file at the path the incident is about, so the check's own subject exists.
     victim = os.path.join("data", "corpus", "sample", "batch_0000.jsonl")
@@ -2529,7 +2605,7 @@ def _broken_shapes_table_covers_doc():
         m = cand
         break
     if m is None:
-        raise SelftestSkip("no rule row with 2+ §refs; update _broken_shapes_table_covers_doc")
+        raise SelftestSkip("no rule row with 2+ §refs; update _broken_shapes_table_covers_doc", reason="empty_population")
     refs = m.group(1)
     dropped = re.findall(r"§\d+", refs)[-1]
     text = text[:m.start(1)] + re.sub(r"\s*" + dropped + r"\s*$", " ", refs) + text[m.end(1):]
@@ -2549,7 +2625,7 @@ def _broken_shapes_table_doc_grew():
     text = open(src, encoding="utf-8").read()
     nums = [int(m) for m in re.findall(r"^### §(\d+)", text, re.M)]
     if not nums:
-        raise SelftestSkip("no incident headings to extend; update _broken_shapes_table_doc_grew")
+        raise SelftestSkip("no incident headings to extend; update _broken_shapes_table_doc_grew", reason="empty_population")
     # Use a number above every § in BOTH layer files so the overlap check does not fire.
     infra_p = os.path.join(ROOT, "docs", "lessons", "infra_incidents.md")
     if os.path.exists(infra_p):
@@ -2588,7 +2664,7 @@ def _broken_shapes_table_duplicate_heading():
     text = open(src, encoding="utf-8").read()
     nums = re.findall(r"^### §(\d+)", text, re.M)
     if not nums:
-        raise SelftestSkip("no incident headings to duplicate; update _broken_shapes_table_duplicate_heading")
+        raise SelftestSkip("no incident headings to duplicate; update _broken_shapes_table_duplicate_heading", reason="empty_population")
     # Same symlink hazard as _broken_shapes_table_doc_grew: docs/ is a link into the repo.
     link = os.path.join(d, "docs")
     if os.path.islink(link):
@@ -2692,7 +2768,7 @@ def _broken_agents_rules_covered():
     text = open(src, encoding="utf-8").read()
     row = "| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |"
     if row not in text:
-        raise SelftestSkip("the coverage row moved; update _broken_agents_rules_covered")
+        raise SelftestSkip("the coverage row moved; update _broken_agents_rules_covered", reason="dead_guard")
     text = text.replace(row, "| `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `gemm_dims_aligned` |", 1)
     open(os.path.join(d, "AGENTS.md"), "w", encoding="utf-8").write(text)
     return d
@@ -3240,7 +3316,17 @@ def check_main_advances_by_ancestry(root):
                  # alone" and "Do NOT re-run the merge" -- all three correct when origin has not
                  # moved, all three wrong here, and the third forbids the one safe action.
                  ("a2375098b7595abb67dc45a990d9aef6ded21410",
-                  "12ecbf520be918785b76873ca2114fbb9128db28")}
+                  "12ecbf520be918785b76873ca2114fbb9128db28"),
+                 # 2026-09-17 12:05 local: after `merge_main: 0e-review-457` wrote 7aa7217d on
+                 # local main, a session ran `branch: Reset to origin/main` (f4a4626e) on a
+                 # refused push, discarding 46cbc0bb (0e's 11:56Z changes-requested row for
+                 # PR #457, de-81). origin was already correct at 22fd20eb, and 0e re-posted the
+                 # equivalent review row at 12:02Z (same reviewer/pr/verdict/finding) which
+                 # reaches origin as `merge_main: 0e-review-457-b` -- so no evidence was lost;
+                 # the discarded commit is dangling (only reflog) and its content is a strict
+                 # subset already on origin/main. Recorded pair = (discarded, reset destination).
+                 ("7aa7217dfdb3db12d9d210189d3a20a76cb3e013",
+                  "f4a4626e609ec3c6e21f2e97ca1afc2070518860")}
     jumps = []
     unsigned = []
     for ln in lines:
@@ -4192,7 +4278,7 @@ def _tiny_tokenizer_json(eos_id=1, with_num=True):
 
 def _broken_tokenizer(eos_id=1, with_num=True):
     if not os.path.isfile(os.path.join(ROOT, "data", "tokenizer.json")):
-        raise SelftestSkip("no data/tokenizer.json -- check SKIPs without it")
+        raise SelftestSkip("no data/tokenizer.json -- check SKIPs without it", reason="environment")
     d = _tmp_repo()
     json.dump(
         _tiny_tokenizer_json(eos_id, with_num),
@@ -4797,7 +4883,7 @@ def _broken_pod_stamp_is_main():
                        capture_output=True, text=True)
     sha = r.stdout.strip()
     if not sha:
-        raise SelftestSkip("no commit outside main here; cannot build a non-ancestor stamp")
+        raise SelftestSkip("no commit outside main here; cannot build a non-ancestor stamp", reason="environment")
     os.makedirs(os.path.join(d, "data"), exist_ok=True)
     stamp = os.path.join(d, "data", "pod_synced_head")
     with open(stamp, "w", encoding="utf-8") as fh:
@@ -4887,7 +4973,7 @@ def _broken_pod_ledger_rows_home():
     for rel in ("runs/score_matrix.jsonl", "runs/experiments.jsonl"):
         src = os.path.join(ROOT, rel)
         if not os.path.exists(src):
-            raise SelftestSkip(f"{rel} absent; nothing real to build the world from")
+            raise SelftestSkip(f"{rel} absent; nothing real to build the world from", reason="environment")
         dst = os.path.join(d, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy(src, dst)
@@ -4978,7 +5064,7 @@ def _broken_run_commits_resolve():
     d = _tmp_repo()
     src = os.path.join(ROOT, "runs", "experiments.jsonl")
     if not os.path.exists(src):
-        raise SelftestSkip("runs/experiments.jsonl absent; nothing real to mutate")
+        raise SelftestSkip("runs/experiments.jsonl absent; nothing real to mutate", reason="environment")
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import exp as _exp
 
@@ -6142,7 +6228,7 @@ def _broken_coresident_call_removed():
     d = _tmp_repo_shaped()
     src = os.path.join(ROOT, "eval", "cache_guard.py")
     if not os.path.isfile(src):
-        raise SelftestSkip("eval/cache_guard.py absent")
+        raise SelftestSkip("eval/cache_guard.py absent", reason="environment")
     # eval/ is a symlink into the repo in a shaped world: replace the link with a real dir.
     ed = os.path.join(d, "eval")
     if os.path.islink(ed):
@@ -6156,16 +6242,17 @@ def _broken_coresident_call_removed():
     # the chokepoint gained a `head_rows=head_rows` argument. The literal stopped matching, the
     # world raised SelftestSkip, and `harness self-test OK` kept printing with this guard dead --
     # for 4.5 hours, over an argument added to the very line it watches. A world keyed to an
-    # exact source string is a world that any refactor of its subject silently retires, and the
-    # skip is indistinguishable in the summary from the environmental ones (no nvidia-smi, no
-    # lane card). Regex on the CALL, so adding or reordering keyword arguments cannot kill it;
+    # exact source string is a world that any refactor of its subject silently retires. Such a
+    # skip carries reason=dead_guard and is counted separately from environmental skips (no
+    # nvidia-smi, no lane card) in the self-test summary, so a retired guard can no longer
+    # hide in the environmental total (de-78, 2026-09-17). Regex on the CALL, so adding or reordering keyword arguments cannot kill it;
     # what must still fail loudly is the call disappearing, which is the defect under test.
     m = re.search(r"^[ \t]*assert_not_co_resident\(domains[^)]*\)[ \t]*\n", s, re.M)
     if m is None:
         raise SelftestSkip(
             "eval/cache_guard.py's chokepoint no longer calls assert_not_co_resident(domains, "
             "...) on its own line -- if that call was deliberately moved, re-point this world at "
-            "its new site; a SKIP here means nothing checks that the chokepoint asks")
+            "its new site; a SKIP here means nothing checks that the chokepoint asks", reason="dead_guard")
     with open(p, "w", encoding="utf-8") as fh:
         fh.write(s[:m.start()] + s[m.end():])
     return d
@@ -6242,7 +6329,7 @@ def _broken_vocab_id_load_path():
     for fn in ("sft.py", "sft_math.py"):
         src = os.path.join(ROOT, fn)
         if not os.path.isfile(src):
-            raise SelftestSkip(f"{fn} absent")
+            raise SelftestSkip(f"{fn} absent", reason="environment")
         dst = os.path.join(d, fn)
         if os.path.islink(dst):
             os.remove(dst)
@@ -6253,7 +6340,7 @@ def _broken_vocab_id_load_path():
     # the read that feeds the assert, pointed at a key nothing writes
     old = 'pack_vocab = d.get("vocab_id", d.get("vocab"))'
     if old not in s:
-        raise SelftestSkip("sft_math.py no longer reads the pack vocab this way")
+        raise SelftestSkip("sft_math.py no longer reads the pack vocab this way", reason="dead_guard")
     s = s.replace(old, 'pack_vocab = None  # d.get("vocabulary_identity")', 1)
     with open(p, "w", encoding="utf-8") as fh:
         fh.write(s)
@@ -7352,7 +7439,7 @@ def _broken_merge_keeps_parent_paths():
 
     if subprocess.run(["git", "-C", ROOT, "cat-file", "-e", "d9c9614f^{commit}"],
                       capture_output=True, stdin=subprocess.DEVNULL).returncode:
-        raise SelftestSkip("d9c9614f is not in this repository; the drop site is unavailable")
+        raise SelftestSkip("d9c9614f is not in this repository; the drop site is unavailable", reason="environment")
     d = _tf.mkdtemp(prefix="merge_drop_")
     # A linked worktree would register itself in the shared .git and need removing; a clone of
     # the local repo is self-contained and cheap (--no-checkout, then a detached read).
@@ -7362,7 +7449,7 @@ def _broken_merge_keeps_parent_paths():
                        env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
     if r.returncode:
         _sh.rmtree(d, ignore_errors=True)
-        raise SelftestSkip(f"cannot clone this repository for the world: {r.stderr[:80]}")
+        raise SelftestSkip(f"cannot clone this repository for the world: {r.stderr[:80]}", reason="environment")
     w = os.path.join(d, "r")
     subprocess.run(["git", "-C", w, "checkout", "-q", "--detach", "d9c9614f"],
                    capture_output=True, stdin=subprocess.DEVNULL)
@@ -8167,7 +8254,7 @@ def _broken_sft_pack_uncontaminated():
     # Real tokenizer and eval files, so the probe encodes real questions.
     tok_src = os.path.join(ROOT, "data", "tokenizer.json")
     if not os.path.isfile(tok_src):
-        raise SelftestSkip("no data/tokenizer.json -- check SKIPs without it")
+        raise SelftestSkip("no data/tokenizer.json -- check SKIPs without it", reason="environment")
     shutil.copy(tok_src, os.path.join(d, "data", "tokenizer.json"))
     eval_dir = os.path.join(d, "data", "eval")
     os.makedirs(eval_dir, exist_ok=True)
@@ -9017,7 +9104,7 @@ def _broken_one_deliverable_per_owner():
         if t.get("state") == "open" and t.get("owner") in roster:
             open_by_owner.setdefault(t["owner"], []).append(t)
     if not open_by_owner:
-        raise SelftestSkip("no roster member holds an open task; the register is empty")
+        raise SelftestSkip("no roster member holds an open task; the register is empty", reason="empty_population")
     owner = min(open_by_owner, key=lambda o: (len(open_by_owner[o]), o))
     with open(dst, "a", encoding="utf-8") as fh:
         # Close all but one, so the member holds exactly one -- the state the check calls
@@ -9293,7 +9380,7 @@ def _broken_review_present():
                 pass
     reviewed = [r for r in reviews if r.get("task")]
     if not reviewed:
-        raise SelftestSkip("no task-linked review rows yet; the check SKIPs the same way")
+        raise SelftestSkip("no task-linked review rows yet; the check SKIPs the same way", reason="empty_population")
     import shutil as _sh
 
     drop = reviewed[0]["task"]
@@ -9672,7 +9759,7 @@ def _broken_facts():
     hit = [e for e in obj2["facts"] if e.get("status") == "retracted"]
     if len(hit) < 2:
         raise SelftestSkip(f"facts/efficiency.json holds {len(hit)} retracted entries; the world "
-                           "needs two to break both halves of the retracted_value branch")
+                           "needs two to break both halves of the retracted_value branch", reason="empty_population")
     hit[0].pop("retracted_value", None)
     hit[1]["retracted_value"] = ["1234.5678 no such number in this entry"]
     json.dump(obj2, open(cf, "w"))
@@ -9768,7 +9855,7 @@ def _broken_unreached_files_ruled():
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
     src = os.path.join(ROOT, "runs", "reachability.txt")
     if not os.path.exists(src):
-        raise SelftestSkip("runs/reachability.txt absent; nothing real to mutate")
+        raise SelftestSkip("runs/reachability.txt absent; nothing real to mutate", reason="environment")
     out, hit = [], False
     for ln in open(src, encoding="utf-8"):
         m = re.match(r"^(\S+\.(?:py|sh))(\s+.*?)(KEEP|DELETE)\b.*$", ln.rstrip("\n"))
@@ -9780,7 +9867,7 @@ def _broken_unreached_files_ruled():
         else:
             out.append(ln)
     if not hit:
-        raise SelftestSkip("no ruled row in runs/reachability.txt to strip")
+        raise SelftestSkip("no ruled row in runs/reachability.txt to strip", reason="empty_population")
     with open(os.path.join(d, "runs", "reachability.txt"), "w", encoding="utf-8") as fh:
         fh.writelines(out)
     return d
@@ -10039,24 +10126,36 @@ def check_fact_refs(root):
         except Exception as e:
             return FAIL, f"cannot parse {f}: {e}"
     bad, retracted, n = [], [], 0
+    # ONLY TRACKED FILES ARE SCANNED. (source-label, path) for every tracked doc that may cite
+    # a fact. docs/lessons and docs/audits are the population; data/PROVENANCE.md is tracked
+    # prose outside docs/ that cites facts too (de-81) and was silently skipped. data/eval/
+    # PROVENANCE.md is tracked but has 0 facts/...#id citations, so it is deliberately not a
+    # source. PR/issue bodies and other GitHub text are non-tracked and out of scope: they are
+    # not part of the checkout the gate ships, so a missing fact id there cannot rot the repo.
+    # A missing fact id in a tracked source is the same rot as in a lesson.
+    sources = []
     for sub in DOCS_SUBDIRS:
         d = os.path.join(root, "docs", sub)
         if not os.path.isdir(d):
             continue
         for f in sorted(os.listdir(d)):
-            if not f.endswith(".md"):
-                continue
-            for m in FACT_REF_RE.finditer(open(os.path.join(d, f), encoding="utf-8").read()):
-                n += 1
-                fname, fid = m.group(1) + ".json", m.group(2)
-                if fname not in index:
-                    # fname already carries .json; appending it again printed
-                    # "facts/base_eval.json.json does not exist", a path nobody can act on.
-                    bad.append(f"docs/{sub}/{f}: facts/{fname} does not exist")
-                elif fid not in index[fname]:
-                    bad.append(f"docs/{sub}/{f}: {fid} not in facts/{fname}")
-                elif index[fname][fid].get("status") == "retracted":
-                    retracted.append(f"docs/{sub}/{f} cites retracted {fname}#{fid}")
+            if f.endswith(".md"):
+                sources.append((f"docs/{sub}/{f}", os.path.join(d, f)))
+    provenance = os.path.join(root, "data", "PROVENANCE.md")
+    if os.path.isfile(provenance):
+        sources.append(("data/PROVENANCE.md", provenance))
+    for label, path in sources:
+        for m in FACT_REF_RE.finditer(open(path, encoding="utf-8").read()):
+            n += 1
+            fname, fid = m.group(1) + ".json", m.group(2)
+            if fname not in index:
+                # fname already carries .json; appending it again printed
+                # "facts/base_eval.json.json does not exist", a path nobody can act on.
+                bad.append(f"{label}: facts/{fname} does not exist")
+            elif fid not in index[fname]:
+                bad.append(f"{label}: {fid} not in facts/{fname}")
+            elif index[fname][fid].get("status") == "retracted":
+                retracted.append(f"{label} cites retracted {fname}#{fid}")
     if bad:
         return FAIL, "; ".join(bad[:5])
     if retracted:
@@ -10216,7 +10315,7 @@ def _broken_prereg_amendment_date():
         out.append(json.dumps(row, ensure_ascii=False))
         stripped = True
     if not stripped:
-        raise SelftestSkip("no dated amendment in the real ledger to strip")
+        raise SelftestSkip("no dated amendment in the real ledger to strip", reason="empty_population")
     open(p, "w", encoding="utf-8").write("\n".join(out))
     return d
 
@@ -10327,7 +10426,7 @@ def _broken_prereg_citation():
             out = text[: m.end()] + "@amended_1" + text[m.end() :]
             open(p, "w", encoding="utf-8").write(out)
             return d
-    raise SelftestSkip("no docs/ citation of runs/prereg.jsonl#<id> to make stale")
+    raise SelftestSkip("no docs/ citation of runs/prereg.jsonl#<id> to make stale", reason="empty_population")
 
 
 def _broken_docs_root():
@@ -10368,6 +10467,42 @@ def _broken_fact_ref():
     with open(os.path.join(d, "docs", "lessons", "kept_methods.md"), "a", encoding="utf-8") as f:
         f.write("\n\nSee facts/tokenizer.json#tok.does_not_exist.\n")
     return d
+
+
+def _fact_ref_world(provenance_extra=""):
+    """Real docs + facts, plus the tracked data/PROVENANCE.md, optionally with a citation
+    appended. The real PROVENANCE cites one fact that resolves, so the unmutated world
+    passes; the appended string is the only bad citation in the mutated world."""
+    import shutil
+
+    d = _tmp_repo()
+    shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
+    shutil.copytree(os.path.join(ROOT, "facts"), os.path.join(d, "facts"))
+    src = os.path.join(ROOT, "data", "PROVENANCE.md")
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    text = open(src, encoding="utf-8").read() if os.path.exists(src) else ""
+    open(os.path.join(d, "data", "PROVENANCE.md"), "w", encoding="utf-8").write(
+        text + provenance_extra)
+    return d
+
+
+def _selftest_fact_refs_scan_provenance():
+    """data/PROVENANCE.md is part of the fact-citation population (de-81).
+
+    A tracked data/PROVENANCE.md citing a nonexistent fact must FAIL and NAME that file;
+    dropping the PROVENANCE scan from check_fact_refs makes the broken world pass, which is
+    the green-on-a-bad-citation hole. The unmutated world (real PROVENANCE, whose one fact
+    citation resolves) must PASS -- the positive control that the new scan does not fire on
+    the real file."""
+    clean = _fact_ref_world()
+    state, evidence = check_fact_refs(clean)
+    assert state != FAIL, f"real data/PROVENANCE.md must not fail the fact-ref check: {evidence}"
+
+    bad = _fact_ref_world("\n\nSee facts/tokenizer.json#tok.provenance_does_not_exist.\n")
+    state, evidence = check_fact_refs(bad)
+    assert state == FAIL, ("a bogus fact id in data/PROVENANCE.md must FAIL", state, evidence)
+    assert "data/PROVENANCE.md" in evidence, ("the FAIL must name data/PROVENANCE.md", evidence)
+    assert "provenance_does_not_exist" in evidence, evidence
 
 
 DATA_PATH_RE = re.compile(r"data/[A-Za-z0-9_][A-Za-z0-9_./-]*")
@@ -13280,7 +13415,7 @@ def _broken_tasks_drop_reason():
         return None
     dropped = [r.get("id") for r in _read_tasks() if r.get("state") == "dropped"]
     if not dropped:
-        raise SelftestSkip("the real register holds no dropped row to mutate")
+        raise SelftestSkip("the real register holds no dropped row to mutate", reason="empty_population")
     victim = dropped[0]
     rows = []
     for r in raw:
@@ -13482,7 +13617,7 @@ def _broken_friction_kinds_cover_ledger():
     """
     src = os.path.join(ROOT, "runs", "friction.jsonl")
     if not os.path.exists(src):
-        raise SelftestSkip("no runs/friction.jsonl to mutate")
+        raise SelftestSkip("no runs/friction.jsonl to mutate", reason="environment")
     lines = [ln for ln in open(src, encoding="utf-8") if ln.strip()]
     hit = None
     for i, ln in enumerate(lines):
@@ -13496,7 +13631,7 @@ def _broken_friction_kinds_cover_ledger():
             hit = i
             break
     if hit is None:
-        raise SelftestSkip("no friction row carries a kind; the world needs one to rename")
+        raise SelftestSkip("no friction row carries a kind; the world needs one to rename", reason="empty_population")
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
     with open(os.path.join(d, "runs", "friction.jsonl"), "w", encoding="utf-8") as fh:
@@ -13605,7 +13740,7 @@ def _broken_gpu_entry_points_claim():
     s = open(src, encoding="utf-8", errors="replace").read()
     if "claim_my_cards" not in s or ".cuda()" not in s:
         raise SelftestSkip("scripts/b0_n8_reuse_gate.py no longer claims or no longer moves to a "
-                           "device; the world needs a covered in-population file to uncover")
+                           "device; the world needs a covered in-population file to uncover", reason="dead_guard")
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
     open(os.path.join(d, "scripts", "b0_n8_reuse_gate.py"), "w", encoding="utf-8").write(
@@ -13714,7 +13849,7 @@ def _broken_card_held_without_claim():
     import card_claim
     if card_claim.card_memory() is None:
         raise SelftestSkip("no nvidia-smi: card_held_without_claim SKIPs here, so its world can "
-                           "only be built on the pod")
+                           "only be built on the pod", reason="environment")
     real = os.path.join(ROOT, "runs", "claims")
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "runs", "claims"), exist_ok=True)
@@ -13723,7 +13858,7 @@ def _broken_card_held_without_claim():
     names = sorted(os.listdir(real)) if os.path.isdir(real) else []
     if not names:
         raise SelftestSkip("no live claim to mutate: the world needs a real claim whose cards "
-                           "can be emptied")
+                           "can be emptied", reason="empty_population")
     for nm in names:
         src = os.path.join(real, nm)
         obj = json.load(open(src, encoding="utf-8"))
@@ -13917,7 +14052,7 @@ def _broken_lane_respected():
         lane, block = [], []
     if not block:
         raise SelftestSkip("runs/card_assignment.json names no block_cards; there is no lane "
-                           "violation to build")
+                           "violation to build", reason="empty_population")
     if not lane:
         # A GRANT WITH NO LANE CANNOT EXPRESS THIS CHECK'S DEFECT, and the fallback that used to
         # stand here quietly built a world with no violation at all: it marked the frozen config's
@@ -13931,7 +14066,7 @@ def _broken_lane_respected():
         raise SelftestSkip(
             f"runs/card_assignment.json grants no lane card (block {','.join(block)}), and the "
             f"defect this check catches is a busy LANE counted as one of the block's cards -- "
-            f"there is no such card to mark busy, so the world would assert nothing")
+            f"there is no such card to mark busy, so the world would assert nothing", reason="empty_population")
     if len(block) < 2:
         # A ONE-CARD BLOCK CANNOT HOLD THIS DEFECT. The check FAILs on partial occupancy,
         # 0 < busy < world; with a single block card the only states are 0 busy and all busy,
@@ -13947,7 +14082,7 @@ def _broken_lane_respected():
         raise SelftestSkip(
             f"runs/card_assignment.json grants a {len(block)}-card block ({','.join(block)}), and "
             f"this check's defect is PARTIAL occupancy of the block -- with fewer than two block "
-            f"cards there is no partial state to build, only idle and full")
+            f"cards there is no partial state to build, only idle and full", reason="empty_population")
     # One block card plus the lane, no training process: the lane must not make up the count.
     os.environ["HARNESS_BUSY_CARDS"] = f"{block[0]},{lane[0]}"
     os.environ["HARNESS_TRAINING_PROC"] = "0"
@@ -15028,7 +15163,7 @@ def _selftest_train_cite_baseline_is_content_keyed():
         victim_key = next(iter(allowed), None)
     if victim_key is None:
         raise SelftestSkip("no baselined citation anywhere to build the world from -- the "
-                           "baseline is empty, so the multiset schema has no subject")
+                           "baseline is empty, so the multiset schema has no subject", reason="empty_population")
     victim = victim_key.split("->")[0]
     target = victim_key.split("->")[1].lstrip(":")
 
@@ -15139,7 +15274,7 @@ def _selftest_cite_scope_covers_facts():
         _common = subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-common-dir"],
                                  capture_output=True, text=True)
         if _common.returncode != 0:
-            raise SelftestSkip("git cannot name this tree's object store")
+            raise SelftestSkip("git cannot name this tree's object store", reason="environment")
         _objects = os.path.join(os.path.realpath(os.path.join(ROOT, _common.stdout.strip())),
                                 "objects")
         assert os.path.isdir(_objects), f"no object store at {_objects}"
@@ -15155,7 +15290,7 @@ def _selftest_cite_scope_covers_facts():
         os.makedirs(fdir, exist_ok=True)
         real_facts = os.path.join(ROOT, "facts")
         if not os.path.isdir(real_facts):
-            raise SelftestSkip("no facts/ in this tree")
+            raise SelftestSkip("no facts/ in this tree", reason="environment")
         for fn in sorted(os.listdir(real_facts)):
             if fn.endswith(".json"):
                 shutil.copy(os.path.join(real_facts, fn), os.path.join(fdir, fn))
@@ -15710,7 +15845,7 @@ def _selftest_cite_blob_anchor():
         _common = subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-common-dir"],
                                  capture_output=True, text=True)
         if _common.returncode != 0:
-            raise SelftestSkip("git cannot name this tree's object store")
+            raise SelftestSkip("git cannot name this tree's object store", reason="environment")
         _objects = os.path.join(os.path.realpath(os.path.join(ROOT, _common.stdout.strip())),
                                 "objects")
         assert os.path.isdir(_objects), f"no object store at {_objects}"
@@ -17692,7 +17827,7 @@ def _broken_fixture_not_live_state():
     old = subprocess.run(["git", "-C", ROOT, "show", "d9ba571d:scripts/test_free_card.py"],
                          capture_output=True, text=True)
     if old.returncode != 0 or not old.stdout.strip():
-        raise SelftestSkip("d9ba571d:scripts/test_free_card.py unreadable in this clone")
+        raise SelftestSkip("d9ba571d:scripts/test_free_card.py unreadable in this clone", reason="environment")
     # The world holds ONLY that file, so a PASS cannot come from some other test file.
     for fn in list(os.listdir(os.path.join(d, "scripts"))):
         if fn.startswith("test_") or fn.endswith("_test.py"):
@@ -22447,7 +22582,7 @@ def _selftest_card_lend_expires():
 
     live_p = os.path.join(ROOT, "runs/card_assignment.json")
     if not os.path.isfile(live_p):
-        raise SelftestSkip("no runs/card_assignment.json to derive worlds from")
+        raise SelftestSkip("no runs/card_assignment.json to derive worlds from", reason="environment")
     with open(live_p, encoding="utf-8") as fh:
         live = json.load(fh)
 
@@ -22757,7 +22892,7 @@ def _selftest_card_observed_blocks():
 
     live_p = os.path.join(ROOT, "runs", "card_assignment.json")
     if not os.path.isfile(live_p):
-        raise SelftestSkip("no runs/card_assignment.json to derive worlds from")
+        raise SelftestSkip("no runs/card_assignment.json to derive worlds from", reason="environment")
     with open(live_p, encoding="utf-8") as fh:
         live = json.load(fh)
 
@@ -22836,7 +22971,7 @@ def _selftest_facts_ephemeral_only_source():
 
     real = json.load(open(os.path.join(FACTS_DIR, "data_scaling.json"), encoding="utf-8"))
     if len(real["facts"]) < 1:
-        raise SelftestSkip("facts/data_scaling.json is empty")
+        raise SelftestSkip("facts/data_scaling.json is empty", reason="empty_population")
     rev = subprocess.run(["git", "-C", ROOT, "rev-list", "-1", "HEAD"],
                          capture_output=True, text=True).stdout.strip()
     # World 3 needs a path that is ONLY reachable at a rev: if the same path also resolves in
@@ -22853,7 +22988,7 @@ def _selftest_facts_ephemeral_only_source():
                                       capture_output=True, text=True).stdout.strip()
     if not rev or not dead_rev:
         raise SelftestSkip(f"no rev holds a deleted {dead_path} for world 3 "
-                           f"(rev={rev[:8]!r}, dead_rev={dead_rev})")
+                           f"(rev={rev[:8]!r}, dead_rev={dead_rev})", reason="empty_population")
 
     cases = [
         ("1 /tmp only", "/tmp/de_only_ephemeral.py, full pass, no sampling", None, FAIL),
@@ -22953,7 +23088,7 @@ def _selftest_facts_retracted_value_names_what_died():
     real = json.load(open(os.path.join(FACTS_DIR, "data_scaling.json"), encoding="utf-8"))
     base = next((e for e in real["facts"] if e.get("status") == "measured"), None)
     if base is None:
-        raise SelftestSkip("facts/data_scaling.json holds no measured entry to build worlds on")
+        raise SelftestSkip("facts/data_scaling.json holds no measured entry to build worlds on", reason="empty_population")
 
     # (label, mutate(entry), want, want_named)
     cases = [
@@ -23183,7 +23318,7 @@ def _selftest_devs_map():
     """
     helper = os.path.join(ROOT, "eval", "_devs.sh")
     if not os.path.exists(helper):
-        raise SelftestSkip("eval/_devs.sh not present")
+        raise SelftestSkip("eval/_devs.sh not present", reason="environment")
 
     def devs(cvd, n):
         env = dict(os.environ)
@@ -23884,8 +24019,8 @@ def _demo(only=None):
         try:
             root = broken()
         except SelftestSkip as e:
-            print(f"  SKIP {name}: {e}")
-            skipped.append(name)
+            print(f"  SKIP[{e.reason or 'UNCLASSIFIED'}] {name}: {e}")
+            skipped.append((name, e))
             continue
         try:
             if name in world_reality:
@@ -24679,12 +24814,14 @@ def _demo(only=None):
         _selftest_produced_checkpoint_inputs,
         _selftest_review_present_legacy,
         _selftest_inline_citations_are_scanned,
+        _selftest_skip_reasons_classified,
+        _selftest_fact_refs_scan_provenance,
     ):
         try:
             _fn()
         except SelftestSkip as e:
-            print(f"  SKIP {_fn.__name__}: {e}")
-            skipped_direct.append(_fn.__name__)
+            print(f"  SKIP[{e.reason or 'UNCLASSIFIED'}] {_fn.__name__}: {e}")
+            skipped_direct.append((_fn.__name__, e))
         except Exception as e:
             _direct_failures.append(f"{_fn.__name__} raised {type(e).__name__}: {e}")
 
@@ -24700,26 +24837,50 @@ def _demo(only=None):
     # noise.
     assert_evidence_covers_checks()
 
-    # THE COUNT MUST NOT INCLUDE WHAT WAS SKIPPED. `len(CHECKS)` claimed "81 checks each verified to
-    # FAIL on a broken world" while a SelftestSkip meant some of them were never run -- the skip
+    # THE COUNT MUST NOT INCLUDE WHAT WAS SKIPPED. `len(CHECKS)` claimed "81 checks each
+    # verified to FAIL on a broken world" while a SelftestSkip meant some of them were never
+    # run -- the skip
     # printed above, but the closing line is what people read and quote, and it overclaimed by
-    # exactly the checks whose worlds could not be built. Same class as the defect this run's own
-    # commit fixes: a number that reads as coverage without being it.
+    # exactly the checks whose worlds could not be built. Same class as the defect this run's
+    # own commit fixes: a number that reads as coverage without being it.
+    #
+    # Skips are split by reason. dead_guard is the dangerous class: the construct the guard
+    # watches was retired, so until the world is re-pointed the guard protects nothing -- it
+    # must read separately from environment (no GPU / shallow clone / gitignored input here)
+    # and empty_population (the artifact is present but currently holds no qualifying record).
+    def _reason_counts(pairs):
+        return {r: sum(1 for _, e in pairs if e.reason == r) for r in SKIP_REASONS}
+
+    _skip_rc = _reason_counts(skipped)
     _verified = len(CHECKS) - len(skipped)
-    _tail = f"; {len(skipped)} SKIPPED, not verified: {', '.join(sorted(skipped))}" if skipped else ""
+    _tail = (
+        f"; {len(skipped)} SKIPPED, not verified"
+        f" [environment={_skip_rc[SKIP_ENVIRONMENT]}, dead_guard={_skip_rc[SKIP_DEAD_GUARD]},"
+        f" empty_population={_skip_rc[SKIP_EMPTY_POPULATION]}]"
+    )
+    if skipped:
+        _dead = sorted(n for n, e in skipped if e.reason == SKIP_DEAD_GUARD)
+        if _dead:
+            _tail += f"; DEAD GUARD(S) awaiting re-point: {', '.join(_dead)}"
+        _tail += ": " + ", ".join(sorted(f"{n}[{e.reason}]" for n, e in skipped))
     # THE DEFERRED FAILURES, RAISED LAST. Everything above has now run and reported, so one
     # unbuildable world or one broken fixture costs its own coverage and nothing else's. Raised
     # before the OK line so a run with a deferred failure never prints one. Both lists together
     # in one message: two defects must not need two runs to both be seen.
     _deferred = ([f"broken world cannot be made to fail: {u}" for u in _untested_deferred]
-                 + [f"direct selftest: {f}" for f in _direct_failures])
+                 + [f"direct selftest: {f}" for f in _direct_failures]
+                 + _unclassified_skip_failures(skipped)
+                 + _unclassified_skip_failures(skipped_direct))
     assert not _deferred, "selftest failures (every other selftest still ran):\n  " + "\n  ".join(_deferred)
     # A DIRECT SKIP IS NAMED IN THE OK LINE. The broken-world skips already are; a direct
     # selftest whose fixture could not be staged was silently absent, which is the shape of a
     # green line describing more coverage than it has.
     if skipped_direct:
-        _tail += (f"; {len(skipped_direct)} direct selftest(s) SKIPPED: "
-                  f"{', '.join(sorted(skipped_direct))}")
+        _drc = _reason_counts(skipped_direct)
+        _tail += (f"; {len(skipped_direct)} direct selftest(s) SKIPPED"
+                  f" [environment={_drc[SKIP_ENVIRONMENT]}, dead_guard={_drc[SKIP_DEAD_GUARD]},"
+                  f" empty_population={_drc[SKIP_EMPTY_POPULATION]}]: "
+                  + ", ".join(sorted(f"{n}[{e.reason}]" for n, e in skipped_direct)))
     print(f"harness self-test OK on {_tree_stamp} ({_verified} of {len(CHECKS)} checks each "
           f"verified to FAIL on a broken world; every PASS verified a non-zero count{_tail})")
 

@@ -1156,12 +1156,18 @@ def main():
         "filters/secrets.py",
         # genB: known-answer coverage for the three live PIPELINE_FILTERS Cosmopedia
         # garbage passes (build_corpus calls pass1/2/3). A flagless test file: it asserts one
-        # real drop witness PER listed regex (171 total). Each witness matches its own paired
-        # rule (it may also match siblings); the guarantee is from the exhaustive deletion
-        # mutation -- all 171 rule deletions leak their witness (a witness kept alive only by
-        # a sibling is a redundant rule and is caught), which also catches dead/backwards
+        # real drop witness PER listed regex (170 total). Each witness matches its own paired
+        # rule; the guarantee is the exhaustive deletion mutation, now RUN IN the selftest
+        # rather than out of band -- deleting any one rule must leak its witness, so a witness
+        # kept alive only by a sibling is reported as a REDUNDANT RULE and the run goes red.
+        # That is what caught pass1 rule 11 (the 足球运动员 rule, gap 0-20, tails
+        # 个人简介/职业生涯/生涯分析), deleted 2026-09-17 as provably subsumed by rule 10;
+        # its witness is merged into rule 10's. The check also catches dead/backwards
         # patterns -- plus 6 normal Chinese/English/code strings no rule may drop (false-kill
-        # guard). The passes gained a shared drops() predicate that this test and CLI both call.
+        # guard). The passes gained a shared drops() predicate that this test and CLI both
+        # call. NO BRACE CHARACTERS IN THIS COMMENT: the map regex stops at the first closing
+        # brace, and one here truncates the parse (measured 2026-09-17: gates fell to 42 and
+        # 218 gated files reported missing). The quote guard above does not cover braces.
         "filters/test_l0_garbage_known.py",
         # merge_main.sh's lock predicate. Registered because the rule it replaces is exactly the
         # kind someone reinstates for looking simpler: `find -mmin +10` reads as an obviously
@@ -2109,6 +2115,18 @@ def main():
         # plus header-gate and marker/tool conjunction controls. Runs here because a banner
         # rule that fires on ordinary words silently drops hand-written code. ~0.05s.
         "datagen/code_quality_rules.py",
+        # genB: the cross-source exact-dedup core (harness run dedup). CPU-only known
+        # answers registered because the dedup KEY decides what is the same document: a
+        # sha1 over whitespace/punctuation-normalized text. The selftest pins that
+        # re-flowed/punctuated re-crawls share a key while case/word-order/content do not,
+        # that a cross-source duplicate points at the FIRST occurrence, that dedup_fp moves
+        # with every param, and that normalized-empty docs are skipped; all four outputs
+        # (manifest/kept/stats/per-domain marker) publish via atomic_io.durable_publish,
+        # spy-verified, and a torn global manifest under complete markers rebuilds instead
+        # of JSONDecodeError. Each guard is mutation-verified (raw-text key, rep overwrite,
+        # dup removal, constant fp, dropping the empty skip, a direct non-atomic write, and
+        # an existence-only resume check all turn the selftest red).
+        "datagen/dedup_corpus.py",
         # de-36: the pod ledger puller. Its selftest is cardless and podless -- every case
         # is fabricated rows plus a stubbed pod reader, because the live numbers change
         # daily and an assertion against them would be red the moment someone pulls (the
@@ -2320,6 +2338,12 @@ def main():
         # The v41f P1 assembly suite (de): whole-Block (then whole-Model) allclose against
         # the same vendored reference, proving the P0 leaf modules are wired together.
         "tests/v41f/p1_selftest.py",
+        # CPU parity skeleton for the future GPU torch._grouped_mm MoE dispatch (66, P4
+        # preresearch; design docs/standards/moe_grouped_mm_dispatch.md). --selftest pins the
+        # grouped flatten/sort/batch_sizes/index_add expansion to the per-expert where-loop at
+        # max_abs 0.0 in fp32 and bf16 (weight-before-w2), an empty group, and a bf16
+        # weight-order guard. Standalone until the GPU branch joins it to p1 discovery.
+        "tests/v41f/test_p1_grouped_dispatch.py",
         # v41f-S config-formula total/active parameter counter (3b); --selftest pins a
         # hand-computed tiny config so the total=sum-of-modules identity cannot silently rot.
         "scripts/v41f_param_count.py",
