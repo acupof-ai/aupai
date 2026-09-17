@@ -74,6 +74,13 @@ jobs:
       - run: python scripts/tokenizer_eval.py --selftest
       - run: python scripts/harness.py --selftest
       - run: python scripts/harness.py check
+      # Every registered, CI-runnable selftest, enumerated from the hook's SELFTEST_FILES/PARTIAL
+      # map at runtime rather than re-listed here. Closes the gap where a map selftest sat red for
+      # days because nothing in this explicit list ran it (#502). NEEDS_DATA exemptions and the
+      # small reasoned CI_SELFTEST_EXCLUDE set (GPU/gitignored-data/root) are partitioned out by
+      # the ci_selftest_partition check; a newly registered portable selftest is covered without
+      # anyone editing this file.
+      - run: python scripts/harness.py ci-selftests
       # scripts/test_e2e.py is deliberately NOT here. It needs a GPU (KDA is fla/Triton
       # only), so on a runner it could only re-check the mix and the vocabulary that the
       # two steps above already cover, and exit 0 -- a green that means nothing. The chain
