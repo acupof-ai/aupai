@@ -342,7 +342,7 @@ def phase_b():
     from corpus_fingerprint import fp_dir  # noqa: E402
 
     fp = fp_dir(OUT)
-    script_fp = _script_fp()
+    packer_fp = _packer_fp()
     paired_content = nimpl_tok + ntest_tok
     required_pass_rate = (2.0e9 / paired_content) if paired_content else None
 
@@ -355,9 +355,13 @@ def phase_b():
         "filters": "code-tests-pairing-v1",
         "workers": NJOBS,
         "n_shards": nshards,
-        # filters_fp = content hash of THIS build script, which is what actually
-        # produced the bytes (pairing + formatting), not filters/*.py.
-        "filters_fp": script_fp,
+        # This domain never passes through filters/*.py: its only filters are the inline
+        # AST-validity / _is_test regexes above and the trial pair_yield rule, all inside
+        # THIS script. So its producer fingerprint is a packer fingerprint, not a filters
+        # fingerprint -- a packer_fp field, which check_corpus_filters_fp treats as a
+        # self-contained packer outside the pipeline. Writing it under "filters_fp" would
+        # compare this script's hash against the live pipeline patterns and fail forever.
+        "packer_fp": packer_fp,
         "fingerprint": fp,
         "near_dedup": False,
         "near_dedup_note": "impl counted once per (repo,pkg-prefix); the separate calibrated near-dedup post-pass (44) still applies later",
@@ -407,17 +411,23 @@ def phase_b():
         stats["pairing"]["trial_reproduced"] = round(paired_content / tr["paired_tokens"], 5)
     with open(os.path.join(OUT, "build_corpus_stats.json"), "w") as f:
         json.dump(stats, f, indent=2)
-    # assert the required filters_fp
-    assert stats["filters_fp"], "filters_fp must be non-empty"
+    # assert the packer fingerprint is recorded (this script is the sole producer)
+    assert stats["packer_fp"], "packer_fp must be non-empty"
     print(json.dumps({"phase": "b", "docs": ndocs, "shards": nshards,
                       "paired_content_tokens": paired_content,
                       "impl_tokens": nimpl_tok, "test_tokens": ntest_tok,
                       "required_pass_rate": required_pass_rate,
-                      "fingerprint": fp, "filters_fp": script_fp}, indent=2))
+                      "fingerprint": fp, "packer_fp": packer_fp}, indent=2))
     return stats
 
 
-def _script_fp():
+def _packer_fp():
+    """Content hash of THIS packer script.
+
+    The domain's bytes are produced entirely by this file (inline AST validity, the
+    _is_test regexes, the trial pairing rule and the chapter formatting); no filters/*.py
+    runs. This therefore belongs under packer_fp, the producer fingerprint, never under
+    filters_fp (which check_corpus_filters_fp compares to the live pipeline patterns)."""
     p = os.path.realpath(__file__)
     h = hashlib.sha1()
     with open(p, "rb") as f:
