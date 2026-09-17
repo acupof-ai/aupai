@@ -300,6 +300,10 @@ def main():
     ap.add_argument("--shards", type=int, default=8, help="shards per domain; part of the metric definition")
     ap.add_argument("--clip", type=int, default=0, help="chars per doc, 0 = whole document")
     ap.add_argument("--n_train", type=int, default=12000)
+    ap.add_argument("--veto_only", action="store_true",
+                    help="run only the correctness/threshold vetoes; skip the 800-row held-out "
+                         "bits/char split and the preference ranking. For a zero-GPU box with no "
+                         "gate corpus, e.g. a surviving data/tokenizer.json verified against sample")
     a = ap.parse_args()
 
     import tokenizer_report as R
@@ -310,9 +314,11 @@ def main():
         sys.exit("no corpus under data/corpus/")
     paths = [p.strip() for p in a.tokenizers.split(",") if p.strip()]
 
-    from tokenizer_sweep import load_text
+    train_rows, eval_rows = [], []
+    if not a.veto_only:
+        from tokenizer_sweep import load_text
 
-    train_rows, eval_rows = load_text(doms, a.n_train, 800)
+        train_rows, eval_rows = load_text(doms, a.n_train, 800)
 
     # bits/char cannot rank across sizes (tokenizer_sweep documents why), so it is
     # scored only when the field is size-matched. 5% tolerance: a few reserved
@@ -320,7 +326,8 @@ def main():
     from tokenizers import Tokenizer
 
     sizes = [Tokenizer.from_file(p).get_vocab_size() for p in paths]
-    score_bits = (max(sizes) - min(sizes)) / max(sizes) < 0.05
+    size_matched = (max(sizes) - min(sizes)) / max(sizes) < 0.05
+    score_bits = (not a.veto_only) and size_matched
     hanzi_applies = corpus_has_hanzi(corpus)
     if not hanzi_applies:
         print("! hanzi whole-char gate is N/A: the sampled corpus is not Chinese-bearing "
@@ -328,13 +335,16 @@ def main():
               "English/math/code with zero Chinese domains; incidental CJK in code comments "
               "(measured <=3.8% of docs) does not arm the bilingual guard. A corpus WITH Chinese "
               "still FAILs on byte-fragmented hanzi -- the gate is scoped, not removed.")
-    if not score_bits:
+    if a.veto_only:
+        print("! --veto_only: bits/char and preference scoring skipped; only the correctness and "
+              "threshold vetoes are evaluated")
+    elif not size_matched:
         print(f"! vocabulary sizes span {min(sizes)}..{max(sizes)} -- bits/char REPORTED, NOT SCORED")
         print("  (it is strictly monotone in size; see tokenizer_sweep.py)")
 
     rows = []
     for p in paths:
-        tok, m, g = collect(p, corpus, train_rows, eval_rows, True)
+        tok, m, g = collect(p, corpus, train_rows, eval_rows, score_bits)
         rows.append((os.path.basename(p), m, g, tok.get_vocab_size()))
 
     print(f"\n{'=' * 78}\nGATES  (a failure disqualifies; correctness is not traded against compression)")
@@ -369,6 +379,15 @@ def main():
         if any(k in m for _, m in ok):
             vals = " ".join(f"{m[k]:.4f}" for _, m in ok if k in m)
             print(f"  {'(not gated)':<24}{k:<20}{vals:>10}   {why}")
+
+    if a.veto_only:
+        if failed:
+            print(f"\n  {len(failed)} veto(es) FAILED: {', '.join(failed)}")
+            print("  A gate is a REBUILD trigger, not a preference: ids do not survive a rebuild,")
+            print("  so every checkpoint trained on this vocabulary inherits the defect for life.")
+            return 1
+        print("\n  all vetoes pass")
+        return 0
 
     print(f"\n{'=' * 78}\nRAW")
     keys = [k for k in METRICS if any(k in m for _, m in ok)] + ["embed params (M)"]
