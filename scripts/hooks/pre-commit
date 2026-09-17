@@ -1778,6 +1778,11 @@ def main():
         # guards breaks in either direction -- a non-pipeline file in filters/ must NOT move
         # the fingerprint (the false positive that re-failed nine already-ruled domains), and
         # an edit to a pipeline filter MUST move it (the blindness that would replace it).
+        # 2026-09-17: fp_filters now hashes the compiled PATTERNS, not the files' bytes, so the
+        # self-check also pins the SEMANTIC line -- a semantics-preserving edit (hoisted
+        # COMPILED, comment, import order) must NOT move it, four PATTERNS mutations x all
+        # three pipeline files MUST, the AST reader must equal build_corpus's exec, and a
+        # PATTERNS the reader cannot read must raise rather than contribute nothing.
         "datagen/corpus_fingerprint.py",
         # The Fable CoT renderer. Its selftest holds keep() equal to the predicates
         # measure_fable5_supply.py counted with: a drift makes the fold land a different row
