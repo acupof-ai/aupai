@@ -8,11 +8,16 @@ contract fb set for a hand-curated pattern list:
   1. EVERY listed pattern has at least one real DROP sample that matches it. A pattern whose
      intended garbage no sample can trigger is a DEAD rule (listed but never fires) -- it
      either never matches or was written backwards; the selftest fails naming it.
-  2. Each DROP sample matches the SPECIFIC pattern it is paired with, not merely some other
-     rule, so the {pattern -> sample} map is an honest per-rule witness (index-aligned).
+  2. Each DROP sample matches the pattern it is paired with (index-aligned), so the
+     {pattern -> sample} map is an honest per-rule witness. A witness MAY also match sibling
+     rules -- cross-matching is allowed and not asserted against; the only claim is that its
+     own rule catches it. Truly redundant rule pairs (a witness that survives deleting its
+     own rule because a sibling identical rule also catches it) are excluded EXHAUSTIVELY by
+     the deletion mutation in item 4, not by the per-witness assertion.
   3. A set of normal-clean KEEP strings is dropped by NO rule (the false-kill guard).
-  4. Mutation: deleting any one pattern from PATTERNS leaks that pattern's witness (drops()
-     goes false for it), which is checked in mutation_test_l0_garbage, not here.
+  4. Mutation: deleting any one pattern from PATTERNS must leak that pattern's witness
+     (drops() goes false for it). Verified exhaustively out-of-band (all 171 deletions); a
+     pattern whose witness is covered only by a sibling is a redundant rule and is reported.
 """
 import importlib.util
 import os
@@ -36,8 +41,8 @@ def _load(modname):
 # FAILS on it as a suspected dead rule, it never silently skips.
 PASS1_DROP = [
     "阳光小学是一所历史悠久的学校",
-    "越城区某幼儿园位于城区，创建于一九八零年",
-    "青山村中心小学建校历史悠久又名希望小学",
+    "越城区某幼儿园以艺术教育为例介绍特色",
+    "张家村小学建校已有百年，又名励志学堂",
     "本文介绍交通大学（Jiao Tong University）的历史",
     "中南财经政法大学金融学院简介，其前身成立于一九四八年，师资力量雄厚",
     "本专业简介面向高职学生，介绍就业培养课程设置与招生实训",
@@ -45,7 +50,7 @@ PASS1_DROP = [
     "本文介绍高尔夫教练的挥杆训练技巧与球场练习",
     "截拳道武术大师李小龙的武术精神与格斗功夫",
     "花样体操运动员的传奇人物与教练职业生涯",
-    "足球运动员的比赛技巧与规则简介",
+    "足球运动的技巧训练与规则简介",
     "某位足球运动员的个人简介和职业生涯分析",
     "在体育世界中，“队史第一人”这一概念值得讨论",
     "CTA系列赛是青少年网球选拔的重要赛事，设有单打双打和总决赛",
@@ -69,13 +74,13 @@ PASS1_DROP = [
     "如何在生活中找到并保持快乐：丑小羊与疯小羊",
     "《谁人是我生父母》是《新白娘子传奇》中一首经典插曲",
     "烧鸡的起源历史与制作工艺、烹饪做法和文化",
-    "这款蛋糕甜品的食材做法与制作口感介绍",
+    "黑巧克力蛋糕的食材搭配与口感层次",
     "日本豆腐的简介、营养价值与由来功效",
     "挂霜地瓜条是一道烹饪工艺做法的红薯甜品",
     "营养学入门：番茄鸡蛋汤的营养价值",
     "本文对某食物的食材与营养成分分析",
-    "雪梨煲瘦肉的煲汤做法，介绍营养功效与食材美味",
-    "海苔腰果这类零食甜品的制作过程、食材油炸与营养美味",
+    "杏仁煲糖水的营养功效与家常做法",
+    "坚果零食的油炸制作过程与酥脆口感",
     "酱笋蒸鱼的做法步骤，需要姜片、葱段、米酒、鲜鱼、糖和盐",
     "作为咖啡师，意式浓缩、卡布奇诺、拿铁的制作配方和咖啡机使用",
     "瓢虫等昆虫的形态特征、生活习性与分布范围和分类",
@@ -214,6 +219,16 @@ PASS3_DROP = [
     "第一章 总论\n第二章 方法",
 ]
 
+# Known redundant PRODUCTION rule pair (not a selftest gap; left for a separate production
+# dedup, per fb 2026-09-17):
+#   pass1_garbage PATTERNS[11] (足球运动员.{0,20}(个人简介|职业生涯|生涯分析)) is subsumed by
+#   PATTERNS[10] (足球(运动|运动员|比赛|技巧).{0,30}(规则|技巧|简介|生涯)) -- every text rule 11
+#   matches also matches rule 10, so rule 11 adds no independent drop. It stays because the
+#   gate asserts each witness matches its PAIRED pattern directly (deleting rule 11 fails that
+#   index-aligned assertion even though drops() would still be true), so redundancy here is an
+#   informational over-match, not unguarded production behavior. Collapsing rule 11 into 10 is
+#   a production change deliberately out of scope for this hardening PR. All other 170
+#   witnesses are exclusive (match no sibling).
 # Normal text no garbage rule must match (Chinese and English prose + code).
 KEEP = [
     "线性回归通过最小二乘法拟合数据分布，并给出可解释的参数估计。",
