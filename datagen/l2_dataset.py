@@ -111,6 +111,8 @@ def load_text_pool(path):
     the document. Loud on a duplicate (parent, chunk_idx), duplicate chunk_id, or bad id."""
     chunks = {}
     chunk_to_parent = {}
+    present_parent = 0
+    absent_parent = 0
     for ln, row in _iter_jsonl(path):
         chunk_id = row.get("sample_id") or row.get("doc_id")
         if not chunk_id:
@@ -121,7 +123,24 @@ def load_text_pool(path):
         chunk_idx = row.get("chunk_idx", 0)
         if not isinstance(chunk_idx, int) or isinstance(chunk_idx, bool) or chunk_idx < 0:
             raise DatasetJoinError(f"{path}:{ln}: chunk_idx must be a non-negative int")
-        parent = row.get("parent_doc_id") or chunk_id
+        explicit_parent = row.get("parent_doc_id")
+        if not explicit_parent:
+            # Single-chunk / legacy rows fall back to chunk==doc, but a continuation chunk
+            # (chunk_idx>0) or a self-declared multi-chunk row CANNOT be its own document:
+            # accepting it would key the train/val split on the chunk and leak the other
+            # halves of the same source document across sides.
+            n_chunks = row.get("n_chunks")
+            if chunk_idx > 0 or (isinstance(n_chunks, int) and not isinstance(n_chunks, bool) and n_chunks > 1):
+                raise DatasetJoinError(
+                    f"{path}:{ln}: chunk {chunk_id} (chunk_idx={chunk_idx}, n_chunks={n_chunks}) "
+                    "has no parent_doc_id; multi-chunk rows must carry the parent id or the "
+                    "document-level train/val split leaks across its chunks"
+                )
+            absent_parent += 1
+            parent = chunk_id
+        else:
+            present_parent += 1
+            parent = explicit_parent
         if not isinstance(parent, str) or not parent:
             raise DatasetJoinError(f"{path}:{ln}: parent_doc_id must be a non-empty string")
         key = (parent, chunk_idx)
@@ -134,6 +153,14 @@ def load_text_pool(path):
             )
         chunks[key] = (content, chunk_id)
         chunk_to_parent[chunk_id] = key
+    if present_parent and absent_parent:
+        # A legacy/new `cat` is heterogeneous: some rows split by parent, others by chunk,
+        # so the document-leak guarantee holds for only part of the pool. Refuse loudly.
+        raise DatasetJoinError(
+            f"{path}: {absent_parent} row(s) omit parent_doc_id while {present_parent} carry "
+            "it; a mixed legacy/new pool cannot guarantee document-level splitting -- rebuild "
+            "the pool so every multi-chunk row carries parent_doc_id"
+        )
     return chunks, chunk_to_parent
 
 
@@ -187,13 +214,25 @@ def load_pairs(
         chunks_of.setdefault(parent, []).append(ci)
     # version presence is checked against the rows that survive scorer_name/kind BEFORE the
     # join, so a pinned-but-absent version raises instead of returning an empty pair list.
-    eligible = [
-        r
-        for r in rows
-        if r["scorer_name"] == scorer_name
-        and r["rubric_dims"] is not None
-        and (rubric_kind is None or r["rubric_kind"] == rubric_kind)
-    ]
+    def is_rubric_row(r):
+        # A row for the pinned RUBRIC scorer must carry rubric_dims, never a scalar: the
+        # l3-rubric scorer emits only multi-dim grades, so a scalar under its name is a
+        # mislabeled/foreign row. .get keeps a hand-authored row missing the key from raising
+        # a raw KeyError instead of the loader's DatasetJoinError.
+        if r.get("scorer_name") != scorer_name:
+            return False
+        if r.get("rubric_dims") is not None:
+            return rubric_kind is None or r.get("rubric_kind") == rubric_kind
+        if r.get("score") is not None:
+            raise DatasetJoinError(
+                f"{r.get('doc_id')}: scorer {scorer_name!r} row carries a scalar score, "
+                "not rubric_dims; the rubric scorer emits only 4-dim grades"
+            )
+        return False
+
+    # version presence is checked against the rows that survive scorer_name/kind BEFORE the
+    # join, so a pinned-but-absent version raises instead of returning an empty pair list.
+    eligible = [r for r in rows if is_rubric_row(r)]
     if scorer_version is not None:
         present = {r["scorer_version"] for r in eligible}
         if scorer_version not in present:
@@ -205,7 +244,7 @@ def load_pairs(
     labeled_parents = set()
     excluded_truncated = 0
     for r in rows:
-        if r["scorer_name"] != scorer_name or r["rubric_dims"] is None:
+        if not is_rubric_row(r):
             continue
         if scorer_version is not None and r["scorer_version"] != scorer_version:
             continue
@@ -223,11 +262,25 @@ def load_pairs(
             )
         dims = r["rubric_dims"]
         missing = [d for d in dim_order if d not in dims]
-        if missing:
+        extra = [d for d in dims if d not in dim_order]
+        if missing or extra:
             raise DatasetJoinError(
-                f"{r['doc_id']} ({kind}): rubric row missing dims {missing}; requires {list(dim_order)}"
+                f"{r['doc_id']} ({kind}): rubric_dims must be exactly {list(dim_order)}; "
+                f"missing={missing} extra={extra}"
             )
         label_id = r["doc_id"]
+        # A label id that is BOTH a parent_doc_id and a chunk sample_id of a DIFFERENT parent
+        # is ambiguous: document-level vs chunk-level resolution would join it to different
+        # text. Never guess (the historical shape silently labeled the wrong doc). A
+        # single-chunk doc whose chunk text equals its whole doc resolves to the same parent,
+        # which is harmless and allowed.
+        if label_id in chunks_of and label_id in chunk_to_parent:
+            chunk_parent, _ = chunk_to_parent[label_id]
+            if chunk_parent != label_id:
+                raise DatasetJoinError(
+                    f"{label_id}: label id is both a parent_doc_id and a chunk sample_id of "
+                    f"a different parent {chunk_parent!r}; ambiguous chunk-vs-document join"
+                )
         if label_id in chunks_of:
             parent = label_id  # document-level label
             target_chunks = chunks_of[parent]
@@ -799,10 +852,124 @@ def _selftest():
     assert [p.doc_id for p in legacy_pairs] == ["fulldoc0"]
     assert legacy_pairs[0].truncated is False
 
+    # ---- rubric_dims must be EXACTLY the kind's four dims: a 5th/extra dim is refused, not
+    # silently dropped (the mean-based quota selector would otherwise rank on it), and a
+    # missing dim is still refused. All rows go through the real ledger file.
+    def rubric_ledger(path, doc, dims, scorer="l3-rubric", score=None):
+        row = {
+            "doc_id": doc, "domain": "py", "lang": "en", "scorer_name": scorer,
+            "scorer_version": "r1", "ts": "2026-09-16T00:00:00Z", "rubric_kind": "code",
+            "model": "t", "backend": "stub", "stratum": None,
+        }
+        if dims is not None:
+            row["rubric_dims"] = dims
+        if score is not None:
+            row["score"] = score
+        with open(path, "w") as f:
+            f.write(json.dumps(row) + "\n")
+
+    shape_pool = os.path.join(tmp, "shape_pool.jsonl")
+    with open(shape_pool, "w") as f:
+        f.write(json.dumps({"sample_id": "sh0", "parent_doc_id": "shdoc",
+                            "chunk_idx": 0, "content": "body text"}) + "\n")
+    four = {d: 3 for d in expected}
+    # extra 5th dim -> loud
+    rubric_ledger(os.path.join(tmp, "extra.jsonl"), "shdoc", dict(four, rogue_fifth=5))
+    try:
+        load_pairs(os.path.join(tmp, "extra.jsonl"), shape_pool, scorer_version="r1")
+    except DatasetJoinError:
+        pass
+    else:
+        raise AssertionError("a 5th rubric dim must be refused, not silently dropped")
+    # missing dim -> loud (unchanged contract)
+    rubric_ledger(os.path.join(tmp, "missdim.jsonl"), "shdoc",
+                  {d: 3 for d in expected if d != "complexity"})
+    try:
+        load_pairs(os.path.join(tmp, "missdim.jsonl"), shape_pool, scorer_version="r1")
+    except DatasetJoinError:
+        pass
+    else:
+        raise AssertionError("a missing rubric dim must be refused")
+    # scalar score under the rubric scorer name -> DatasetJoinError naming it, never raw
+    # KeyError. A second VALID rubric row keeps the pinned version present, so the refusal
+    # is specifically about the scalar row (not the unrelated version-absent guard).
+    scalar_pool = os.path.join(tmp, "scalar_pool.jsonl")
+    with open(scalar_pool, "w") as f:
+        f.write(json.dumps({"sample_id": "sh0", "parent_doc_id": "shdoc", "chunk_idx": 0, "content": "b1"}) + "\n")
+        f.write(json.dumps({"sample_id": "ok0", "parent_doc_id": "okdoc", "chunk_idx": 0, "content": "b2"}) + "\n")
+    with open(os.path.join(tmp, "scalar.jsonl"), "w") as f:
+        f.write(json.dumps({
+            "doc_id": "shdoc", "domain": "py", "lang": "en", "scorer_name": "l3-rubric",
+            "scorer_version": "r1", "ts": "2026-09-16T00:00:00Z", "score": 3.0}) + "\n")
+        f.write(json.dumps({
+            "doc_id": "okdoc", "domain": "py", "lang": "en", "scorer_name": "l3-rubric",
+            "scorer_version": "r1", "ts": "2026-09-16T00:00:00Z", "rubric_kind": "code",
+            "rubric_dims": dict(four), "model": "t", "backend": "stub", "stratum": None}) + "\n")
+    try:
+        load_pairs(os.path.join(tmp, "scalar.jsonl"), scalar_pool, scorer_version="r1")
+    except DatasetJoinError as e:
+        assert "scalar score" in str(e), str(e)
+    else:
+        raise AssertionError("a scalar row under the rubric scorer must be refused loudly")
+
+    # ---- missing parent_doc_id: a continuation chunk (chunk_idx>0) can not be its own
+    # document, or the document-level split leaks its sibling chunks across train/val.
+    cont_pool = os.path.join(tmp, "cont.jsonl")
+    with open(cont_pool, "w") as f:
+        f.write(json.dumps({"sample_id": "a0", "chunk_idx": 0, "content": "x"}) + "\n")
+        f.write(json.dumps({"sample_id": "a1", "chunk_idx": 1, "content": "y"}) + "\n")
+    try:
+        load_text_pool(cont_pool)
+    except DatasetJoinError:
+        pass
+    else:
+        raise AssertionError("a chunk_idx>0 row without parent_doc_id must be refused")
+    # homogeneous single-chunk legacy pool (every row chunk_idx 0, no parent) is still allowed
+    single_pool = os.path.join(tmp, "single.jsonl")
+    with open(single_pool, "w") as f:
+        for i in range(3):
+            f.write(json.dumps({"sample_id": f"only{i}", "content": f"b{i}"}) + "\n")
+    _, c2p_single = load_text_pool(single_pool)
+    assert all(parent == cid for cid, (parent, _) in c2p_single.items())
+    # a mixed legacy/new pool (some rows carry parent, others do not) is refused: the
+    # document-leak guarantee would hold for only part of the pool.
+    mixed_pool = os.path.join(tmp, "mixed.jsonl")
+    with open(mixed_pool, "w") as f:
+        f.write(json.dumps({"sample_id": "n0", "parent_doc_id": "pnew", "chunk_idx": 0, "content": "a"}) + "\n")
+        f.write(json.dumps({"sample_id": "o0", "content": "b"}) + "\n")
+    try:
+        load_text_pool(mixed_pool)
+    except DatasetJoinError:
+        pass
+    else:
+        raise AssertionError("a mixed with/without-parent pool must be refused")
+
+    # ---- ambiguous label id: equal to a parent_doc_id AND a chunk sample_id of a DIFFERENT
+    # parent must be refused; the benign same-content shape (chunk id == its own parent id)
+    # still resolves.
+    amb_pool = os.path.join(tmp, "amb.jsonl")
+    with open(amb_pool, "w") as f:
+        f.write(json.dumps({"sample_id": "X", "parent_doc_id": "Y", "chunk_idx": 0, "content": "A"}) + "\n")
+        f.write(json.dumps({"sample_id": "Z", "parent_doc_id": "X", "chunk_idx": 0, "content": "B"}) + "\n")
+    rubric_ledger(os.path.join(tmp, "amb_led.jsonl"), "X", dict(four))
+    try:
+        load_pairs(os.path.join(tmp, "amb_led.jsonl"), amb_pool, scorer_version="r1")
+    except DatasetJoinError:
+        pass
+    else:
+        raise AssertionError("a label id naming both a parent and another parent's chunk is ambiguous")
+    benign_pool = os.path.join(tmp, "benign_pool.jsonl")
+    with open(benign_pool, "w") as f:
+        f.write(json.dumps({"sample_id": "Q", "parent_doc_id": "Q", "chunk_idx": 0, "content": "same"}) + "\n")
+    rubric_ledger(os.path.join(tmp, "benign_led.jsonl"), "Q", dict(four))
+    bp = load_pairs(os.path.join(tmp, "benign_led.jsonl"), benign_pool, scorer_version="r1")
+    assert len(bp) == 1 and bp[0].doc_id == "Q"
+
     print(
         "l2_dataset selftest OK: doc_id join + chunk alignment, deterministic no-leak "
         "split, missing/duplicate refusal, scorer_version pin, truncate/pad collate, label "
-        "mask, torch tensors"
+        "mask, torch tensors; exact 4-dim set (5th/missing refused), scalar-under-rubric "
+        "loud, continuation chunk without parent refused, ambiguous label id refused"
     )
 
 
