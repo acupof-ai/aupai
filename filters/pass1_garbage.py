@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Filter Cosmopedia garbage using long-pattern matching."""
-import json, re, sys
+import json
+import re
+import sys
 
 PATTERNS = [
     # 学校/机构介绍
@@ -16,7 +18,6 @@ PATTERNS = [
     r"(李小龙|截拳道|武术大师).{0,50}(武术|教育意义|精神|电影|格斗|功夫)",
     r"(艺术体操|竞技体操|跳水|花样滑冰|体操).{0,40}(运动员|冠军|传奇人物|教练|职业生涯)",
     r"足球(运动|运动员|比赛|技巧).{0,30}(规则|技巧|简介|生涯)",
-    r"足球运动员.{0,20}(个人简介|职业生涯|生涯分析)",
     r"在体育世界中，.队史第一人.这一概念",
     r"(中网的CTA系列赛|CTA系列赛|网球|羽毛球|乒乓球|篮球|足球)[^。]{0,80}(赛事|比赛|青少年|单打|双打|选拔|总决赛|分区赛|联赛|锦标赛)",
     r"篮球运动员的体测数据与NBA生涯",
@@ -94,10 +95,18 @@ PATTERNS = [
     r"流行歌曲衍生内容|基于儿歌的泛泛励志教程",
 ]
 
+COMPILED = [re.compile(p) for p in PATTERNS]
+
+
+def drops(content):
+    """True when any L0 garbage rule matches (the document is dropped). The single predicate
+    the CLI and the selftest share so the gate tests the exact production decision."""
+    return any(p.search(content) for p in COMPILED)
+
+
 def main():
     inp = sys.argv[1]
     out = sys.argv[2]
-    compiled = [re.compile(p) for p in PATTERNS]
     kept, dropped = 0, 0
     drop_reasons = {}
     with open(inp) as f, open(out, 'w') as fo:
@@ -105,7 +114,7 @@ def main():
             d = json.loads(line)
             content = d.get('content', '')
             dropped_match = None
-            for i, pat in enumerate(compiled):
+            for i, pat in enumerate(COMPILED):
                 if pat.search(content):
                     dropped_match = i
                     break

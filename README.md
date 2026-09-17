@@ -6,7 +6,20 @@ DeepSeek-V4.1-Flash flat architecture (CSA2 + sliding-window attention, MoE). Pi
 0830v1 gates are retired. Working rules, layout, and the run book are in `AGENTS.md`; this
 file is the short version.
 
+> **⚠️ 2026-09-16 — the `sglang-test` pod and its `/work` emptyDir were destroyed and the
+> 8×H20 cards were decommissioned. All pod/`tn`/launch instructions below are suspended until
+> the node is reprovisioned and data rebuilt; see
+> `docs/standards/infra_persistent_rebuild_0916.md` and
+> `docs/standards/data_pipeline_rebuild_0916.md`. The architecture facts below remain valid.**
+
 ## Model
+
+> The table below is the **r3 / `v41` gate architecture** (3,209.5M total / ~342.9M active)
+> — retained for the r3 run-book and runbook-final, not the active build. The model line
+> pivoted 2026-09-16 to the faithful **v41f** DeepSeek-V4.1-Flash reproduction (small-scale
+> 8×H20 trainable); its measured size is **0.9046 B total / 210.95 M active** from
+> `scripts/v41f_param_count.py`, design in `docs/standards/v41_faithful_repro.md`. The r3
+> facts (CSA2/MoE/FP8 below) remain true for that checkpoint and the rebuild run-books.
 
 | | |
 |---|---|
@@ -49,10 +62,14 @@ anneal weight. A missing mix is an error, not a fallback.
 ## Run
 
 Every GPU or corpus job starts through one launcher — it writes the experiment row first,
-takes its cards from the controller's allocation (world-6 block 0-5 for gate training with
-no lane at launch; card 5 is the temporary pre-launch lane; cards 6-7 stay tileRL through
-the run), detaches with `setsid`, verifies the startup
+takes its cards from the controller's allocation, detaches with `setsid`, verifies the startup
 gate in the worker log before the job counts as started, and arms a monitor:
+
+> **Historical card map (pre-2026-09-16, awaiting reprovisioning).** The allocation below
+> described the now-destroyed `sglang-test` node: world-6 block 0-5 for gate training with no
+> lane at launch; card 5 was the temporary pre-launch lane; cards 6-7 stayed tileRL through the
+> run. It is retained as the shape a new node must reproduce, not a live allocation — confirm
+> the controller's current card map before any launch after rebuild.
 
 ```bash
 python scripts/harness.py launch <name> --training --hypothesis "..." -- ./run_ddp.sh --mix data/mix_v41_gate.json --name <name>
