@@ -1,0 +1,6 @@
+# /tmp worktrees with UNCOMMITTED tracked work on a main-ancestor HEAD — KEEP, owner decides. Reboot deletes, does not reap.
+# format: dirty-count | branch/HEAD | path | uncommitted
+/private/tmp/wt-98-idx-trainability-design | docs/standards/v41f_indexer_trainability_design.md +88/-43 (looks like an EARLIER draft; main carries newer sub-ULP text — owner 98 diffs then commit/restore)
+/private/tmp/wt-98-v41f-train-ckpt-design | docs/standards/v41f_train_checkpoint_design.md +102/-24 (EARLIER draft; main carries the #489 G1-G7 revision — owner 98 diffs then commit/restore)
+# harmless dirty /tmp (cosmetic re-wrap of files already fixed on main; confirm w/ owner, no design content):
+/private/tmp/eng493 /private/tmp/eng493base /private/tmp/idx494 | indexer.py cosmetic + untracked test already on main
