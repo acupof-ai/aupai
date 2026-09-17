@@ -165,3 +165,76 @@ Explicitly unmeasured, to be filled from the first node's run, never guessed:
    assembly step.
 4. v41f's own smoke peak GiB/rank and steady tok/s/gpu on the new node, with A+B on.
 5. Whether any of the above is sensitive to the H20 driver/torch build on the new image.
+
+## 6. v41f items CPU cannot measure — run these on GPU first, before a production launch
+
+The §1–§5 gates predate two defects that make the **production 12-layer engram-on** network
+untestable in full on a laptop. On CPU we can prove the small config's code path and derive
+the production network's parameter structure, but not run its real backward. Both items below
+are CPU-blocked today and become the first GPU-only v41f gates once #493/#494 and D-PRE land
+(fix order: #488 → #485 → #494 → #493, then D-PRE). Run them on the provisioned node; every
+measured number stays `prereg` until then.
+
+Why CPU cannot close either one:
+- the production net is **1.009B parameters**; a full bf16-forward + fp32-AdamW step is ~1.9
+  GiB bf16 weights + ~7.5 GiB AdamW m/v/master + activations — it OOMs on the laptop, so CPU
+  only ever builds a small engram-on config (proves the code path) or the production model
+  structurally (dtype/census only, never a backward);
+- two open bugs independently abort a production backward today: **#493**
+  (`v41f/engram.py:156 @torch.inference_mode()` on `NgramHashState.forward` makes every
+  engram-on backward raise "Inference tensors cannot be saved for backward" at
+  `engram.py:212`) and **#494** (a layer-ratio≠key-ratio index source — layer 8 ratio 1
+  reusing layer 2's ratio-2 `index_k` — raises a mask-size mismatch at `v41f/indexer.py:106`
+  and, even past the crash, leaks future compressed columns unless the visibility length is
+  keyed to the owner ratio). A small engram config does not cross either.
+
+### 6.1 Production 12-layer engram-on: real backward + one `optimizer.step()`
+
+Once #493 and #494 are fixed, build the production `V41FConfig()` (engram on, MTP on, the
+heterogeneous `compress_ratios` + `kv_source_layers=(2)` / `index_source_layers=(2,4,8)`),
+move it to one GPU, and run a genuine forward → backward → **one AdamW step** at a batch/seq
+the card holds. This is the first execution of the production training graph anywhere.
+
+Gate (pass criteria), all measured on GPU (`prereg` the loss/grad-norm values):
+- forward + backward + `optimizer.step()` complete with no exception on the production shape;
+- the **four engram parameters** receive FINITE, NON-ZERO gradients and are actually updated:
+  `engrams.1.q_weight`, `engrams.1.k_weight`, `engrams.1.embed.weight`, `engrams.1.wkv.weight`
+  (q/k are the explicit-bf16 leaves from assembly step A; embed/wkv are ambient bf16);
+- no NaN/Inf anywhere in the graph (the §2 whole-net gate, now at the real engram-on shape),
+  including the layer-8 cross-ratio indexer path from #494.
+
+Failure action: a missing/zero grad on any of the four engram leaves, a NaN, or a #493/#494
+re-raise blocks the engram-on launch regardless of the green small-config gates. This is the
+backward half the step-A forward-only/allclose gate deliberately does not cover.
+
+### 6.2 D-PRE production full-optimizer census — measured, not derived
+
+The step-D optimizer-membership counts for the production net are today **structural
+derivations**, not measurements, because #493 blocks a production backward. They must be
+confirmed by a real backward on GPU after D-PRE (the indexer `requires_grad` flip) lands.
+
+Run the independent recheck helper (98) on the repo checkout that carries D-PRE:
+
+```bash
+python3 /tmp/dpre_recheck.py --repo <repo> --shape prod --backward --full-optim
+```
+
+Gate — the three optimizer sets and the counts it pins (`prereg` until GPU-confirmed):
+- total production parameters **2153**;
+- requires_grad / in-AdamW set: **2145 in `off`** mode and **2151 in `ste`** mode — the only
+  delta is exactly the **SIX** hard-topk indexer leaves
+  `layers.{2,4,8}.attn.indexer.{wq_b,weights_proj}.weight` (the mode symmetric difference
+  `T(ste) △ T(off)` equals SIX);
+- the **F** set (2 index_key leaves, derived from `kv_source_layers=(2)`) is frozen in BOTH
+  modes — never in the group, never a grad/state;
+- `--full-optim` (give every requires_grad param a grad, one AdamW step) proves membership by
+  actual optimizer STATE, not just by the flag: under a real coverage backward the SIX leaves
+  have no state in `off` and finite non-zero state in `ste`.
+
+Failure action: a count other than 2153 / 2145 / 2151, an F leaf that entered the group, an
+SIX leaf with state in `off` or without state in `ste`, or a symmetric difference wider than
+SIX means the D-PRE flip is missing or too broad; block step-D (PR-1), which builds the
+name-keyed optimizer membership off exactly this predicate. The small shape in the same
+helper (`--shape small`: 236 total / 228 off / 232 ste / 4 F) is the CPU smoke; prod is the
+GPU-only confirmation.
+
