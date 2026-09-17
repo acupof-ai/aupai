@@ -3316,7 +3316,17 @@ def check_main_advances_by_ancestry(root):
                  # alone" and "Do NOT re-run the merge" -- all three correct when origin has not
                  # moved, all three wrong here, and the third forbids the one safe action.
                  ("a2375098b7595abb67dc45a990d9aef6ded21410",
-                  "12ecbf520be918785b76873ca2114fbb9128db28")}
+                  "12ecbf520be918785b76873ca2114fbb9128db28"),
+                 # 2026-09-17 12:05 local: after `merge_main: 0e-review-457` wrote 7aa7217d on
+                 # local main, a session ran `branch: Reset to origin/main` (f4a4626e) on a
+                 # refused push, discarding 46cbc0bb (0e's 11:56Z changes-requested row for
+                 # PR #457, de-81). origin was already correct at 22fd20eb, and 0e re-posted the
+                 # equivalent review row at 12:02Z (same reviewer/pr/verdict/finding) which
+                 # reaches origin as `merge_main: 0e-review-457-b` -- so no evidence was lost;
+                 # the discarded commit is dangling (only reflog) and its content is a strict
+                 # subset already on origin/main. Recorded pair = (discarded, reset destination).
+                 ("7aa7217dfdb3db12d9d210189d3a20a76cb3e013",
+                  "f4a4626e609ec3c6e21f2e97ca1afc2070518860")}
     jumps = []
     unsigned = []
     for ln in lines:
