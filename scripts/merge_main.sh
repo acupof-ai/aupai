@@ -375,8 +375,9 @@ _code_pr_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse
   echo "  Ship them this way instead:" >&2
   echo "    git push -u origin $1" >&2
   echo "    gh pr create --base main --head $1" >&2
-  echo "    # CI must be green on the HEAD sha; then your second reader approves on the PR," >&2
-  echo "    # with 'artifact:' or 'case:' in the approval body naming what they opened" >&2
+  echo "    python3 scripts/pr_merge_gate.py $1   # rc 0 only when every check is settled-passing; nonzero -> do NOT merge" >&2
+  echo "    # then your second reader approves on the PR, with 'artifact:' or 'case:' in the" >&2
+  echo "    # approval body naming what they opened" >&2
   echo "    # THE REVIEWER, not you: gh pr merge --merge" >&2
   echo "  Ledger-only commits (runs/*.jsonl, EXPERIMENTS.md) still merge here." >&2
   echo "  Controller override: AUPAI_CONTROLLER=1 (logged to runs/friction.jsonl)." >&2
