@@ -2050,20 +2050,14 @@ def check_launcher_states_anneal_frac(root):
                   f"flag or reads the key at its entry point ({len(declaring)} mix(es) declare it)")
 
 
-def _hook_selftest_maps(src):
-    """The hook's SELFTEST_FILES set and NEEDS_DATA dict, read from the literal with `ast`.
+def _hook_selftest_inventory(src):
+    """The hook's four selftest structures, read from their literals with `ast`.
 
-    Returns (selftest_paths:set[str], needs:dict[str,str]) or None if either literal is
-    absent/non-literal/non-homogeneous. This mirrors the hook's own
-    `_registered_selftest_paths` (scripts/hooks/pre-commit): ast.literal_eval on the
-    assignment node, never a regex over text.
-
-    Three regex parsers of these literals were wrong. The first two are recorded in the
-    hook; this check's was the third: `SELFTEST_FILES = {([^}]*)}` truncates at the FIRST
-    `}`, and an entry comment containing a brace (de's `{requires_grad=True}`,
-    `{AdamW state}`) closed the match early and silently dropped every registered path
-    below it -- a false "ungated selftest" FAIL. Comments are part of the python source
-    but not of the literal; only the parser knows that.
+    Returns (selftest:set[str], needs:dict[str,str|tuple], flag:dict[str,str]) or None.
+    `needs` preserves the raw value -- a plain str is a never-run-here exemption, a
+    tuple[str,...] is a PARTIAL entry (reason + flag override the hook DOES run). `flag`
+    is SELFTEST_FLAG (per-file flag that is not --selftest). Mirrors the hook's own
+    `_registered_selftest_paths`; a dict comprehension (PARTIAL) is derived, not parsed.
     """
     try:
         tree = ast.parse(src)
@@ -2073,27 +2067,53 @@ def _hook_selftest_maps(src):
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for t in node.targets:
-                if isinstance(t, ast.Name) and t.id in ("SELFTEST_FILES", "NEEDS_DATA"):
+                if isinstance(t, ast.Name) and t.id in ("SELFTEST_FILES", "NEEDS_DATA",
+                                                        "SELFTEST_FLAG"):
                     literals[t.id] = ast.literal_eval(node.value)
     if "SELFTEST_FILES" not in literals:
         return None
-    sf, nd = literals["SELFTEST_FILES"], literals.get("NEEDS_DATA", {})
+    sf = literals["SELFTEST_FILES"]
+    nd = literals.get("NEEDS_DATA", {})
+    fl = literals.get("SELFTEST_FLAG", {})
     if not isinstance(sf, (set, list, tuple)) or not isinstance(nd, dict):
         return None
-    if not all(isinstance(x, str) for x in sf):
+    if not isinstance(fl, dict) or not all(isinstance(x, str) for x in sf):
         return None
-    # NEEDS_DATA maps a selftest path -> reason. The reason is a str, or a tuple of str when
-    # it also carries a flag override; only the keys gate, and tuple members are still prose.
+    if not all(isinstance(k, str) and (
+            isinstance(v, str) or
+            (isinstance(v, tuple) and all(isinstance(x, str) for x in v)))
+            for k, v in nd.items()):
+        return None
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in fl.items()):
+        return None
+    return set(sf), dict(nd), dict(fl)
+
+
+def _hook_selftest_maps(src):
+    """The hook's SELFTEST_FILES set and NEEDS_DATA reasons, read from the literal with `ast`.
+
+    Returns (selftest_paths:set[str], reasons:dict[str,str]) or None if the literals are
+    absent/non-literal/non-homogeneous. Tuple NEEDS values (PARTIAL flag overrides) are
+    flattened into their reason prose. Mirrors the hook's own `_registered_selftest_paths`
+    (scripts/hooks/pre-commit): ast.literal_eval on the assignment node, never regex.
+
+    Three regex parsers of these literals were wrong. The first two are recorded in the
+    hook; this check's was the third: `SELFTEST_FILES = {([^}]*)}` truncates at the FIRST
+    `}`, and an entry comment containing a brace (de's `{requires_grad=True}`,
+    `{AdamW state}`) closed the match early and silently dropped every registered path
+    below it -- a false "ungated selftest" FAIL. Comments are part of the python source
+    but not of the literal; only the parser knows that.
+    """
+    inv = _hook_selftest_inventory(src)
+    if inv is None:
+        return None
+    sf, nd, _fl = inv
+
     def _reason_str(v):
-        if isinstance(v, str):
-            return v
-        if isinstance(v, tuple) and all(isinstance(x, str) for x in v):
-            return " ".join(v)
-        return None
-    reasons = {k: r for k, v in nd.items() if isinstance(k, str) and (r := _reason_str(v))}
-    if len(reasons) != len(nd):
-        return None
-    return set(sf), reasons
+        return v if isinstance(v, str) else " ".join(v)
+
+    reasons = {k: _reason_str(v) for k, v in nd.items()}
+    return sf, reasons
 
 
 def check_selftests_are_gated(root):
@@ -2237,6 +2257,164 @@ def check_selftests_are_gated(root):
     return PASS, (f"{len(have)} selftest-carrying file(s), all gated by the hook; "
                   f"map literal {len(gated_paths)} SELFTEST_FILES + {len(needs_data)} "
                   f"NEEDS_DATA entries (ast)")
+
+
+# Registered selftests the COMMIT HOOK can run but the bare CI image cannot, with the reason.
+# The hook runs on laptops/pods (which may have data/tokenizer.json, a GPU, root, a network);
+# CI is ubuntu + CPU + torch-cpu, no gitignored data, no privileged sandbox. An entry here is
+# an ENVIRONMENT exemption, not a quality one -- a genuinely-broken portable selftest stays in
+# the driver and fails CI red. Every key must be a live map member; a stale key FAILs the
+# partition check. Keep this set minimal: prefer making a selftest CI-runnable to excluding it.
+CI_SELFTEST_EXCLUDE = {
+    # gitignored data/tokenizer.json or data/corpus shards, absent from a fresh CI checkout.
+    "datagen/build_dd09_full.py": "needs data/tokenizer.json (gitignored) to build the dd09 mix",
+    "datagen/count_code_dirs.py": "needs data/tokenizer.json (gitignored)",
+    "datagen/count_corpus_dir.py": "needs data/corpus shards (gitignored)",
+    "scripts/count_dir.py": "walks data/corpus (gitignored); nothing to count in CI",
+    # by design refuse outside a specific real tree -- not portable assertions.
+    "scripts/test_merge_main_ancestor.py": "refuses unless run from the worktree holding the merged branch",
+    "scripts/test_pod_sync_stamp.py": "deliberate ALLOW_DIRECT_RUN guard; row/claim/watchdog created by hand",
+    "scripts/test_reachability_fresh.py": "compares against the committed runs/reachability.txt derived artifact, not reproducible mid-CI",
+    # optional third-party kernel not installed in the CPU image.
+    "scripts/test_sft_moe_cfg.py": "imports liger_kernel, which is not installed in the CPU CI image",
+}
+
+
+def _hook_ci_partition(src):
+    """Partition the hook's runnable selftest population for the CI image.
+
+    Returns dict(path -> bucket) with bucket in {"driver", "needs", "exclude"} or None when
+    the hook literals do not parse:
+      - needs:  NEEDS_DATA value is a plain str exemption -- the hook itself never runs it.
+      - exclude: a hook-runnable file the bare CI image cannot run (CI_SELFTEST_EXCLUDE).
+      - driver: everything else; `harness ci-selftests` enumerates and runs it.
+    PARTIAL entries (tuple NEEDS value with a flag override) are hook-runnable, so they land
+    in driver/exclude, never needs.
+    """
+    inv = _hook_selftest_inventory(src)
+    if inv is None:
+        return None
+    sf, nd, _fl = inv
+    buckets = {}
+    for p in sf:
+        if p in CI_SELFTEST_EXCLUDE:
+            buckets[p] = "exclude"
+        else:
+            buckets[p] = "driver"
+    for p, v in nd.items():
+        if isinstance(v, tuple):  # PARTIAL: hook runs it with the override flag
+            buckets.setdefault(p, "exclude" if p in CI_SELFTEST_EXCLUDE else "driver")
+        else:                      # plain-str exemption: the hook does not run it either
+            buckets[p] = "needs"
+    return buckets
+
+
+def ci_selftest_flags(src):
+    """Per-file flag the hook would invoke each registered selftest with (PARTIAL first)."""
+    inv = _hook_selftest_inventory(src)
+    if inv is None:
+        return None
+    _sf, nd, fl = inv
+    partial = {k: v[1] for k, v in nd.items() if isinstance(v, tuple)}
+    flags = dict(fl)
+    flags.update(partial)
+    return flags
+
+
+def cmd_ci_selftests(argv):
+    """Run every driver-bucket registered selftest, bounded, fail-fast with the failing name.
+
+    This is the single CI entry that closes the hook-map vs explicit-CI-list gap (#502): it
+    enumerates SELFTEST_FILES/PARTIAL from the hook at runtime, so a newly registered
+    selftest is covered by construction instead of waiting for someone to edit ci.yml.
+    """
+    ap = argparse.ArgumentParser(prog="harness ci-selftests")
+    ap.add_argument("--timeout", type=float, default=120.0)
+    a = ap.parse_args(argv)
+    hook = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
+    src = open(hook, encoding="utf-8").read()
+    buckets = _hook_ci_partition(src)
+    flags = ci_selftest_flags(src)
+    if buckets is None:
+        print("ci-selftests: cannot parse the hook selftest maps", file=sys.stderr)
+        return 2
+    targets = sorted(p for p, b in buckets.items() if b == "driver")
+    env = dict(os.environ)
+    env["CUDA_VISIBLE_DEVICES"] = ""  # CPU image: never let a selftest silently claim a card
+    failed, ran = [], 0
+    for p in targets:
+        if not os.path.exists(os.path.join(ROOT, p)):
+            print(f"ci-selftests: FAIL {p}: registered but missing on disk")
+            return 1
+        fl = flags.get(p, "--selftest")
+        interp = ["bash"] if p.endswith(".sh") else [sys.executable]
+        args = interp + [os.path.join(ROOT, p)] + ([fl] if fl else [])
+        try:
+            r = subprocess.run(args, capture_output=True, text=True, env=env,
+                               timeout=a.timeout, cwd=ROOT)
+        except subprocess.TimeoutExpired:
+            print(f"ci-selftests: FAIL {p}: exceeded {a.timeout:.0f}s (mark it slow or fix it)")
+            return 1
+        ran += 1
+        if r.returncode != 0:
+            tail = (r.stdout + r.stderr).strip().splitlines()[-8:]
+            print(f"ci-selftests: FAIL {p} {fl or ''} (exit {r.returncode})")
+            for line in tail:
+                print("    " + line)
+            failed.append(p)
+            break
+    if failed:
+        print(f"ci-selftests: {len(failed)} of {ran} ran failed; the rest were not reached")
+        return 1
+    print(f"ci-selftests: {ran} registered selftest(s) passed (driver bucket)")
+    return 0
+
+
+def check_ci_selftest_partition(root):
+    """Every hook-runnable selftest is covered in CI, and the three buckets stay exhaustive.
+
+    #502: a SELFTEST_FILES selftest sat red off-pod for days because CI runs an explicit
+    command list, not the map, and the file was in neither. The partition must be:
+      driver  -> `harness ci-selftests` (enumerated at runtime) actually invoked in ci.yml
+      needs   -> NEEDS_DATA plain-str exemption (the hook never runs it either)
+      exclude -> CI_SELFTEST_EXCLUDE with a reason (CI image cannot run it)
+    No fourth bucket: a registered file covered by silence FAILs. A stale exclude key FAILs.
+    """
+    hook = os.path.join(root, "scripts", "hooks", "pre-commit")
+    ci = os.path.join(root, ".github", "workflows", "ci.yml")
+    if not os.path.exists(hook) or not os.path.exists(ci):
+        return SKIP, "no hook or CI workflow"
+    src = open(hook, encoding="utf-8").read()
+    buckets = _hook_ci_partition(src)
+    if buckets is None:
+        return FAIL, "the hook selftest maps do not parse; cannot prove CI coverage"
+    ci_src = open(ci, encoding="utf-8").read()
+    driver_invoked = "ci-selftests" in ci_src
+    counts = {"driver": 0, "needs": 0, "exclude": 0}
+    for b in buckets.values():
+        counts[b] += 1
+    # The driver step must exist; otherwise every driver-bucket file has zero CI coverage.
+    if not driver_invoked:
+        uncovered = sorted(p for p, b in buckets.items() if b == "driver")
+        return FAIL, (f"ci.yml does not invoke 'harness ci-selftests', leaving "
+                      f"{len(uncovered)} hook-runnable selftest(s) with no CI run: "
+                      f"{', '.join(uncovered[:4])}")
+    # Every exclude key must be a live, non-exempt map member with a nonempty reason; a stale
+    # key (file deleted/moved, or it became a plain NEEDS exemption) is a silent over-exclude.
+    stale = sorted(k for k in CI_SELFTEST_EXCLUDE if buckets.get(k) != "exclude")
+    if stale:
+        return FAIL, (f"{len(stale)} CI_SELFTEST_EXCLUDE key(s) are no longer driver-bucket map "
+                      f"members (stale or already a NEEDS exemption): {', '.join(stale[:4])}")
+    noreason = sorted(k for k, r in CI_SELFTEST_EXCLUDE.items() if not str(r).strip())
+    if noreason:
+        return FAIL, f"CI_SELFTEST_EXCLUDE entries without a reason: {', '.join(noreason[:4])}"
+    # An excluded file must still exist; excluding a path that is not on disk hides a typo.
+    missing = sorted(k for k in CI_SELFTEST_EXCLUDE
+                     if not os.path.exists(os.path.join(root, k)))
+    if missing:
+        return FAIL, f"CI_SELFTEST_EXCLUDE names a missing file: {', '.join(missing[:4])}"
+    return PASS, (f"{counts['driver']} driver-run, {counts['needs']} NEEDS-exempt, "
+                  f"{counts['exclude']} CI-image-excluded; no uncovered bucket")
 
 
 def check_probe_numbers_unique(root):
@@ -2405,6 +2583,29 @@ def _broken_selftests_are_gated():
         text.replace('"scripts/eval_artifacts.py", ', "")
             .replace('"scripts/eval_artifacts.py"', '"scripts/harness.py"'))
     return d
+
+
+def _broken_ci_selftest_partition():
+    """A world where a runnable selftest has NO CI coverage: ci.yml does not invoke the
+    driver. The REAL ci.yml with the one driver step removed; the hook is unchanged, so every
+    map member is real. Without the driver invocation the whole driver bucket is uncovered,
+    which must FAIL (#502's exact shape).
+    """
+    d = _tmp_repo_shaped()
+    ci_real = os.path.join(ROOT, ".github", "workflows", "ci.yml")
+    ci_dst = os.path.join(d, ".github", "workflows", "ci.yml")
+    if not os.path.exists(ci_real):
+        return None
+    import shutil
+    os.makedirs(os.path.dirname(ci_dst), exist_ok=True)
+    ci = open(ci_real, encoding="utf-8").read()
+    if "ci-selftests" not in ci:
+        return None  # the broken-world premise (a present driver step) does not hold
+    shutil.copyfile(ci_real, ci_dst)
+    stripped = "\n".join(l for l in ci.splitlines() if "ci-selftests" not in l)
+    open(ci_dst, "w", encoding="utf-8").write(stripped)
+    return d
+
 
 
 def _broken_no_duplicate_defs():
@@ -19172,6 +19373,13 @@ CHECKS = [
         _broken_selftests_are_gated,
     ),
     (
+        "ci_selftest_partition",
+        "every hook-runnable selftest is either run by 'harness ci-selftests' in CI or a reasoned NEEDS/CI-image exemption; no uncovered fourth bucket",
+        "a SELFTEST_FILES selftest (datagen/test_parallel_exact_identity.py) sat RED off-pod for days because CI runs an explicit command list, not the hook map, and the file was in neither -- the red could only show on a commit that staged it (#502)",
+        check_ci_selftest_partition,
+        _broken_ci_selftest_partition,
+    ),
+    (
         "selftest_worlds_reachable",
         "no registered selftest file has a statement that cannot execute",
         "e1 added two worlds to eval/equal_token_gap.py and put a `return 0` above the existing "
@@ -19504,7 +19712,9 @@ EVIDENCE = {
     # `git show HEAD:runs/score_matrix.jsonl`, and it SKIPs on the pod naming that tree's
     # missing .git. A "pod" declaration would ask it to answer where it cannot run.
     "score_matrix_rewrites_traced": "repo",
-    "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
+    "cited_artifacts_attested": "repo", "selftests_are_gated": "repo",
+    "ci_selftest_partition": "repo",
+    "probe_numbers_unique": "repo",
     "launcher_states_anneal_frac": "repo",
     # NOT "repo": the evidence is THIS CHECKOUT's .git/hooks symlink and the integration
     # tree's working file, neither of which is repo content. Green here says nothing about
@@ -29173,6 +29383,8 @@ def main():
         return cmd_ledger_append(sys.argv[3:])
     if len(sys.argv) > 1 and sys.argv[1] == "sync":
         return cmd_sync(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "ci-selftests":
+        return cmd_ci_selftests(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "install-hooks":
         return cmd_install_hooks(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "launch":
