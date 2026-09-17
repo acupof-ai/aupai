@@ -176,10 +176,18 @@ are CPU-blocked today and become the first GPU-only v41f gates once #493/#494 an
 measured number stays `prereg` until then.
 
 Why CPU cannot close either one:
-- the production net is **1.009B parameters**; a full bf16-forward + fp32-AdamW step is ~1.9
-  GiB bf16 weights + ~7.5 GiB AdamW m/v/master + activations — it OOMs on the laptop, so CPU
-  only ever builds a small engram-on config (proves the code path) or the production model
-  structurally (dtype/census only, never a backward);
+- the production net is **1.0757B `named_parameters` elements** at the REAL gate vocab
+  (vocab_size 32768, engram hash table 786862 rows — built for the element census, which needs
+  no GPU). Breakdown: **105.44M are the engram hash tables**; non-engram = **0.9703B**.
+  Memory floor before activations: **~2.0 GiB weights** (bf16-native elements at 2 B + the
+  94 fp32-native params at 4 B; ~2.07 GiB counted) and, for one fp32-AdamW step, **~8.0 GiB
+  m+v** and **~11.9 GiB m+v+fp32-master** (bf16-native master is a distinct fp32 copy =
+  12 B/element; the fp32-native 94 alias their master = 8 B/element). (A parameter-COUNT
+  script that only reports non-hung rows gives 0.9046B — a different calibre, not the total.)
+  A full backward+step therefore OOMs on the laptop; CPU only builds a small engram-on config
+  (proves the code path) or the production model structurally (element/dtype census, never a
+  backward). These CPU numbers are structural estimates, not GPU measurements — peak
+  including activations is a §3/§6 `prereg`;
 - two open bugs independently abort a production backward today: **#493**
   (`v41f/engram.py:156 @torch.inference_mode()` on `NgramHashState.forward` makes every
   engram-on backward raise "Inference tensors cannot be saved for backward" at
@@ -212,6 +220,12 @@ backward half the step-A forward-only/allclose gate deliberately does not cover.
 The step-D optimizer-membership counts for the production net are today **structural
 derivations**, not measurements, because #493 blocks a production backward. They must be
 confirmed by a real backward on GPU after D-PRE (the indexer `requires_grad` flip) lands.
+
+**This section is authoritative for the in-group counts and supersedes the provisional
+2147/2153 in `docs/standards/v41f_train_checkpoint_design.md` §6**, which counted the frozen
+**F** index_key leaves as trainable. The D-PRE predicate subtracts F too: off = total − F −
+SIX, ste = total − F. (Re-derived by build and by 98's helper: prod F=2/SIX=6 → 2145/2151;
+small F=4/SIX=4 → 228/232.) The step-D doc is expected to align to these in its PR-1 pass.
 
 Run the independent recheck helper (98) on the repo checkout that carries D-PRE:
 
