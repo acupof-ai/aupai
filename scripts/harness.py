@@ -7726,7 +7726,7 @@ def check_corpus_filters_fp(root):
         return SKIP, "no mix-domain corpus on this machine"
     baseline_path = os.path.join(root, CORPUS_FILTERS_BASELINE)
     baseline = json.load(open(baseline_path, encoding="utf-8")) if os.path.exists(baseline_path) else {}
-    stale, new_unstamped, baselined, unmigrated, ok = [], [], [], [], 0
+    stale, new_unstamped, baselined, unmigrated, packer_only, ok = [], [], [], [], [], 0
     # GENERATION MARKER. fp_filters hashes the compiled PATTERNS and prefixes the value "p1-";
     # until 2026-09-17 it returned a bare 16-hex sha1 over the filter FILES' bytes. Both shapes
     # are 16 hex characters, so an old stamp and a new one are indistinguishable BY VALUE, and
@@ -7737,13 +7737,23 @@ def check_corpus_filters_fp(root):
     # baselined-debt shape, so it is reported as debt rather than as a mismatch.
     live_gen = live.split("-", 1)[0] if "-" in live else ""
     for dom in present:
-        stats = os.path.join(corpus, dom, "build_corpus_stats.json")
-        got = None
-        if os.path.isfile(stats):
-            with open(stats, encoding="utf-8") as f:
-                got = json.load(f).get("filters_fp")
+        stats_p = os.path.join(corpus, dom, "build_corpus_stats.json")
+        stamp = {}
+        if os.path.isfile(stats_p):
+            with open(stats_p, encoding="utf-8") as f:
+                stamp = json.load(f)
+        got = stamp.get("filters_fp")
         if got is None:
-            if dom in baseline:
+            # A PACKER-ONLY domain records the content hash of the script that produced its
+            # bytes under packer_fp and never runs the filters/ pipeline (its filtering is
+            # inline in that script). There is no pipeline value it could match, so it is not
+            # compared and not counted as filters debt. A domain that passes through filters/
+            # must stamp filters_fp instead; packer_fp is no escape hatch (it is unreachable
+            # when filters_fp is present), and an EMPTY packer_fp still falls through to
+            # new_unstamped.
+            if stamp.get("packer_fp"):
+                packer_only.append(dom)
+            elif dom in baseline:
                 baselined.append(dom)
             else:
                 new_unstamped.append(dom)
@@ -7776,7 +7786,7 @@ def check_corpus_filters_fp(root):
             f"{len(new_unstamped)} domain(s) have no filters_fp and are not in the baseline "
             f"({', '.join(new_unstamped)}) -- rebuild to stamp, or register in {CORPUS_FILTERS_BASELINE}"
         )
-    if ok == 0 and not baselined and not unmigrated:
+    if ok == 0 and not baselined and not unmigrated and not packer_only:
         return FAIL, f"0/{len(present)} mix domain(s) match filters {live}"
     note = ""
     if baselined:
@@ -7786,6 +7796,9 @@ def check_corpus_filters_fp(root):
         note += (f"; UNMIGRATED debt: {len(unmigrated)} domain(s) carry a pre-p1 stamp from the "
                  f"byte-hash definition ({', '.join(unmigrated)}) -- not comparable to a pattern "
                  f"hash and not a filters edit; a rebuild re-stamps them in the new generation")
+    if packer_only:
+        note += (f"; PACKER-ONLY (no filters/ pipeline, packer_fp stamped): {len(packer_only)} "
+                 f"({', '.join(packer_only)}) -- not compared to filters_fp")
     return PASS, f"{ok}/{len(present)} domain(s) match filters {live}{note}"
 
 
@@ -7949,6 +7962,41 @@ def _selftest_corpus_filters_fp_gate_mix():
         assert state == FAIL, (
             f"a lone {label} stamp ({fp!r}) must FAIL, not be waved through as unmigrated debt",
             state, ev)
+
+    # PACKER-ONLY (A1): a domain whose bytes never pass through filters/ stamps a non-empty
+    # packer_fp and no filters_fp. It must PASS without being compared to the pipeline -- the
+    # pre-A1 builder wrote its packer hash under filters_fp and would mismatch forever. An
+    # EMPTY packer_fp is not a declaration and stays new-unstamped FAIL.
+    def _packer_world(dom, stamp_obj):
+        w = _tmp_repo()
+        os.makedirs(os.path.join(w, "filters"), exist_ok=True)
+        for _n in cfp.PIPELINE_FILTERS:
+            shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(w, "filters", _n))
+        sys.path.insert(0, os.path.join(w, "scripts"))
+        json.dump({"domains": {dom: 1.0}}, open(os.path.join(w, GATE_RUN_MIX), "w"))
+        wb = os.path.join(w, "data", "corpus", dom)
+        os.makedirs(wb)
+        json.dump(stamp_obj, open(os.path.join(wb, "build_corpus_stats.json"), "w"))
+        return check_corpus_filters_fp(w)
+
+    st, ev = _packer_world("code_tests_v1",
+                           {"fingerprint": "f" * 16, "packer_fp": "abcdef0123456789"})
+    assert st == PASS and "PACKER-ONLY" in ev, (
+        "a packer_fp-stamped domain that never used filters/ must PASS by name", st, ev)
+    st, _ = _packer_world("code_tests_v1", {"fingerprint": "f" * 16, "packer_fp": ""})
+    assert st == FAIL, "an empty packer_fp is not a valid packer-only declaration"
+
+    # NOT AN ESCAPE HATCH: a CURRENT-generation stale filters_fp beside a non-empty packer_fp
+    # must still FAIL (judged by filters_fp; packer_fp is read only in the `got is None` arm).
+    # The stale value carries the live generation marker so it exercises `got != live`, not
+    # the unmigrated-debt branch. Mutation `elif got != live and not packer_fp` must red this.
+    st, ev = _packer_world(
+        "twofaced_dc",
+        {"fingerprint": "f" * 16, "filters_fp": f"{gen}-" + "0" * 16,
+         "packer_fp": "fedcba9876543210"})
+    assert st == FAIL and "built with filters" in ev and "twofaced_dc" in ev, (
+        "a stale current-generation filters_fp must fail even beside a non-empty packer_fp",
+        st, ev)
 
 
 def check_score_input_fresh(root):
