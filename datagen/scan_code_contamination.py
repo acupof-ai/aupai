@@ -383,6 +383,40 @@ def holdout_hash(holdouts):
     return hashlib.sha1("".join(sorted(qhash(q) for q in holdouts)).encode()).hexdigest()[:16]
 
 
+def _content_fp(paths):
+    """Content fingerprint of a shard list: fp_dir over a synthetic directory view.
+
+    WHY CONTENT AND NOT size+mtime. The ledger keyed a cached verdict on `path:size:mtime`,
+    which is wrong in the one direction that costs work: a `cp`/`rsync`/`podput` moves mtime
+    without touching a byte, so a transfer rebuilt every verdict (the same
+    transfer-invariance failure corpus_fingerprint._shard_line was written to avoid -- "a
+    copy, podput, rsync or mv changes mtime without touching a byte"). It was also wrong in
+    the other direction, which facts/contamination.json#cont.ledger already recorded as the
+    uncertainty: "bytes+mtime misses an in-place rewrite that preserves both -- content-hash
+    if shards can be replaced adversarially".
+
+    fp_dir/is the repo's canonical content fingerprint (shard name, size, sha256 of the first
+    and last 64KB), parity-asserted against train.py's inline copy by
+    corpus_fingerprint --self-check. Reusing it means this cache and every other content
+    fingerprint in the tree agree on what "the same bytes" means. Cost is 128KB read per
+    shard, once per run.
+
+    WHAT IT IS BLIND TO, measured not assumed: the 64KB windows are SAMPLED, so an edit
+    confined to a shard's interior -- after the first 64KB, before the last -- leaves the
+    fingerprint unchanged. Measured on a 192KB fixture: a one-byte flip inside the middle
+    window did not move it, while a flip in either the head or the tail window did. So this is
+    narrower than cont.ledger's adversarial middle-edit scenario, not closed over it; the old
+    key missed that case too. Closing it fully means reading whole shards, which costs the full
+    byte count instead of 128KB per shard, and would make this cache stricter than every other
+    content fingerprint in the repo. Read it as "sampled content", never as full coverage."""
+    from corpus_fingerprint import _shard_line
+
+    h = hashlib.sha1()
+    for p in sorted(paths):
+        h.update(_shard_line(os.path.basename(p), p))
+    return h.hexdigest()[:16]
+
+
 def ledger_read():
     rows = []
     if os.path.exists(LEDGER):
@@ -392,23 +426,28 @@ def ledger_read():
     return rows
 
 
-def ledger_cached(ledger, path, hhash, threshold, baseline_id):
-    st = os.stat(path)
+def ledger_cached(ledger, path, hhash, threshold, baseline_fp, cand_fp):
+    """A cached verdict is reused only when the CANDIDATE and the BASELINE are the same bytes.
+
+    Both sides are content fingerprints. A row written before this change carries `bytes` and
+    `mtime` instead of `cand_fp`/`baseline_fp`; it has no content identity, so it can never be
+    shown fresh and is treated as UNCACHEABLE (rescanned once). That is the conservative
+    direction: an unstamped row must not be read as "the same bytes" -- the same rule the
+    token caches follow for an unstamped .srcfp."""
     for row in ledger:
-        if (row.get("path") == path and row.get("bytes") == st.st_size
-                and row.get("mtime") == int(st.st_mtime) and row.get("holdout_hash") == hhash
-                and row.get("threshold") == threshold and row.get("baseline_id") == baseline_id
+        if (row.get("path") == path and row.get("cand_fp") == cand_fp
+                and row.get("holdout_hash") == hhash
+                and row.get("threshold") == threshold and row.get("baseline_fp") == baseline_fp
                 and bool(row.get("idf"))):
             return row
     return None
 
 
-def ledger_append(path, hhash, threshold, baseline_id, n, hit_rows, exact, per_gb, verdict):
-    st = os.stat(path)
+def ledger_append(path, hhash, threshold, baseline_fp, cand_fp, n, hit_rows, exact, per_gb, verdict):
     with open(LEDGER, "a", encoding="utf-8") as f:
         f.write(json.dumps({
-            "path": path, "bytes": st.st_size, "mtime": int(st.st_mtime),
-            "holdout_hash": hhash, "threshold": threshold, "baseline_id": baseline_id,
+            "path": path, "cand_fp": cand_fp,
+            "holdout_hash": hhash, "threshold": threshold, "baseline_fp": baseline_fp,
             "idf": True,
             "scanned_at": int(time.time()),
             "rows": n, "hit_rows": hit_rows, "per_gb": round(per_gb, 2),
@@ -440,7 +479,65 @@ def self_check():
     assert abs(float(mc1w[0]) - v1) < 1e-9, \
         f"weighted containment must match unweighted under uniform IDF, got {mc1w[0]} vs {v1}"
     assert hr1w == hr1
-    print(f"self-check OK (contaminated {v1} vs clean {v2})")
+    # LEDGER KEY: content, both sides. Pure temp-file work, no corpus, no scan -- so it runs
+    # wherever the self-check runs. Four cases, the middle two being the pair fb named: a
+    # transfer must NOT invalidate, a one-byte change MUST.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as td:
+        bl = os.path.join(td, "baseline.jsonl")
+        cand = os.path.join(td, "cand.jsonl")
+        with open(bl, "w", encoding="utf-8") as f:
+            f.write('{"content": "alpha beta gamma"}\n')
+        with open(cand, "w", encoding="utf-8") as f:
+            f.write('{"content": "delta epsilon zeta"}\n')
+        b_fp, c_fp = _content_fp([bl]), _content_fp([cand])
+        row = {"path": cand, "cand_fp": c_fp, "holdout_hash": "hh", "threshold": 0.8,
+               "baseline_fp": b_fp, "idf": True, "verdict": "clean"}
+        rt = lambda: ledger_cached([row], cand, "hh", 0.8, _content_fp([bl]), _content_fp([cand]))
+        # 1. same bytes -> the verdict is reused
+        assert rt() is not None, "identical bytes must serve the cached verdict"
+        # 2. TRANSFER: identical bytes, new mtime -> still reused. This is the false-rebuild
+        #    the old size+mtime key produced on every cp/rsync/podput.
+        st = os.stat(bl)
+        os.utime(bl, (st.st_atime, st.st_mtime + 3600))
+        os.utime(cand, (st.st_atime, st.st_mtime + 3600))
+        assert rt() is not None, (
+            "an mtime-only change (a transfer) must NOT invalidate the cached verdict -- "
+            "the key is still reading mtime")
+        # 3. ONE BYTE of the BASELINE changes -> invalidated. Restore both sides first, so this
+        #    case (and the next) is INDEPENDENT: appending to the baseline in case 3 and then to
+        #    the candidate in case 4 would let the baseline mismatch alone explain case 4's
+        #    result, and dropping cand_fp from the key would still pass the whole section.
+        def _reset():
+            with open(bl, "w", encoding="utf-8") as f:
+                f.write('{"content": "alpha beta gamma"}\n')
+            with open(cand, "w", encoding="utf-8") as f:
+                f.write('{"content": "delta epsilon zeta"}\n')
+
+        assert rt() is not None, "restoring both sides must restore the cache"
+        with open(bl, "a", encoding="utf-8") as f:
+            f.write(" ")
+        assert rt() is None, "a changed baseline byte must invalidate the cached verdict"
+        # 4. ONE BYTE of the CANDIDATE changes, baseline restored -> invalidated. This is the
+        #    case that isolates cand_fp: if the key drops it, this returns the cached row.
+        _reset()
+        assert rt() is not None, "restoring both sides must restore the cache"
+        with open(cand, "a", encoding="utf-8") as f:
+            f.write(" ")
+        assert rt() is None, "a changed candidate byte must invalidate the cached verdict"
+        _reset()
+        # 5. A row with no content identity (written by the old key) is UNCACHEABLE, never
+        #    treated as fresh. The conservative direction: an unstamped row must not read as
+        #    "the same bytes".
+        legacy = {"path": cand, "bytes": os.path.getsize(cand),
+                  "mtime": int(os.stat(cand).st_mtime), "holdout_hash": "hh",
+                  "threshold": 0.8, "baseline_id": "whatever", "idf": True, "verdict": "clean"}
+        assert ledger_cached([legacy], cand, "hh", 0.8, _content_fp([bl]),
+                             _content_fp([cand])) is None, (
+            "a legacy row (bytes+mtime, no content fingerprint) must be uncacheable, not fresh")
+    print(f"self-check OK (contaminated {v1} vs clean {v2}; ledger key content-based, "
+          f"transfer-invariant, one-byte-sensitive both sides, legacy row uncacheable)")
     return 0
 
 
@@ -520,7 +617,13 @@ def main():
                     help="REQUIRED: same-scale in-training corpus; the verdict is the candidate's "
                          "per-GB hit rate vs the baseline's (a FPR number without a same-scale "
                          "baseline has no binding power -- cont.cci3_scale_failure)")
-    ap.add_argument("--self-check", action="store_true")
+    # --selftest is an ALIAS, not the primary spelling. The hook invokes every SELFTEST_FILES
+    # entry with --selftest by default (scripts/hooks/pre-commit: `SELFTEST_FLAG.get(f,
+    # "--selftest")`) and reads argparse's exit 2 as the selftest FAILING, so a file whose only
+    # spelling is --self-check needs a SELFTEST_FLAG entry or it hard-reds every commit that
+    # stages it. Accepting both removes the class instead of the instance: this file is
+    # callable either way, and the registration cannot go stale.
+    ap.add_argument("--self-check", "--selftest", action="store_true", dest="self_check")
     ap.add_argument("--positive-control", action="store_true",
                     help="inject HumanEval/0 verbatim + a renamed variant, assert both caught")
     ap.add_argument("--out-dir", metavar="DIR",
@@ -552,12 +655,14 @@ def main():
         sys.exit("REFUSE: no long holdouts (all < MIN_BIGRAMS); a main-bucket 0-hit verdict would be vacuous")
     paths = sorted(glob.glob(args.path)) if "*" in args.path else [args.path]
     base_paths = sorted(glob.glob(args.fpr_baseline)) if "*" in args.fpr_baseline else [args.fpr_baseline]
-    baseline_id = ":".join(f"{p}:{os.stat(p).st_size}:{int(os.stat(p).st_mtime)}" for p in base_paths)
+    # The baseline is fingerprinted ONCE per run (its glob is small), and the value is stored
+    # in each row, so a re-run reads it again but no candidate's cache costs an extra read.
+    baseline_fp = _content_fp(base_paths)
     ledger = [] if args.force else ledger_read()
     rc = 0
     fresh, cached = [], []
     for p in paths:
-        row = ledger_cached(ledger, p, hhash, args.threshold, baseline_id)
+        row = ledger_cached(ledger, p, hhash, args.threshold, baseline_fp, _content_fp([p]))
         if row and not args.force:
             cached.append((p, row))
             rc |= 1 if row["verdict"] == "REJECT" else 0
@@ -607,7 +712,8 @@ def main():
         per_gb = hr / (bytes_ / 1e9) if bytes_ else 0.0
         verdict = "REJECT" if (exact or (base_per_gb == 0 and hr) or
                                (base_per_gb and per_gb / base_per_gb > RATE_REJECT_RATIO)) else "clean"
-        ledger_append(p, hhash, args.threshold, baseline_id, n, hr, len(exact), per_gb, verdict)
+        ledger_append(p, hhash, args.threshold, baseline_fp, _content_fp([p]), n, hr,
+                      len(exact), per_gb, verdict)
     for p, row in cached:
         print(f"=== {os.path.basename(p)}: cached {row['verdict']} "
               f"({row.get('hit_rows', row.get('hits_0.8', '?'))} hit rows, {row.get('per_gb', '?')}/GB, "
