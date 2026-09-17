@@ -23,7 +23,7 @@ user's release.
 ## 1. Root cause and the two hard rules
 
 **Root cause.** The working tree `/work/aupai` was a Kubernetes **emptyDir**
-(`scripts/harness.py:272` `EPHEMERAL_MOUNTS = ("/work",)`). An emptyDir is created when the
+(`scripts/harness.py:348` `EPHEMERAL_MOUNTS = ("/work",)`). An emptyDir is created when the
 pod is scheduled and **deleted with the pod**; on 2026-09-16 the static pod was permanently
 removed and every byte under it — roughly 662 GB (measured at teardown, not a recorded
 fact: checkpoints, corpora, token caches, runs/ ledgers, and the gate tokenizer copy — was
@@ -31,9 +31,9 @@ wiped. The container deleting
 cleanly was the failure, not a crash: nothing about an emptyDir survives pod removal.
 
 `check_root_durable` named this exact risk for the whole campaign
-(`scripts/harness.py:3645`): it FAILs when the root is on `/work` unless a recent backup
+(`scripts/harness.py:3789-3794`): it FAILs when the root is on `/work` unless a recent backup
 marker exists on a durable mount. The FAIL was knowingly carried under `--force` because
-mid-campaign nobody relocates a standing tree (`scripts/harness.py:3655-3657`). Knowing the
+mid-campaign nobody relocates a standing tree (`scripts/harness.py:3775-3778`). Knowing the
 risk and accepting it is not a mount; the pod still deleted empty.
 
 **Hard rule 1 — the new AUPAI_ROOT must be a persistent hostPath or a separately attached
@@ -56,7 +56,7 @@ mountpoint (`scripts/pod_backup.sh:59-71`); the failure this guards was already 
 2026-08-30 — a directory that merely existed at `/mnt/data02`, was not a mount, and would
 have backed up onto the same ephemeral disk (`scripts/pod_backup.sh:29-46`). On the lost
 node the intended `/mnt/data02` target was not mounted inside the container, so no durable
-backup existed; `root_durable`'s 48h marker (`scripts/harness.py:3714`) could not go green
+backup existed; `root_durable`'s 48h marker (`scripts/harness.py:3731`) could not go green
 on bytes that were never written. At provision: attach the backup disk, confirm
 `mountpoint(1)` / st_dev from inside the container, run one `pod_backup.sh`, and confirm the
 marker and MANIFEST sha on the durable mount **before** any GPU work starts.
