@@ -1,5 +1,10 @@
 # v41_gate_0911 run-end sequence
 
+> **历史（2026-09-16）：** 该 run 的 pod 与 `ckpt_v41_gate_0911.pt` 已在 0916 pod 销毁中
+> 灭失，本文件的停止/收尾命令**不得再执行**。重建与数据恢复见
+> `docs/standards/infra_persistent_rebuild_0916.md` 与
+> `docs/standards/data_pipeline_rebuild_0916.md`；以下保留为该 run 的历史顺序记录。
+
 Ordered steps for the hour the 30B gate run ends (~2026-09-13 10Z). Every command is run on
 the pod from `/work/aupai` unless stated. Card allocation stays the controller's: ask fb for
 the free card before steps 5 and 7 (two different cards; SFT starts while the panel is read).
