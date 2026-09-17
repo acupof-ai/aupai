@@ -75,6 +75,23 @@ REF_ONLY_RUNTIME_OR_OUT_OF_SCOPE = frozenset({
 # exactly until it is added to V41FConfig; the intersection gate fails on any unnamed member.
 REF_ONLY_SHAPE_PENDING = frozenset()
 
+# V41F-ONLY TRAINING KNOBS: V41FConfig fields that deliberately have NO counterpart in the
+# vendored ref ModelArgs. The reference is an INFERENCE port; it never trains the CSA2
+# second-level indexer, so the straight-through training switch (design #456, step C #485)
+# is a v41f-defined field the ref ModelArgs cannot consume. It is classified here on its own
+# rather than folded into REF_ONLY_SHAPE_PENDING: that set names a ref-side shape the port
+# still owes upstream; a knob is the opposite, an OUR-side control the ref is right not to
+# have.
+#
+# EXPLICIT ENUMERATION, never a prefix/regex/wildcard: every member must point at a doc that
+# marks it a v41f-only training flag. The guard is symmetric: a config field the ref cannot
+# consume that is NOT listed here fails, and a field listed here that V41FConfig no longer
+# carries (or that the ref has since grown) fails. Adding a knob is therefore a deliberate,
+# documented act, never a silent wildcard match.
+CFG_ONLY_TRAINING_KNOBS = frozenset({
+    "indexer_train_mode",   # docs/standards/v41f_indexer_trainability_design.md (#456/#485)
+})
+
 # Prime bucket sum independently recomputed = 786,862; x head_dim 128 = 100.7M rows.
 STEP_A_LAYER = 1
 STEP_A_NEW_KEYS = {
@@ -270,9 +287,10 @@ def gate_field_intersection():
     """No MODEL-SHAPE field silently fails to cross the ModelArgs<->V41FConfig intersection.
 
     Asserts the ref-only set partitions exactly into (a) runtime/out-of-scope names and
-    (b) the explicitly-pending shape field(s), and that V41FConfig carries no field the ref
-    ModelArgs does not know at all. Adding engram_num_embeddings to V41FConfig removes it
-    from (b); any OTHER ref-only shape field appearing here fails by name.
+    (b) the explicitly-pending shape field(s), and that every V41FConfig field the ref
+    ModelArgs cannot consume is either such a pending shape or a NAMED v41f-only training
+    knob. Adding engram_num_embeddings to V41FConfig removes it from (b); any OTHER
+    ref-only/cfg-only field appearing here fails by name.
     """
     import dataclasses
 
@@ -285,6 +303,7 @@ def gate_field_intersection():
 
     legit = REF_ONLY_RUNTIME_OR_OUT_OF_SCOPE
     pending = REF_ONLY_SHAPE_PENDING
+    knobs = CFG_ONLY_TRAINING_KNOBS
     fail = []
     unexpected = ref_only - legit - pending
     if unexpected:
@@ -304,12 +323,40 @@ def gate_field_intersection():
     if resolved_but_listed:
         fail.append(f"field already present in V41FConfig but still listed in "
                     f"REF_ONLY_SHAPE_PENDING (clear it): {sorted(resolved_but_listed)}")
-    if cfg_only:
-        fail.append(f"V41FConfig fields the ref ModelArgs cannot consume: {sorted(cfg_only)}")
+    # --- v41f-only training knobs: a category, not a wildcard.
+    # (1) every cfg-only field must be classified; one the ref cannot consume that is not a
+    #     named knob fails. This is the "someone added a config field the ref silently drops"
+    #     tripwire, and it is what makes listing a knob deliberate rather than permissive.
+    unlisted_knob = cfg_only - knobs
+    if unlisted_knob:
+        fail.append(f"V41FConfig fields the ref ModelArgs cannot consume and that are not "
+                    f"classified v41f-only training knobs: {sorted(unlisted_knob)} (cross "
+                    f"them normally, or add the name to CFG_ONLY_TRAINING_KNOBS with a doc "
+                    f"that marks it a v41f-only training flag)")
+    # (2) symmetric: every listed knob must still be a real V41FConfig field. A rename/removal
+    #     that leaves the name here makes the whitelist vouch for a field that does not exist.
+    missing_knobs = knobs - cfg_fields
+    if missing_knobs:
+        fail.append(f"CFG_ONLY_TRAINING_KNOBS names absent V41FConfig fields "
+                    f"(remove the stale knob entry): {sorted(missing_knobs)}")
+    # (3) the real guardrail of the category: a knob must have NO ref counterpart. If the ref
+    #     ModelArgs ever grows the same-named field, it is no longer v41f-only and must cross
+    #     the intersection like every other shape field, not ride the training-knob exemption.
+    knob_now_in_ref = knobs & ref_fields
+    if knob_now_in_ref:
+        fail.append(f"training knob now exists in the ref ModelArgs; cross it normally and "
+                    f"drop it from CFG_ONLY_TRAINING_KNOBS: {sorted(knob_now_in_ref)}")
+    # (4) the two categories are disjoint: a knob is an our-side control, a pending entry is
+    #     a ref-side shape the port owes. A name in both is a classification error.
+    knob_in_pending = knobs & pending
+    if knob_in_pending:
+        fail.append(f"field classified as both a training knob and a pending ref shape; "
+                    f"pick one category: {sorted(knob_in_pending)}")
     if fail:
         raise AssertionError("; ".join(fail))
     return (f"intersection: ref-only partitions into {len(legit)} runtime/scope + "
-            f"{len(pending)} pending shape ({sorted(pending) or 'none'}); cfg-only empty")
+            f"{len(pending)} pending shape ({sorted(pending) or 'none'}); "
+            f"{len(knobs & cfg_only)} v41f-only training knob(s) {sorted(knobs)}")
 
 
 def _selftest():
