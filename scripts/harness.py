@@ -2025,6 +2025,52 @@ def check_launcher_states_anneal_frac(root):
                   f"flag or reads the key at its entry point ({len(declaring)} mix(es) declare it)")
 
 
+def _hook_selftest_maps(src):
+    """The hook's SELFTEST_FILES set and NEEDS_DATA dict, read from the literal with `ast`.
+
+    Returns (selftest_paths:set[str], needs:dict[str,str]) or None if either literal is
+    absent/non-literal/non-homogeneous. This mirrors the hook's own
+    `_registered_selftest_paths` (scripts/hooks/pre-commit): ast.literal_eval on the
+    assignment node, never a regex over text.
+
+    Three regex parsers of these literals were wrong. The first two are recorded in the
+    hook; this check's was the third: `SELFTEST_FILES = {([^}]*)}` truncates at the FIRST
+    `}`, and an entry comment containing a brace (de's `{requires_grad=True}`,
+    `{AdamW state}`) closed the match early and silently dropped every registered path
+    below it -- a false "ungated selftest" FAIL. Comments are part of the python source
+    but not of the literal; only the parser knows that.
+    """
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return None
+    literals = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if isinstance(t, ast.Name) and t.id in ("SELFTEST_FILES", "NEEDS_DATA"):
+                    literals[t.id] = ast.literal_eval(node.value)
+    if "SELFTEST_FILES" not in literals:
+        return None
+    sf, nd = literals["SELFTEST_FILES"], literals.get("NEEDS_DATA", {})
+    if not isinstance(sf, (set, list, tuple)) or not isinstance(nd, dict):
+        return None
+    if not all(isinstance(x, str) for x in sf):
+        return None
+    # NEEDS_DATA maps a selftest path -> reason. The reason is a str, or a tuple of str when
+    # it also carries a flag override; only the keys gate, and tuple members are still prose.
+    def _reason_str(v):
+        if isinstance(v, str):
+            return v
+        if isinstance(v, tuple) and all(isinstance(x, str) for x in v):
+            return " ".join(v)
+        return None
+    reasons = {k: r for k, v in nd.items() if isinstance(k, str) and (r := _reason_str(v))}
+    if len(reasons) != len(nd):
+        return None
+    return set(sf), reasons
+
+
 def check_selftests_are_gated(root):
     """Every file carrying its own --selftest is in the hook's SELFTEST_FILES map.
 
@@ -2038,41 +2084,14 @@ def check_selftests_are_gated(root):
     if not os.path.exists(hook):
         return SKIP, "no scripts/hooks/pre-commit"
     src = open(hook, encoding="utf-8").read()
-    m = re.search(r"SELFTEST_FILES\s*=\s*\{([^}]*)\}", src)
-    if not m:
-        return FAIL, ("scripts/hooks/pre-commit has no SELFTEST_FILES map, so no staged "
-                      "file's selftest runs at commit time")
-    gated = set(re.findall(r'"([^"]+)"', m.group(1)))
-    # THE PARSE MUST NOT BE SHIFTED BY A COMMENT. Quotes are paired positionally, so a
-    # comment inside either map that contains an odd number of double quotes re-pairs every
-    # quote below it and silently drops the entries that follow. Measured 2026-09-03: a
-    # comment quoting the regex on this very line cost 20 entries, and the check then
-    # reported 16 ungated selftests that were all present in the map -- a false FAIL that
-    # reads exactly like a real one, and sent me through nine probes looking for the wrong
-    # cause. The comment explaining the first version of this bug caused the second.
-    #
-    # Cross-check the positional parse against a line-shaped one: a real entry is a quoted
-    # path alone on its line, ending in a comma. If the two disagree, the map is being
-    # misread and the counts below are meaningless -- so it refuses instead of reporting.
-    for label, block in (("SELFTEST_FILES", m.group(1)),
-                         ("NEEDS_DATA", nd.group(1) if (
-                             nd := re.search(r"NEEDS_DATA\s*=\s*\{(.*?)\n    \}", src, re.S)
-                         ) else "")):
-        line_shaped = set(re.findall(r'^\s+"([^"]+)"\s*[,:]', block, re.M))
-        positional = set(re.findall(r'"([^"]+)"', block))
-        missed = sorted(x for x in line_shaped if x not in positional)
-        if missed:
-            return FAIL, (
-                f"{len(missed)} entry(ies) in {label} are invisible to this check's parse, "
-                f"so nothing runs their selftests while the map appears to list them: "
-                f"{', '.join(missed[:4])}. Cause is almost always a comment inside the map "
-                f"containing an odd number of double-quote characters, which re-pairs every "
-                f"quote below it. Remove the quotes from the comment."
-            )
-    # A file the hook cannot run here is still accounted for, with the reason recorded.
-    # "not in the map" and "cannot run at commit time" are different facts, and only
-    # the second is acceptable -- silence about the first is how a selftest goes unrun.
-    gated |= set(re.findall(r'"([^"]+)":', nd.group(1))) if nd else set()
+    maps = _hook_selftest_maps(src)
+    if maps is None:
+        return FAIL, ("scripts/hooks/pre-commit has no parseable SELFTEST_FILES set literal, "
+                      "so no staged file's selftest is provably gated at commit time")
+    gated_paths, needs_data = maps
+    # A NEEDS_DATA key names a selftest the hook accounts for but cannot run here; it is
+    # gated for the missing-ungated direction exactly like a SELFTEST_FILES entry.
+    gated = set(gated_paths) | set(needs_data)
     # The map's other direction, which nothing watched: an entry naming a file that no
     # longer exists. Found by measurement, not by reasoning -- main deleted
     # mathbank/arith_curriculum.py and mathbank/procedure_curriculum.py and both stayed
@@ -2182,15 +2201,17 @@ def check_selftests_are_gated(root):
     # exemption that claims some OTHER command already covers it is the one shape that
     # asserts coverage rather than impossibility. Cost, missing data, and needing root
     # are claims about this machine; "X already runs it" is a claim about X.
-    if nd:
-        covered = [k for k, v in re.findall(r'"([^"]+)":\s*"([^"]*)"', nd.group(1))
+    if needs_data:
+        covered = [k for k, v in needs_data.items()
                    if re.search(r"\bis its selftest\b|\balready runs\b|\bcovered by\b", v)]
         if covered:
             return FAIL, (f"{len(covered)} NEEDS_DATA reason(s) claim another command "
                           f"already runs the selftest, which is a coverage claim nothing "
                           f"recomputes: {', '.join(covered)} -- state why it cannot run "
                           f"here (cost, data, root), not what supposedly covers it")
-    return PASS, f"{len(have)} selftest-carrying file(s), all gated by the hook"
+    return PASS, (f"{len(have)} selftest-carrying file(s), all gated by the hook; "
+                  f"map literal {len(gated_paths)} SELFTEST_FILES + {len(needs_data)} "
+                  f"NEEDS_DATA entries (ast)")
 
 
 def check_probe_numbers_unique(root):
@@ -22127,19 +22148,47 @@ def _selftest_flagless_test_is_gated():
         f"a test_*.py with no `if __name__` runs nothing and must not be demanded: {ev2[:200]}")
     print("  selftests_are_gated: a flagless runnable test must be gated; an inert test_*.py "
           "is not demanded")
-    # The odd-quote arm (§74): a comment inside the map with an odd number of double quotes
-    # re-pairs every quote below it and silently drops entries. The cross-validation must
-    # refuse rather than report a false FAIL.
-    mutated = text.replace("SELFTEST_FILES = {",
-                           'SELFTEST_FILES = {\n    # odd quote " here', 1)
-    if mutated != text:
-        open(os.path.join(hd, "pre-commit"), "w", encoding="utf-8").write(mutated)
+    # The brace-in-comment arm (de, #495): the THIRD regex parser truncated
+    # `SELFTEST_FILES = {([^}]*)}` at the first `}`, and an entry comment containing a brace
+    # pair (`{requires_grad=True}`, `{AdamW state}`) closed the match early and dropped every
+    # registered path below it -- a false ungated-selftest FAIL. The parser is now ast, which
+    # reads the literal and ignores comments. Pin two properties:
+    #   1. a brace in a map comment does not change the parsed set (check stays PASS and the
+    #      entry count is unchanged);
+    #   2. the checker's view is the AST truth: the helper's literal set equals exactly the
+    #      gated set the check passes against, no prose-in-comment paths added or entries lost.
+    clean_maps = _hook_selftest_maps(text)
+    assert clean_maps is not None, "the real hook's SELFTEST_FILES must ast-parse"
+    clean_paths = clean_maps[0]
+    braced = text.replace("SELFTEST_FILES = {",
+                          "SELFTEST_FILES = {\n    # tensor stays leaf {requires_grad=True}; "
+                          "optimizer step reads the {AdamW state}\n", 1)
+    if braced != text:
+        braced_maps = _hook_selftest_maps(braced)
+        assert braced_maps is not None and braced_maps[0] == clean_paths, (
+            "a brace pair in a map comment must not change the ast-parsed SELFTEST_FILES set "
+            f"(clean {len(clean_paths)} vs braced "
+            f"{len(braced_maps[0]) if braced_maps else 'PARSE-FAIL'})")
+        open(os.path.join(hd, "pre-commit"), "w", encoding="utf-8").write(braced)
         st3, ev3 = check_selftests_are_gated(d)
-        assert st3 == FAIL and "invisible to this check" in ev3, (
-            f"an odd quote in a map comment must FAIL with the cross-validation message; "
+        assert st3 == PASS and f"map literal {len(clean_paths)} SELFTEST_FILES" in ev3, (
+            f"a brace in a map comment must keep the check PASS with the full entry count; "
             f"got {st3}: {ev3[:200]}")
-        print("  selftests_are_gated: an odd quote in a map comment is refused, not reported "
-              "as a false FAIL")
+        print(f"  selftests_are_gated: a brace pair in a map comment does not truncate the "
+              f"ast parse ({len(clean_paths)} entries unchanged)")
+    # Reverse control proving the parse is the property, not the green message: revert the
+    # helper's parser in your head to the old `SELFTEST_FILES = {([^}]*)}` regex -- the
+    # injected brace closes that match inside the comment, so the regex view holds no real
+    # registered path below it while ast holds all of them. Encode the discriminator
+    # directly: at least one REAL path that ast sees is absent from the regex view.
+    regex_view = set(re.findall(r'"([^"]+)"',
+                                re.search(r"SELFTEST_FILES\s*=\s*\{([^}]*)\}", braced).group(1)))
+    lost = clean_paths - regex_view
+    assert victim in lost and len(lost) == len(clean_paths), (
+        "the old [^}]* regex must lose every registered path under an early brace comment "
+        f"(lost {len(lost)} of {len(clean_paths)}, victim dropped={victim in lost})")
+    print("  selftests_are_gated: reverse control -- the old [^}]* regex drops every real "
+          "path under a brace comment, ast keeps all of them")
 
 
 def _selftest_stamp_ref_is_origin():
