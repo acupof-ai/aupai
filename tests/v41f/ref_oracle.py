@@ -151,10 +151,117 @@ def load_reference():
 
 def bf16_args(model, **over):
     """Reference ModelArgs forced onto the CPU pure-torch path: bf16 weights,
-    single process, no vision, no engram hash (layers=()), no DSpark."""
+    single process, no vision, no DSpark. Engram defaults OFF (engram_layer_ids=()) so the
+    ordinary whole-model comparison builds with no tokenizer; the ON path overrides it --
+    use engram_on_args / build_engram_transformer, which fill the derived engram fields and
+    validate the tokenizer/table config BEFORE construction can fail deep in the ref with a
+    bare AttributeError/IndexError (the de A4 diagnostic-order trap)."""
     import dataclasses
     base = dict(dtype="bf16", expert_dtype=None, vision_n_layers=0,
                 engram_layer_ids=(), dspark_block_size=0,
                 dspark_target_layer_ids=(), max_batch_size=2, max_seq_len=4096)
     base.update(over)
     return dataclasses.replace(model.ModelArgs(), **base)
+
+
+# A synthetic tokenizer for the ENGRAM ON path: enough surface for
+# build_compressed_token_map (backend_tokenizer.decode / id_to_token / len) and nothing
+# else, so an ON ref Transformer builds on CPU with no data/tokenizer.json on disk. The
+# pieces are the P0 engram known-answer set (case/accent/whitespace folding + the raw U+FFFD
+# piece); a caller needing another compressed-vocab size passes its own pieces.
+_DEFAULT_ENGRAM_PIECES = [
+    "a", "A", "y", " The", "the", "THE", "\tThe\n", "cafe", "café", " ", "\n", "�",
+]
+
+
+class _SyntheticBackend:
+    def __init__(self, pieces):
+        self.pieces = list(pieces)
+
+    def decode(self, ids, skip_special_tokens=False):
+        return "".join(self.pieces[i] for i in ids)
+
+    def id_to_token(self, i):
+        return f"<raw{i}>"
+
+
+class SyntheticTokenizer:
+    """Stand-in for the HF tokenizer the ref Engram path reads. Disk-free CPU double."""
+
+    def __init__(self, pieces=None):
+        self.backend_tokenizer = _SyntheticBackend(
+            _DEFAULT_ENGRAM_PIECES if pieces is None else pieces)
+
+    def __len__(self):
+        return len(self.backend_tokenizer.pieces)
+
+
+def synthetic_tokenizer(pieces=None):
+    return SyntheticTokenizer(pieces)
+
+
+class _NamespaceLike:
+    """Just enough attribute access for EngramLayout.from_args over a plain dict."""
+
+    def __init__(self, d):
+        for k, v in d.items():
+            setattr(self, k, v)
+
+
+def _engram_num_embeddings(engram_mod, over):
+    """Table rows per engram layer = sum of that layer's bucket primes, derived from the
+    SAME prime layout the ref builds (never a hand-written literal). from_args only passes
+    num_embeddings through; primes are all we read, so a placeholder () is supplied."""
+    probe = dict(over, engram_num_embeddings=())
+    layout = engram_mod.EngramLayout.from_args(_NamespaceLike(probe))
+    return tuple(sum(p for ngram in layer for p in ngram) for layer in layout.primes)
+
+
+def engram_on_args(model, engram_mod, *, engram_layer_ids=(1,), tokenizer=None,
+                   engram_max_ngram_size=4, engram_n_heads=2, engram_head_dim=8,
+                   engram_vocab_size=20, engram_pad_id=2, **shape):
+    """Ref ModelArgs for an engram-ON CPU comparison. Derives engram_num_embeddings from the
+    bucket primes and engram_compressed_vocab_size by measuring the tokenizer (vendored map;
+    P0 proves it bit-equal to v41f/engram). Validates in a clear order BEFORE Transformer
+    construction: (1) a non-empty engram layer REQUIRES a tokenizer -- the ref otherwise dies
+    in NgramHashState with a NoneType AttributeError; (2) num_embeddings is filled from the
+    layout -- an empty tuple otherwise raises IndexError at ParallelEngramEmbedding."""
+    engram_layer_ids = tuple(engram_layer_ids)
+    if engram_layer_ids and tokenizer is None:
+        raise ValueError(
+            "engram ON path requires a tokenizer: pass synthetic_tokenizer() (or an HF "
+            "tokenizer). Transformer(args, None) with engram_layer_ids="
+            f"{engram_layer_ids} fails deep in NgramHashState with a NoneType AttributeError; "
+            "the tokenizer feeds build_compressed_token_map.")
+    _, compressed_size = engram_mod.build_compressed_token_map(tokenizer)
+    over = dict(
+        engram_layer_ids=engram_layer_ids,
+        engram_max_ngram_size=engram_max_ngram_size,
+        engram_n_heads=engram_n_heads,
+        engram_head_dim=engram_head_dim,
+        engram_vocab_size=engram_vocab_size,
+        engram_pad_id=engram_pad_id,
+        engram_compressed_vocab_size=compressed_size,
+    )
+    over.update(shape)
+    over["engram_num_embeddings"] = _engram_num_embeddings(engram_mod, over)
+    return bf16_args(model, **over), over["engram_num_embeddings"], compressed_size
+
+
+def build_engram_transformer(model, args, tokenizer=None, eval_mode=True):
+    """Construct a ref Transformer, enforcing the engram/tokenizer contract BEFORE the ref
+    can fail opaquely. None is valid only on the OFF path (engram_layer_ids=()). Disk-free:
+    this harness never reads data/tokenizer.json."""
+    if tuple(args.engram_layer_ids) and tokenizer is None:
+        raise ValueError(
+            "build_engram_transformer: engram_layer_ids is non-empty but no tokenizer was "
+            "given. Pass ref_oracle.synthetic_tokenizer(); None only matches the OFF path.")
+    import torch
+    prev = torch.get_default_dtype()
+    torch.set_default_dtype(torch.bfloat16)
+    try:
+        t = model.Transformer(args, tokenizer)
+    finally:
+        torch.set_default_dtype(prev)
+    return t.eval() if eval_mode else t
+
