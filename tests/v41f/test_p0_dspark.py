@@ -164,6 +164,14 @@ def _build_pair(dtype, seed=7):
         # stage-0-only draft pieces the ordinary ref Block does not carry
         ref.main_proj = model.Linear(cfg.dim, cfg.dim).eval()
         ref.main_norm = model.RMSNorm(cfg.dim, cfg.norm_eps).eval()
+        # the last-draft-stage PRE-HEAD norm (ref DSparkBlock :1115-1116 builds it when
+        # stage_id == n_mtp_layers-1, and forward_head runs head(norm(hc_pre(x)))). With
+        # n_mtp_layers 1 here, stage 0 is the last stage. The ref Block stand-in has no
+        # top-level norm, so attach it the same way main_norm is attached -- it is not used
+        # by the block forward this file compares, but it IS a parameter the reference
+        # module carries, so leaving it out would make the copy plan's "no uninitialised
+        # parameter" assertion fail on a difference in the reference, not in the wiring.
+        ref.norm = model.RMSNorm(cfg.dim, cfg.norm_eps).eval()
         ref.attn.forward = _install_oracle_attn(model).__get__(ref.attn, type(ref.attn))
         ours = DSparkBlock(cfg, 0, 1, max_batch_size=_DRAFT_SMALL["max_batch_size"]).eval()
         embed = torch.nn.Embedding(cfg.vocab_size, cfg.dim)
@@ -209,6 +217,7 @@ def _build_pair(dtype, seed=7):
     plan["ffn_norm.weight"] = "ffn_norm.weight"
     plan["main_proj.weight"] = "main_proj.weight"
     plan["main_norm.weight"] = "main_norm.weight"
+    plan["norm.weight"] = "norm.weight"
     for h in _HC:
         plan[h] = f"hc.{h}"
     plan["ffn.gate.weight"] = "ffn.gate.weight"
