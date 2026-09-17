@@ -85,10 +85,17 @@ gate after each step with that step's mechanism ON:
 | step | mechanism ON for this gate | prerequisite |
 |---|---|---|
 | base | all four OFF — today's `v41f_small` | none (this is the §2 run above) |
-| A | Engram (`self.engrams`, `engram_hash`) | #447 |
+| A | Engram (`self.engrams`, `engram_hash`) | `engram_num_embeddings` on `V41FConfig` (else `EngramLayout.from_args` AttributeErrors) + the bf16 `Engram.q_weight`/`k_weight` fix |
 | B | DSpark draft block (`self.mtp` + training entry) | #454 merged |
 | C | indexer STE (non-default path) | #456 merged |
-| D | ckpt covers the three new subsystems | #447, after A/B/C |
+| D | ckpt covers the three new subsystems | after A/B/C (parameters settled) |
+
+Steps A/B/C are **fully serial**, not merely ordered (A and B both edit `v41f/model.py`; C is
+staggered to isolate regressions) — the prerequisite column is a gate, and the serial ruling
+is the reason no two run at once. The `engram_num_embeddings` field and the explicit-bf16
+`q_weight`/`k_weight` are hard prerequisites inside step A: without them the model either
+fails to construct or constructs at an implicit dtype that the #468 regression gate exists to
+catch.
 
 Each step's own pair of gates (off = regression against the step's baseline; on = correctness
 vs the vendored reference) is #468's; §2 here is the **GPU execution** of that pair.
