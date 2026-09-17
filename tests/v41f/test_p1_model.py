@@ -34,12 +34,12 @@ _HERE = Path(__file__).resolve().parent
 _ROOT = _HERE.parents[1]
 
 
-def _model_args(model):
-    """ModelArgs for v41f_small derived from the SAME V41FConfig the v41f model uses, so
-    there is one shape source (a field changed in v41f_small reaches both sides). Only the
-    ModelArgs fields the config does not carry (dtype/vision/engram/DSpark, batch/seq) are
-    forced by bf16_args; max_batch/seq are test harness sizes, not model shapes."""
-    cfg = v41f_small()
+def _model_args(model, cfg=None):
+    """ModelArgs derived from the SAME V41FConfig the v41f model uses, so there is one
+    shape source (a field changed in the config reaches both sides). Only the ModelArgs
+    fields the config does not carry (dtype/vision/engram, batch/seq) are forced by
+    bf16_args; max_batch/seq are test harness sizes, not model shapes."""
+    cfg = cfg or v41f_small()
     valid = {f.name for f in dataclasses.fields(model.ModelArgs)}
     over = {k: v for k, v in dataclasses.asdict(cfg).items() if k in valid}
     over.update(max_batch_size=2, max_seq_len=64)
@@ -81,10 +81,10 @@ def _copy_layer(ref_layer, ours_layer, g):
     assert not unmapped, f"ours layer params left at init: {sorted(unmapped)}"
 
 
-def _build_pair(seed=21):
+def _build_pair(seed=21, cfg=None):
     model = _patched_reference()
     model.hc_split_sinkhorn = _split_ref_3d
-    cfg, args = _model_args(model)
+    cfg, args = _model_args(model, cfg)
     prev = torch.get_default_dtype()
     torch.set_default_dtype(torch.bfloat16)
     try:
@@ -166,6 +166,59 @@ def test_whole_model_logits_allclose():
     m_mut = (mut - rlogits).abs().max().item()
     assert m_mut > 1.0, m_mut
     print(f"  bf16 max_abs={m16:.4e}; fp32 max_abs={m32:.4e}; head-weight mutation={m_mut:.3f} (red if ~0)")
+
+
+def test_dspark_target_hidden_is_pre_block_attn_input():
+    """Pin WHERE the DSpark/MTP target hidden is read. ref Transformer.forward appends
+    h.mean(dim=2) for i in target_layer_ids BEFORE the block runs (the MTP head reads that
+    layer's attention INPUT, ref :1264-1267). v41f_small leaves the target list empty so
+    this line has zero coverage there -- moving the append AFTER the block kept every test
+    green. Use a one-target config and prove the recorded hidden is the pre-block stream
+    mean, bit-matches the reference at that same site, and is genuinely NOT the block
+    output (anti-tautology)."""
+    import types
+
+    k = 2
+    cfg = v41f_small(dspark_target_layer_ids=(k,))  # MTP module still off (dspark_block_size=0)
+    ref, ours, cfg = _build_pair(seed=31, cfg=cfg)
+    b, s = 2, 8
+    torch.manual_seed(7)
+    ids = torch.randint(0, cfg.vocab_size, (b, s), dtype=torch.long)
+
+    # capture the expanded stream immediately before/after our target block
+    pre, post = {}, {}
+    real_fwd = ours.layers[k].forward
+
+    def spy(self, h, start_pos, pre_mix, state):
+        pre["h"] = h.detach().clone()
+        out, pm, st = real_fwd(h, start_pos, pre_mix, state)
+        post["h"] = out.detach().clone()
+        return out, pm, st
+
+    ours.layers[k].forward = types.MethodType(spy, ours.layers[k])
+    orig = ref.head.forward
+    ref.head.forward = lambda x, full_logits=False: orig(x, True)
+    try:
+        with torch.no_grad():
+            _, _, rmain = ref(ids, 0)
+            _, omain = ours(ids)
+    finally:
+        ref.head.forward = orig
+        ours.layers[k].forward = real_fwd
+
+    assert rmain is not None and omain is not None, "target=(k,) must record a hidden"
+    # (1) it is the same tensor the reference records at its pre-block site
+    cmp("DSpark target hidden vs ref", omain, rmain, atol=5e-2)
+    # (2) it equals the PRE-block stream mean exactly (the attention input), not recomputed
+    pre_mean = pre["h"].mean(dim=2)
+    cmp("DSpark target is pre-block attn input", omain, pre_mean, atol=1e-6)
+    # (3) anti-tautology: pre-block attn input materially differs from the block OUTPUT
+    post_mean = post["h"].mean(dim=2)
+    gap = (pre_mean.float() - post_mean.float()).abs().max().item()
+    assert not torch.allclose(omain.float(), post_mean.float(), atol=1e-2), (
+        "target hidden indistinguishable from block output -- position unobserved"
+    )
+    print(f"  target@{k} hidden==pre-block mean exact; pre-vs-post-block gap={gap:.4f} (must be large)")
 
 
 def _count(cfg):
