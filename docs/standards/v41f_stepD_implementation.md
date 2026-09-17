@@ -4,7 +4,8 @@ Status: implementation plan, doc-only. Inputs are the approved design
 `docs/standards/v41f_train_checkpoint_design.md` (#447) and the adversarial prereview issue
 **#487** (G1–G7, each with file:line). Every count below I rebuilt independently on this
 main under the bf16 default dtype (CPU, torch 2.12); they match #487. No model/config edit
-here. Owner: 98. Code opens only after #485 (indexer STE) and ae's test-wiring PR land.
+here. Owner: 98. Code opens only after #485 (indexer STE), ae's test-wiring PR, and the
+standalone G5 `requires_grad` flip (step D-PRE, de owns — not part of #485) land.
 
 **Sequencing.** #487 changes this from "implement the design" to "amend the design, then
 implement". PR-0 is a doc-only revision of `v41f_train_checkpoint_design.md` applying the
@@ -45,7 +46,7 @@ itself is what is wrong.
 | **G2** optim integer index | §1.1 blob and §1.3 line 132: replace the integer-indexed `optim.state` with a NAME-keyed block over the in-group master names (the concrete format is genA's verified scratch design `~/aupai-textgen/genA/g2_optim_namekey_test_design_2026-09-18.md`, torch 2.12): canonical name-sorted `param_names`; `state_by_name{step,exp_avg,exp_avg_sq,shape,dtype}`; hyper by value; symmetric name-set diff + per-name shape/dtype + post-load `torch.equal`; no integer `param_groups.params` round-tripped. `param_names` doubles as the §6 optimizer-membership census, so it lists ONLY requires_grad in-group master names, not all model params. §3 oracle adds a cross-BUILD resume case (reversed construction order) that the same-build oracle structurally cannot see. | TrainState saves/loads by the genA functions; AdamW constructed on name-sorted master; loader refuses set/order/shape/dtype drift and asserts each m/v/step re-attached under the same name (`beta->beta` True, `beta->alpha` False). |
 | **G3** tokenizer | §1.3 and §2.5: load is `load_*_checkpoint(path, *, tokenizer, vocab_id, ...)`; an engram-on config without an injected tokenizer raises before build; tokenizer identity is tied to the existing vocab_id refusal. Note the inference `ckpt.py` loader gains the same injection (it cannot open today's default blob either). | loader signature takes tokenizer; `V41FModel(cfg, tokenizer=tokenizer)`; no v41f file read. |
 | **G4** optim verbatim | §1.1 lines 50–51: keep AdamW per-param state tensors VERBATIM inside `state_by_name` (`step` is a 0-d tensor in torch 2.12, not int; m/v untouched); persist hyper BY VALUE with the constructor allowlist only `{lr,betas,eps,weight_decay,amsgrad,maximize}` — `decoupled_weight_decay/capturable/foreach/fused` are state_dict-only keys and raise if passed to `AdamW()`. Drop the hand-shaped `{int step, trimmed groups}` and never round-trip integer params. | save/load use genA's `_HYPER` allowlist; 0-d step tensor stored as-is. |
-| **G5** dormant not enforced | Decision 2 / §6: membership is `requires_grad`, and the OFF indexer leaves must be `requires_grad_(False)` at build so present-dormant is real, not "in group but grad None". Precise proposition (de): **off → 0 of the 6 in group; ste → exactly the 6 index-source `wq_b`/`weights_proj` flip in-group and get master/m/v; every other indexer/compressor/index_key param stays grad-less and census-marked frozen.** STE's purpose is to train those 6; the detach seam keeps the rest frozen. | coordinated with #485 (§4): the mode owns the 6 leaves' `requires_grad`; TrainState filters on it; census asserts the exact 6-name in-group delta under ste. |
+| **G5** dormant not enforced | Decision 2 / §6: membership is `requires_grad`, and the OFF indexer leaves must be `requires_grad_(False)` at build so present-dormant is real, not "in group but grad None". Precise proposition (de): **off → 0 of the 6 in group (in-group 2147); ste → exactly the 6 index-source `wq_b`/`weights_proj` in group (2153)**; every other indexer/compressor/index_key param stays grad-less and census-marked frozen. STE's purpose is to train those 6; the detach seam keeps the rest frozen. | NEW standalone step D-PRE (de owns, §4): the mode sets the 6 leaves' `requires_grad`; #485 does not (both modes True). TrainState filters on it; M14 census asserts the exact 6-name in-group delta. PR-1 blocks on D-PRE. |
 | **G6** buffers | §1.1 line 47: the `model` group is the FULL `model.state_dict()` — parameters AND the 13 persistent `gate.bias`; buffers never enter master/optim. §1.3 strict load then sees them. M10 gains buffer missing/extra sub-cases. | save `model` from `state_dict()`, master from the live fp32 params only. |
 | **G7** alias on load | §2.5 lines 182–184: by-tensor copy contradicts the single-storage alias. Loader special-cases fp32_native: `master[name] = model[name]` (same Parameter, one storage); only bf16 params get a distinct cloned fp32 master. Gate 7 data_ptr equality then holds and a master step is visible in `model.head`. Also specify the SAVE side: a plain `model.state_dict()` materializes fresh tensors and severs cross-group sharing, so for fp32_native names save must place the SAME live parameter object under both `model[name]` and `master_fp32[name]` (torch.save preserves shared storage within one object graph); buffers and bf16 use the state_dict copies. | loader branch on group; save builds the model group from live params for the alias set. |
 
@@ -84,14 +85,24 @@ Inference `ckpt.py` keeps a disjoint format and refuses this blob (M11).
 
 No `SELFTEST_FILES` edit (glob; ae's PR makes the glob run in the gate).
 
-## 4. Cross-PR contract with #485 (de)
+## 4. G5 prerequisite: a separate `requires_grad` flip (step D-PRE, de owns)
 
-Step D derives the group from `requires_grad`; it is correct only if #485 owns indexer
-trainability. Requested on de's branch: `off` builds the 6 index-source `wq_b`/`weights_proj`
-leaves `requires_grad_(False)`; `ste` flips exactly those 6. TrainState must NOT hand-list
-names. The step-D census under ste asserts the in-group delta is exactly those 6 and that
-compressor/index_key/qproj/other-layer indexer params remain grad-less. Step D code blocks
-on this line landing; the design amendment (PR-0) does not.
+Step D derives the group from `requires_grad`; it is correct only if the indexer leaves'
+flag actually reflects the mode. Verified on #485 @920e2504: **#485 does NOT set the flag**
+— both `off` and `ste` leave `wq_b`/`weights_proj` at `requires_grad=True` (grep over the
+five #485 files is empty); the modes differ only by grad presence. That is exactly the G5
+"in group but grad None" defect, so the fix is NEW code cut as its own small change, not
+added to the frozen #485:
+
+- **step D-PRE** (de owns): at build, `off` → the 6 index-source
+  `layers.{2,4,8}.attn.indexer.{wq_b,weights_proj}.weight` get `requires_grad_(False)`;
+  `ste` → exactly those 6 are trainable. compressor/index_key/non-source-layer indexer
+  params stay frozen (the STE detach seam already keeps them grad-local).
+- TrainState filters on `requires_grad`; it must NOT hand-list names.
+- The step-D census under each mode asserts the in-group set is exactly 2147 (off) / 2153
+  (ste), i.e. a delta of exactly those 6 names (M14).
+
+Step-D code (PR-1) blocks on D-PRE merging; the design amendment (this PR-0) does not.
 
 ## 5. Minimal CPU-acceptable first increment (after PR-0)
 
