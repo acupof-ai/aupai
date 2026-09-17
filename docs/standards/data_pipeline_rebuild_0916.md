@@ -83,13 +83,14 @@ python3 datagen/build_corpus.py --domain en_c4 \
     --filters light --no_near_dedup --global-only --workers <N>
 python3 datagen/build_corpus.py --domain code_py_starcoder \
     --out data/corpus/code_py_starcoder --phase <this-rebuild-phase> \
-    --source 'jsonl:data/raw/ms_starcoder_py/*.jsonl' --workers <N>
+    --source 'jsonl:data/raw/ms_starcoder_py/*.jsonl' \
+    --filters light --workers <N>
 ```
 
 `<this-rebuild-phase>` and `--workers`/`--target_tokens` are operator-decided per the new
-hardware; pin them in the run's experiment row. (The exact starcoder filter tier/phase flags
-were not recorded in git from the lost run — confirm with `--dry` first; build_corpus refuses
-`code_py_starcoder+web`, so use the domain's correct filter tier.)
+hardware; pin them in the run's experiment row. `--filters` has only two tiers (`web`, the
+default, and `light`); `web`'s `not_zh` (>=60% CJK) would delete a code corpus and build_corpus
+REFUSEs `code_py_starcoder+web`, so `--filters light` is required (confirm with `--dry` first).
 
 **2c. Restore the 13-gram holdout bases, then decontaminate.**
 `scripts/filter_gate_domains.py` exits immediately unless these are present (it does NOT
