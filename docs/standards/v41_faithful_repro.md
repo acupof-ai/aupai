@@ -1,6 +1,8 @@
 # V4.1-Flash 忠实复刻设计（v41f，小规模可训练）
 
-**状态：** 设计稿，未开工
+**状态：** P0（attention/compressor/indexer/engram/Hyper-Connections/MoE/rope/window/…）与 P1
+（HC Block、整网 model、ckpt、loss、train smoke）已合入 main（`tests/v41f/p0_*`、`p1_*` 全绿）；
+P3 DSpark draft-block 在 #454（`0e-v41f-mtp`，未合）。本文件是 v41f 的契约与真值来源。
 **真值来源：** `deepseek-ai/DeepSeek-V4.1-Flash` 仓库 `inference/`（`config.json`、`model.py` 1309 行、`kernel.py`、`engram.py`，2026-09-16 拉取核对）
 **范围裁定（fb，2026-09-16）：** 小规模、8×H20 可训练可评测；机制与官方参考 1:1，尺寸等比缩小。纳入核心四件套 + Engram + DSpark；**不做视觉 ViT**（与代码目标无关）。
 **非目标：** 不加载官方权重、不做 TP 推理服务、不复制 tilelang fp4 推理 kernel。
@@ -50,7 +52,7 @@ V4.1-Flash 有七处结构差异，每一处都改权重语义、无法靠开关
 - 单条 `wkv: dim→head_dim`，`kv_norm`；K,V 全头共享（MQA），sparse_attn 里 `kv` 无 head 维。
 - 输出：头按 `o_groups` 分组，`wo_a` 为块对角（每组 `heads/o_groups` 个 head × head_dim →
   o_lora_rank，用 einsum，**不是** Linear），`wo_b: o_groups*o_lora_rank→dim`。
-- 每头一个 fp32 `attn_sink`，softmax 分母恒加 `exp(sink - max)`，见 :382-383。
+- 每头一个 fp32 `attn_sink`，softmax 分母恒加 `exp(sink - max)`，见上游 `inference/kernel.py:383`。
 - Q 与输出都对末尾 `rope_head_dim` 加 RoPE；**输出要逆向 RoPE**（`apply_rotary_emb(...,inverse=True)`），
   因为压缩 KV 是 V、K 共用一条且 RoPE 过，这与 r3「K/V 分离、V 不旋转」相反，必须照抄。
 - 滑窗 KV 是 128 环形缓冲，prefill/decode 两种索引（`get_window_topk_idxs`）；训练只走 prefill
@@ -110,8 +112,9 @@ V4.1-Flash 有七处结构差异，每一处都改权重语义、无法靠开关
 
 ## 3. v41f-S 配置（8×H20 可训练）
 
-沿用 d=1024 便于和 r3 直接对照；所有数字除显式标注外是配置取值，参数量/显存为**估算**，开工前以
-`ckpt_info` 同口径实测覆盖。
+沿用 d=1024 便于和 r3 直接对照；字段为配置取值。**参数量已用
+`scripts/v41f_param_count.py` 按配置公式实测（见下，非估算）**；显存占用在真机 smoke 前仍是
+估算，开工后以 `ckpt_info` 同口径实测覆盖。
 
 | 字段 | v41f-S | 官方 Flash | 取值理由 |
 |---|---|---|---|
@@ -134,10 +137,15 @@ V4.1-Flash 有七处结构差异，每一处都改权重语义、无法靠开关
 | n_mtp_layers / block / markov | 1 / 5 / 暂不做 | 3 / 5 / 256 | P3 仅训练 loss |
 | vocab | 32768（现有） | 129280 | 沿用 gate vocab |
 
-**估算规模（标注为估算）：** total ≈ 1.2–1.4B（MoE 48 专家 ≈0.8B 为大头，HC ≈0.4B，注意力
-≈0.02B，embed/head ≈0.07B，Engram ≈0.1B）；active ≈ 0.5–0.55B/token（HC 两套投影每 token 必算，
-是 active 主项，MoE active ≈10M/层）。H20 单卡：fp8 权重 + bf16 grad + fp32 master/Adam 态 ≈16–20GB，
-B4/seq4096 + grad checkpoint 激活 30–50GB，8 卡 DDP 可行；若峰值越界，先降 B 到 2/accum 翻倍，不
+**实测规模（`python scripts/v41f_param_count.py`，2026-09-17 核对）：** total = 904,583,784
+= **0.9046 B**，active/token = 210,950,760 = **210.95 M**（active fraction 23.32%）。分项：
+backbone total 832.75M / active 139.12M；MoE 跨层 total 809.83M / active 116.20M（MoE 是
+total 大头，但每 token 仅激活 6 路由专家 + 1 共享，active 占比低）；engram dense 投影 4.72M，
+engram 表当前 rows=0（待 tokenizer 素数桶，计 0）；embedding 与 untied lm_head 各 33.55M，
+final norm 1,024。这与早期 1.2–1.4B / 0.5–0.55B-active 的估算不同——估算高估了 MoE/HC 的
+active，以脚本实测为准（改动任一配置字段后重跑该脚本覆盖本数）。显存仍为估算：H20 单卡
+fp8 权重 + bf16 grad + fp32 master/Adam 态 ≈16–20GB，B4/seq4096 + grad checkpoint 激活 30–50GB，
+8 卡 DDP 可行；若峰值越界，先降 B 到 2/accum 翻倍，不
 动结构。实测后回填本节。
 
 ## 4. Kernel 与精度策略
