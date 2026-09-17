@@ -2375,6 +2375,16 @@ def main():
         # model-shape field is named, not silently defaulted), and arms skip-loud A (engram) /
         # B (tied mtp embed/head single-registration) sections when those modules are wired.
         "tests/v41f/test_p1_assembly_keys.py",
+        # M14 / step D-PRE optimizer-membership gate (de). Registered because its checks are
+        # `gate_*` functions, NOT `test_*`: the p1_selftest glob runner selects only `test_*`
+        # callables, so without this entry the file would import, execute nothing, and
+        # contribute zero cases while the suite still printed green -- the same shape that
+        # makes test_p1_assembly_keys need both this map and an explicit CI step. Asserts set
+        # equality between requires_grad and AdamW state after a COVERED step (coverage itself
+        # asserted, since an unrouted MoE expert legitimately has neither), that F is derived
+        # from cfg and frozen in both modes, and that off/ste differ by exactly the indexer
+        # projections. Mutants: a dropped freeze and a missing unfreeze each go red by name.
+        "tests/v41f/test_p1_indexer_freeze.py",
         # v41f-S config-formula total/active parameter counter (3b); --selftest pins a
         # hand-computed tiny config so the total=sum-of-modules identity cannot silently rot.
         "scripts/v41f_param_count.py",
@@ -2833,7 +2843,8 @@ def main():
     # changed module; the per-module files are not SELFTEST_FILES-registered and are filtered by
     # the intersection below.
     _V41F_SUBJECT_TESTS = {"tests/v41f/p0_selftest.py", "tests/v41f/p1_selftest.py",
-                          "tests/v41f/test_p1_assembly_keys.py"}
+                          "tests/v41f/test_p1_assembly_keys.py",
+                          "tests/v41f/test_p1_indexer_freeze.py"}
     _subject_tests = set()
     for _subj in staged("AM"):
         _subject_tests |= TESTS_FOR_SUBJECT.get(_subj, set())
