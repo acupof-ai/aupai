@@ -3316,7 +3316,19 @@ def check_main_advances_by_ancestry(root):
                  # alone" and "Do NOT re-run the merge" -- all three correct when origin has not
                  # moved, all three wrong here, and the third forbids the one safe action.
                  ("a2375098b7595abb67dc45a990d9aef6ded21410",
-                  "12ecbf520be918785b76873ca2114fbb9128db28")}
+                  "12ecbf520be918785b76873ca2114fbb9128db28"),
+                 # 2026-09-17: 0e ran `git branch -f main origin/main` after merge_main's push was
+                 # refused non-fast-forward (origin advanced by the #461 merge during the run). The
+                 # discarded tip 7aa7217d held one commit -- the #457 changes-requested review row
+                 # (46cbc0bb) -- plus a merge, and was BEHIND origin (it lacked f4a4626e/#461), so
+                 # the reset also avoided reverting that code. The review row was re-landed verbatim
+                 # (same fields, only the guard timestamp moved 11:56->12:02Z) via a fresh
+                 # merge_main CAS as 22fd20eb, which is an ancestor of origin/main. Nothing is
+                 # missing; recorded after confirming the discarded commit's net content is the one
+                 # row 22fd20eb already carries. Operator fault: the push-refusal recovery points at
+                 # `checkout --detach origin/main`, not `git branch -f`.
+                 ("7aa7217dfdb3db12d9d210189d3a20a76cb3e013",
+                  "f4a4626e609ec3c6e21f2e97ca1afc2070518860")}
     jumps = []
     unsigned = []
     for ln in lines:
