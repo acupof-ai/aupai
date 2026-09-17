@@ -125,8 +125,20 @@ Bytes that survived off-pod on a laptop; copy these in rather than regenerating.
 |---|---|---|---|
 | gate tokenizer (32,768 BPE, `<eos>=1`, `[NUM]=32767`) | `/Users/bytedance/code/aupai-de/data/tokenizer.json` | new root `data/tokenizer.json` | `[SURVIVES-PERSISTENT]` verified 2026-09-16: 2,287,069 B, sha256 prefix `c6d5eec97c6af1ba` |
 
-After copy, run `scripts/tokenizer_eval.py --tokenizers data/tokenizer.json --selftest`;
-do not retrain unless it fails (full recipe in #404 §1). Other local working trees
+After copy, gate the actual file (a bare `--selftest` runs internal known-answer worlds and
+ignores `--tokenizers`, so it does NOT read the copied file):
+
+```bash
+python3 -c "import sys;sys.path.insert(0,'scripts');import harness as h;print(h.check_tokenizer_roundtrip('.'));print(h.check_pinned_ids('.'))"  # load + NUL/tab/hanzi/digits round-trip; <eos>=1, [NUM]=32767
+python3 scripts/tokenizer_eval.py --veto_only --tokenizers data/tokenizer.json --domains <a-present-corpus-dir>  # round-trip, 256 bytes, ref fertility <=1.55, scoped hanzi
+```
+
+`check_tokenizer_roundtrip`/`check_pinned_ids` need no corpus (run against the repo root);
+`--veto_only` (ae #442) skips the 800-row held-out split so it runs before a gate-scale corpus
+exists, but needs one shard-bearing `--domains` dir for the hanzi/ref-fertility reading (on the
+zero-Chinese gate mix the hanzi veto is N/A, not failed). Confirm sha256 still prefixes
+`c6d5eec97c6af1ba` after copy. Do not retrain unless a gate fails (full recipe in #404 §1).
+Other local working trees
 (`aupai-de`, `aupai-66-*`) hold code already on `main` or on feature branches — they are
 not data backups and need no copy beyond what git carries.
 
