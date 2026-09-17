@@ -90,6 +90,14 @@ class V41FConfig:
     dspark_n_activated_experts: int = 0
     # rank>0 builds the inference Markov/confidence heads (later PR); rank 0 omits them
 
+    # Straight-through training signal for the CSA2 second-level indexer (v41f-defined).
+    # "off" is the faithful path and constructs nothing; "ste" feeds an identity-valued,
+    # softmax-differentiated slot weight into sparse_attn so wq_b/weights_proj receive the
+    # main-CE gradient. NOT a reference field: the vendored model has no differentiable
+    # indexer path, which is why this is the one V41FConfig field the ref ModelArgs cannot
+    # consume (see the intersection gate's CFG_ONLY_TRAINING_KNOBS).
+    indexer_train_mode: str = "off"
+
     def validate(self) -> None:
         if len(self.compress_ratios) != self.n_layers:
             raise ValueError(
@@ -110,6 +118,9 @@ class V41FConfig:
             raise ValueError(
                 f"engram_num_embeddings has {len(self.engram_num_embeddings)} entries for "
                 f"{len(self.engram_layer_ids)} engram layers")
+        if self.indexer_train_mode not in ("off", "ste"):
+            raise ValueError(
+                f"indexer_train_mode must be 'off' or 'ste', got {self.indexer_train_mode!r}")
 
     def derived_engram_num_embeddings(self) -> tuple[int, ...]:
         """Table rows per engram layer = that layer's sum of bucket primes.
