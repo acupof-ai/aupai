@@ -284,3 +284,32 @@ def test_decode_large_end_pos_matches_reference():
     finally:
         torch.set_default_dtype(prev)
     print("  decode (start_pos 128/256): selection matches the pinned reference")
+
+def test_key_ratio_derivation_errs_only_restrictive():
+    """The fix derives the key's ratio as `end_pos // key_rows`. That is EXACT only when the
+    owner published complete groups; at start_pos=0 the compressor holds a trailing partial
+    group in its state, so `key_rows == end_pos // r` and the derivation is exact ONLY for
+    `end_pos % r == 0`. At other lengths it OVER-estimates the ratio (measured: end_pos=3, r=2
+    -> derived 3, true 2).
+
+    WHY THIS IS A TEST AND NOT A COMMENT: the residual's DIRECTION is the whole question. An
+    over-estimated ratio shrinks `compress_lens`, which can only HIDE reachable columns; an
+    under-estimated one would grow it and ADMIT FUTURE columns, which is the #494 defect itself.
+    Scanned all end_pos < 5000 for r <= 32: `derived < r` never occurs, so the derivation cannot
+    reintroduce the bug -- but the caller must know it can over-restrict at odd lengths, because
+    that is a fidelity boundary against the reference, not a rounding detail.
+
+    If a future change makes this assertion fail in the other direction, stop: that is #494 back.
+    """
+    unsafe = []
+    for end_pos in range(1, 5000):
+        for r in range(1, 33):
+            rows = end_pos // r
+            if not rows:
+                continue
+            if end_pos // rows < r:
+                unsafe.append((end_pos, r, rows, end_pos // rows))
+    assert not unsafe, (
+        f"the ratio derivation under-estimates at {unsafe[:3]}: an under-estimated key_ratio "
+        f"grows compress_lens and admits FUTURE columns, which is exactly the #494 defect")
+    print("  derivation: never under-estimates over end_pos<5000, r<=32 (over-restrictive only)")
