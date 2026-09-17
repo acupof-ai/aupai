@@ -2314,6 +2314,11 @@ def main():
         # v41f-S config-formula total/active parameter counter (3b); --selftest pins a
         # hand-computed tiny config so the total=sum-of-modules identity cannot silently rot.
         "scripts/v41f_param_count.py",
+        # The PR merge gate (66, #441 class). Registered because the whole point is a race it
+        # must not lose: a merge must wait for EVERY check settled-passing. --selftest is pure
+        # (evaluate() over injected lists, zero network) and pins GO only on all-pass, exit 2 on
+        # a fabricated IN_PROGRESS/QUEUED check, fail>pending, cancel/empty/unknown fail closed.
+        "scripts/pr_merge_gate.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
