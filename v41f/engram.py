@@ -194,8 +194,15 @@ class Engram(nn.Module):
         self.embed = nn.Embedding(layout.num_embeddings[self.layer_hash_index], layout.head_dim)
         self.wkv = nn.Linear(n_hash_cols * layout.head_dim, args.dim * (args.hc_mult + 1), bias=False)
         self.eps = args.norm_eps
-        self.q_weight = nn.Parameter(torch.ones(args.hc_mult, args.dim))
-        self.k_weight = nn.Parameter(torch.ones(args.hc_mult, args.dim))
+        # EXPLICIT bf16, matching the ref, which builds these with a bare torch.ones INSIDE
+        # no set_dtype block while the process default is bf16 (model_ref :345-346; the one
+        # construction-time set_dtype(float32) at :940 wraps the six HC tables only). The
+        # faithful value is therefore bf16, and the forward's `q_weight.float() * k_weight.float()`
+        # (:348) is where the ref lifts it back. Spelled out rather than inherited from the
+        # ambient default so a caller that sets a different default dtype cannot silently
+        # move a checkpointed parameter's dtype.
+        self.q_weight = nn.Parameter(torch.ones(args.hc_mult, args.dim, dtype=torch.bfloat16))
+        self.k_weight = nn.Parameter(torch.ones(args.hc_mult, args.dim, dtype=torch.bfloat16))
 
     def forward(
         self, x: torch.Tensor, hash_ids: torch.Tensor, token_mask: torch.Tensor | None = None
