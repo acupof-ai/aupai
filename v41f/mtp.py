@@ -154,27 +154,29 @@ from v41f.rope import apply_rotary_emb  # noqa: E402
 from v41f.sparse_attn import sparse_attn  # noqa: E402
 
 
-def dspark_causal_topk(main_len: int, block_size: int, batch: int, device):
+def dspark_causal_topk(main_slots: int, block_size: int, batch: int, device):
     """Per-query draft topk for the parallel teacher-forced path.
 
-    KV layout after concat is [0:main_len]=main window prefix,
-    [main_len:main_len+block_size]=this draft block's KV. Query (draft position) i sees
-    the ENTIRE main prefix plus draft positions 0..i (causal). Returns
-    [batch, block_size, main_len + block_size] int indices (no empty slots here); the
-    trailing draft slots past i are simply not emitted for that row.
+    KV layout after concat is [0:main_slots]=main WINDOW prefix (the last window_size main
+    positions; main_slots = min(window_size, main_len)),
+    [main_slots:main_slots+block_size]=this draft block's KV. Query (draft position) i sees
+    every main window slot plus draft positions 0..i (causal). It does NOT reach main
+    positions older than the window: the ref seeds a window_size ring (model_ref:1046-1051)
+    and get_dspark_topk_idxs emits arange(min(window_size, start_pos+1)) (model_ref:1021-1029).
+    Returns [batch, block_size, main_slots + block_size] int indices; the trailing draft
+    slots past i are not emitted for that row.
 
-    Rows have varying length (i+1 draft slots), which sparse_attn handles as a normal
+    Rows have varying length (main_slots + i+1 slots), which sparse_attn handles as a normal
     (unpadded) index set; we pad the ragged draft tail to block_size with -1 so the tensor
     is rectangular, matching sparse_attn's empty-slot convention.
     """
     device = torch.device(device)
-    main_idx = torch.arange(main_len, device=device)
-    draft_base = main_len
+    main_idx = torch.arange(main_slots, device=device)
     rows = []
     for i in range(block_size):
-        draft_idx = draft_base + torch.arange(i + 1, device=device)
+        draft_idx = main_slots + torch.arange(i + 1, device=device)
         rows.append(torch.cat([main_idx, draft_idx]))
-    padded = torch.full((block_size, main_len + block_size), -1, dtype=torch.long, device=device)
+    padded = torch.full((block_size, main_slots + block_size), -1, dtype=torch.long, device=device)
     for i, row in enumerate(rows):
         padded[i, : row.numel()] = row
     return padded.unsqueeze(0).expand(batch, -1, -1).contiguous()
@@ -198,10 +200,14 @@ class DSparkAttention(Attention):
         # own, so no draft compressor/indexer is built.
         from dataclasses import replace
 
+        # pad the ratio table just far enough to index THIS virtual layer (stage_index can
+        # exceed 0 with n_mtp_layers>1, so the padding grows with the layer; a fixed +1 would
+        # IndexError on the second draft stage). Virtual layer ids are always >= n_layers, so
+        # this count is >= 1 on its own.
         n_extra = virtual_layer_id - len(cfg.compress_ratios) + 1
         draft_cfg = replace(
             cfg,
-            compress_ratios=tuple(cfg.compress_ratios) + (0,) * max(n_extra, 1),
+            compress_ratios=tuple(cfg.compress_ratios) + (0,) * n_extra,
         )
         super().__init__(draft_cfg, virtual_layer_id, max_batch_size=max_batch_size)
         if self.compress_ratio != 0 or self.indexer is not None or self.compressor is not None:
@@ -223,8 +229,15 @@ class DSparkAttention(Attention):
         draft_kv = self.kvproj(x)
         apply_rotary_emb(draft_kv[..., -self.rd :], freqs)
 
+        # The draft attends only the last window_size main positions (the ref window ring's
+        # contents, model_ref:1046-1051). Drop the older prefix here so the concat and topk
+        # index space is [main window slots ; draft slots], never the full anchor context.
+        win = self.window_size
+        main_kv = main_kv[:, -win:, :]
+        main_slots = main_kv.size(1)
+
         kv = torch.cat([main_kv, draft_kv], dim=1)
-        idxs = dspark_causal_topk(main_len, block_size, b, x.device)
+        idxs = dspark_causal_topk(main_slots, block_size, b, x.device)
         o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale)
         o = o.to(q.dtype)
         apply_rotary_emb(o[..., -self.rd :], freqs, inverse=True)
@@ -243,7 +256,9 @@ class DSparkAttention(Attention):
 
 
 class DSparkBlock(Block):
-    """One draft block (mtp.* checkpoint namespace), structurally a Block but:
+    """One draft block (registered under the mtp.* checkpoint namespace once wired into the
+    model; this standalone module is not yet in model_v41f.py, so no mtp.* state_dict key
+    exists until integration), structurally a Block but:
     - attention_cls is the window-only DSparkAttention;
     - stage 0 owns main_proj/main_norm over the concat of target-layer attn inputs;
     - the FFN MoE is a NEW independent parameter set sized by get_moe_config (dspark count
