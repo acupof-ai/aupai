@@ -487,6 +487,45 @@ print(state + ' ' + sha + ' ' + str(r.get('databaseId') or '?'))
 #
 # Returns 0/1. The CALLER chooses the exit code, because by the time this runs main has already
 # advanced and "the merge failed" would be false.
+# FETCH origin/main, then REFUSE when the integration tree's local main is BEHIND it (de-80
+# part B). Without this the merge below reads a stale local main as the base: the working tree
+# holds pre-fix files (so the pre-merge hook validates the wrong world), the CAS merge can land
+# a tree that omits commits already on origin, and the post-CAS push then fails non-fast-forward
+# -- a confusing failure that pointed at the patch, when the real cause was an unfetched main.
+# Measured 2026-09-08. Fetching SILENTLY and continuing is deliberately not done: it quietly
+# changes "I merged X but published Y"; the operator must re-run from a tree they can see.
+# Args: $1=MAIN integration tree. Returns 0 when level/ahead (ahead is the merge itself), 1 when
+# behind, after printing the count and the recovery. Network/fetch failure does NOT silently
+# continue: it returns 2 so an offline laptop (where origin is genuinely unreachable) is told the
+# freshness is unknown rather than merging on an assumed-current main.
+_fetch_and_check_behind() {
+  _fm="$1"
+  _fm_err="$(mktemp 2>/dev/null || mktemp -t mmfetch)"
+  if ! git -C "$_fm" fetch origin main >"$_fm_err" 2>&1; then
+    echo "merge_main: REFUSING: could not fetch origin/main, so local main's freshness is unknown:" >&2
+    sed 's/^/  git: /' "$_fm_err" >&2
+    rm -f "$_fm_err"
+    echo "  Fix network/tunnel access and re-run. Merging on an unfetched main risks landing a" >&2
+    echo "  tree behind origin (de-80)." >&2
+    return 2
+  fi
+  rm -f "$_fm_err"
+  # commits origin/main has that local main lacks (behind); empty when level or ahead.
+  _behind_n=$(git -C "$_fm" rev-list --count main..origin/main 2>/dev/null)
+  case "$_behind_n" in
+    ''|*[!0-9]*) echo "merge_main: REFUSING: could not compare local main to origin/main" >&2; return 2 ;;
+    0) return 0 ;;
+    *)
+      echo "merge_main: REFUSING: local main is behind origin/main by $_behind_n commit(s)." >&2
+      echo "  The merge must not read a stale base (it validates the wrong pre-merge world and" >&2
+      echo "  the push then fails non-fast-forward). Bring the integration tree current WITHOUT" >&2
+      echo "  merging in it, then re-run:" >&2
+      echo "    git -C $_fm fetch origin main && git -C $_fm checkout --detach origin/main" >&2
+      echo "    bash scripts/merge_main.sh <branch>" >&2
+      return 1 ;;
+  esac
+}
+
 _push_origin_main() {
   _po_err=$(git -C "$MAIN" push origin main 2>&1)
   _po_rc=$?
@@ -499,6 +538,30 @@ _push_origin_main() {
   # `| tail -2` eats anything that depends on position.
   echo "REFUSING: merge_main could not push origin/main (git exit $_po_rc)" >&2
   printf '%s\n' "$_po_err" | sed 's/^/  git: /' >&2
+  # BRANCH THE RECOVERY ON THE CAUSE (de-80). The four lines below are correct for a push that
+  # failed for an EXTERNAL reason with origin unmoved (push protection, auth, network): the local
+  # merge landed and only delivery failed, so retrying the push alone is right. They are WRONG
+  # for a NON-FAST-FORWARD: origin advanced between our fetch and the push, so our local main is
+  # now BEHIND origin. Measured 2026-09-08 and again 2026-09-17 (#443): in that state `git push`
+  # alone is rejected every time, and "Do NOT re-run the merge" forbids the one action that works
+  # -- re-running merge_main, whose CAS is legal because the old local main is an ancestor of the
+  # new merge, re-integrates origin, and pushes both sides' work with zero force. Git names this
+  # cause on stderr; match its own words rather than guessing from the exit code.
+  case "$_po_err" in
+    *"[rejected]"*|*"non-fast-forward"*|*"Fetch first"*|*"fetch first"*|*"Updates were rejected"*)
+      echo "  Origin moved since this merge started; this is a NON-FAST-FORWARD, not a delivery" >&2
+      echo "  failure. The local merge is intact but behind origin. Recover by RE-RUNNING the merge:" >&2
+      echo "    bash scripts/merge_main.sh <branch>" >&2
+      echo "  Do NOT 'git push' alone (it stays rejected) and never use a bare update-ref or" >&2
+      echo "  --force: the §245 forced ref write came from following the wrong advice here." >&2
+      ;;
+    *)
+      echo "  Main stays advanced locally -- the merge LANDED and only delivery failed." >&2
+      echo "  Retry the push alone: git -C $MAIN push origin main" >&2
+      echo "  Do NOT re-run the merge, and never fix this with a bare update-ref: that is §245," >&2
+      echo "  where a hand update-ref after a refused push overwrote a landed commit." >&2
+      ;;
+  esac
   return 1
 }
 
@@ -1453,7 +1516,118 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
     *) echo "  FAIL push W2-control: the remote's reason was swallowed -- this is §245's recovery" >&2
        _fails=$((_fails + 1)) ;;
   esac
+  # W2-EXTERNAL-ADVICE (de-80): a NON non-fast-forward rejection must keep the delivery-failure
+  # advice ("retry the push alone"), NOT the re-run-merge text that is correct only when origin
+  # moved. This control stops the cause-branch from sending the non-ff advice to every failure.
+  case "$_pout" in
+    *"NON-FAST-FORWARD"*) echo "  FAIL push W2-ext: a push-protection failure got non-ff advice" >&2
+                         _fails=$((_fails + 1)) ;;
+    *"Retry the push alone"*) echo "  ok   push W2-ext: external failure keeps retry-push advice" ;;
+    *) echo "  FAIL push W2-ext: no delivery-failure advice for the external cause" >&2
+       _fails=$((_fails + 1)) ;;
+  esac
   rm -rf "$_p"
+
+  # W3 NON-FAST-FORWARD (de-80). A SECOND clone advances the bare origin after the pushing clone
+  # last fetched, so its main is behind and `git push` is rejected with git's own
+  # "! [rejected] main -> main (non-fast-forward)". The REAL function must (a) return nonzero,
+  # (b) advise RE-RUNNING merge_main -- the only recovery that works -- and (c) NOT print the
+  # stale "retry the push alone" line, which never succeeds in this state. A stub would author the
+  # git rejection itself, so this uses a real two-clone bare origin.
+  _n=$(mktemp -d 2>/dev/null || mktemp -t mmnff)
+  git init -q --bare -b main "$_n/origin.git" >/dev/null 2>&1
+  # seed clone: an empty bare origin has no main to clone --branch, so push HEAD to create it.
+  git clone -q "$_n/origin.git" "$_n/a" >/dev/null 2>&1
+  ( cd "$_n/a" && git config user.email t@t && git config user.name T
+    git checkout -q -b main 2>/dev/null || git symbolic-ref HEAD refs/heads/main
+    echo a > f.txt && git add f.txt && git commit -qm base && git push -q origin main )
+  git clone -q --branch main "$_n/origin.git" "$_n/b" >/dev/null 2>&1
+  ( cd "$_n/b" && git config user.email t@t && git config user.name T
+    echo from-b > f.txt && git commit -qam "b advances origin" && git push -q origin main )
+  # now a makes ANOTHER local commit WITHOUT fetching b's advance, then pushes -> rejected
+  ( cd "$_n/a" && echo from-a >> f.txt && git commit -qam "a behind" ) >/dev/null 2>&1
+  _nout=$( MAIN="$_n/a"; _push_origin_main 2>&1 ) && _nrc=0 || _nrc=$?
+  if [ "$_nrc" -ne 0 ]; then echo "  ok   push W3 a non-fast-forward push -> nonzero"
+  else echo "  FAIL push W3: non-ff returned 0" >&2; _fails=$((_fails + 1)); fi
+  case "$_nout" in
+    *"[rejected]"*|*"non-fast-forward"*) echo "  ok   push W3 git's non-ff reason is echoed" ;;
+    *) echo "  FAIL push W3: did not surface git's non-ff rejection text" >&2
+       _fails=$((_fails + 1)) ;;
+  esac
+  case "$_nout" in
+    *"RE-RUNNING the merge"*|*"merge_main.sh") echo "  ok   push W3 advises re-running merge_main" ;;
+    *) echo "  FAIL push W3: no re-run-merge recovery advice" >&2
+       _fails=$((_fails + 1)) ;;
+  esac
+  case "$_nout" in
+    *"Retry the push alone"*) echo "  FAIL push W3: printed the stale retry-push-alone advice" >&2
+                              _fails=$((_fails + 1)) ;;
+    *) echo "  ok   push W3 does not print the always-rejected retry-push-alone advice" ;;
+  esac
+  rm -rf "$_n"
+
+  # W4 BEHIND-MAIN REFUSE (de-80 part B), against the REAL _fetch_and_check_behind with a bare
+  # origin, in two worlds. W4-behind: integration main is an ancestor of origin/main after a
+  # second clone lands a commit -> returns nonzero and names the commit count. W4-level: a fresh
+  # clone that is current -> returns 0 and prints nothing. The function fetches itself, so the
+  # worlds differ only by whether origin advanced, which is the property under test.
+  _h=$(mktemp -d 2>/dev/null || mktemp -t mmbehind)
+  git init -q --bare -b main "$_h/origin.git" >/dev/null 2>&1
+  git clone -q "$_h/origin.git" "$_h/integ" >/dev/null 2>&1
+  ( cd "$_h/integ" && git config user.email t@t && git config user.name T
+    git checkout -q -b main 2>/dev/null || git symbolic-ref HEAD refs/heads/main
+    echo base > f.txt && git add f.txt && git commit -qm base && git push -q origin main )
+  git clone -q --branch main "$_h/origin.git" "$_h/adv" >/dev/null 2>&1
+  ( cd "$_h/adv" && git config user.email t@t && git config user.name T
+    echo new > f2.txt && git add f2.txt && git commit -qam advance && git push -q origin main )
+  _hbout=$( _fetch_and_check_behind "$_h/integ" 2>&1 ) && _hbrc=0 || _hbrc=$?
+  if [ "$_hbrc" -ne 0 ] && echo "$_hbout" | grep -q "1 commit"; then
+    echo "  ok   behind W4 a stale local main refuses nonzero and names the count"
+  else
+    echo "  FAIL behind W4: want nonzero naming 1 commit, got rc=$_hbrc: $_hbout" >&2
+    _fails=$((_fails + 1))
+  fi
+  # bring the local main REF level with origin (the legitimate catch-up the recovery prescribes;
+  # a checkout only moves HEAD, not the main branch ref the helper compares). Now the SAME helper
+  # must return 0 and print nothing.
+  ( cd "$_h/integ" && git update-ref refs/heads/main origin/main )
+  _hlout=$( _fetch_and_check_behind "$_h/integ" 2>&1 ) && _hlrc=0 || _hlrc=$?
+  if [ "$_hlrc" -eq 0 ] && [ -z "$_hlout" ]; then
+    echo "  ok   behind W4-control a level local main passes with no output"
+  else
+    echo "  FAIL behind W4-control: level main should pass silently, got rc=$_hlrc: $_hlout" >&2
+    _fails=$((_fails + 1))
+  fi
+  rm -rf "$_h"
+
+  # W5 BEHIND-GATE WIRING, source-level (de-80 part B). W4 above drives the real helper (behind
+  # refuses, level passes), but reaching the merge path needs a whole two-repo integration world
+  # for one line of branchless shell -- the same ceiling push W3 documents. What this catches is
+  # the wiring mutation: the helper defined but never invoked before the merge. COUNTED AT 2,
+  # not searched-for-a-string: the call text appears in this assertion line too, so a bare
+  # grep -c>=1 passes with the real call deleted; >=2 requires the actual merge-path invocation.
+  _n=$(grep -c '_fetch_and_check_behind "$MAIN" || exit 1' "$0" || true)
+  if [ "${_n:-0}" -ge 2 ]; then
+    echo "  ok   behind W5 the merge path invokes the behind guard (source-level)"
+  else
+    echo "  FAIL behind W5: _fetch_and_check_behind is defined but not called on the merge path" >&2
+    _fails=$((_fails + 1))
+  fi
+  # ORDER: the guard must run AFTER _old is read and BEFORE the merge that reads the base. A
+  # guard after the merge would validate the wrong world. Match the PRODUCTION lines (4-space
+  # indent, real invocation) and only consider the file body after the selftest block, so the
+  # strings quoted inside this test cannot be mistaken for the call sites. Byte offsets from awk.
+  _body=$(awk 'NR>1750' "$0")
+  _o_old=$(printf '%s\n' "$_body" | grep -n '^    _old=$(git -C "$MAIN" rev-parse main)$' | head -1 | cut -d: -f1)
+  _o_fetch=$(printf '%s\n' "$_body" | grep -n '^    _fetch_and_check_behind "$MAIN" || exit 1$' | head -1 | cut -d: -f1)
+  _o_merge=$(printf '%s\n' "$_body" | grep -n '^    if ! git merge --no-edit -m "merge main into $1 ($1)" main; then$' | head -1 | cut -d: -f1)
+  if [ -n "$_o_old" ] && [ -n "$_o_fetch" ] && [ -n "$_o_merge" ] \
+     && [ "$_o_old" -lt "$_o_fetch" ] && [ "$_o_fetch" -lt "$_o_merge" ]; then
+    echo "  ok   behind W5 guard is ordered after _old and before the merge"
+  else
+    echo "  FAIL behind W5: order must be _old < fetch-behind < merge (got $_o_old < $_o_fetch < $_o_merge)" >&2
+    _fails=$((_fails + 1))
+  fi
 
   # MAIN-IS-RED (4c's ruling 2026-09-07). Five worlds against the REAL _main_ci_is_red, with a fake
   # `gh` first on PATH -- the subject is how the function reads gh's output, so the fake supplies
@@ -1704,6 +1878,10 @@ for _ in $(seq 1 120); do
       echo "merge_main: detached the integration tree (it was on main; a CAS there is silent)"
     fi
     _old=$(git -C "$MAIN" rev-parse main)
+    # REFUSE ON A STALE LOCAL MAIN BEFORE READING THE BASE (de-80 part B). The merge below and the
+    # pre-merge hook otherwise use a main that is behind origin; fetch first and, if behind, name
+    # the count and stop rather than silently merging an outdated tree.
+    _fetch_and_check_behind "$MAIN" || exit 1
     # A DIRTY LEDGER ABORTS THE MERGE BEFORE IT STARTS, and git's own advice for it is `git
     # stash`, which is forbidden here (.git/refs/stash is shared across every worktree).
     # Naming the order costs three lines and is the whole recovery: commit the ledger row
@@ -1986,10 +2164,9 @@ EOF
       _push_failed=0
     else
       _push_failed=1
-      echo "  Main stays advanced at ${_new:0:8} -- the merge LANDED and only delivery failed." >&2
-      echo "  Retry the push alone: git -C $MAIN push origin main" >&2
-      echo "  Do NOT re-run the merge, and never fix this with a bare update-ref: that is §245," >&2
-      echo "  where a hand update-ref after a refused push overwrote a landed commit." >&2
+      # Recovery advice is printed by _push_origin_main and branched on the cause (non-fast-forward
+      # vs an external delivery failure); do not echo a second, unconditional "retry the push
+      # alone" here -- that is exactly the de-80 wrong-advice path for a moved origin.
       # The friction row is DEFERRED and drained by the next merge, not committed here. A commit
       # at this point would write the ledger after the CAS has been read, which is exactly the
       # ordering defect documented on the queue drain above (c12576ea landed one commit behind
