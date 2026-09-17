@@ -11,7 +11,7 @@ v41f_s() size, measured by scripts/v41f_param_count.py: 0.9046 B total params,
 210.95 M active/token (23.32%). This is the faithful V4.1-Flash-S config, not the retired
 ~350M-active r3 gate line; do not retune these shapes toward that older number.
 """
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from typing import Literal
 
 
@@ -70,6 +70,13 @@ class V41FConfig:
     engram_head_dim: int = 128
     engram_vocab_size: int = 65536          # hash-bucket modulus, NOT compressed-vocab size
     engram_pad_id: int = 2
+    # Table rows per engram layer, one entry per engram layer. The class default () is the
+    # OFF path; a config with engram_layer_ids set must carry the values EngramLayout
+    # derives, or Engram indexes a zero-row table (nn.Embedding(0, d) builds fine and only
+    # fails on the first forward index). Use derive_engram_num_embeddings / with_derived_engram
+    # rather than writing the numbers: they are the sum of a layer's bucket primes and move
+    # with engram_vocab_size, engram_n_heads and engram_max_ngram_size.
+    engram_num_embeddings: tuple[int, ...] = ()
     # filled in from the real tokenizer; assert-checked at build (see Engram)
     engram_compressed_vocab_size: int = 0
     # DSpark MTP draft head; 0 draft layers disables it
@@ -99,6 +106,34 @@ class V41FConfig:
             raise ValueError("activated experts exceed routed experts")
         if self.hc_mult < 1:
             raise ValueError("hc_mult >= 1")
+        if self.engram_num_embeddings and len(self.engram_num_embeddings) != len(self.engram_layer_ids):
+            raise ValueError(
+                f"engram_num_embeddings has {len(self.engram_num_embeddings)} entries for "
+                f"{len(self.engram_layer_ids)} engram layers")
+
+    def derived_engram_num_embeddings(self) -> tuple[int, ...]:
+        """Table rows per engram layer = that layer's sum of bucket primes.
+
+        Derived from the SAME EngramLayout.from_args the model will build, so the number and
+        the module cannot disagree. Returns () when the engram is off, which is what keeps
+        the field's default honest: nothing to fill in when there is no layer to fill.
+
+        This is not arithmetic that could be inlined: `from_args` draws the primes in order
+        from `engram_vocab_size`, skipping already-used ones, so the sum moves with
+        engram_vocab_size, engram_n_heads and engram_max_ngram_size together.
+        """
+        from .engram import EngramLayout
+
+        layout = EngramLayout.from_args(self)
+        if layout is None:
+            return ()
+        return tuple(sum(p for ngram in layer for p in ngram) for layer in layout.primes)
+
+    def with_derived_engram(self) -> "V41FConfig":
+        """A copy with engram_num_embeddings filled from the layout; raises if the engram is
+        on and no tokenizer was supplied, because a compressed-vocab size of 0 cannot have
+        been measured and Engram asserts on it."""
+        return replace(self, engram_num_embeddings=self.derived_engram_num_embeddings())
 
     @property
     def nope_head_dim(self) -> int:

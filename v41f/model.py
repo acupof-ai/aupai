@@ -20,12 +20,16 @@ stage (A) freezes block.py. Stage (B) registers real Engram modules in these slo
 builds the tokenizer-dependent NgramHashState; the call sites below already match ref.
 """
 
+from dataclasses import asdict
+from types import SimpleNamespace
+
 import torch
 import torch.nn.functional as F
 from torch import nn
 
 from .attention import SharedAttnState
 from .block import Block, make_identity_pre_mix
+from .engram import Engram, EngramLayout, NgramHashState
 from .norm_gate import RMSNorm
 
 
@@ -60,20 +64,40 @@ class V41FModel(nn.Module):
     attention-input means; None when dspark_target_layer_ids is empty (v41f_small).
     """
 
-    def __init__(self, cfg, max_batch_size: int = 4):
+    def __init__(self, cfg, max_batch_size: int = 4, tokenizer=None, max_seq_len: int = 4096):
         super().__init__()
         self.cfg = cfg
         self.hc_mult = cfg.hc_mult
         self.target_layer_ids = tuple(cfg.dspark_target_layer_ids)
-        # n-gram hash state needs the rebuilt tokenizer; stage (B) sets it. None disables
-        # the engram path while keeping the per-layer injection site in forward.
-        self.engram_hash = None
         self.embed = nn.Embedding(cfg.vocab_size, cfg.dim)
         self.layers = nn.ModuleList([Block(cfg, i, max_batch_size) for i in range(cfg.n_layers)])
-        # aligned with self.layers as a ModuleList of None: stage (B) assigns a real Engram
-        # module to a slot and it is registered immediately (parameters/.to/.train), no
-        # structural change needed when the engram feature switches on.
+        # Engram: aligned with self.layers as a ModuleList of None, so a slot is registered
+        # the moment it is assigned (parameters/.to/.train) and a config leaves the OFF path
+        # structurally identical rather than specially cased.
+        #
+        # THE TOKENIZER IS PASSED IN, NEVER READ FROM DISK. NgramHashState needs it only for
+        # build_compressed_token_map (a pure function of the tokenizer object), and a model
+        # layer that opened data/tokenizer.json would put a hidden file dependency under every
+        # construction -- including shaped-sandbox unit tests, which would have to write a
+        # tokenizer file to build a model. The caller loads once and injects.
         self.engrams = nn.ModuleList([None for _ in range(cfg.n_layers)])
+        self.engram_hash = None
+        layout = EngramLayout.from_args(cfg)
+        if layout is not None:
+            if tokenizer is None:
+                raise ValueError(
+                    "engram_layer_ids is non-empty but no tokenizer was given: pass the "
+                    "tokenizer object (NgramHashState builds its compressed token map from "
+                    "it). None is only valid when engram_layer_ids is ().")
+            # NgramHashState reads the engram fields off cfg plus two RUNTIME shapes that
+            # are deliberately not config fields (max_seq_len sizes the int64 hash cache and
+            # is harness-supplied; making it a config field would make the ref's model shape
+            # depend on a config value it is not). Merge rather than widen either side.
+            hash_args = SimpleNamespace(**asdict(cfg), max_batch_size=max_batch_size, max_seq_len=max_seq_len)
+            self.engram_hash = NgramHashState(hash_args, layout, tokenizer)
+            self.engrams = nn.ModuleList(
+                [Engram(cfg, i, layout) if i in layout.layer_ids else None for i in range(cfg.n_layers)]
+            )
         self.norm = RMSNorm(cfg.dim, cfg.norm_eps)
         self.head = V41FHead(cfg.vocab_size, cfg.dim)
 
