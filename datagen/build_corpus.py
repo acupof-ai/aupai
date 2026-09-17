@@ -718,9 +718,23 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_ke
                     f"data/tokenizer.json, {n_sample}/{len(shards)}-shard sample extrapolated by bytes; {CONVENTION}"
                 )
         except Exception as e:  # a stamp must land even if the count cannot
+            # ALL THREE KEYS, even when unmeasured. CANONICAL_STATS_KEYS is a contract that
+            # every stamp writer emits the same shape (see its comment: "tokens/tokens_status
+            # are never absent"), and _assert_canonical_stats enforces it. This branch used to
+            # set only tokens_status, so a stamp built where the count could not run failed its
+            # own assertion -- the guard fired on the one path it was meant to describe.
+            # tokens is None, not 0: an unmeasured count and a measured zero are different
+            # facts, and a mix budget must not read one as the other.
+            stats["tokens"] = None
             stats["tokens_status"] = f"unmeasured: {type(e).__name__}: {str(e)[:80]}"
+            # CONVENTION is imported INSIDE the try above, so it may be undefined here --
+            # naming it would raise NameError inside the one branch whose whole point is
+            # that a stamp must land even when the count cannot.
+            stats["tokens_config"] = "data/tokenizer.json present but the count failed"
     else:
+        stats["tokens"] = None
         stats["tokens_status"] = "unmeasured: data/tokenizer.json not present"
+        stats["tokens_config"] = "data/tokenizer.json absent; no token count was taken"
     _assert_canonical_stats(stats, "domain")
     with open(os.path.join(out, "build_corpus_stats.json"), "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)
