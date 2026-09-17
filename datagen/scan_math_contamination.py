@@ -549,7 +549,10 @@ def main():
                     help="REQUIRED: same-scale in-training corpus; the verdict is the candidate's "
                          "per-GB hit rate vs the baseline's (a FPR number without a same-scale "
                          "baseline has no binding power -- cont.cci3_scale_failure)")
-    ap.add_argument("--self-check", action="store_true")
+    # --selftest is an ALIAS: the hook calls every SELFTEST_FILES entry with --selftest by
+    # default and reads argparse's exit 2 as the selftest FAILING, so a file accepting only
+    # --self-check hard-reds every commit staging it unless it is in SELFTEST_FLAG.
+    ap.add_argument("--self-check", "--selftest", action="store_true", dest="self_check")
     ap.add_argument("--holdout", action="append",
                     help="holdout jsonl (repeatable); overrides the default math-500+math-hard set")
     args = ap.parse_args()
