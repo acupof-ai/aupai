@@ -18922,14 +18922,29 @@ EVIDENCE = {
 }
 
 
-def assert_evidence_covers_checks():
-    # Equality, not subset: both directions fail loudly. A check added without a declaration
-    # is classified by nobody; a stale name is noise. Cheap enough to run in the hook's
-    # scoped path, where the full _demo() guard never fires for a CHECKS/EVIDENCE-only diff.
+def evidence_parity():
+    """(ok, message) for `set(EVIDENCE) == the CHECKS table's names`. No side effects.
+
+    Equality, not subset: both directions fail loudly. A check added without a declaration
+    is classified by nobody; a stale name is noise.
+
+    ONE PREDICATE, THREE CONSUMERS: the hook's scoped path asserts on it, `harness check`
+    turns it into a counted FAIL and so into an exit code (de-83), and the selftest drives
+    both. A second copy of this comparison is how those two paths drift apart, which is the
+    shape the task was filed for -- the guard existed, in one place, and the exit code
+    everyone actually read was decided in another.
+    """
     check_names = {n for n, *_ in CHECKS}
-    assert set(EVIDENCE) == check_names, (
+    if set(EVIDENCE) == check_names:
+        return True, f"{len(check_names)} checks, every one declared"
+    return False, (
         f"EVIDENCE stale: {sorted(set(EVIDENCE) - check_names)}; "
         f"undeclared: {sorted(check_names - set(EVIDENCE))}")
+
+
+def assert_evidence_covers_checks():
+    ok, msg = evidence_parity()
+    assert ok, msg
 
 
 # -------------------------------------------------------------------------- stages
@@ -22073,6 +22088,65 @@ def _selftest_repo_auth_mirror():
         shutil.rmtree(d, ignore_errors=True)
 
 
+def _selftest_evidence_parity_is_an_invariant():
+    """A parity break moves `harness check`'s EXIT CODE, and the exit code is what is read.
+
+    THE MUTANT IS THE INCIDENT. #115 added a CHECKS entry with no EVIDENCE line; CI went red
+    and `harness check` printed "0 FAIL of 87" and exited 0 on that same tree. Deleting a REAL
+    EVIDENCE key is the only faithful world: a hand-written CHECKS/EVIDENCE pair would assert
+    against the same fiction the fix was written from.
+
+    Run through main(), not by calling the helper. The defect was never in the comparison --
+    it was that the comparison's verdict reached no exit code, so a test of evidence_parity()
+    would have passed on the broken tree and reported green for exactly the reason the task
+    was filed. run_checks is stubbed to [] so the FAIL is unambiguously this line's: with the
+    real checks in the list a red could come from any of 118 and the assertion would not
+    discriminate.
+
+    Both directions, because the negative one alone is satisfied by making every run red.
+    """
+    import contextlib
+    import io
+
+    _real = globals()["run_checks"]
+    _argv = sys.argv
+    _victim = _saved = None
+    try:
+        globals()["run_checks"] = lambda *a, **k: []
+        sys.argv = ["harness.py", "check"]
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            green_rc = main()
+        assert green_rc == 0, (
+            f"a green tree exits {green_rc} -- every commit would be refused: "
+            f"{out.getvalue()[-200:]}")
+        assert "evidence_parity" in out.getvalue(), (
+            "the parity line is not printed on a clean run, so nobody reading the output "
+            "knows it was evaluated at all")
+        # A REAL KEY, removed. Not a fabricated name appended to EVIDENCE: the register has
+        # to be the one this tree carries, or the world tests a shape no commit can make.
+        _victim = [n for n, *_ in CHECKS if n in EVIDENCE][0]
+        _saved = EVIDENCE.pop(_victim)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            red_rc = main()
+        _text = out.getvalue()
+        assert red_rc != 0, (
+            f"harness check exits {red_rc} with {_victim} undeclared in EVIDENCE -- this is "
+            f"#115: the invariant is visible but not in the exit code: {_text[-300:]}")
+        assert "evidence_parity" in _text and _victim in _text, (
+            f"the refusal does not name the undeclared check, so it cannot be acted on: "
+            f"{_text[-300:]}")
+    finally:
+        globals()["run_checks"] = _real
+        sys.argv = _argv
+        if _victim:
+            EVIDENCE[_victim] = _saved
+    print("  evidence parity: a dropped EVIDENCE key exits nonzero from `harness check` and "
+          "names the check; a clean tree still exits 0; driven through main() with run_checks "
+          "stubbed, so the FAIL is this line's")
+
+
 def _selftest_commit_delivers_fact_ref():
     """_commit_delivers understands facts/<f>.json#<id>: the fragment is stripped for the
     touched-file comparison and the id must exist in that file at HEAD (44-26).
@@ -24293,6 +24367,7 @@ def _demo(only=None):
     _selftest_repo_auth_mirror()
     _selftest_flagless_test_is_gated()
     _selftest_core_reexports_are_identical()
+    _selftest_evidence_parity_is_an_invariant()
 
     # The other half of the selftest: a PASS must have verified something. A check that
     # examined zero items and returned PASS is vacuous -- the shape shared by score_matrix_present
@@ -28326,6 +28401,21 @@ def main():
     if cmd in ("all", "check"):
         print("INVARIANTS  (a check that cannot run is a FAILURE, never a pass)")
         res = run_checks()
+        # THE PARITY IS AN INVARIANT, SO IT BELONGS IN THE EXIT CODE (de-83). It ran only on
+        # the --selftest path and inside the hook's scoped branch, and #115 is what that
+        # bought: a CHECKS entry landed with no EVIDENCE line, CI went red, and this command
+        # printed "0 FAIL of 87" and exited 0 on that same tree. Printed in a check row's own
+        # shape and appended to `res`, so it is counted in the FAIL line and decides the exit
+        # code -- which is also what lets the hook's harness-check gate refuse on it.
+        _ok, _why = evidence_parity()
+        _state = PASS if _ok else FAIL
+        print(f"  [{_state:^4}] {'evidence_parity':<22} {_why}  (0.0s) auth=repo")
+        if not _ok:
+            print("         asserts: every CHECKS entry declares where its evidence lives, and "
+                  "every EVIDENCE key names a check that exists")
+            print("         prevents: #115 -- a check added without its EVIDENCE line went red in "
+                  "CI while every local signal, this command included, read green")
+        res = res + [("evidence_parity", _state, _why, "", "")]
         bad = [n for n, s, *_ in res if s == FAIL]
         warns = [n for n, s, *_ in res if s == WARN]
         timed = [n for n, s, *_ in res if s == TIMEOUT]
