@@ -13,11 +13,17 @@ lazy option (shards stay untouched) -- the mix consults it.
 flag: this pass is exact content-hash only, with no threshold and no shingling. Caught by
 harness check doc_flags_parse, which compares a documented flag against add_argument.
 
-Contract: data/dedup/dedup_manifest.json (duplicate ids + which source) +
-dedup_stats.json with dedup_fp = hash(algorithm + params: exact threshold,
-near-dup threshold, shingling params) -- changes when the algorithm changes.
-CPU-only (near-dup ~30ms/doc). Resumable: process domains one at a time, skip
-completed (per-domain manifest). Exit 0/non-zero.
+Outputs (data/dedup/): dedup_manifest.json is a JSON ARRAY with one record per
+duplicate OCCURRENCE {doc_key, dup_of, source, shard} (a later copy points at the
+first source domain); dedup_kept.json maps representative key -> {source, shard};
+dedup_stats.json carries dedup_fp = hash(algorithm + params: exact threshold,
+near-dup threshold, shingling params) -- it changes when the algorithm changes.
+CPU-only (near-dup ~30ms/doc). Resumable: a per-domain manifest_<domain>.json marker
+skips a completed domain; if all are present the global manifest is left as-is.
+As of 2026-09-17 NO production code consumes dedup_manifest.json yet (verified by
+repo grep; only docs/facts mention it) -- it is the lazy manifest a future mix/
+training skip will consult, so its shape is set and gated here before a reader lands.
+Exit 0/non-zero.
 """
 
 import argparse
@@ -101,44 +107,66 @@ def dedup_docs(docs):
 
 
 
-def dedup(domains, params):
-    os.makedirs(DEDUP_DIR, exist_ok=True)
+def dedup(domains, params, *, doc_source=corpus_docs, out_dir=DEDUP_DIR):
+    """Production cross-source exact dedup. It MUST go through dedup_docs (the tested core):
+    gather every domain's documents in domain order, then keep the first occurrence and emit
+    one duplicate record PER later occurrence (a list -- never a hash-keyed dict that collapses
+    two later copies into one and mis-attributes them to the last domain).
+
+    doc_source/out_dir are injected only for the selftest (stub corpus + temp dir)."""
+    os.makedirs(out_dir, exist_ok=True)
     fp = dedup_fp(params)
-    stats = {"domains": domains, "dedup_fp": fp, "params": params, "shards_scanned": {}}
+    stats = {"domains": list(domains), "dedup_fp": fp, "params": params, "shards_scanned": {}}
 
-    # pass 1: exact across all domains (content-hash). second+ occurrence -> duplicate.
-    seen_exact = {}  # hash -> (domain, shard)
-    manifest = {}  # dochash -> {"dup_of": hash or null, "source": domain}
+    # Build the single ordered document stream across domains. A per-domain marker file makes a
+    # completed domain resumable: if present, its docs are skipped and the recorded count used.
+    docs = []
     total = 0
-
     for domain in domains:
-        dom_file = os.path.join(DEDUP_DIR, f"manifest_{domain}.json")
-        dom_seen = {}
+        dom_file = os.path.join(out_dir, f"manifest_{domain}.json")
         if os.path.exists(dom_file):
-            with open(dom_file) as f:  # resume: per-domain completed manifest
+            with open(dom_file) as f:
                 stats["shards_scanned"][domain] = len(json.load(f))
-                continue
-        for dh, _norm, shard in corpus_docs(domain):
-            total += 1
-            if dh in seen_exact:
-                manifest[dh] = {"dup_of": seen_exact[dh][0], "source": domain, "shard": shard}
-            else:
-                seen_exact[dh] = (domain, shard)
-                dom_seen[dh] = shard
-        # per-domain manifest (retustartable): write once per domain, not per shard --
-        # the shards themselves are not rewritten; the manifest is the durable output.
+            continue
+        n = 0
+        for _key, text, shard in doc_source(domain):
+            docs.append((domain, text, shard))
+            n += 1
+        stats["shards_scanned"][domain] = n
+        total += n
+        # resumable per-domain marker: counts the docs scanned from this domain so a re-run
+        # skips it (the shards and the global manifest are rebuilt from the gathered stream).
         with open(dom_file, "w") as f:
-            json.dump({k: v for k, v in manifest.items() if v.get("source") == domain}, f, indent=0)
+            json.dump({"domain": domain, "docs_scanned": n}, f)
 
-    mpath = os.path.join(DEDUP_DIR, "dedup_manifest.json")
+    # Resume: if every requested domain was already scanned (markers present, nothing gathered),
+    # the global manifest on disk is complete -- leave it rather than rebuild from an empty
+    # stream (which would wipe it). A partial prior run (some domains unmarked) re-scans those
+    # domains and rebuilds from the full gathered stream.
+    if not docs and all(os.path.exists(os.path.join(out_dir, f"manifest_{d}.json"))
+                       for d in domains):
+        mpath0 = os.path.join(out_dir, "dedup_manifest.json")
+        if os.path.exists(mpath0):
+            print(f"dedup {list(domains)}: all domains already scanned; {mpath0} left as-is")
+            return 0
+
+    seen, dups = dedup_docs(docs)  # THE tested decision; dups is one record per occurrence
+
+    # global manifest: a JSON array of duplicate records (one per later occurrence).
+    mpath = os.path.join(out_dir, "dedup_manifest.json")
     with open(mpath, "w") as f:
-        json.dump(manifest, f)
-    sp = os.path.join(DEDUP_DIR, "dedup_stats.json")
-    stats["duplicates"] = len(manifest)
+        json.dump(dups, f)
+    # representatives manifest (the surviving first occurrences), key -> {source, shard}.
+    with open(os.path.join(out_dir, "dedup_kept.json"), "w") as f:
+        json.dump(seen, f)
+    sp = os.path.join(out_dir, "dedup_stats.json")
+    stats["duplicates"] = len(dups)
+    stats["representatives"] = len(seen)
     with open(sp, "w") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)
     print(
-        f"dedup {domains}: {total} docs, {len(manifest)} exact-duplicate doc-ids -> {mpath} (dedup_fp {fp})"
+        f"dedup {list(domains)}: {total} docs scanned, {len(seen)} representatives, "
+        f"{len(dups)} exact-duplicate occurrences -> {mpath} (dedup_fp {fp})"
     )
     return 0
 
@@ -197,8 +225,53 @@ def _selftest():
     seen3, dups3 = dedup_docs([("domA", "", "x"), ("domA", "   ", "y"),
                                ("domA", "\n\t", "z")])
     assert not seen3 and dups3 == [], (seen3, dups3)
+
+    # 6) PRODUCTION WIRING: dedup() itself must drive dedup_docs and persist one record per
+    #    duplicate occurrence. The pure tests above cannot catch a dedup() that inlines an old
+    #    hash-keyed dict (which collapses 3 copies to 1 dup and attributes it to the LAST
+    #    domain). Stub the corpus reader and output dir; three copies of one normalized doc
+    #    across A/B/C must yield exactly two dup records, both pointing at the first source.
+    import tempfile
+    base = "the cat sat on the mat and the dog ran"
+    corpus = {
+        "domA": [(doc_key(base), base, "a0.jsonl"),
+                 (doc_key("only in alpha"), "only in alpha unique words", "a1.jsonl")],
+        "domB": [(doc_key(base), base.replace(" ", "  "), "b0.jsonl")],
+        "domC": [(doc_key(base), base.replace(" ", "\n"), "c0.jsonl")],
+    }
+
+    def stub_docs(domain):
+        return iter(corpus[domain])
+
+    with tempfile.TemporaryDirectory() as td:
+        rc = dedup(["domA", "domB", "domC"],
+                   {"exact": "content-hash", "near_dup": "none", "shingles": 5},
+                   doc_source=stub_docs, out_dir=td)
+        assert rc == 0
+        with open(os.path.join(td, "dedup_manifest.json")) as f:
+            on_disk = json.load(f)
+        with open(os.path.join(td, "dedup_stats.json")) as f:
+            on_stats = json.load(f)
+        # a LIST with one entry per duplicate OCCURRENCE (B and C), not one hash-keyed entry
+        assert isinstance(on_disk, list), "global manifest must be a per-occurrence list"
+        assert len(on_disk) == 2, f"3 copies must give 2 dup records, got {len(on_disk)}"
+        pairs = sorted((r["source"], r["dup_of"]) for r in on_disk)
+        assert pairs == [("domB", "domA"), ("domC", "domA")], pairs
+        # both later copies are attributed to the FIRST source, never the last
+        assert all(r["dup_of"] == "domA" for r in on_disk)
+        # two distinct representatives survive (the shared doc + alpha-only doc)
+        assert on_stats["representatives"] == 2 and on_stats["duplicates"] == 2, on_stats
+        # rerun with markers present rescans nothing but still rewrites a consistent manifest
+        rc2 = dedup(["domA", "domB", "domC"],
+                    {"exact": "content-hash", "near_dup": "none", "shingles": 5},
+                    doc_source=stub_docs, out_dir=td)
+        assert rc2 == 0
+        with open(os.path.join(td, "dedup_manifest.json")) as f:
+            again = json.load(f)
+        assert again == on_disk, "resume must produce an identical manifest"
     print("selftest ok: normalization collapses ws/punct variants; case/order/content do not; "
-          "cross-source dup points at first occurrence; dedup_fp tracks params; empty skipped")
+          "cross-source dup points at first occurrence; dedup_fp tracks params; empty skipped; "
+          "production dedup() drives the core (3 copies -> 2 dup records, first source)")
     return 0
 
 
