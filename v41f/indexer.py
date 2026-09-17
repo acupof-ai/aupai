@@ -95,11 +95,48 @@ class Indexer(nn.Module):
         """`freqs` is the query RoPE table already sliced to [start_pos:end_pos]'s
         length in positions (complex, index_head_dim/2). `index_k` is
         [b, end_pos//ratio, index_head_dim], already built/rotated by the owner."""
+        idxs, _ = self.select(x, qr, index_k, freqs, start_pos, offset, candidates)
+        return idxs
+
+    def select(self, x: torch.Tensor, qr: torch.Tensor, index_k: torch.Tensor,
+               freqs: torch.Tensor, start_pos: int, offset: int,
+               candidates: "torch.Tensor | None" = None):
+        """The selection seam: (hard idxs, continuous scores at those slots).
+
+        `forward` is exactly `select(...)[0]`, so every existing caller and the bit-exact
+        oracles see the same integers they saw before. The second value is what the
+        training-only straight-through path needs: `score` is the SAME tensor the hard topk
+        consumed (post-visibility-mask, in-place masked), and `sc = score.gather(-1, idxs)`
+        reads it at the selected slots -- NOT a recomputation.
+
+        `gather` is NOT a view: it allocates a new tensor with its own storage (measured:
+        `sc._base is score` is False, `sc._is_view()` is False). What it preserves is
+        provenance and the graph -- one `score()` call produced the values, and `sc` keeps a
+        `grad_fn` back into that same score tensor, so the straight-through gradient reaches
+        `wq_b`/`weights_proj` without a second projection.
+
+        Recomputing the score on a training side path is the fed-dead-weight shape: an
+        allclose over fed values goes green while the real default path leaves
+        `wq_b`/`weights_proj` unused. The caller must not call `score()` again.
+        """
         bsz, seqlen, _ = x.size()
         ratio = self.compress_ratio
         end_pos = start_pos + seqlen
 
-        index_score = self.score(x, qr, index_k, freqs)
+        # THE SCORE'S INPUTS ARE DETACHED, which makes the training gradient
+        # INDEXER-LOCAL (design doc §2, gate 4). The score is the only consumer of a graph
+        # here -- the hard topk reads values, and ints carry no derivative -- so cutting the
+        # inputs costs the faithful path nothing (measured: both indexer grads are None off,
+        # with or without the detach) and stops the straight-through signal, which enters
+        # through `score`, from leaking into wq_b's INPUTS. Without it the measurement is:
+        # qproj.wq_a/q_norm grads move by 3.7e-09, and index_key.wk/k_norm go from None to
+        # having grads -- i.e. the "indexer-local" property is false and, in a real model
+        # where x is the residual stream, the STE would push gradient into the whole
+        # backbone rather than into two projection weights.
+        #
+        # wq_b.weight / weights_proj.weight keep their gradient: a weight's gradient depends
+        # on its input's VALUE, which detach does not touch.
+        index_score = self.score(x.detach(), qr.detach(), index_k.detach(), freqs)
 
         if start_pos == 0:
             compress_lens = (torch.arange(1, seqlen + 1, device=x.device) // ratio).unsqueeze(-1)
@@ -113,4 +150,7 @@ class Indexer(nn.Module):
 
         topk = min(self.index_topk, end_pos // ratio)
         idxs = index_score.topk(topk, dim=-1, sorted=False).indices.sort(dim=-1).values
-        return torch.where(idxs < compress_lens, idxs + offset, -1).int()
+        # gather on the -inf-padded row must not read an out-of-range column; the shift is a
+        # no-op in value (-inf stays -inf) and keeps every index in range.
+        sc = index_score.gather(-1, idxs.clamp_max(index_score.size(-1) - 1))
+        return torch.where(idxs < compress_lens, idxs + offset, -1).int(), sc

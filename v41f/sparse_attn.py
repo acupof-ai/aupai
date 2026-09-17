@@ -13,7 +13,20 @@ import torch
 
 
 def sparse_attn(q: torch.Tensor, kv: torch.Tensor, attn_sink: torch.Tensor,
-                topk_idxs: torch.Tensor, softmax_scale: float) -> torch.Tensor:
+                topk_idxs: torch.Tensor, softmax_scale: float,
+                slot_weight: "torch.Tensor | None" = None) -> torch.Tensor:
+    """`slot_weight` [b,m,1,k] optionally scales each gathered slot's softmax numerator.
+
+    It exists for the training-only straight-through indexer signal (`v41f/indexer_ste.py`),
+    which supplies a tensor that is exactly 1.0 in forward and carries a softmax derivative
+    in backward. The default None is the faithful path: no multiplication happens at all, so
+    the inferential numerics are the ones the reference defines.
+
+    Callers that DO pass it must be aware that `exp * w` with `w == 1.0` is bit-equal to
+    `exp` (the multiply is exact for 1.0, and `exp` is finite and non-negative by the
+    nan_to_num above), which is what keeps the hard forward bit-identical rather than merely
+    close.
+    """
     b, m, h, d = q.shape
     valid = topk_idxs >= 0
     safe = topk_idxs.clamp_min(0)                       # [b,m,topk]
@@ -25,6 +38,8 @@ def sparse_attn(q: torch.Tensor, kv: torch.Tensor, attn_sink: torch.Tensor,
     row_max = torch.nan_to_num(row_max, neginf=0.0)     # all-empty row -> sink only
     exp = torch.exp(scores - row_max)
     exp = torch.nan_to_num(exp, nan=0.0, posinf=0.0, neginf=0.0)
+    if slot_weight is not None:
+        exp = exp * slot_weight
     sink_term = torch.exp(
         attn_sink.view(1, 1, h) - row_max.squeeze(-1))  # [b,m,h]
     denom = exp.sum(dim=-1) + sink_term
