@@ -423,6 +423,77 @@ def _selftest():
         else:
             raise AssertionError(f"blob/pin mismatch on {field} must raise QuotaError")
 
+    # ---- F8/F3 CLI WIRING (main/argv): the blob identity check and the coverage check must
+    # be actually invoked on the real subcommand paths, not just unit-tested as helpers. Uses
+    # a single-version scorer that scored BOTH languages, written through append_rows so the
+    # file is a real ledger. In-process main(argv) is sufficient: removing the
+    # _assert_blob_identity CALL makes the mismatch subcommand return cleanly (fail), and
+    # removing the coverage wiring would let a partial version select silently.
+    import subprocess
+    import sys as _sys
+    import tempfile
+
+    from datagen.score_ledger import append_rows
+
+    cli_dir = tempfile.mkdtemp()
+    cli_ledger = os.path.join(cli_dir, "ledger.jsonl")
+    cli_rows = []
+    for i in range(8):
+        cli_rows.append(ScoreRow(doc_id=f"e{i}", domain="web", lang="en", scorer_name="kenlm",
+                                 scorer_version="v1", ts="2026-09-16T00:00:00Z",
+                                 score=0.1 * i + 0.1, stratum=None))
+    for i in range(4):
+        cli_rows.append(ScoreRow(doc_id=f"z{i}", domain="web", lang="zh", scorer_name="kenlm",
+                                 scorer_version="v1", ts="2026-09-16T00:00:00Z",
+                                 score=0.1 * i + 0.1, stratum=None))
+    append_rows(cli_ledger, cli_rows)
+    cli_th = os.path.join(cli_dir, "th.jsonl")
+    cli_out = os.path.join(cli_dir, "rev.jsonl")
+
+    # happy-path SELECT: domain quota over a version that covers both langs -> rc 0, the
+    # emitted blob decides BOTH languages (coverage wired in, satisfied).
+    rc = subprocess.run(
+        [_sys.executable, os.path.abspath(__file__), "select", cli_ledger,
+         "--scorer", "kenlm", "--version", "v1", "--quota", '{"web": 0.5}',
+         "--out", cli_th], capture_output=True, text=True, timeout=60)
+    assert rc.returncode == 0, rc.stderr
+    with open(cli_th, encoding="utf-8") as fh:
+        cli_blob = json.load(fh)
+    decided_langs = {d["lang"] for d in cli_blob["decisions"]}
+    assert decided_langs == {"en", "zh"}, decided_langs
+
+    # coverage NEGATIVE CLI gate: a later v2 that rescored only en must NOT let a domain
+    # quota silently omit zh. Removing the coverage= wiring in select makes this rc 0.
+    for i in range(4):
+        append_rows(cli_ledger, [ScoreRow(
+            doc_id=f"e{i}", domain="web", lang="en", scorer_name="kenlm", scorer_version="v2",
+            ts="2026-09-16T00:00:00Z", score=0.2, stratum=None)])
+    partial = subprocess.run(
+        [_sys.executable, os.path.abspath(__file__), "select", cli_ledger,
+         "--scorer", "kenlm", "--version", "v2", "--quota", '{"web": 0.5}',
+         "--out", os.path.join(cli_dir, "th_v2.jsonl")], capture_output=True, text=True, timeout=60)
+    assert partial.returncode != 0 and "zh" in partial.stderr, partial.stderr
+
+    def cli_sample(version, threshold_path):
+        return subprocess.run(
+            [_sys.executable, os.path.abspath(__file__), "sample", cli_ledger,
+             "--thresholds", threshold_path, "--scorer", "kenlm", "--version", version,
+             "--out", cli_out], capture_output=True, text=True, timeout=60)
+
+    # matching blob -> rc 0 and review rows exported
+    ok = cli_sample("v1", cli_th)
+    assert ok.returncode == 0, ok.stderr
+    with open(cli_out, encoding="utf-8") as rev_fh:
+        assert sum(1 for _ in rev_fh) > 0
+    # mismatched blob (scorer_version rewritten on disk) -> nonzero BEFORE any export
+    bad_th = os.path.join(cli_dir, "th_bad.jsonl")
+    with open(bad_th, "w", encoding="utf-8") as fh:
+        json.dump(dict(cli_blob, scorer_version="v9"), fh)
+    os.remove(cli_out)
+    bad = cli_sample("v1", bad_th)
+    assert bad.returncode != 0 and "scorer_version" in bad.stderr, bad.stderr
+    assert not os.path.exists(cli_out), "no review sample on blob/pin mismatch"
+
     print(
         "score_quota selftest OK: quota conservation, conditional per-lang thresholds, "
         "empty/wiped/version refusals, rubric-dim ordering, review export; coverage names a "
@@ -491,8 +562,6 @@ def main(argv=None):
     elif a.cmd == "sample":
         rows = load_rows(a.ledger)
         groups, ver = pin_groups(rows, a.scorer, a.version, a.rubric_kind, a.rubric_dim, not a.no_lang)
-        with open(a.thresholds, encoding="utf-8") as f:
-            blob = json.load(f)
         with open(a.thresholds, encoding="utf-8") as f:
             blob = json.load(f)
         _assert_blob_identity(blob, a.scorer, ver, a.rubric_kind, a.rubric_dim)
