@@ -399,7 +399,16 @@ def _content_fp(paths):
     and last 64KB), parity-asserted against train.py's inline copy by
     corpus_fingerprint --self-check. Reusing it means this cache and every other content
     fingerprint in the tree agree on what "the same bytes" means. Cost is 128KB read per
-    shard, once per run."""
+    shard, once per run.
+
+    WHAT IT IS BLIND TO, measured not assumed: the 64KB windows are SAMPLED, so an edit
+    confined to a shard's interior -- after the first 64KB, before the last -- leaves the
+    fingerprint unchanged. Measured on a 192KB fixture: a one-byte flip inside the middle
+    window did not move it, while a flip in either the head or the tail window did. So this is
+    narrower than cont.ledger's adversarial middle-edit scenario, not closed over it; the old
+    key missed that case too. Closing it fully means reading whole shards, which costs the full
+    byte count instead of 128KB per shard, and would make this cache stricter than every other
+    content fingerprint in the repo. Read it as "sampled content", never as full coverage."""
     from corpus_fingerprint import _shard_line
 
     h = hashlib.sha1()
@@ -608,7 +617,13 @@ def main():
                     help="REQUIRED: same-scale in-training corpus; the verdict is the candidate's "
                          "per-GB hit rate vs the baseline's (a FPR number without a same-scale "
                          "baseline has no binding power -- cont.cci3_scale_failure)")
-    ap.add_argument("--self-check", action="store_true")
+    # --selftest is an ALIAS, not the primary spelling. The hook invokes every SELFTEST_FILES
+    # entry with --selftest by default (scripts/hooks/pre-commit: `SELFTEST_FLAG.get(f,
+    # "--selftest")`) and reads argparse's exit 2 as the selftest FAILING, so a file whose only
+    # spelling is --self-check needs a SELFTEST_FLAG entry or it hard-reds every commit that
+    # stages it. Accepting both removes the class instead of the instance: this file is
+    # callable either way, and the registration cannot go stale.
+    ap.add_argument("--self-check", "--selftest", action="store_true", dest="self_check")
     ap.add_argument("--positive-control", action="store_true",
                     help="inject HumanEval/0 verbatim + a renamed variant, assert both caught")
     ap.add_argument("--out-dir", metavar="DIR",
