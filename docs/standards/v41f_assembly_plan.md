@@ -37,8 +37,9 @@ python scripts/v41f_param_count.py      # 904,583,784 total / 210,950,760 active
 | **C** | indexer STE 接线（非默认路径） | `v41f/attention.py`（+ `v41f/indexer_ste.py`） | **#456 合并** |
 | **D** | ckpt 覆盖三个新子系统 | `v41f/ckpt.py`（+ `v41f/master.py`） | **#447 合并**，A/B/C 之后 |
 
-A 与 B 都改 `v41f/model.py`，**串行**；C 不动 `model.py`，可在 B 之后或与 B 并行，但它改
-`attention.py`，与任何正在改 `attention.py` 的会话互斥；D 最后，因为它的前置是"参数集合已经定形"。
+A、B、C 三步**全部串行**（fb 裁，§7.0.4）：A 与 B 都改 `v41f/model.py`；C 虽不改 `model.py`，
+但它的插入点（`sparse_attn`）与 indexer 接线同在 `v41f/attention.py`，与 B 的窗口语义改动同区，
+错峰串行更容易定位回归。D 最后，前置是"参数集合已经定形"。
 
 ---
 
@@ -336,11 +337,16 @@ v41f/attention.py
 2. **§7.3 tied embed/head 双 key：倾向"衔接时显式只注册一份、两模块共享同一注册名"**，让
    `state_dict()` 保持一个参数一个名字（与 #447 严格键集自洽）。具体写法在步 D 的实现 PR 里对着
    `state_dict().keys()` 实测敲定；判据是**不留两个 `data_ptr` 相同的 key**。
-3. **engram `q_weight/k_weight`：必须显式 dtype。** ⚠️ fb 给的理由是"按忠实参考该是 fp32 就 fp32
-   （对齐 head/HC 的原生 fp32 处理）"——**这条前提经查不成立**，见 §2.2 前置 3：ref 的 HC 表显式
-   包在 `set_dtype(torch.float32)`（`model_ref.py.ref:940-946`）里，engram 的 `q_weight/k_weight`
-   没有，走的是 ambient bf16。**要修的是隐式，忠实值仍是 bf16**；若定要改 fp32，是一条需记为自定
-   的偏离。这一条在接线 PR 里仍需 fb 确认一次。
+3. **engram `q_weight` / `k_weight`：显式 `dtype=torch.bfloat16`——治"隐式随 ambient 漂移"，
+   **不改精度**。** 修正过程记一笔：初裁是"显式 fp32，对齐 head/HC 的原生 fp32 处理"，该前提经查
+   不成立（§2.2 前置 3：ref 的 HC 表显式包在 `set_dtype(torch.float32)`（`model_ref.py.ref:940-946`）
+   里，engram 的 `q_weight/k_weight` 没有，走 ambient bf16），fb 已复核并撤回。ref 在数学处
+   `q_weight.float() * k_weight.float()`（`:348`）提回 fp32 的做法照搬。
+   若以后训练稳定性要求 fp32，按 **v41f 自定偏离**走 prereg（同 DSpark 训练形态），不得写成
+   "对齐 head/HC"。
+4. **步 C 不提前并行。** 等 #454/#456/#447 三篇返修全合并、A/B 串行接线稳定后再排。理由：
+   STE 插入点（`sparse_attn`）与 indexer 接线同在 `v41f/attention.py`，和 B 步的窗口语义改动
+   同区，错峰串行更容易定位回归——双门本来就是为抓这个设计的。默认 `off` 保留。
 
 ### 7.1 其余待裁项
 
@@ -348,7 +354,5 @@ v41f/attention.py
 2. MTP 多 token loss 的加权与 target 层选取：charter §6 已标注"官方未给，需自定并 prereg"，本文件
    只接线不算 loss。
 3. （已裁方向，见 §7.0.2；实现细节留步 D）
-4. 步 C 与步 A/B 的并行度：C 不动 `model.py`，理论上可与 B 并行，但两者都要跑 `v41f_small` 整网
-   对拍。若 fb 要压缩日历时间，C 可以先行（它默认 off，风险最低）。
 4. 步 C 与步 A/B 的并行度：C 不动 `model.py`，理论上可与 B 并行，但两者都要跑 `v41f_small` 整网
    对拍。若 fb 要压缩日历时间，C 可以先行（它默认 off，风险最低）。
