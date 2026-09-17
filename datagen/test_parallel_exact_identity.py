@@ -22,6 +22,76 @@ HOLD = "REVEAL_ME_SENTINEL_HOLDOUT_0003 is a holdout marker that must be dropped
 REAL_HOLD = "小明有10个苹果，他送给小红3个，还剩几个？"
 
 
+def check_token_count_failure_path():
+    """_write_stats must emit the FULL canonical key set even when the token count fails.
+
+    The defect this pins (found 2026-09-18, main was red for this --selftest): both
+    failure branches set only `tokens_status`, leaving `tokens` and `tokens_config`
+    absent, so _assert_canonical_stats failed on exactly the path it exists to describe.
+    CANONICAL_STATS_KEYS' own comment states the contract -- "tokens/tokens_status are
+    never absent" -- and the code violated it wherever data/tokenizer.json was missing
+    (every laptop and CI) or its count raised.
+
+    WHY None AND NOT 0: an unmeasured count and a measured zero are different facts.
+    scripts/count_dir.py:148 reads `st.get("tokens")` and falls back to kept_tokens when
+    it is None, then to "carries no integer tokens"; a 0 is an int, so it would pass that
+    check and report a delta of the whole corpus against a false zero.
+
+    Exercises the EXCEPT branch specifically -- tokenizer present, count raises -- because
+    a machine with no tokenizer takes the `else` branch and would leave this one untested.
+    """
+    import types
+
+    td = tempfile.mkdtemp()
+    out = os.path.join(td, "corpus", "domA")
+    os.makedirs(out)
+    with open(os.path.join(out, "domA_000.jsonl"), "w") as f:
+        f.write('{"content": "x"}\n')
+    # plant a tokenizer at the REAL path _write_stats computes, and remove it after
+    real_root = os.path.dirname(os.path.dirname(os.path.abspath(B.__file__)))
+    tok = os.path.join(real_root, "data", "tokenizer.json")
+    planted = not os.path.exists(tok)
+    if planted:
+        os.makedirs(os.path.dirname(tok), exist_ok=True)
+        with open(tok, "w") as f:
+            f.write("{}")
+
+    class _Boom:
+        @staticmethod
+        def from_file(p):
+            raise RuntimeError("forced: tokenizer unreadable")
+
+    saved_tok = sys.modules.get("tokenizers")
+    sys.modules["tokenizers"] = types.SimpleNamespace(Tokenizer=_Boom)
+    saved_settle, B.SETTLE_S = B.SETTLE_S, 0
+
+    class _A:
+        domain = "domA"; filters = "light"; workers = 1
+        no_near_dedup = True; phase = None; allow_empty_slice = False
+
+    try:
+        B._write_stats(out, "domA", _A(), {}, 1, 5, 1)
+        with open(os.path.join(out, "build_corpus_stats.json")) as f:
+            st = json.load(f)
+        missing = [k for k in B.CANONICAL_STATS_KEYS if k not in st]
+        assert not missing, (
+            f"the tokenizer-failure path dropped canonical keys {missing}; a stamp that "
+            f"cannot carry a count must still carry the same SHAPE")
+        assert st["tokens"] is None, (
+            f"an unmeasured count must be None, not {st['tokens']!r} -- 0 is an int and "
+            f"count_dir would read it as a measured zero")
+        assert "unmeasured" in st["tokens_status"], st["tokens_status"]
+    finally:
+        B.SETTLE_S = saved_settle
+        if saved_tok is None:
+            sys.modules.pop("tokenizers", None)
+        else:
+            sys.modules["tokenizers"] = saved_tok
+        if planted:
+            os.remove(tok)
+        shutil.rmtree(td, ignore_errors=True)
+
+
 def main():
     # three shards; doc 0 x2 (exact dup across shard 0), UNIQ x2 (across shard 0/1),
     # UNIQ x1 (shard 2), one real holdout doc (HOLD sentinel is NOT a real holdout by
@@ -76,6 +146,7 @@ def main():
     uniq_hits = serial.count(b"def g(x): return x * 2")
     assert uniq_hits == 1, f"expected UNIQ deduped to 1 occurrence, got {uniq_hits}"
     n_lines = serial.count(b"\n")
+    check_token_count_failure_path()
     print(f"ok: serial==parallel byte-identical ({len(serial)}B, {n_lines} lines); UNIQ deduped to 1")
     shutil.rmtree(d1, ignore_errors=True)
     shutil.rmtree(d2, ignore_errors=True)
