@@ -62,8 +62,7 @@ GATE_BIAS_SUFFIX = "ffn.gate.bias"   # persistent fp32 SELECTION-ONLY buffer
 # are NOT model shapes v41f must own: dtype/expert/temperature/image are forced by bf16_args,
 # vision_* is out of scope, and max_batch_size/max_seq_len are RUNTIME/harness parameters
 # (bf16_args supplies them; max_seq_len must never become a config field — that would make a
-# runtime length look like a controlled model shape). Step A adds engram_num_embeddings to
-# V41FConfig; until then it is the ONE ref-only shape field and is named here as expected.
+# runtime length look like a controlled model shape).
 REF_ONLY_RUNTIME_OR_OUT_OF_SCOPE = frozenset({
     "dtype", "expert_dtype", "temperature", "image_token_id", "max_batch_size",
     "max_seq_len",
@@ -71,10 +70,10 @@ REF_ONLY_RUNTIME_OR_OUT_OF_SCOPE = frozenset({
     "vision_max_wh_ratio", "vision_min_pixels", "vision_n_heads", "vision_n_layers",
     "vision_patch_size", "vision_rope_theta",
 })
-# Ref-only MODEL-SHAPE fields still missing from V41FConfig. Today exactly one; it shrinks to
-# the empty set when step A adds engram_num_embeddings. Anything appearing here unnamed is a
-# silent-default hazard.
-REF_ONLY_SHAPE_PENDING = frozenset({"engram_num_embeddings"})
+# Ref-only MODEL-SHAPE fields still missing from V41FConfig. Step A landed
+# engram_num_embeddings, so this is EMPTY on main. A FUTURE ref-only shape field belongs here
+# exactly until it is added to V41FConfig; the intersection gate fails on any unnamed member.
+REF_ONLY_SHAPE_PENDING = frozenset()
 
 # Prime bucket sum independently recomputed = 786,862; x head_dim 128 = 100.7M rows.
 STEP_A_LAYER = 1
@@ -166,33 +165,82 @@ def gate_baseline():
             "no non-persistent leak")
 
 
+def _build_engram_on_small():
+    """An engram-ON v41f_small on the disk-free synthetic tokenizer (#481 harness shapes).
+
+    Returns None when the wiring is absent (step A not landed); the gate then skips. Once the
+    feature is on this constructs for real so the key/dtype contract is exercised on every
+    commit rather than waiting for a production tokenizer.
+    """
+    import sys as _sys
+    here = Path(__file__).resolve().parent
+    if str(here) not in _sys.path:
+        _sys.path.insert(0, str(here))
+    try:
+        from ref_oracle import synthetic_tokenizer  # noqa: WPS433
+    except Exception:
+        return None
+    tok = synthetic_tokenizer()
+    cfg = v41f_small(
+        vocab_size=len(tok), engram_compressed_vocab_size=6,
+        engram_layer_ids=(1,), engram_max_ngram_size=4, engram_n_heads=2,
+        engram_head_dim=8, engram_vocab_size=20, engram_pad_id=2,
+    ).with_derived_engram()
+    torch.set_default_dtype(torch.bfloat16)
+    try:
+        model = V41FModel(cfg, max_batch_size=2, max_seq_len=64, tokenizer=tok).eval()
+    finally:
+        torch.set_default_dtype(torch.float32)
+    return model, cfg
+
+
 def gate_step_a_engram():
-    """When Engram is wired and enabled, exactly the four engrams.1.* keys appear, all bf16,
-    with the table/wkv/q/k shapes, and NgramHashState's five buffers stay out of the blob."""
-    m = _build_baseline()
+    """When Engram is wired and enabled, exactly four engrams.1.* keys appear, all bf16, with
+    the table/wkv/q/k shapes, and NgramHashState's five buffers stay out of the blob.
+
+    Runs on the SMALL synthetic config (shapes below); the production 786862x128 shapes in
+    STEP_A_NEW_KEYS document the gate-config contract the param counter/checkpoint use.
+    """
+    built = _build_engram_on_small()
+    if built is None:
+        raise _Skip("engram wiring/tokenizer harness unavailable — pre-step-A world")
+    m, cfg = built
     if not any(getattr(e, "embed", None) is not None for e in getattr(m, "engrams", [])):
         raise _Skip("engram not wired (self.engrams all None) — step A section pending")
     sd = m.state_dict()
-    prefix = f"engrams.{STEP_A_LAYER}."
+    layer = cfg.engram_layer_ids[0]
+    prefix = f"engrams.{layer}."
     present = {k[len(prefix):]: tuple(v.shape) for k, v in sd.items() if k.startswith(prefix)}
     fail = []
-    for suf, (shape, dt) in STEP_A_NEW_KEYS.items():
+    # structural contract: exactly the four expected suffixes, all bf16 (small-config shapes)
+    SMALL_A_SHAPES = {
+        "embed.weight": (cfg.engram_num_embeddings[0], cfg.engram_head_dim),
+        "q_weight": (cfg.hc_mult, cfg.dim),
+        "k_weight": (cfg.hc_mult, cfg.dim),
+        # wkv is [dim*(hc_mult+1), (max_ngram-1)*n_heads*head_dim]
+        "wkv.weight": (cfg.dim * (cfg.hc_mult + 1),
+                       (cfg.engram_max_ngram_size - 1) * cfg.engram_n_heads * cfg.engram_head_dim),
+    }
+    for suf, shape in SMALL_A_SHAPES.items():
         if suf not in present:
             fail.append(f"missing {prefix}{suf}")
         elif present[suf] != shape:
             fail.append(f"{prefix}{suf} shape {present[suf]} != {shape}")
-        elif sd[prefix + suf].dtype != dt:
-            fail.append(f"{prefix}{suf} dtype {sd[prefix+suf].dtype} != {dt}")
-    extra = set(present) - set(STEP_A_NEW_KEYS)
+        elif sd[prefix + suf].dtype != torch.bfloat16:
+            fail.append(f"{prefix}{suf} must be bf16, got {sd[prefix+suf].dtype}")
+    extra = set(present) - set(SMALL_A_SHAPES)
     if extra:
         fail.append(f"unexpected engram keys {sorted(extra)}")
+    if set(present) != set(SMALL_A_SHAPES):
+        fail.append(f"engram key count {len(present)} != 4: {sorted(present)}")
     leaked = [k for k in sd if "engram_hash" in k and
               any(tok in k for tok in ENGRAM_NONPERSISTENT)]
     if leaked:
         fail.append(f"NgramHashState persistent=False buffers leaked into state_dict: {leaked}")
     if fail:
         raise AssertionError("; ".join(fail))
-    return f"step A: 4 engrams.{STEP_A_LAYER}.* bf16 keys, table 786862x128, 5 hash buffers absent"
+    return (f"step A: 4 engrams.{layer}.* bf16 keys, table "
+            f"{cfg.engram_num_embeddings[0]}x{cfg.engram_head_dim}, 5 hash buffers absent")
 
 
 def gate_step_b_mtp():
@@ -247,6 +295,15 @@ def gate_field_intersection():
     if stale:
         fail.append(f"field now present in V41FConfig but still whitelisted as non-shape: "
                     f"{sorted(stale)}")
+    # SYMMETRIC to `stale`: a field listed as a still-missing PENDING shape must actually be
+    # absent from V41FConfig. Once it is added (step A added engram_num_embeddings), leaving
+    # it in REF_ONLY_SHAPE_PENDING makes the gate keep reporting "1 pending" forever — the
+    # permanent-amber shape. This asserts the pending bookkeeping is cleared when the field
+    # lands, mirroring the `stale` check for the runtime/scope whitelist.
+    resolved_but_listed = pending & cfg_fields
+    if resolved_but_listed:
+        fail.append(f"field already present in V41FConfig but still listed in "
+                    f"REF_ONLY_SHAPE_PENDING (clear it): {sorted(resolved_but_listed)}")
     if cfg_only:
         fail.append(f"V41FConfig fields the ref ModelArgs cannot consume: {sorted(cfg_only)}")
     if fail:
