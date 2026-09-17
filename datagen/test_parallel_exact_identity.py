@@ -51,10 +51,6 @@ def check_token_count_failure_path():
     real_root = os.path.dirname(os.path.dirname(os.path.abspath(B.__file__)))
     tok = os.path.join(real_root, "data", "tokenizer.json")
     planted = not os.path.exists(tok)
-    if planted:
-        os.makedirs(os.path.dirname(tok), exist_ok=True)
-        with open(tok, "w") as f:
-            f.write("{}")
 
     class _Boom:
         @staticmethod
@@ -62,6 +58,10 @@ def check_token_count_failure_path():
             raise RuntimeError("forced: tokenizer unreadable")
 
     saved_tok = sys.modules.get("tokenizers")
+    # INSTALL THE FAKE tokenizers. Without this the count fails with ModuleNotFoundError
+    # instead of the forced RuntimeError -- the test still passes (both land in `except`)
+    # but for the wrong reason, and a reader would believe the count path was exercised
+    # when only the import was. `types` is imported for this line alone.
     sys.modules["tokenizers"] = types.SimpleNamespace(Tokenizer=_Boom)
     saved_settle, B.SETTLE_S = B.SETTLE_S, 0
 
@@ -70,6 +70,14 @@ def check_token_count_failure_path():
         no_near_dedup = True; phase = None; allow_empty_slice = False
 
     try:
+        # THE PLANT IS INSIDE THE try. It used to sit above it, so anything raising between
+        # the plant and the try leaked data/tokenizer.json into the repo tree -- gitignored,
+        # so it would persist silently and the NEXT run would see planted=False and clean up
+        # nothing. Everything that mutates state this function must restore belongs here.
+        if planted:
+            os.makedirs(os.path.dirname(tok), exist_ok=True)
+            with open(tok, "w") as f:
+                f.write("{}")
         B._write_stats(out, "domA", _A(), {}, 1, 5, 1)
         with open(os.path.join(out, "build_corpus_stats.json")) as f:
             st = json.load(f)
@@ -81,6 +89,15 @@ def check_token_count_failure_path():
             f"an unmeasured count must be None, not {st['tokens']!r} -- 0 is an int and "
             f"count_dir would read it as a measured zero")
         assert "unmeasured" in st["tokens_status"], st["tokens_status"]
+        # WHICH exception, not just that one happened. Without the fake tokenizers module
+        # installed above, _write_stats would fail at `from tokenizers import Tokenizer`
+        # with ModuleNotFoundError -- the same `except`, the same green, and a reader
+        # believing the count path ran when only the import did. Measured 2026-09-18: a
+        # refactor that dropped that install line left this test passing for exactly that
+        # wrong reason. The RuntimeError is the one this test forces.
+        assert "RuntimeError" in st["tokens_status"], (
+            f"the count failed for the wrong reason (expected the forced RuntimeError): "
+            f"{st['tokens_status']}")
     finally:
         B.SETTLE_S = saved_settle
         if saved_tok is None:
