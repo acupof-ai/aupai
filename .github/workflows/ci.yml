@@ -14,6 +14,17 @@ jobs:
       - run: python -m py_compile train.py sft.py sft_math.py serve.py chat.py infer.py datagen/prepare_sft_math.py eval/*.py scripts/*.py mathbank/*.py datagen/*.py algorithms/*.py filters/*.py
       - run: python scripts/test_arch_compat.py
       - run: python scripts/de109/check_cpu_parity.py
+      # v41f faithful-repro suites, CPU-only. Each runner glob-discovers every
+      # tests/v41f/test_p{0,1}_*.py module test; neither hard-requires CUDA. They are the
+      # path-level gate for v41f/ production edits (the pre-commit hook selects them on any
+      # staged v41f/*.py); CI runs them unconditionally so a red assertion on main cannot hide
+      # behind a commit that did not stage the tests.
+      - run: python tests/v41f/p0_selftest.py
+      - run: python tests/v41f/p1_selftest.py
+      # The assembly key/dtype gate exposes gate_* functions, not test_* ones, so the p1
+      # glob runner loads it without executing it. Run it explicitly: it is the armed A/B
+      # wiring gate (an implemented section that fails to arm exits nonzero).
+      - run: python tests/v41f/test_p1_assembly_keys.py --selftest
       - run: python scripts/shape_audit.py --selftest
       - run: python scripts/shape_audit.py
       - run: python scripts/pod_drift.py --selftest
