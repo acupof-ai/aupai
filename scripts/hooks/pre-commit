@@ -2353,6 +2353,12 @@ def main():
         # max_abs 0.0 in fp32 and bf16 (weight-before-w2), an empty group, and a bf16
         # weight-order guard. Standalone until the GPU branch joins it to p1 discovery.
         "tests/v41f/test_p1_grouped_dispatch.py",
+        # Assembly A/B key-set + dtype structural gate (98, #468 prep). --selftest freezes the
+        # all-off v41f_small floor (241 sd keys/236 params, fp32 head+hc+sink+gate-bias contract,
+        # no non-persistent leak), the ModelArgs<->V41FConfig field intersection (a ref-only
+        # model-shape field is named, not silently defaulted), and arms skip-loud A (engram) /
+        # B (tied mtp embed/head single-registration) sections when those modules are wired.
+        "tests/v41f/test_p1_assembly_keys.py",
         # v41f-S config-formula total/active parameter counter (3b); --selftest pins a
         # hand-computed tiny config so the total=sum-of-modules identity cannot silently rot.
         "scripts/v41f_param_count.py",
