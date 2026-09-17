@@ -1794,6 +1794,17 @@ def main():
         # hand read actually reads and the one a careless guard would blank.
         "datagen/code_dedup_handread.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
+        # The two contamination scanners. Registered with the ledger-key fix (genB, 2026-09-18):
+        # their --self-check now carries a corpus-free section over the ledger cache key, which
+        # was size+mtime and is now a content fingerprint on BOTH sides. A transfer
+        # (cp/rsync/podput) used to rebuild every cached verdict -- the transfer-invariance
+        # failure corpus_fingerprint was written to avoid -- and a same-size in-place rewrite
+        # was missed, which facts/contamination.json#cont.ledger already recorded as the
+        # uncertainty. The section is the four cases in both directions plus the legacy-row
+        # rule; each is mutation-verified red (revert the key to bytes+mtime, drop baseline_fp,
+        # drop cand_fp, accept a legacy row as fresh). ~0.7s each, no corpus.
+        "datagen/scan_code_contamination.py",
+        "datagen/scan_math_contamination.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "datagen/near_dedup_scale.py",
         "probes/t71_depth_lr_rule.py",
