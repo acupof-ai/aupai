@@ -27,6 +27,7 @@ Exit 0/non-zero.
 """
 
 import argparse
+import contextlib
 import glob
 import hashlib
 import json
@@ -36,6 +37,9 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from atomic_io import durable_publish  # noqa: E402
 
 DEDUP_DIR = os.path.join(ROOT, "data", "dedup")
 
@@ -106,6 +110,26 @@ def dedup_docs(docs):
     return seen, dups
 
 
+def _write_json_atomic(path, obj, *, indent=None):
+    """Durable, atomic JSON publish via datagen/atomic_io.durable_publish (#450): same-dir
+    .tmp -> flush -> fsync(file) -> os.replace -> fsync(parent dir). A reader never sees a
+    half-written path. Every dedup output MUST go through this; a bare open(final,'w') is
+    the regression the spy selftest turns red."""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh, ensure_ascii=False, indent=indent)
+        durable_publish(fh, tmp, path)
+
+
+def _load_valid_json(path):
+    """Parsed JSON at path, or None if absent/corrupt/torn. Resume treats a torn manifest
+    as 'not complete' and rebuilds, never a permanent JSONDecodeError."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+
 
 def dedup(domains, params, *, doc_source=corpus_docs, out_dir=DEDUP_DIR):
     """Production cross-source exact dedup. It MUST go through dedup_docs (the tested core):
@@ -124,9 +148,9 @@ def dedup(domains, params, *, doc_source=corpus_docs, out_dir=DEDUP_DIR):
     total = 0
     for domain in domains:
         dom_file = os.path.join(out_dir, f"manifest_{domain}.json")
-        if os.path.exists(dom_file):
-            with open(dom_file) as f:
-                stats["shards_scanned"][domain] = len(json.load(f))
+        marker = _load_valid_json(dom_file)
+        if marker is not None:
+            stats["shards_scanned"][domain] = marker.get("docs_scanned", 0)
             continue
         n = 0
         for _key, text, shard in doc_source(domain):
@@ -136,37 +160,50 @@ def dedup(domains, params, *, doc_source=corpus_docs, out_dir=DEDUP_DIR):
         total += n
         # resumable per-domain marker: counts the docs scanned from this domain so a re-run
         # skips it (the shards and the global manifest are rebuilt from the gathered stream).
-        with open(dom_file, "w") as f:
-            json.dump({"domain": domain, "docs_scanned": n}, f)
+        _write_json_atomic(dom_file, {"domain": domain, "docs_scanned": n})
 
     # Resume: if every requested domain was already scanned (markers present, nothing gathered),
     # the global manifest on disk is complete -- leave it rather than rebuild from an empty
     # stream (which would wipe it). A partial prior run (some domains unmarked) re-scans those
-    # domains and rebuilds from the full gathered stream.
-    if not docs and all(os.path.exists(os.path.join(out_dir, f"manifest_{d}.json"))
-                       for d in domains):
-        mpath0 = os.path.join(out_dir, "dedup_manifest.json")
-        if os.path.exists(mpath0):
+    # domains and rebuilds from the full gathered stream. A torn/corrupt global manifest under
+    # complete markers is NOT left to JSONDecodeError forever: invalidate the markers and
+    # re-scan every domain this run.
+    all_marked = all(_load_valid_json(os.path.join(out_dir, f"manifest_{d}.json")) is not None
+                     for d in domains)
+    mpath0 = os.path.join(out_dir, "dedup_manifest.json")
+    if not docs and all_marked:
+        existing = _load_valid_json(mpath0)
+        if isinstance(existing, list):
             print(f"dedup {list(domains)}: all domains already scanned; {mpath0} left as-is")
             return 0
+        for d in domains:
+            with contextlib.suppress(OSError):
+                os.remove(os.path.join(out_dir, f"manifest_{d}.json"))
+        docs = []
+        total = 0
+        for domain in domains:
+            dom_file = os.path.join(out_dir, f"manifest_{domain}.json")
+            n = 0
+            for _key, text, shard in doc_source(domain):
+                docs.append((domain, text, shard))
+                n += 1
+            stats["shards_scanned"][domain] = n
+            total += n
+            _write_json_atomic(dom_file, {"domain": domain, "docs_scanned": n})
 
     seen, dups = dedup_docs(docs)  # THE tested decision; dups is one record per occurrence
 
     # global manifest: a JSON array of duplicate records (one per later occurrence).
-    mpath = os.path.join(out_dir, "dedup_manifest.json")
-    with open(mpath, "w") as f:
-        json.dump(dups, f)
+    _write_json_atomic(mpath0, dups)
     # representatives manifest (the surviving first occurrences), key -> {source, shard}.
-    with open(os.path.join(out_dir, "dedup_kept.json"), "w") as f:
-        json.dump(seen, f)
+    _write_json_atomic(os.path.join(out_dir, "dedup_kept.json"), seen)
     sp = os.path.join(out_dir, "dedup_stats.json")
     stats["duplicates"] = len(dups)
     stats["representatives"] = len(seen)
-    with open(sp, "w") as f:
-        json.dump(stats, f, ensure_ascii=False, indent=1)
+    _write_json_atomic(sp, stats, indent=1)
     print(
         f"dedup {list(domains)}: {total} docs scanned, {len(seen)} representatives, "
-        f"{len(dups)} exact-duplicate occurrences -> {mpath} (dedup_fp {fp})"
+        f"{len(dups)} exact-duplicate occurrences -> {mpath0} (dedup_fp {fp})"
     )
     return 0
 
@@ -269,9 +306,62 @@ def _selftest():
         with open(os.path.join(td, "dedup_manifest.json")) as f:
             again = json.load(f)
         assert again == on_disk, "resume must produce an identical manifest"
-    print("selftest ok: normalization collapses ws/punct variants; case/order/content do not; "
-          "cross-source dup points at first occurrence; dedup_fp tracks params; empty skipped; "
-          "production dedup() drives the core (3 copies -> 2 dup records, first source)")
+
+    # 7) DURABLE/ATOMIC PUBLICATION: every output lands via tmp -> flush/fsync ->
+    #    os.replace(tmp != dst) -> dir fsync, never a bare open(final,'w') a crash can tear.
+    #    Spy on durable_publish in THIS module's globals (under __main__, `import
+    #    datagen.dedup_corpus` is a second module object; patching that attribute never
+    #    reaches _write_json_atomic). A direct write bypasses durable_publish and goes red.
+    calls = []
+    _real_pub = durable_publish
+
+    def _spy_publish(fh, tmp, dst):
+        calls.append((tmp, dst))
+        return _real_pub(fh, tmp, dst)
+
+    with tempfile.TemporaryDirectory() as td:
+        globals()["durable_publish"] = _spy_publish
+        try:
+            dedup(["domA"], {"exact": "content-hash", "near_dup": "none", "shingles": 5},
+                  doc_source=lambda dom: iter([(doc_key("one two three four"),
+                                                "one two three four", "a.jsonl")]),
+                  out_dir=td)
+        finally:
+            globals()["durable_publish"] = _real_pub
+        got = {os.path.basename(dst) for _tmp, dst in calls}
+        expected = {"dedup_manifest.json", "dedup_kept.json", "dedup_stats.json",
+                    "manifest_domA.json"}
+        assert expected <= got, f"not every output published durably: missing {expected - got}"
+        for tmp, dst in calls:
+            assert tmp != dst and os.path.basename(tmp).endswith(".tmp"), (tmp, dst)
+            assert os.path.dirname(os.path.abspath(tmp)) == os.path.dirname(
+                os.path.abspath(dst)), (tmp, dst)
+        assert not [f for f in os.listdir(td) if f.endswith(".tmp")], "stale .tmp left behind"
+
+    # 8) TORN-MANIFEST RECOVERY: complete markers + a half-written global manifest must be
+    #    REBUILT (rc 0, valid correct manifest), not left failing every resume with
+    #    JSONDecodeError.
+    stub2 = {
+        "domA": [(doc_key(base), base, "a0.jsonl")],
+        "domB": [(doc_key(base), base.replace(" ", "  "), "b0.jsonl")],
+    }
+    with tempfile.TemporaryDirectory() as td:
+        dedup(["domA", "domB"],
+              {"exact": "content-hash", "near_dup": "none", "shingles": 5},
+              doc_source=stub2.__getitem__, out_dir=td)
+        with open(os.path.join(td, "dedup_manifest.json"), "w") as f:
+            f.write('[{"doc_key": "deadbeef", "dup_of": "do')  # torn mid-JSON
+        rc3 = dedup(["domA", "domB"],
+                    {"exact": "content-hash", "near_dup": "none", "shingles": 5},
+                    doc_source=stub2.__getitem__, out_dir=td)
+        assert rc3 == 0, "torn manifest must rebuild, not raise"
+        rebuilt = _load_valid_json(os.path.join(td, "dedup_manifest.json"))
+        assert isinstance(rebuilt, list) and len(rebuilt) == 1, rebuilt
+        assert rebuilt[0]["source"] == "domB" and rebuilt[0]["dup_of"] == "domA", rebuilt
+
+    print("selftest ok: normalization; cross-source first-occurrence; dedup_fp; empty skip; "
+          "production drives core (3 copies -> 2 dup); all 4 outputs atomic tmp->rename "
+          "(spy-verified); torn global manifest with complete markers rebuilds, never raises")
     return 0
 
 
