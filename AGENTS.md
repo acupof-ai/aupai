@@ -548,12 +548,18 @@ The domain files, named here because `facts_well_formed` requires it in both dir
   ```bash
   git push -u origin HEAD
   gh pr create --base main --head <branch>
-  # CI must be green on the PR's HEAD sha
+  # Gate first: nonzero rc means do NOT merge (2=pending check, 1=fail/cancel, 3=gh error/empty)
+  python3 scripts/pr_merge_gate.py <pr>   # rc 0 only when EVERY check is settled-passing
   # your second reader approves ON THE PR as a COMMENT with `artifact:` or `case:` in it, plus a
   # runs/review.jsonl row: every session shares one gh identity, so `gh pr review --approve` is
   # refused ("Can not approve your own pull request") and review_present reads the ledger row
   # THE REVIEWER, never the author: gh pr merge --merge
   ```
+
+  The gate reads `gh pr checks --json` and fails closed: it decides on the whole settled set,
+  not one CI event, so a check still QUEUED/IN_PROGRESS blocks the merge (the #441 race) and an
+  empty/gh-error set is NO-GO, never green. It is a pre-merge convention, not a hook — there is
+  no wrapper around `gh pr merge`; the reviewer runs it and only merges on rc 0.
 
   Ledger-only commits still merge with `scripts/merge_main.sh <branch>` — immediate, union-merged,
   CAS. That split is the ruling and not a shortcut: the union driver and the compare-and-swap are

@@ -2086,6 +2086,13 @@ def main():
         # rebound), a changed backend/teacher_model/rubric_version (mixed labels), or a
         # missing manifest all refuse with nonzero exit. CPU-only, no network/corpus.
         "datagen/l3_label_pilot.py",
+        # genB: the L3 rubric parser/truncation contract. CPU-only known answers. Registered
+        # because build_prompt flags a >TRUNC_CHARS document at the exact boundary in both
+        # rubrics (a missed flag feeds a prefix label as if whole), and parse_scores must
+        # refuse missing/non-int/bool/out-of-range/extra/no-json/empty teacher replies. Each
+        # guard is mutation-verified (removing the trunc flag, the range check, or the
+        # missing-dim check turns the selftest red). Had no selftest/main before 2026-09-17.
+        "datagen/l3_rubric.py",
         # ae: the strict machine-generated-banner rule for English code corpora (L0/L1
         # hardening 2026-09-16). Pure string work, no corpus -- 7 real Django/AutoRest/protobuf
         # banner positives and 7 real-code negatives that a looser regex was measured to
@@ -2307,6 +2314,11 @@ def main():
         # v41f-S config-formula total/active parameter counter (3b); --selftest pins a
         # hand-computed tiny config so the total=sum-of-modules identity cannot silently rot.
         "scripts/v41f_param_count.py",
+        # The PR merge gate (66, #441 class). Registered because the whole point is a race it
+        # must not lose: a merge must wait for EVERY check settled-passing. --selftest is pure
+        # (evaluate() over injected lists, zero network) and pins GO only on all-pass, exit 2 on
+        # a fabricated IN_PROGRESS/QUEUED check, fail>pending, cancel/empty/unknown fail closed.
+        "scripts/pr_merge_gate.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to

@@ -323,6 +323,47 @@ def _selftest():
         assert m3["repaired_torn_label_tail"] is True, m3
         assert m3["kept"] == n_lines(out) == 5, (m3["kept"], n_lines(out))
         assert m3["newly_kept_this_run"] == 1, m3
+
+    # rejected-dedup across runs (the mutation blind spot): a sample_id already in the
+    # rejected file is SKIPPED on resume, not re-sent to the teacher. A run that dropped the
+    # rejected_seen guard would label that row and newly_kept would rise.
+    with tempfile.TemporaryDirectory() as td:
+        pilot = os.path.join(td, "p.jsonl")
+        out = os.path.join(td, "labels.jsonl")
+        rej = out + ".rejected.jsonl"
+        with open(pilot, "w", encoding="utf-8") as fh:
+            for i in range(3):
+                fh.write(json.dumps({
+                    "sample_id": f"q{i:07d}", "language": "en", "length_band": "s",
+                    "source": "st/x", "url": None,
+                    "content": "rejected dedup probe words in a row " * 8}) + "\n")
+        # q0 and q2 were rejected in a prior (crashed) run; q1 was never attempted.
+        with open(rej, "w", encoding="utf-8") as fh:
+            for sid in ("q0000000", "q0000002"):
+                fh.write(json.dumps({"sample_id": sid, "reason": "x",
+                                     "rubric_kind": "natural_language", "ts": "t"}) + "\n")
+
+        def run_rej():
+            buf = io.StringIO()
+            old = sys.argv
+            sys.argv = ["l3_label_pilot.py", "--pilot", pilot, "--out", out,
+                        "--backend", "stub"]
+            try:
+                with contextlib.redirect_stdout(buf):
+                    main()
+            finally:
+                sys.argv = old
+            return json.loads(buf.getvalue())
+
+        m = run_rej()
+        assert m["kept"] == 1 and m["newly_kept_this_run"] == 1, m
+        assert m["rejected"] == 2 and m["newly_rejected_this_run"] == 0, m
+        with open(out, encoding="utf-8") as fh:
+            kept_ids = {json.loads(l)["sample_id"] for l in fh}
+        assert kept_ids == {"q0000001"}, kept_ids
+        m2 = run_rej()
+        assert m2["newly_kept_this_run"] == 0 and m2["newly_rejected_this_run"] == 0, m2
+
     print("selftest ok: fresh=0; identical resume allowed; changed pilot, changed "
           "backend/model/rubric, and missing manifest all refused; torn LAST line in "
           "labels/rejects self-heals (middle corruption loud); rejected ids dedup on "
