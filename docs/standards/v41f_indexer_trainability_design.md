@@ -46,26 +46,44 @@ dormant on the current small shape.
 
 ## 1. Options
 
-### Option A — straight-through estimator (STE) on the hard selection
+### Option A — straight-through estimator (STE) wired into the attention softmax
 
 Keep the forward exactly as today (hard `topk`, integer gather, bit-identical KV actually
-attended), but let the gradient pass through the selection as if it were the identity:
+attended), but give the hard per-slot selection indicator a differentiable twin that is
+consumed BY the attention the main loss runs through. The STE tensor is not a side output; a
+surrogate that is computed and never fed to a consumer leaves `score.grad`/`wq_b.grad` None
+(this was the defect in the first draft of this option: `score.gather(hard_idx)` on its own is
+a dangling tensor, and the real path `score -> topk -> .int -> sparse_attn` discards it —
+independently measured, both grads are None whether or not the gather exists).
 
-    soft = score                       # continuous [b,s,t], already masked in-place
-    hard_idx = soft.topk(k).indices    # discrete, used by the forward
-    # surrogate: selected entries = soft.gather(hard_idx); backward treats the
-    # gather mask as constant and sends dL/d(selected score) into `soft` at picked slots
+Concrete construction (de d4f, measured on the real path 2026-09-17):
 
-The attended compressed KV is still the hard-gathered one — forward numerics do not change.
-On the backward, only the `k` selected entries per query receive gradient, through the
-continuous `score` that produced them. `wq_b` / `weights_proj` then learn "raise the score
-of entries the main CE found useful," evaluated through the real attention output, not a
+    # selector emits, alongside hard idxs, the CONTINUOUS scores at the selected slots:
+    sc = score.gather(-1, hard_idx)          # [b,m,k], a view of the SAME score tensor
+    a  = one-hot / hard selection weight actually used in the gather (forward)
+    sf = softmax(sc)                          # differentiable over the k selected slots
+    p  = a + (sf - sf.detach())              # STE: forward == a, backward == d softmax
+
+`p` is passed to `sparse_attn` as the selection weight in the softmax it already computes
+over the k gathered slots (plus the sink). Forward: `sf.detach()` cancels `sf`, so
+`torch.equal(p, a)` is True and attention numerics are bit-identical to the hard path.
+Backward: the `- sf.detach()` cancels in value but not in the graph, so gradient flows
+through the already-computed softmax `sf` into `sc`, into `score`, into `wq_b`/
+`weights_proj` — measured forward `torch.equal` True and `wq_b.weight.grad = 111.836`,
+finite. The selection the main CE used is still the hard one; only the gradient is soft.
+
+`wq_b` / `weights_proj` then learn "raise the indexer score of entries the attended output
+found useful," differentiated through the real attention and the real main CE — not a
 surrogate target.
 
-Cost: small. Needs an explicit custom-autograd `Function` (or
-`score[...].detach()*0 + gather(score)` style) because native `topk().indices` carries no
-grad. No new loss term, no scalar weight to tune, and it cannot perturb the main CE in the
-forward (the hard selection is unchanged).
+Cost: small. The seam exposes the gathered `sc`; the STE is one add with a detached term;
+no new loss term and no scalar weight, so it cannot perturb the main CE forward (hard
+selection unchanged). No custom `torch.autograd.Function` is needed — the
+`x + (f(x) - f(x).detach())` identity is the standard STE and keeps the forward a plain
+hard tensor.
+
+Do NOT use a multiplicative `score * log(gate)` coupling: it is not element-wise across the
+selection and produces NaN grads; the additive STE above is the measured-good form.
 
 Known weakness (labeled, not hidden): STE is a biased estimator — gradient magnitude ignores
 that selection is a step function, and non-selected entries get exactly zero signal even
@@ -122,10 +140,15 @@ the real default path leaves `wq_b`/`weights_proj` unused.
   `index_score` in-place and then topks it. The change exposes the post-visibility-mask
   continuous tensor (the same object the hard topk reads) so a training adapter can attach
   STE without a second projection. Selection math is unchanged.
-- **Selector is factored as `score -> hard idxs` with a named seam.** The seam returns
-  `(idxs_int, score_continuous)`; inference and the bit-exact tests consume `idxs_int`
-  exactly as now. The STE adapter wraps the gather of `score_continuous` at selected slots;
-  it is constructed only when training-with-STE is enabled.
+- **Selector is factored as `score -> (hard idxs, selected scores)` with a named seam.** The
+  seam returns the integer `idxs_int` the gather uses AND the continuous scores gathered at
+  those slots, `sc = score.gather(-1, hard_idx)` (a view of the same `score` object, not a
+  recompute). Inference and the bit-exact tests consume `idxs_int` exactly as now. When STE
+  is on, the adapter builds `p = a + (softmax(sc)-softmax(sc).detach())` (Option A) and
+  passes `p` INTO `sparse_attn` as the per-slot selection weight in its softmax — the STE
+  tensor is a consumer input, never a dangling side tensor (the first draft's
+  `score.gather(...)` left unused was the bug: grads stayed None). It is constructed only in
+  training-with-STE; the off path never builds `sc`/`p`.
 - **Compressor interface is unchanged.** The softmax-gated compressor
   (`v41f/compressor.py`) produces the latent; the indexer scores `index_key(latent)`. STE
   differentiates `score` w.r.t. `wq_b`/`weights_proj` only. Whether gradient flows further
@@ -152,18 +175,23 @@ the real default path leaves `wq_b`/`weights_proj` unused.
   future `"ste+aux"`). `off` is byte-identical to today on both forward and backward —
   proven by an equality test against the flag-off path, not assumed.
 - Default off means the faithful P0/P1 allclose suite, the inference checkpoint, and every
-  existing numerics test see no change. The indexer params remain outside the fp32-master
-  optimizer group while off (consistent with #447 §1.1: indexer params are saved
-  structurally but carry no m/v until a gradient path exists). Turning `ste` on moves them
-  into the optimizer group; #447's membership rule ("in optimizer group ⇒ has master") then
-  covers them with no special case.
+  existing numerics test see no change. The indexer params use the three-state lifecycle of
+  `v41f_train_checkpoint_design.md` §6 (#447): off = **present-dormant** (module built,
+  bf16 weights saved with `param_meta grad=False`, no master/m/v); ste = **in-group**
+  (AdamW group ⇒ fp32 master + m/v). A level-1 indexer module that v41f-S does not
+  instantiate is **absent** (never in the blob). Turning the mode on is the only thing that
+  moves `wq_b`/`weights_proj` present-dormant → in-group, with no format migration; #447's
+  membership rule ("in optimizer group ⇒ has master") covers them with no special case.
 - STE changes only the **backward**. Assertions:
   - forward: hard-selected idxs and attended logits identical between off and ste
-    (`torch.equal(idxs)`, logits bit-exact on CPU fp32);
+    (`torch.equal(idxs)` off-vs-ste, `torch.equal(p, hard_weight_a)`, logits bit-exact on CPU fp32);
   - backward off: `wq_b.weight.grad is None` or zeros (dead, as today);
-  - backward ste: `wq_b.weight.grad` / `weights_proj.weight.grad` are non-zero, finite, and
-    flow **only** from CE — no auxiliary scalar exists yet, so any non-CE gradient is a
-    wiring fault.
+  - backward ste: `wq_b.weight.grad` / `weights_proj.weight.grad` are non-zero and finite,
+    and reach them THROUGH the `p -> sparse_attn softmax -> CE` consumer graph — proven by
+    the grad being present when `p` is fed and None when the identical gathered `sc` is left
+    unconsumed. (de measured `wq_b.grad=111.836` finite on the real path; the additive-STE
+    forward-identity/backward-soft identity is independently proven on a minimal tensor.)
+    No auxiliary scalar exists yet, so any non-CE gradient is a wiring fault.
 - No tunable coefficient exists in Option A, so there is no knob that can distort the main
   CE. The risk surface is restricted to a biased-but-scaled gradient; a gradient-norm guard
   (indexer grad norm finite and not exploding relative to attn grads) is logged, not used to
@@ -184,11 +212,16 @@ Correctness (green on real code):
 
 1. **off = today**: with `indexer_train_mode="off"`, selected idxs and logits are
    bit-identical to a run on the unmodified selector; both indexer grads are None/zero.
-2. **STE forward hard**: with `"ste"`, `torch.equal` of hard idxs vs off, and logits
-   bit-identical (forward does not soften).
+2. **STE forward hard**: with `"ste"`, `torch.equal` of hard idxs vs off,
+   `torch.equal(p, hard_weight_a)` (the `+(sf-sf.detach())` term is exactly zero in value),
+   and logits bit-identical (forward does not soften).
 3. **STE backward soft/nonzero**: finite, non-zero grads on both `wq_b.weight` and
    `weights_proj.weight`; shapes equal the parameter shapes; grad reaches indexer params
-   from CE alone.
+   through the `p -> sparse_attn softmax -> CE` consumer graph, from CE alone.
+9. **STE tensor is actually consumed (the first-draft regression).** With gathered `sc` and
+   `softmax(sc)` built but NOT passed to `sparse_attn` (a dangling tensor), both indexer
+   grads are None; feeding the STE `p` into the sparse_attn softmax flips them to gate-3
+   nonzero. This gate separates a wired STE from a computed-but-unused surrogate.
 4. **gradient provenance**: only `wq_b`/`weights_proj` receive new grad; compressor /
    `index_key` / attention param grads are unchanged between off and ste (indexer-local
    scope, §2).
@@ -199,12 +232,19 @@ Correctness (green on real code):
    autograd without NaN.
 7. **optimizer-group membership**: off ⇒ indexer params absent from optimizer param group
    (no m/v); ste ⇒ present with fp32 master under #447. Loads/saves round-trip either way.
-8. **inference isolation**: `eval()`/inference checkpoint path contains no STE Function;
+8. **inference isolation**: `eval()`/inference checkpoint path builds no STE `sc`/`p`;
    logits equal the off path.
 
 Mutants (each names the assertion that dies):
 
-- M1 replace STE backward with zero / detach the score ⇒ gate 3 (nonzero grad) fails.
+- M1 zero the STE backward (`p=a` with no soft graph, or `sf.detach()` only) ⇒ gate 3
+  nonzero-grad fails.
+- **M1b compute `sc`/`p` but never pass `p` into `sparse_attn` (dangling surrogate) ⇒ gate
+  9 fails — the exact first-draft defect that left the as-written grads None.**
+- M1c drop the `-sf.detach()` cancellation (`p = a + sf`) ⇒ gate 2 `torch.equal(p,a)` and
+  bit-exact logits fail (forward no longer hard).
+- M1d replace the additive STE with a multiplicative `score * log_softmax(...)` coupling ⇒
+  NaN/non-finite at gate 3/6 (the form de measured bad).
 - M2 make the forward soft (weighted gather instead of hard) ⇒ gate 2 `torch.equal(idxs)`
   and logits bit-exact fail — pins "forward stays hard."
 - M3 recompute score on the training side instead of reusing the seam tensor ⇒ gate 5
@@ -227,14 +267,19 @@ an aux term does.
 
 ## 5. Open questions for de/fb
 
-1. STE custom-autograd placement: a small `v41f/indexer_ste.py` (training-only, never
-   imported by inference) vs an inline `torch.autograd.Function` in `indexer.py`. Recommend
-   the separate file so the faithful port file stays a 1:1 read against the ref.
+1. STE placement: no `torch.autograd.Function` is needed — the additive
+   `a+(sf-sf.detach())` identity is enough. The open choice is where the gathered `sc`/`p`
+   crosses into `sparse_attn` (an optional per-slot selection-weight argument, default the
+   hard one-hot) and whether the adapter lives in a small training-only
+   `v41f/indexer_ste.py` so the faithful `indexer.py` stays a 1:1 read against the ref.
+   Recommend the separate file + an opt-in sparse_attn weight the off path never builds.
 2. Confirm indexer-local STE scope (grad to `wq_b`/`weights_proj` only) for the first
    landing, vs extending into `index_key` immediately. Recommend local.
-3. Gate the first STE landing on a short CPU train-smoke asserting indexer grads are
-   non-zero and the main-CE loss still decreases — no claim it improves HumanEval; it only
-   proves the params are trained. A real usefulness claim needs the GPU ablation later
-   (off vs ste, downstream HumanEval delta), which is a separate prereg question.
-4. Flag name/grouping with #447's optimizer-membership rule — confirm
-   `indexer_train_mode="ste"` is the single switch that also moves master/m/v.
+3. Gate the first STE landing on a short CPU train-smoke asserting (a) gate 9 — an
+   unconsumed `p` leaves grads None while the wired `p` yields the gate-3 nonzero finite
+   grads — and (b) the main-CE loss still decreases. No claim it improves HumanEval; it only
+   proves the params train. A usefulness claim needs the later GPU ablation (off vs ste,
+   downstream HumanEval delta), a separate prereg question.
+4. Flag name/grouping with #447 §6's optimizer-membership rule — confirm
+   `indexer_train_mode="ste"` is the single switch that moves the indexer params
+   present-dormant → in-group (master/m/v) and that an absent level-1 module is excluded.
