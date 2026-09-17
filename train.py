@@ -615,16 +615,40 @@ def _n_active_params(model, cfg):
     148 (the log says 278%; the gap is its rounded tok/s). Active is 0.2067B and the honest figure
     is 38.6%.
 
-    THE PREDICATE IS THE TENSOR'S SHAPE, NOT ITS NAME, and the difference is a trap worth stating
-    because a name test looks equivalent and is not. model.FFN gives the DENSE FFN
-    parameters called `w13` and `w2`; model.MoEFFN gives its routed stacks the same two
+    THE PREDICATE IS THE SHAPE **AND** THE MODULE, and both halves are load-bearing for opposite
+    reasons. The shape half is what makes it about routed experts at all. The module half is what
+    stops a non-routed tensor that happens to be 3-D with the right leading dimension.
+
+    Shape alone is not enough, and the counterexample is live in this file's own model family:
+    `DeltaRecurrence.short_conv` is `nn.Conv1d(d_in, d_in, kernel_size=4, groups=d_in)`
+    (model.py:140), whose `.weight` is `(d_in, 1, 4)`. At `d_in == cfg.moe_experts` that matches a
+    shape-only test, and the short_conv is then discounted by k/e as if it were an expert that most
+    tokens skip. MEASURED on this repo, d 8 / layers 4 / moe_experts 8 / top_k 1, moe_layers "0-1":
+    the shape-only predicate matches SEVEN tensors, of which only four are routed --
+    `blocks.{0,2}.mixer.short_conv.weight` joins `blocks.{0,1}.ffn.{w13,w2}` -- so 96 numel of
+    mixer conv enters the routed sum and 84 of it is discounted (96 - 96*1//8), i.e. the
+    denominator reads 3274 where it should read 3358. Note which way the error points: the
+    phantom discount makes the denominator SMALLER, so MFU reads HIGHER than it should.
+
+    Name alone is not enough either, which is the trap the shape half exists for. model.FFN gives the
+    DENSE FFN parameters called `w13` and `w2`; model.MoEFFN gives its routed stacks the same two
     names. A test on the last path component happens to separate them today -- nn.Linear appends
     `.weight`, a bare nn.Parameter does not -- but that is a fact about nn.Linear's internals, not
     about which parameters are routed, and it breaks the moment an expert stack becomes a module.
     The substring spelling is worse and measured: on a mixed model (moe_layers "0-1" of 12 layers,
     the real arm's shape) `"w13" in n` charges all 12 blocks, 344064 against the routed 98304.
-    A routed stack is (E, ..., ...) with E == cfg.moe_experts; a dense weight is 2-D. Verified
-    against both checkpoints: the dense arm excludes 0.0000B either way, the MoE arm 1.3590B.
+    `"ffn." in n` is a MODULE test, not a leaf-name test: it separates `blocks.N.ffn.*` from
+    `blocks.N.mixer.*` (and from any other subsystem) without depending on how the leaf is spelled,
+    so a renamed expert leaf or an expert stack that becomes an nn.Module both stay matched. A
+    routed stack is (E, ..., ...) with E == cfg.moe_experts AND lives under an ffn module; a dense
+    weight is 2-D. Verified against both checkpoints: the dense arm excludes 0.0000B either way, the
+    MoE arm 1.3590B.
+
+    SCALE: the false match is unreachable at any shipped config, because short_conv is `(d, 1, 4)`
+    and needs `d == moe_experts`. The arms are 1024/48 and 5120/384. So nothing printed today is
+    wrong; what the module half buys is that the predicate cannot silently become wrong the day
+    someone sizes a small ablation with d == experts (a sweep point, not a hypothetical -- the
+    de-74 mutation world is exactly that config).
 
     THE DENSE ARM MUST BE BIT-IDENTICAL, which is 62's acceptance criterion and the reason this
     subtracts rather than recomputing an active count from config. With moe_experts 0 the loop
@@ -643,8 +667,8 @@ def _n_active_params(model, cfg):
     k = int(getattr(cfg, "moe_top_k", 0) or 0)
     n_routed = 0
     if e > 0:
-        n_routed = sum(p.numel() for p in model.parameters()
-                       if p.dim() == 3 and p.shape[0] == e)
+        n_routed = sum(p.numel() for n, p in model.named_parameters()
+                       if p.dim() == 3 and p.shape[0] == e and "ffn." in n)
     # k >= e would mean every expert is reached: subtract nothing rather than add.
     n_inactive = n_routed - n_routed * min(k, e) // e if e > 0 else 0
     return n_total - n_mem - n_inactive
