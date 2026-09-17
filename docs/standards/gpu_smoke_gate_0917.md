@@ -44,18 +44,22 @@ dispatch.
 
 **1b. GPU fast path allcloses the CPU loop oracle.** This is the gate that lets the grouped
 dispatch replace `v41f/moe.py:79-89`'s per-expert loop. The CPU form of it already passes at
-**0.0** (`tests/v41f/test_p1_grouped_dispatch.py`, in `moe_grouped_mm_dispatch.md` §4). On
-GPU the same test runs with `torch._grouped_mm` where the skeleton calls `_grouped_linear`.
+**0.0** — both dtypes, because the reference uses the same `F.linear` operand layout as the
+loop (`tests/v41f/test_p1_grouped_dispatch.py`, `moe_grouped_mm_dispatch.md` §4). On GPU the
+same test runs with `torch._grouped_mm` where the skeleton calls `_grouped_linear`.
 
-- bf16, at the gate magnitudes (`dim=1024, inter=1728`): the CPU pre-transposed-layout
-  figure there is **0.031–0.25 across seeds** and is shape-dependent, so the GPU gate gets a
-  **threshold, not a copied value**. Proposed bound `atol=2e-2` (the project MoE convention)
-  on the *dispatch-vs-loop* comparison — the GPU kernel does NOT need to match the CPU
-  layout artifact; it must match the loop it replaces.
-- `prereg`: the measured GPU max_abs at the gate shape, and whether the kernel needs the
-  16-byte-aligned `[E,K,N]` repack (moe doc §7 prereg #1). If the real kernel's bf16
-  accumulation differs enough to exceed 2e-2, that is a finding for the prereg, not a silent
-  threshold bump.
+- CPU expectation for this gate: **0.0** — it compares dispatch math against the loop, and
+  grouping is exact once the operand layout is held fixed.
+- The GPU kernel is forced to the `[E,K,N]` weight layout, which the CPU reference does NOT
+  use. That layout difference is a separate, **shape-dependent** CPU proxy: bf16
+  `dim=1024/inter=1728` measured 0.031–0.25 across seeds, `dim=8/16` and `dim=64/128` 0.0
+  (`moe_grouped_mm_dispatch.md` §5). This is the operand-layout rounding the GPU repack can
+  introduce, and its real on-GPU magnitude is **prereg #3 — do not gate on the CPU proxy and
+  do not copy it as a threshold**. Gating the GPU run on the proxy range would either fail a
+  correct kernel or invite a silent atol bump.
+- `prereg`: the measured GPU dispatch-vs-loop max_abs at the gate shape, and whether the
+  kernel needs the 16-byte-aligned repack at all (moe doc §7 prereg #1). Set the working atol
+  from that measurement, against the loop, not from any CPU proxy.
 - The CPU loop stays the oracle: a GPU run that disagrees with it fails, full stop.
 
 Failure action: do not enable the fast path; the loop remains the production path and the
@@ -70,37 +74,62 @@ assembled Block/Model matches the vendored upstream reference
 model on the device, and adds the two things a CPU run cannot show: GPU kernels emit no NaN,
 and GPU backward agrees.
 
+**This gate is re-run at each assembly step, not once.** The current `v41f_small()`
+(`v41f/config.py:110`) and the whole-net comparison run with all four new subsystems OFF
+(`engram_layer_ids=()`, `n_mtp_layers=0`, `dspark_block_size=0`,
+`dspark_target_layer_ids=()`). A green run there says nothing about the model once Engram,
+DSpark, or the indexer STE are wired in. Per the assembly plan (`docs/standards/v41f_assembly_plan.md`,
+open PR #468 at the time of writing — this section tracks that plan's A–D steps), re-run this
+gate after each step with that step's mechanism ON:
+
+| step | mechanism ON for this gate | prerequisite |
+|---|---|---|
+| base | all four OFF — today's `v41f_small` | none (this is the §2 run above) |
+| A | Engram (`self.engrams`, `engram_hash`) | #447 |
+| B | DSpark draft block (`self.mtp` + training entry) | #454 merged |
+| C | indexer STE (non-default path) | #456 merged |
+| D | ckpt covers the three new subsystems | #447, after A/B/C |
+
+Each step's own pair of gates (off = regression against the step's baseline; on = correctness
+vs the vendored reference) is #468's; §2 here is the **GPU execution** of that pair.
+
 ```bash
 python tests/v41f/p0_selftest.py --selftest    # CPU, must stay green (baseline)
 python tests/v41f/p1_selftest.py --selftest
-# prereg: a GPU variant that builds v41f_small on cuda, forward+backward vs the CPU fp32 ref
+# prereg: a GPU variant that builds v41f_small + the enabled step, fwd+bwd vs the CPU fp32 ref
 ```
 
-- Forward: whole `v41f_small` (`v41f/config.py:110`, the upstream-small reference shape) on
-  GPU, compared to the CPU fp32 reference at the existing P0/P1 atol — `prereg` that the GPU
-  bf16 path reproduces the CPU comparison inside that atol (the suites are bf16 on CPU today;
-  the GPU dtype/atol pairing is the thing to pin).
+- Forward: the assembled model on GPU, compared to the CPU fp32 reference at the existing
+  P0/P1 atol — `prereg` the GPU dtype/atol pairing and the measured max_abs; do not invent it.
 - Backward: every parameter receives a finite gradient; no NaN/Inf anywhere in the graph.
-- `prereg`: the exact GPU atol and the measured max_abs; do not invent it.
+- Run this at the base config AND at each of A/B/C (D re-runs it via ckpt load). A step that
+  is correct on CPU but NaNs or diverges on GPU is exactly what this catches.
 
-Failure action: a NaN or a shape-dependent gradient gap blocks the training launch; it is a
-model/kernel defect, and it is cheaper to find here than at step 40 of a real run.
+Failure action: a NaN, or a gradient gap that survives the step's own on/off gates, blocks
+that assembly step's merge and the training launch — cheaper to find here than at step 40 of
+a real run.
 
 ## 3. Memory peak and first-step throughput — recorded the r3 way
 
-Once §2 passes, run a short smoke (the V4.1 stack at the gate shape) and record it in the
-convention the r3-era smokes already used (`facts/v41.json#v41.smoke_compiled_flash_h_i_0911`,
-`#v41.smoke_first_steps_f_0910`): loss at named steps, grad-norm, **peak GiB/rank**, and
-**tok/s/gpu** at named steps — with the config that produced them, never a bare number.
+Run a short smoke (the V4.1 stack at the gate shape) and record it in the convention the
+r3-era smokes used: loss at named steps, grad-norm, **peak GiB/rank**, **tok/s/gpu**, with
+the config that produced them — never a bare number.
 
-- Record: cfg (dim/layers/heads/seq/batch/accum/world/dtype/compile), loss + gnorm + tok/s at
-  steps 10/20/30..., peak GiB/rank, NaN yes/no, checkpoint written (path) or not.
-- The r3 reference points (batch 8 OOMs pre-step at 94.6 GiB; batch 4 accum 4 drove 381 steps
-  at 72.64 GiB/rank, steady ~18K tok/s/gpu) are **r3-era facts on the r3 model family**.
-  v41f is a new model family: its architecture flags differ and it does **not inherit r3
-  weights or r3 numbers**. Use the r3 record as the *format*, not as the expected values.
-- `prereg`: v41f's own peak and steady tok/s at the batch/accum chosen. B4×accum is fixed
-  where the gate recipe fixes it; the smoke reports what the new node actually does.
+**Measure this after assembly steps A and B**, not at the base config: Engram and DSpark both
+add parameters (and DSpark adds a draft block), so a peak taken with them off under-reports
+the training shape. Step C (indexer STE) is attention-path and does not change parameter
+count, but re-record if it moves the attention activation peak.
+
+- The record format and the r3 reference points are in the same fact entry:
+  `facts/v41.json#v41.smoke_compiled_flash_h_i_0911` records batch 8 OOMs pre-step at **94.6
+  GiB/rank** and batch 4 accum 4 driving **381 steps at 72.64 GiB/rank, steady ~18K
+  tok/s/gpu**; `#v41.smoke_first_steps_f_0910` is the eager dense-FFN counterpart (25.2
+  GiB/rank, 7K/12K tok/s/gpu at steps 20/30).
+- Those are **r3-era facts on the r3 model family**. v41f is a new model family: its
+  architecture flags differ and it does **not inherit r3 weights or r3 numbers**. Read the
+  r3 entry for the *format*; the numbers above are r3's, not a target for v41f.
+- `prereg`: v41f's own peak and steady tok/s at the batch/accum chosen, measured with A+B on.
+  B4×accum is fixed where the gate recipe fixes it; the smoke reports what the new node does.
 
 Failure action: an unexpected OOM is a config/headroom finding for the prereg (mirroring the
 `smoke_oom_ladder` batch-8 record), not a reason to change batch silently.
@@ -110,20 +139,22 @@ Failure action: an unexpected OOM is a config/headroom finding for the prereg (m
 | # | gate | proves | CPU status | GPU status |
 |---|---|---|---|---|
 | 1a | 8 H20 + CUDA `_grouped_mm` runs | node is the promised node; the kernel exists (not the shim) | n/a | prereg |
-| 1b | GPU fast path allcloses the CPU loop | the dispatch swap is safe | 0.0 on CPU | `atol=2e-2` proposed, value prereg |
-| 2 | whole-net fwd/bwd, no NaN, matches ref | the model runs on device, gradients are finite | P0/P1 green on CPU | on-GPU atol prereg |
-| 3 | smoke: peak GiB/rank + tok/s, r3 format | the node's real capacity and speed for v41f | n/a | prereg |
+| 1b | GPU fast path allcloses the CPU loop | the dispatch swap is safe | **0.0** (dispatch vs loop) | value prereg; layout proxy not a gate |
+| 2 | whole-net fwd/bwd, no NaN, matches ref | the model runs on device, gradients are finite | P0/P1 green on CPU | on-GPU atol prereg; re-run per assembly step |
+| 3 | smoke: peak GiB/rank + tok/s, r3 format | the node's real capacity and speed for v41f | n/a | prereg; measure after A+B |
 
-Order matters: 1a is the node, 1b is the dispatch, 2 is the model, 3 is the budget. A failure
-in 1 stops the GPU dispatch path; a failure in 2 stops the training launch; a failure in 3 is
-a config finding.
+Order: 1a/1b are one-time (node + dispatch); 2 is re-run at base and at each assembly step
+A/B/C; 3 is the budget, measured once A+B are in. A failure in 1 stops the GPU dispatch path;
+in 2 it blocks that assembly step's merge; in 3 it is a config finding.
 
 ## 5. prereg — everything this doc does not yet know
 
 Explicitly unmeasured, to be filled from the first node's run, never guessed:
 
-1. GPU `_grouped_mm` vs the loop at the gate shape: max_abs and the working atol.
+1. GPU `_grouped_mm` vs the loop at the gate shape: max_abs and the working atol (set from
+   this measurement, against the loop — not from the CPU `[E,K,N]` layout proxy).
 2. Whether the kernel needs the 16-byte-aligned `[E,K,N]` repack at dim=1024/inter=1728.
-3. GPU bf16 backward correctness and its atol vs the CPU fp32 reference for `v41f_small`.
-4. v41f's own smoke peak GiB/rank and steady tok/s/gpu on the new node at the launch shape.
+3. GPU bf16 backward correctness and its atol vs the CPU fp32 reference, at base and at each
+   assembly step.
+4. v41f's own smoke peak GiB/rank and steady tok/s/gpu on the new node, with A+B on.
 5. Whether any of the above is sensitive to the H20 driver/torch build on the new image.
