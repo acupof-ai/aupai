@@ -4856,7 +4856,15 @@ def check_pod_stamp_is_main(root):
         return subprocess.run(["git", "-C", root, *a], capture_output=True, text=True)
     if _git("cat-file", "-e", f"{sha}^{{commit}}").returncode:
         return WARN, f"the stamp names {sha[:12]}, which is no commit in this repository"
-    main = _git("rev-parse", "main").stdout.strip()
+    # ORIGIN/MAIN, NOT THE LOCAL REF (de-99). Since the 2026-09-07 code-PR flip, code reaches
+    # main by `gh pr merge`, which advances origin/main and NO local ref in any worktree --
+    # local main moves only under merge_main.sh's CAS, i.e. only for ledger commits. A stamp a
+    # merger pushed therefore names a commit the LOCAL ref does not contain, and the local form
+    # reported its louder branch falsely ("a tree on no branch"). MEASURED 2026-09-10: the
+    # stamp b4a8a41d WAS origin/main; `git fetch origin main:main` cleared the WARN.
+    # Fall back to local main on a remote-less tree (fixtures/CI) so the check still answers.
+    main = (_git("rev-parse", "--verify", "--quiet", "origin/main").stdout.strip()
+            or _git("rev-parse", "--verify", "--quiet", "main").stdout.strip())
     if not main:
         return SKIP, "no main in this repository"
     if sha == main:
@@ -4877,9 +4885,16 @@ def _broken_pod_stamp_is_main():
     Built from this repository's own refs rather than a made-up hex string, because a made-up
     sha fails at `cat-file -e` and would exercise the wrong branch -- the check would report
     "no such commit" and the ancestor comparison, which is the thing being tested, would never
-    run. If no such commit exists here, the world cannot be built and says so."""
+    run. If no such commit exists here, the world cannot be built and says so.
+
+    THE EXCLUSION REF MUST BE THE REF THE CHECK COMPARES AGAINST (de-99 second half).
+    `--not main` alone excluded the local ref, which lags origin/main in every un-fetched
+    worktree, so the picked commit WAS an ancestor of origin/main and read PASS once the check
+    moved to the remote ref. Excluding both refs makes the world non-ancestor under either
+    resolution, which the reality guard also asserts."""
     d = _tmp_repo()
-    r = subprocess.run(["git", "-C", ROOT, "rev-list", "--all", "--not", "main", "-n", "1"],
+    r = subprocess.run(["git", "-C", ROOT, "rev-list", "--all",
+                        "--not", "main", "origin/main", "-n", "1"],
                        capture_output=True, text=True)
     sha = r.stdout.strip()
     if not sha:
@@ -4894,6 +4909,74 @@ def _broken_pod_stamp_is_main():
     os.environ["HARNESS_POD_STAMP"] = stamp
     os.symlink(os.path.join(ROOT, ".git"), os.path.join(d, ".git"))
     return d
+
+
+def _stamp_world_origin_ahead():
+    """A stamp naming ORIGIN/main while the LOCAL main ref lags: the normal post-flip shape.
+
+    SELF-CONTAINED, deliberately not cloned from ROOT. The first version cloned this
+    repository, which fails on a shallow detached checkout with no local `main` branch (the
+    GitHub runner): `clone -b main` has nothing to check out and the world was unbuildable
+    exactly where CI runs. Here a synthetic bare origin is built from scratch -- init, seed
+    one commit, clone subject and pusher, advance main in the pusher, then have the subject
+    FETCH without merging -- so the subject's origin/main is genuinely ahead of its local
+    main with no dependence on this repository's ref layout or the network.
+
+    Returns the subject tree (its parent tempdir is removed by the caller), or raises
+    SelftestSkip(environment) if git itself cannot build the world.
+    """
+    import shutil
+    import tempfile
+    d = tempfile.mkdtemp(prefix="originstamp_")
+    bare, seed = os.path.join(d, "origin.git"), os.path.join(d, "seed")
+    subject = os.path.join(d, "subject")   # never pushes; only fetches -- the lagging worktree
+    pusher = os.path.join(d, "pusher")     # stands in for the PR merger advancing origin/main
+
+    def g(*a, **kw):
+        return subprocess.run(["git", *a], capture_output=True, text=True, **kw)
+
+    def _bail(why, rc=None):
+        shutil.rmtree(d, ignore_errors=True)
+        raise SelftestSkip(f"{why}; the origin-ahead world is unbuildable"
+                           + (f" (rc={rc})" if rc is not None else ""), reason="environment")
+
+    for cmd in (["init", "-q", "--bare", "-b", "main", bare],
+                ["init", "-q", "-b", "main", seed]):
+        if g(*cmd).returncode:
+            _bail(f"git {' '.join(cmd[:3])} failed")
+    g("-C", seed, "config", "user.email", "st@st")
+    g("-C", seed, "config", "user.name", "st")
+    with open(os.path.join(seed, "SEED"), "w") as fh:
+        fh.write("seed\n")
+    g("-C", seed, "add", "SEED")
+    if g("-C", seed, "commit", "-qm", "seed").returncode:
+        _bail("could not seed the origin")
+    if g("-C", seed, "remote", "add", "origin", bare).returncode or \
+            g("-C", seed, "push", "-q", "-u", "origin", "main").returncode:
+        _bail("could not publish the seed to the bare origin")
+    # two clones from the bare origin so the subject advancing is impossible (it never pushes)
+    for dest in (subject, pusher):
+        if g("clone", "-q", "-b", "main", bare, dest).returncode:
+            _bail(f"cannot clone the bare origin into {os.path.basename(dest)}")
+        g("-C", dest, "config", "user.email", "st@st")
+        g("-C", dest, "config", "user.name", "st")
+    with open(os.path.join(pusher, "ORIGIN_AHEAD"), "w") as fh:
+        fh.write("one commit ahead of the subject's local main\n")
+    g("-C", pusher, "add", "ORIGIN_AHEAD")
+    if g("-C", pusher, "commit", "-qm", "origin-ahead fixture").returncode or \
+            g("-C", pusher, "push", "-q", "origin", "main").returncode:
+        _bail("could not advance origin/main from the pusher")
+    if g("-C", subject, "fetch", "-q", "origin").returncode:
+        _bail("could not fetch in the subject")
+    local = g("-C", subject, "rev-parse", "main").stdout.strip()
+    front = g("-C", subject, "rev-parse", "origin/main").stdout.strip()
+    if not local or not front or front == local:
+        _bail("the subject's origin/main did not move ahead of its local main")
+    os.makedirs(os.path.join(subject, "data"), exist_ok=True)
+    with open(os.path.join(subject, "data", "pod_synced_head"), "w", encoding="utf-8") as fh:
+        fh.write(f"{front} 0 2026-09-10T00:00:00Z\n")
+    os.environ["HARNESS_POD_STAMP"] = os.path.join(subject, "data", "pod_synced_head")
+    return subject
 
 
 def check_pod_ledger_rows_home(root):
@@ -22059,6 +22142,60 @@ def _selftest_flagless_test_is_gated():
               "as a false FAIL")
 
 
+def _selftest_stamp_ref_is_origin():
+    """Both halves of de-99, on a world that can tell the two refs apart.
+
+    PAIRED -- the pairing is the test. Clearing the cry-wolf means nothing unless the branch
+    the check exists for still WARNs. World A (a correct pod push naming origin/main while the
+    local main lags) must PASS; world B (a real non-ancestor commit) must still report the
+    louder WARN. Each world's SelftestSkip(environment) is caught PER CASE: one unbuildable
+    world skips only its own case, out loud -- it must not propagate out of _demo and fail the
+    whole run (the de-99 CI failure was exactly that propagation).
+    """
+    import shutil
+
+    def _refs_differ(a):
+        g = lambda *x: subprocess.run(["git", "-C", a, *x],
+                                      capture_output=True, text=True).stdout.strip()
+        return g("rev-parse", "main") != g("rev-parse", "origin/main")
+
+    saved = os.environ.pop("HARNESS_POD_STAMP", None)
+    a = b = None
+    try:
+        # WORLD A: origin/main ahead of a lagging local main.
+        try:
+            a = _stamp_world_origin_ahead()
+        except SelftestSkip as s:
+            print(f"  pod stamp ref: SKIP world A (origin-ahead unbuildable): {s}")
+        else:
+            assert _refs_differ(a), (
+                "world A's local main equals origin/main, so the PASS below is vacuous")
+            st_a, why_a = check_pod_stamp_is_main(a)
+            assert st_a == PASS, (
+                f"a stamp naming origin/main while local main lags reads {st_a}, not PASS -- "
+                f"de-99 cry-wolf ({why_a[:130]})")
+            print("  pod stamp ref A: origin/main ahead of a lagging local main PASSes")
+        # WORLD B: a real commit outside BOTH refs must still WARN.
+        os.environ.pop("HARNESS_POD_STAMP", None)
+        try:
+            b = _broken_pod_stamp_is_main()
+        except SelftestSkip as s:
+            print(f"  pod stamp ref: SKIP world B (no non-ancestor commit available): {s}")
+        else:
+            st_b, why_b = check_pod_stamp_is_main(b)
+            assert st_b == WARN and "main does NOT contain" in why_b, (
+                f"the non-ancestor world reads {st_b} ({why_b[:130]}) -- the fix weakened the "
+                f"branch this check exists for")
+            print("  pod stamp ref B: a real non-ancestor commit still WARNs")
+    finally:
+        os.environ.pop("HARNESS_POD_STAMP", None)
+        if saved is not None:
+            os.environ["HARNESS_POD_STAMP"] = saved
+        for w in (a, b):
+            if w:
+                shutil.rmtree(os.path.dirname(w), ignore_errors=True)
+
+
 def _selftest_core_reexports_are_identical():
     """Every name harness re-exports from harness_core is the SAME OBJECT, not a second copy.
 
@@ -24215,6 +24352,13 @@ def _demo(only=None):
                           capture_output=True).returncode == 0:
             return (f"{sha[:12]} IS an ancestor of the real main, so the world does not hold "
                     f"the condition the check exists to catch")
+        # THE REMOTE REF TOO (de-99): that is the one check_pod_stamp_is_main now compares
+        # against, so a world excluded only from local main can still hold an origin/main
+        # ancestor and must be caught here as stale.
+        if subprocess.run(["git", "-C", ROOT, "merge-base", "--is-ancestor", sha, "origin/main"],
+                          capture_output=True).returncode == 0:
+            return (f"{sha[:12]} IS an ancestor of origin/main, the ref the check now compares "
+                    f"against, so the world does not hold the condition it must catch")
         return None
 
     # Same exemption, same reason, different artifact: this check reads git's own reflog at
@@ -24585,6 +24729,7 @@ def _demo(only=None):
     _selftest_repo_auth_mirror()
     _selftest_flagless_test_is_gated()
     _selftest_core_reexports_are_identical()
+    _selftest_stamp_ref_is_origin()
     _selftest_evidence_parity_is_an_invariant()
 
     # The other half of the selftest: a PASS must have verified something. A check that
