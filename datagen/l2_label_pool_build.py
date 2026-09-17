@@ -37,6 +37,7 @@ import random
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from atomic_io import durable_publish  # noqa: E402
 from l1_ppl_kenlm import InterpolatedKneserNey, tokenize  # noqa: E402
 from l3_stratified_sample import language_of, length_band  # noqa: E402
 
@@ -160,17 +161,16 @@ def _chunk_fn(tokenizer_path, allow_word_count=False):
 
 
 def _atomic_write_jsonl(path, lines):
-    """Write JSONL atomically: temp file in the same dir, fsync, then os.replace so a
-    crash can never leave a half-written pool at `path` (the restartability promise)."""
+    """Write JSONL atomically: temp file in the same dir, then a durable publish
+    (file fsync -> os.replace -> parent-dir fsync) so a crash can never leave a
+    half-written pool at `path` (the restartability promise)."""
     d = os.path.dirname(os.path.abspath(path))
     os.makedirs(d, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         for ln in lines:
             fh.write(ln)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+        durable_publish(fh, tmp, path)
 
 
 def _atomic_write_json(path, obj):
@@ -179,9 +179,7 @@ def _atomic_write_json(path, obj):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(obj, fh, indent=2, ensure_ascii=False)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+        durable_publish(fh, tmp, path)
 
 
 def _iter_paths(kind2glob):
