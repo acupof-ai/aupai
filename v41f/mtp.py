@@ -302,13 +302,39 @@ class DSparkBlock(Block):
         )
         self.block_size = cfg.dspark_block_size
         self.noise_token_id = cfg.dspark_noise_token_id
+        self.is_last_stage = stage_index == cfg.n_mtp_layers - 1
         if stage_index == 0:
             assert n_target_layers > 0, "DSpark needs target layers"
             self.main_proj = nn.Linear(cfg.dim * n_target_layers, cfg.dim, bias=False)
             self.main_norm = RMSNorm(cfg.dim, cfg.norm_eps)
-        # rank>0: last draft stage gets norm + LM/markov/confidence heads (later PR)
+        # THE LAST STAGE OWNS THE PRE-HEAD NORM (ref :1115-1116): forward_head runs
+        # hc_pre -> self.norm -> head, structurally the same tail as the backbone
+        # (ref Transformer.forward :1268-1269 `h = layer.hc_pre(h, pre_mix); logits =
+        # self.head(self.norm(h))`). With n_mtp_layers == 1, stage 0 IS the last stage, so
+        # omitting it drops a normalization the reference applies and leaves the mtp.* key
+        # set one short of the reference's.
+        if self.is_last_stage:
+            self.norm = RMSNorm(cfg.dim, cfg.norm_eps)
+        # rank>0 adds the inference-only Markov/confidence heads (later PR)
         if cfg.dspark_markov_rank > 0:
             raise NotImplementedError("Markov/confidence inference heads are a later stage")
+
+    def forward_head(self, x, pre_mix, head):
+        """[b, block_size, hc, dim] -> draft logits, mirroring ref DSparkBlock.forward_head
+        with the inference-only pieces removed (no Markov bias, no sample loop, no
+        confidence head -- dspark_markov_rank 0).
+
+        The head is passed in rather than held, exactly as `embed` is in forward_embed: the
+        draft shares the backbone's LM head and embedding without either module registering
+        the other's parameters, so a tied weight cannot appear twice in state_dict under two
+        names. That is a structural invariant, not a workaround -- see
+        test_tied_embed_head_are_not_registered.
+        """
+        if not self.is_last_stage:
+            raise ValueError(
+                f"forward_head is only defined on the last draft stage (this is stage "
+                f"{self.stage_id}); the pre-head norm lives there (ref :1115-1116)")
+        return head(self.norm(self.hc_pre(x, pre_mix)))
 
     def project_main(self, main_hidden):
         """[b, t, dim*n_target] concat of target-layer attn inputs -> [b, t, dim].
@@ -369,11 +395,11 @@ class DSparkBlock(Block):
         """Parallel teacher-forced TRAINING entry (v41f-defined, ref has no training path).
 
         Unlike forward_embed's inference noise fill, training feeds GOLD shifted ids:
-        draft_input_ids is [b, block_size] with position 0 = anchor token, position i =
-        the real main token at anchor-1+i (the label one step left). The causal mask in
-        DSparkAttention keeps each query at or before its own column, so this is the
-        gold-fed sequential decode made parallel. Returns the same tuple as
-        forward_embed."""
+        draft_input_ids is [b, block_size] with position 0 = the anchor token (the LAST
+        prefix token) and position i = the real main token at anchor+i (the label one step
+        left). The causal mask in DSparkAttention keeps each query at or before its own
+        column, so this is the gold-fed sequential decode made parallel. Returns the same
+        tuple as forward_embed."""
         x = embed(draft_input_ids)
         x = x.unsqueeze(2).repeat(1, 1, self.hc_mult, 1)
         pre_mix = identity_pre_mix(x, self.hc_mult)
