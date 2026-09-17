@@ -120,7 +120,16 @@ harmless: their only diffs are cosmetic re-wraps of files already fixed on main 
 test files that already landed — still confirmed with the owner, but no design content.
 
 The 49 detached worktrees under `/private/tmp` and the system temp dir are scratch and are
-reclaimed automatically on reboot; no action.
+reclaimed automatically on reboot; no action — **for the clean ones**. The reboot framing
+understates the time window for any worktree carrying uncommitted content (genB measured):
+a `/tmp` worktree can be removed LIVE with no reboot at all — case
+`/private/tmp/0e508_70869` held a staged `train.py` at 23:0x and by 23:11 both the directory
+and its `.git/worktrees` admin entry were gone, no restart. That instance was harmless
+because the staged delta equalled the branch tip, but the next live-deleted tree need not be.
+Rule: any `/tmp` (or any) worktree with content worth keeping must have it **committed and
+pushed first**; "reboot will eventually recycle scratch" is not a retention guarantee —
+another session can clear it at any moment. This is exactly why bucket F is keep-then-commit,
+never rely-on-reboot.
 
 ## 4. Local `data/` — 723 MiB, almost all conservative-KEEP after the 2026-09-16 pod loss
 The repo's own rule (`docs/standards/data_pipeline_rebuild_0916.md`, `data/PROVENANCE.md`)
