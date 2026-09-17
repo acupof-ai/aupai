@@ -7898,6 +7898,25 @@ def _selftest_corpus_filters_fp_gate_mix():
     state, _ = check_corpus_filters_fp(empty)
     assert state == FAIL, ("an empty packer_fp is not a valid packer-only declaration", state)
 
+    # NOT AN ESCAPE HATCH: a domain that ran the pipeline AND records a stale filters_fp
+    # must FAIL even if it also stamps a non-empty packer_fp. packer_fp is consulted only
+    # in the `filters_fp is absent` arm, so it can never launder a real filters mismatch.
+    # Pinned because a mutant making packer_fp a true escape hatch
+    # (`elif got != live and not packer_fp`) leaves every world above green.
+    both = _tmp_repo()
+    os.makedirs(os.path.join(both, "filters"), exist_ok=True)
+    for _n in cfp.PIPELINE_FILTERS:
+        shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(both, "filters", _n))
+    json.dump({"domains": {"twofaced": 1.0}},
+              open(os.path.join(both, GATE_RUN_MIX), "w"))
+    bb = os.path.join(both, "data", "corpus", "twofaced")
+    os.makedirs(bb)
+    json.dump({"fingerprint": "f" * 16, "filters_fp": "0" * 16, "packer_fp": "fedcba9876543210"},
+              open(os.path.join(bb, "build_corpus_stats.json"), "w"))
+    state, ev = check_corpus_filters_fp(both)
+    assert state == FAIL and "built with filters" in ev, (
+        "a stale filters_fp must fail even beside a non-empty packer_fp", state, ev)
+
 
 def check_score_input_fresh(root):
     """A score must record which corpus it scored, and that corpus must be the current one.
