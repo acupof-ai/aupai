@@ -7726,7 +7726,16 @@ def check_corpus_filters_fp(root):
         return SKIP, "no mix-domain corpus on this machine"
     baseline_path = os.path.join(root, CORPUS_FILTERS_BASELINE)
     baseline = json.load(open(baseline_path, encoding="utf-8")) if os.path.exists(baseline_path) else {}
-    stale, new_unstamped, baselined, packer_only, ok = [], [], [], [], 0
+    stale, new_unstamped, baselined, unmigrated, packer_only, ok = [], [], [], [], [], 0
+    # GENERATION MARKER. fp_filters hashes the compiled PATTERNS and prefixes the value "p1-";
+    # until 2026-09-17 it returned a bare 16-hex sha1 over the filter FILES' bytes. Both shapes
+    # are 16 hex characters, so an old stamp and a new one are indistinguishable BY VALUE, and
+    # comparing them would report "built with filters X, tree is Y" for two numbers that were
+    # never on the same scale -- a red that names the wrong cause and sends the reader to look
+    # for a filters edit that did not happen. An unprefixed stamp is old generation: it needs a
+    # REBUILD to be re-stamped, which no comparison can decide for it. That is exactly the
+    # baselined-debt shape, so it is reported as debt rather than as a mismatch.
+    live_gen = live.split("-", 1)[0] if "-" in live else ""
     for dom in present:
         stats_p = os.path.join(corpus, dom, "build_corpus_stats.json")
         stamp = {}
@@ -7737,16 +7746,24 @@ def check_corpus_filters_fp(root):
         if got is None:
             # A PACKER-ONLY domain records the content hash of the script that produced its
             # bytes under packer_fp and never runs the filters/ pipeline (its filtering is
-            # inline in that script). It is not a filters_fp debtor: there is no pipeline
-            # value it could match, so comparing it would red on every build. A domain that
-            # passes through filters/ must stamp filters_fp instead; packer_fp is not an
-            # escape hatch, and an EMPTY packer_fp still falls through to new_unstamped.
+            # inline in that script). There is no pipeline value it could match, so it is not
+            # compared and not counted as filters debt. A domain that passes through filters/
+            # must stamp filters_fp instead; packer_fp is no escape hatch (it is unreachable
+            # when filters_fp is present), and an EMPTY packer_fp still falls through to
+            # new_unstamped.
             if stamp.get("packer_fp"):
                 packer_only.append(dom)
             elif dom in baseline:
                 baselined.append(dom)
             else:
                 new_unstamped.append(dom)
+        elif live_gen and _OLD_GEN_STAMP.match(str(got)):
+            # Old-generation stamp: built by the byte-hash definition, which returned a bare
+            # 16-hex value. Not comparable to a pattern hash and not a filters edit -- a rebuild
+            # re-stamps it. Keyed on the EXACT old shape rather than on "no prefix": an
+            # unrecognized or corrupt value must not land here and pass quietly, so anything that
+            # is not the known old generation falls through to the comparison and FAILs.
+            unmigrated.append(dom)
         elif got != live:
             # A ruled mismatch is forgiven only when the baseline names THIS exact pair and
             # cites the fact that measured it. Keyed on both fingerprints, so the next
@@ -7769,12 +7786,16 @@ def check_corpus_filters_fp(root):
             f"{len(new_unstamped)} domain(s) have no filters_fp and are not in the baseline "
             f"({', '.join(new_unstamped)}) -- rebuild to stamp, or register in {CORPUS_FILTERS_BASELINE}"
         )
-    if ok == 0 and not baselined and not packer_only:
+    if ok == 0 and not baselined and not unmigrated and not packer_only:
         return FAIL, f"0/{len(present)} mix domain(s) match filters {live}"
     note = ""
     if baselined:
         note = (f"; BASELINED debt: {len(baselined)} domain(s) built before filters_fp existed "
                 f"({', '.join(baselined)}) -- rebuild to stamp and shrink the baseline")
+    if unmigrated:
+        note += (f"; UNMIGRATED debt: {len(unmigrated)} domain(s) carry a pre-p1 stamp from the "
+                 f"byte-hash definition ({', '.join(unmigrated)}) -- not comparable to a pattern "
+                 f"hash and not a filters edit; a rebuild re-stamps them in the new generation")
     if packer_only:
         note += (f"; PACKER-ONLY (no filters/ pipeline, packer_fp stamped): {len(packer_only)} "
                  f"({', '.join(packer_only)}) -- not compared to filters_fp")
@@ -7782,16 +7803,21 @@ def check_corpus_filters_fp(root):
 
 
 def _broken_corpus_filters_fp():
-    """Two failure modes: a stale stamp (mismatch with live filters) and a no-stamp
-    domain that is NOT in the baseline (new debt). Both must FAIL.
+    """Failure modes, all of which must FAIL: a stale stamp (current generation, wrong value),
+    a no-stamp domain NOT in the baseline (new debt), an UNRECOGNIZED stamp (neither the current
+    generation nor the known old shape -- garbage in the stamp field), and a stamp from a
+    DIFFERENT generation marker (a future definition's value reaching a check that does not
+    understand it). The UNMIGRATED case is deliberately NOT here -- it reports as debt, i.e.
+    PASS-with-note, so it belongs in the positive world, not in broken().
 
     The mix written here is the GATE mix (all _dc domains), because check_corpus_filters_fp
     reads data/mix_v41_gate.json when present (ae-10), not train.py's mix_500m default. A
     world that wrote only mix_500m would no longer be read by the check it is supposed to
     break."""
     d = _tmp_repo()
-    # gate mix the check now selects: one domain gets a stale stamp, one gets no stamp.
-    gate_mix = {"domains": {"code_py_starcoder_dc": 1.0, "en_c4_stage2_dc": 1.0}}
+    # gate mix the check now selects: stale / no-stamp / unrecognized / wrong-generation.
+    gate_mix = {"domains": {"code_py_starcoder_dc": 1.0, "en_c4_stage2_dc": 1.0,
+                            "zh_web_dc": 1.0, "cot_dc": 1.0}}
     os.makedirs(os.path.join(d, "data"), exist_ok=True)
     json.dump(gate_mix, open(os.path.join(d, GATE_RUN_MIX), "w"))
     os.makedirs(os.path.join(d, "filters"), exist_ok=True)
@@ -7811,21 +7837,44 @@ def _broken_corpus_filters_fp():
         shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(d, "filters", _n))
     dom = os.path.join(d, "data", "corpus", "code_py_starcoder_dc")
     os.makedirs(dom, exist_ok=True)
+    # A CURRENT-generation stamp that disagrees with the live value: the stale-mismatch world.
+    # It must carry the live generation marker, or it reads as unmigrated debt (an old-generation
+    # stamp, reported not-FAIL) and this world stops testing the mismatch path it was written for.
+    # Read from `live`, never restated -- the marker is the migration signal and a literal here
+    # would go stale the moment it changes.
+    _live = cfp.fp_filters(ROOT)
     with open(os.path.join(dom, "build_corpus_stats.json"), "w") as fh:
-        json.dump({"fingerprint": "deadbeef", "filters_fp": "0000000000000000"}, fh)
+        json.dump({"fingerprint": "deadbeef",
+                   "filters_fp": f"{_live.split('-', 1)[0]}-0000000000000000"}, fh)
     # en_c4_stage2_dc: no stamp at all, no baseline file in this world -> new unstamped domain
     os.makedirs(os.path.join(d, "data", "corpus", "en_c4_stage2_dc"), exist_ok=True)
+    # zh_web_dc: an UNRECOGNIZED stamp -- neither the current generation nor the known old shape.
+    # It must FAIL, not be waved through as unmigrated debt: "not comparable" and "not a known
+    # hash definition at all" are different facts, and only the second means something wrote
+    # garbage into the stamp field.
+    dom_z = os.path.join(d, "data", "corpus", "zh_web_dc")
+    os.makedirs(dom_z, exist_ok=True)
+    with open(os.path.join(dom_z, "build_corpus_stats.json"), "w") as fh:
+        json.dump({"fingerprint": "deadbeef", "filters_fp": "not-a-hash-at-all"}, fh)
+    # cot_dc: CURRENT-shape but a DIFFERENT generation marker -- a future definition's value
+    # reaching a check that does not understand it. Must FAIL: not debt, and not equal.
+    dom_c = os.path.join(d, "data", "corpus", "cot_dc")
+    os.makedirs(dom_c, exist_ok=True)
+    with open(os.path.join(dom_c, "build_corpus_stats.json"), "w") as fh:
+        json.dump({"fingerprint": "deadbeef", "filters_fp": "p9-0000000000000000"}, fh)
     return d
 
 
 def _selftest_corpus_filters_fp_gate_mix():
     """An all-_dc GATE mix reaches the filter gate via INHERITED filters_fp (ae-10).
 
-    Three states on one shaped root, all read through data/mix_v41_gate.json:
+    States on one shaped root, all read through data/mix_v41_gate.json:
       - a _dc dir whose stamp carries the LIVE filters_fp -> PASS (the inherited value equals
         what the source build recorded);
       - a _dc dir carrying a STALE value -> FAIL;
-      - a _dc dir with NO stamp -> FAIL (new-unstamped, not baselined).
+      - a _dc dir with NO stamp -> FAIL (new-unstamped, not baselined);
+      - a _dc dir carrying a pre-p1 stamp -> PASS-with-debt (unmigrated, needs a rebuild);
+      - a _dc dir carrying an unrecognized value -> FAIL.
     The live value is whatever fp_filters returns for the copied pipeline filters, so this
     tracks genB's byte->pattern hash change without restating it."""
     import shutil
@@ -7838,17 +7887,27 @@ def _selftest_corpus_filters_fp_gate_mix():
     import corpus_fingerprint as _cfp
 
     live = _cfp.fp_filters(d)
-    json.dump({"domains": {"ok_dc": 1.0, "stale_dc": 1.0, "nostamp_dc": 1.0}},
+    gen = live.split("-", 1)[0]
+    json.dump({"domains": {"ok_dc": 1.0, "stale_dc": 1.0, "nostamp_dc": 1.0,
+                           "old_dc": 1.0, "junk_dc": 1.0}},
               open(os.path.join(d, GATE_RUN_MIX), "w"))
     base = os.path.join(d, "data", "corpus")
-    for name, fp in (("ok_dc", live), ("stale_dc", "0" * 16)):
+    for name, fp in (("ok_dc", live),
+                     # CURRENT generation, wrong value. NOT "0"*16: a bare 16-hex value is the
+                     # pre-p1 shape and would be reported as unmigrated debt rather than as the
+                     # mismatch this case exists to test (genB).
+                     ("stale_dc", f"{gen}-" + "0" * 16),
+                     # The pre-p1 byte-hash shape: unmigrated debt, must PASS-with-note.
+                     ("old_dc", "0" * 16),
+                     # Not a fingerprint of any generation: corruption, must FAIL.
+                     ("junk_dc", "not-a-hash-at-all")):
         os.makedirs(os.path.join(base, name))
         json.dump({"fingerprint": "f" * 16, "filters_fp": fp},
                   open(os.path.join(base, name, "build_corpus_stats.json"), "w"))
     os.makedirs(os.path.join(base, "nostamp_dc"))  # no stamp -> new-unstamped
 
-    # stale and no-stamp must each FAIL independently; build two single-domain worlds so one
-    # bad domain does not hide the verdict on the other.
+    # Each bad state must FAIL independently; build single-domain worlds so one bad domain does
+    # not hide the verdict on another.
     only_ok = _tmp_repo()
     os.makedirs(os.path.join(only_ok, "filters"), exist_ok=True)
     for _n in cfp.PIPELINE_FILTERS:
@@ -7862,60 +7921,82 @@ def _selftest_corpus_filters_fp_gate_mix():
     state, ev = check_corpus_filters_fp(only_ok)
     assert state == PASS, ("inherited live filters_fp on an all-_dc gate mix must PASS", state, ev)
 
-    state, _ = check_corpus_filters_fp(d)
-    assert state == FAIL, ("stale + no-stamp _dc domains must FAIL", state)
-
-    # PACKER-ONLY world (A1): a domain whose bytes never pass through filters/ records a
-    # non-empty packer_fp and no filters_fp. It must PASS without being compared to the
-    # pipeline patterns -- the pre-A1 behaviour compared its packer hash to fp_filters and
-    # guaranteed a red the moment the domain entered a mix. An EMPTY packer_fp is not a
-    # valid declaration and must still FAIL as new-unstamped.
-    pack = _tmp_repo()
-    os.makedirs(os.path.join(pack, "filters"), exist_ok=True)
+    # The pre-p1 shape alone: PASS, and the evidence must SAY it is unmigrated. A PASS whose
+    # evidence does not name the debt is the silent-green this case exists to prevent.
+    only_old = _tmp_repo()
+    os.makedirs(os.path.join(only_old, "filters"), exist_ok=True)
     for _n in cfp.PIPELINE_FILTERS:
-        shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(pack, "filters", _n))
-    json.dump({"domains": {"code_tests_v1": 1.0}},
-              open(os.path.join(pack, GATE_RUN_MIX), "w"))
-    pb = os.path.join(pack, "data", "corpus", "code_tests_v1")
-    os.makedirs(pb)
-    json.dump({"fingerprint": "f" * 16, "packer_fp": "abcdef0123456789"},
-              open(os.path.join(pb, "build_corpus_stats.json"), "w"))
-    state, ev = check_corpus_filters_fp(pack)
-    assert state == PASS, ("a packer_fp-stamped domain that never used filters/ must PASS",
-                           state, ev)
-    assert "PACKER-ONLY" in ev, ev
+        shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(only_old, "filters", _n))
+    sys.path.insert(0, os.path.join(only_old, "scripts"))
+    json.dump({"domains": {"ok_dc": 1.0}}, open(os.path.join(only_old, GATE_RUN_MIX), "w"))
+    ob2 = os.path.join(only_old, "data", "corpus", "ok_dc")
+    os.makedirs(ob2)
+    json.dump({"fingerprint": "f" * 16, "filters_fp": "0" * 16},
+              open(os.path.join(ob2, "build_corpus_stats.json"), "w"))
+    state, ev = check_corpus_filters_fp(only_old)
+    assert state == PASS, ("a pre-p1 stamp is unmigrated debt, not a mismatch", state, ev)
+    assert "UNMIGRATED" in ev and "ok_dc" in ev, (
+        "the pre-p1 verdict passed without naming the unmigrated domain in its evidence", ev)
 
-    empty = _tmp_repo()
-    os.makedirs(os.path.join(empty, "filters"), exist_ok=True)
-    for _n in cfp.PIPELINE_FILTERS:
-        shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(empty, "filters", _n))
-    json.dump({"domains": {"code_tests_v1": 1.0}},
-              open(os.path.join(empty, GATE_RUN_MIX), "w"))
-    eb = os.path.join(empty, "data", "corpus", "code_tests_v1")
-    os.makedirs(eb)
-    json.dump({"fingerprint": "f" * 16, "packer_fp": ""},
-              open(os.path.join(eb, "build_corpus_stats.json"), "w"))
-    state, _ = check_corpus_filters_fp(empty)
-    assert state == FAIL, ("an empty packer_fp is not a valid packer-only declaration", state)
+    state, ev = check_corpus_filters_fp(d)
+    assert state == FAIL, ("stale + no-stamp + junk _dc domains must FAIL", state)
+    assert "junk_dc" in ev, ("the unrecognized stamp must be named in the FAIL evidence", ev)
 
-    # NOT AN ESCAPE HATCH: a domain that ran the pipeline AND records a stale filters_fp
-    # must FAIL even if it also stamps a non-empty packer_fp. packer_fp is consulted only
-    # in the `filters_fp is absent` arm, so it can never launder a real filters mismatch.
-    # Pinned because a mutant making packer_fp a true escape hatch
-    # (`elif got != live and not packer_fp`) leaves every world above green.
-    both = _tmp_repo()
-    os.makedirs(os.path.join(both, "filters"), exist_ok=True)
-    for _n in cfp.PIPELINE_FILTERS:
-        shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(both, "filters", _n))
-    json.dump({"domains": {"twofaced": 1.0}},
-              open(os.path.join(both, GATE_RUN_MIX), "w"))
-    bb = os.path.join(both, "data", "corpus", "twofaced")
-    os.makedirs(bb)
-    json.dump({"fingerprint": "f" * 16, "filters_fp": "0" * 16, "packer_fp": "fedcba9876543210"},
-              open(os.path.join(bb, "build_corpus_stats.json"), "w"))
-    state, ev = check_corpus_filters_fp(both)
-    assert state == FAIL and "built with filters" in ev, (
-        "a stale filters_fp must fail even beside a non-empty packer_fp", state, ev)
+    # JUNK ALONE. The multi-domain world above cannot see a predicate that classifies EVERY
+    # non-matching value as unmigrated debt: the current-generation stale_dc still mismatches,
+    # so FAIL survives and the run stays red for the wrong reason. Measured -- widening the
+    # predicate to `got != live` leaves that world FAILing while this one silently PASSes.
+    # One domain, one bad state.
+    for label, fp in (("unrecognized", "not-a-hash-at-all"), ("wrong-generation", "p9-" + "0" * 16)):
+        only_bad = _tmp_repo()
+        os.makedirs(os.path.join(only_bad, "filters"), exist_ok=True)
+        for _n in cfp.PIPELINE_FILTERS:
+            shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(only_bad, "filters", _n))
+        sys.path.insert(0, os.path.join(only_bad, "scripts"))
+        json.dump({"domains": {"bad_dc": 1.0}}, open(os.path.join(only_bad, GATE_RUN_MIX), "w"))
+        bb = os.path.join(only_bad, "data", "corpus", "bad_dc")
+        os.makedirs(bb)
+        json.dump({"fingerprint": "f" * 16, "filters_fp": fp},
+                  open(os.path.join(bb, "build_corpus_stats.json"), "w"))
+        state, ev = check_corpus_filters_fp(only_bad)
+        assert state == FAIL, (
+            f"a lone {label} stamp ({fp!r}) must FAIL, not be waved through as unmigrated debt",
+            state, ev)
+
+    # PACKER-ONLY (A1): a domain whose bytes never pass through filters/ stamps a non-empty
+    # packer_fp and no filters_fp. It must PASS without being compared to the pipeline -- the
+    # pre-A1 builder wrote its packer hash under filters_fp and would mismatch forever. An
+    # EMPTY packer_fp is not a declaration and stays new-unstamped FAIL.
+    def _packer_world(dom, stamp_obj):
+        w = _tmp_repo()
+        os.makedirs(os.path.join(w, "filters"), exist_ok=True)
+        for _n in cfp.PIPELINE_FILTERS:
+            shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(w, "filters", _n))
+        sys.path.insert(0, os.path.join(w, "scripts"))
+        json.dump({"domains": {dom: 1.0}}, open(os.path.join(w, GATE_RUN_MIX), "w"))
+        wb = os.path.join(w, "data", "corpus", dom)
+        os.makedirs(wb)
+        json.dump(stamp_obj, open(os.path.join(wb, "build_corpus_stats.json"), "w"))
+        return check_corpus_filters_fp(w)
+
+    st, ev = _packer_world("code_tests_v1",
+                           {"fingerprint": "f" * 16, "packer_fp": "abcdef0123456789"})
+    assert st == PASS and "PACKER-ONLY" in ev, (
+        "a packer_fp-stamped domain that never used filters/ must PASS by name", st, ev)
+    st, _ = _packer_world("code_tests_v1", {"fingerprint": "f" * 16, "packer_fp": ""})
+    assert st == FAIL, "an empty packer_fp is not a valid packer-only declaration"
+
+    # NOT AN ESCAPE HATCH: a CURRENT-generation stale filters_fp beside a non-empty packer_fp
+    # must still FAIL (judged by filters_fp; packer_fp is read only in the `got is None` arm).
+    # The stale value carries the live generation marker so it exercises `got != live`, not
+    # the unmigrated-debt branch. Mutation `elif got != live and not packer_fp` must red this.
+    st, ev = _packer_world(
+        "twofaced_dc",
+        {"fingerprint": "f" * 16, "filters_fp": f"{gen}-" + "0" * 16,
+         "packer_fp": "fedcba9876543210"})
+    assert st == FAIL and "built with filters" in ev and "twofaced_dc" in ev, (
+        "a stale current-generation filters_fp must fail even beside a non-empty packer_fp",
+        st, ev)
 
 
 def check_score_input_fresh(root):
@@ -8783,6 +8864,11 @@ CORPUS_FILTERS_BASELINE = os.path.join("facts", "corpus_filters_baseline.json")
 # must verify the domains THIS run trains on, not train.py's historical default data/mix_500m:
 # the v41 gate mix is all `_dc` domains (ae-10), while mix_500m names nine pre-decontam dirs.
 GATE_RUN_MIX = os.path.join("data", "mix_v41_gate.json")
+# The pre-2026-09-17 filters_fp shape: a bare 16-hex sha1 over the pipeline filter FILES' bytes.
+# Current values are prefixed "p1-" (see corpus_fingerprint.fp_filters). Naming the exact old
+# shape rather than "anything unprefixed" keeps an unrecognized value out of the debt path, where
+# it would pass as a known migration instead of failing as the corruption it is.
+_OLD_GEN_STAMP = re.compile(r"^[0-9a-f]{16}$")
 
 
 
