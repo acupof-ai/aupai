@@ -410,11 +410,23 @@ def main():
 
         _check_premises()
         _check_git_failure_worlds()
-    finally:
+    except BaseException:
         import shutil
 
         shutil.rmtree(d, ignore_errors=True)
-    return _report()
+        raise
+    # CLEANUP MOVED AFTER _report(), and it is not cosmetic. _report() re-runs the arms with
+    # the diag on when the gate is red, and those re-runs exec the child script that lives in
+    # `d` -- so a finally-rmtree here deleted the fixture out from under every diag re-run.
+    # The failure was SILENT in the way that matters: the parent-side runner identity still
+    # printed, so a red carried a block of diag-looking output whose four stage readings had
+    # never been taken, with only two `diag re-run failed:` lines to say so. Found by genB on
+    # the #548 second read, reproduced here by injecting a FAILS entry.
+    rc = _report()
+    import shutil
+
+    shutil.rmtree(d, ignore_errors=True)
+    return rc
 
 
 def _check_premises():
