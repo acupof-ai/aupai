@@ -335,13 +335,78 @@ def _selftest():
     # The row still reports its population, which is what makes the partial panel readable.
     assert len(_out) != len(_doms), "this world is only meaningful when the panel IS partial"
 
+    # THE ROW MUST SAY WHICH BYTES, NOT ONLY HOW MANY. Every other field in the record is a
+    # count, so two caches of the same shape and different content produced byte-identical
+    # records. The case is built to be INDISTINGUISHABLE BY EVERY OTHER FIELD: same row count,
+    # same byte count, same everything -- only the ids differ. A fingerprint that is not a
+    # content hash (a length, a name, a row count) passes every other assertion in this function
+    # and fails here.
+    #
+    # DRIVEN THROUGH _bpb_record, THE REAL PRODUCER. Asserting on seqs_fp alone was the first
+    # version and it was green when the stamp was replaced by str(len(rows)) -- the helper was
+    # exercised while the producer could stamp anything. The assertion has to be able to fail on
+    # the line that writes the record, or it certifies nothing about the output.
+    _same_shape_a = torch.tensor([[11, 22, 33], [44, 55, 66]])
+    _same_shape_b = torch.tensor([[11, 22, 33], [44, 55, 77]])   # one id differs
+    assert _same_shape_a.shape == _same_shape_b.shape, "the world is vacuous unless shapes match"
+    assert int(_same_shape_a.sum()) != int(_same_shape_b.sum()), \
+        "the two inputs must differ in content, or the case cannot fail"
+    _ra = _bpb_record("d", 1.0, 6, _same_shape_a, [], 0, 0, 2048)
+    _rb = _bpb_record("d", 1.0, 6, _same_shape_b, [], 0, 0, 2048)
+    # every other field equal, so a failure here is about the fingerprint and nothing else
+    _other = {k: v for k, v in _ra.items() if k != "head_fp"}
+    _other_b = {k: v for k, v in _rb.items() if k != "head_fp"}
+    assert _other == _other_b, (
+        f"the world is not controlled: another field differs, so a mismatch would not be the "
+        f"fingerprint's doing: {_other} vs {_other_b}")
+    assert _ra["head_fp"] != _rb["head_fp"], (
+        f"two caches of the same row/byte shape and different content produced the same "
+        f"head_fp ({_ra['head_fp']!r}) -- the record cannot distinguish them, which is the "
+        f"defect this field exists to prevent")
+    # KNOWN ANSWER, the other direction: identical content must hash identically, or the field
+    # would fire on every rescore and be turned off.
+    assert _bpb_record("d", 1.0, 6, _same_shape_a.clone(), [], 0, 0, 2048)["head_fp"] == _ra["head_fp"], \
+        "the same content must give the same fingerprint"
+    # AND THE POST-FILTER LIST PATH MUST AGREE WITH THE TENSOR PATH. The identity gate rebinds
+    # `rows` to a plain list, so a stamp that only works on a tensor would silently stamp nothing
+    # (or raise) on exactly the domains where a row was dropped.
+    assert _row_fp([r for r in _same_shape_a]) == _ra["head_fp"], (
+        "the post-filter list path must reproduce the tensor path's fingerprint, or the stamped "
+        "value depends on whether the identity gate dropped a row")
+
     print("domain_bpb self-test OK: uniform models read exactly log2(V) bits/byte, the "
           "unscored first token enters neither numerator nor denominator (so chunking cannot "
           "change the figure), A TRUNCATED TEXT IS DIVIDED BY THE BYTES IT SCORED and its "
           "bits/byte does not move with max_ctx, a too-short text refuses, the gate detects a "
           "lossy codec while ignoring a pure re-split, five known-answer texts survive "
           "the real tokenizer exactly, and a co-residency refusal on one domain leaves the "
-          "other eight scored with the refusal named in `skipped`")
+          "other eight scored with the refusal named in `skipped`, and the row carries the "
+          "content fingerprint of the bytes it scored (same shape + different ids => different "
+          "head_fp; the post-filter list path agrees with the tensor path)")
+
+
+def _row_fp(rows):
+    """sha1 of the rows that were scored, as `head_fp` for the output record.
+
+    STACKED, NOT CALLED ON `rows` DIRECTLY: when the text-identity gate drops a row, the caller
+    rebinds `rows` to a plain list, and seqs_fp calls .cpu().numpy(), which a list does not have.
+    torch.stack keeps the ids and their order, which is all seqs_fp hashes, so the fingerprint
+    covers exactly the rows that were scored either way."""
+    from domain_loss import seqs_fp  # noqa: PLC0415
+    _fp_rows = rows if isinstance(rows, torch.Tensor) else torch.stack([r.long() for r in rows])
+    return seqs_fp(_fp_rows)
+
+
+def _bpb_record(name, bits, nbytes, rows, bad, errs, n_trunc, max_ctx):
+    """The per-domain output record. ONE DEFINITION, so the selftest drives this and not a copy.
+
+    An earlier version of the fingerprint test asserted only on seqs_fp in isolation, and was
+    green when the stamp here was replaced by a row COUNT -- the test exercised the helper while
+    the producer was free to stamp anything. The record builder is a function for that reason:
+    the assertion below has to be able to fail on the real producer."""
+    return {"domain": name, "bpb": bits / nbytes, "scored_bytes": int(nbytes),
+            "n_rows": len(rows), "text_identity_dropped": len(bad), "row_errors": errs,
+            "rows_truncated": n_trunc, "max_ctx": max_ctx, "head_fp": _row_fp(rows)}
 
 
 def main():
@@ -482,9 +547,7 @@ def main():
         # none sits past the cut. Before the 2026-09-08 divisor fix this field did not exist
         # and the truncation was unrepresented in the output: 9 of 9 domains were fully
         # truncated and every row read as if it had scored the whole text.
-        rec = {"domain": name, "bpb": bits / nbytes, "scored_bytes": int(nbytes),
-               "n_rows": len(rows), "text_identity_dropped": len(bad), "row_errors": errs,
-               "rows_truncated": n_trunc, "max_ctx": a.max_ctx}
+        rec = _bpb_record(name, bits, nbytes, rows, bad, errs, n_trunc, a.max_ctx)
         out[name] = rec["bpb"]
         if a.preds:
             with open(a.preds, "a", encoding="utf-8") as f:
