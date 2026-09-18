@@ -48,8 +48,8 @@ def _on_cfg():
     one side.
     """
     tok = synthetic_tokenizer()
-    cfg = v41f_small(vocab_size=len(tok), engram_compressed_vocab_size=6, **_ENGRAM)
-    return cfg.with_derived_engram()
+    cfg = v41f_small(vocab_size=len(tok), tokenizer=tok, **_ENGRAM)
+    return cfg
 
 
 def _build_on_pair(seed=41):
@@ -372,7 +372,7 @@ def test_mutant_num_embeddings_plus_one_goes_red():
     real = _C.derived_engram_num_embeddings
     _C.derived_engram_num_embeddings = lambda self: tuple(r + 1 for r in real(self))
     try:
-        bad = cfg.with_derived_engram()
+        bad = cfg.with_derived_engram(tokenizer=tok)
         layout = EngramLayout.from_args(_model_args(load_reference()[0], bad)[1])
         prime_sum = sum(p for ngram in layout.primes[0] for p in ngram)
         assert bad.engram_num_embeddings[0] != prime_sum, (

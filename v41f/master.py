@@ -263,6 +263,22 @@ def load_train_checkpoint(path, *, tokenizer, max_batch_size: int = 4, lr: float
     if ckpt.get("version") != TRAIN_VERSION:
         raise ValueError(f"unsupported train ckpt version {ckpt.get('version')!r}")
     cfg = V41FConfig(**ckpt["config"])
+    # A LEGACY OR HAND-EDITED BLOB CAN CARRY AN ENGRAIN-ON CONFIG WITH THE DERIVED FIELDS
+    # UNSET, and without this the rebuild dies inside V41FModel -- AssertionError (6, 0) out
+    # of NgramHashState -- which is the deep failure the config gate exists to move up. On
+    # resume the same defect is worse than on a fresh run: the caller has a checkpoint in
+    # hand and no reason to suspect its config, so name the missing field and the rebuilt
+    # shape instead of letting the model constructor report it.
+    if cfg.engram_layer_ids and (
+        not cfg.engram_num_embeddings or cfg.engram_compressed_vocab_size <= 0
+    ):
+        raise ValueError(
+            "this checkpoint's engram config is incomplete: engram_num_embeddings="
+            f"{cfg.engram_num_embeddings!r}, engram_compressed_vocab_size="
+            f"{cfg.engram_compressed_vocab_size!r}. The blob predates the derivation or was "
+            "edited; rebuild the fields with with_derived_engram(tokenizer=...) against the "
+            "same tokenizer and re-save, rather than loading it as-is."
+        )
     if cfg.engram_layer_ids and tokenizer is None:
         raise ValueError("an engram-on train checkpoint requires the injected tokenizer")
     vid = ckpt.get("vocab_id")

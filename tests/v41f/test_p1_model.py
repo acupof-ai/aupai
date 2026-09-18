@@ -27,7 +27,7 @@ from test_p0_attention import _patched_reference
 from test_p1_block import _ATTN_SUFFIX, _HC, _split_ref_3d
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from v41f.config import v41f_s, v41f_small
+from v41f.config import V41FConfig, v41f_small
 from v41f.model import V41FModel
 
 _HERE = Path(__file__).resolve().parent
@@ -260,8 +260,10 @@ def test_param_count_reconciles_to_script():
         f"head {head:,} + norm {final_norm:,}); gate-bias buffer={gate_bias_buf}"
     )
 
-    # production v41f_s: static reconciliation even though this PR never instantiates it
-    rs = _count(v41f_s())
+    # production shape: static reconciliation even though this PR never instantiates it.
+    # V41FConfig() is the unvalidated shape, which is what a param count wants; v41f_s()
+    # would need a tokenizer to measure the engram compressed vocab.
+    rs = _count(V41FConfig())
     assert rs["total_params"] == 904_583_784, rs["total_params"]
     assert rs["active_params_per_token"] == 210_950_760, rs["active_params_per_token"]
     print(f"  v41f_s static total={rs['total_params']:,} active={rs['active_params_per_token']:,}")
