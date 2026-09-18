@@ -94,8 +94,27 @@ Extend `diag_resume_bimodal.py`. Do not build a second diagnostic.
 sampled leaf set. It dumps **no optimizer state at all** (`grep -c exp_avg` = 0). Candidate 2 lives
 entirely in state the current dump cannot see.
 
-For every leaf in `_pick_leaves`, dump after each `optimizer.step()`:
+**The dump must be reachable from the required gate's worker, and today it is not.** The required
+gate does not call `arm()`: `gate_resume_equivalent_to_uninterrupted` spawns its own worker
+`_one_run(kind)` (`test_p1_train_ckpt.py`), which writes the two probe tensors to **stdout and
+nothing else** — `grep -c 'OUTDIR|outdir'` on that file is 0, so no directory plumbing exists in the
+code path a red actually runs. Instrumentation added only to `arm()` therefore uploads nothing on
+the one run the artifact exists for.
 
+Required: `_one_run` writes its dump to a directory named by an **environment variable the parent
+sets** (the gate already builds `env = dict(os.environ, OMP_NUM_THREADS="2")` for its subprocesses),
+falling back to no-dump when the variable is unset so a plain local run stays cheap. The parent
+creates that directory under its own `_scratch` root and the CI step uploads it. Point 1 is
+load-bearing for the whole spec: without it the artifact step below uploads an empty directory on
+every red.
+
+For every leaf in `_pick_leaves`, dump:
+
+- after `optimizer.step()` at the checkpoint step K **and** the first post-load step only — not every
+  step. Measured cost, on 0e's numbers which I confirmed (`embed.weight` and `head.weight` are
+  50.0 MiB each as fp32, 13,107,200 elements): per-step dumping of four leaves x 2 arms x 4 steps is
+  ~1.7 GiB, against ~0.42 GiB for the two points. The **onset** question is already answered by the
+  per-step master tensors `arm()` dumps, so exp_avg at two points loses nothing.
 - `exp_avg`, `exp_avg_sq`, `step` (all three, not just `exp_avg`)
 - and after the load, the same three **as restored**, under a `loadK.opt.l{j}` name
 
@@ -103,6 +122,14 @@ The load-side dump is what makes candidate 2 separable: a re-bind shows as resto
 matching a *different* leaf's control value, which is visible only when both sides are dumped.
 
 ### 2. Dump the checkpoint's own identity
+
+**Fix the leaf sample to be deliberate, not incidental.** `_pick_leaves` takes `names[0]`,
+`names[len//2]`, `names[-1]` from the sorted in-group list, then adds `head.weight` and
+`layers.0.attn.qproj.wq_b.weight`. Measured on `v41f_small(indexer_train_mode="off")`,
+`names[0]` **is** `embed.weight` — so `embed.weight` is sampled today only because it happens to
+sort first alphabetically, and its presence in the dump is an accident of naming. The `embed.weight`
+open question below depends on it being covered, so add it to the explicit `want` tuple alongside
+`head.weight` and the probed leaf.
 
 Per trajectory, record:
 
@@ -163,10 +190,20 @@ did not raise is evidence about *names*, not about *values*, and this makes that
 
 ## Acceptance
 
-1. `python tests/v41f/diag_resume_bimodal.py --diag-selftest` passes, and a **deliberately broken
-   optimizer restore** (on a copy: re-bind one leaf's `exp_avg` to its neighbour in
-   `_load_optim_named`) makes it red by name. A diagnostic that cannot red on a known-broken input
-   is not evidence.
+1. `python tests/v41f/diag_resume_bimodal.py --diag-selftest` passes, and the diagnostic **reds on a
+   deliberately broken input**. Pick the mutation carefully — two obvious ones are non-discriminating:
+
+   | mutation | what happens today |
+   |---|---|
+   | load-side rebind: re-bind one leaf's `exp_avg` to its neighbour in `_load_optim_named` | **already caught** by `v41f/master.py:177-184`, which asserts per name that restored `exp_avg`/`exp_avg_sq`/`step` equal the saved record (`raise OptimStateError(f"{n}: exp_avg not restored to the same name")`). Red here proves an existing assertion fires, not that the new instrumentation works. |
+   | save-side mislabel **across different shapes** (`embed.weight` -> `norm.weight`) | **already caught**, by the shape check at `master.py:155` (`norm.weight: shape (1024,) != saved (12800, 1024)`) — a name check is never reached. |
+
+   Use a save-side mislabel **between two same-shaped leaves** instead: on a copy, relabel
+   `layers.0.attn.qproj.wq_b.weight`'s optimizer record as `layers.3.attn.qproj.wq_b.weight`.
+   Measured 2026-09-19: the restart worker exits **rc=0** — it escapes the shape check (shapes
+   match), the name-set check (both names are in-group) and the per-name identity assertion (which
+   compares whatever `state_by_name[n]` holds against itself). This is the hole the pass-through
+   check below exists to close, and it is the mutation the diagnostic must red on.
 2. On a green run, the dump contains `exp_avg`/`exp_avg_sq`/`step` for every sampled leaf, both
    trajectories, plus the checkpoint sha and the key-set comparison.
 3. The per-param presence assertion fires on a copy where `_save_optim_named`'s `if not st: continue`
