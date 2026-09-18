@@ -20,7 +20,10 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
-from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
+try:  # CUDA-only kernel; the holdout gate and argparse run before any loss is built
+    from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss
+except ImportError:
+    LigerFusedLinearCrossEntropyLoss = None
 from torch.nn.parallel import DistributedDataParallel as DDP
 
 import fone
@@ -200,56 +203,14 @@ def main():
                      "shortens total_steps (and therefore the LR schedule) while --stop_after "
                      "does not. Pass exactly one.")
 
-    ck = torch.load(args.resume, map_location="cpu", weights_only=False)
-    for k, v in ck.get("cfg", {}).items():
-        setattr(Cfg, k, v)
-    Cfg.batch = args.batch
-    Cfg.epochs = args.epochs
-    # Before ANY save: SAVE_INTERVAL writes .stepN checkpoints mid-run, and an interrupted
-    # run's last .stepN is precisely the file someone has to identify later.
-    Cfg.lr_scale = args.lr_scale
-    # grad_ckpt must stay ON: FP8 e4m3 backward goes NaN without it.
-    if args.no_grad_ckpt:
-        print("WARNING --no_grad_ckpt is deprecated; use --no-grad_ckpt (hyphen), the "
-              "spelling train.py uses. Honoured this once.", flush=True)
-        args.grad_ckpt = False
-    Cfg.grad_ckpt = args.grad_ckpt
-
-    torch.manual_seed(Cfg.seed)
-    torch.set_float32_matmul_precision("high")
     ddp, rank, world, local = setup_ddp()
     device = f"cuda:{local}" if ddp else ("cuda:0" if torch.cuda.is_available() else "cpu")
     is_main = not ddp or rank == 0
-    runlog = (
-        RunLog(re.sub(r"^ckpt_", "", os.path.splitext(os.path.basename(args.out))[0])) if is_main else print
-    )
-    amp = device.startswith("cuda")
 
     d = torch.load(args.sft_path, map_location="cpu", weights_only=True)
     X = d["input_ids"][:, :-1].long().contiguous()
     Y = d["labels"][:, 1:].long().contiguous()
-    # A pack from another vocabulary trains silently at ~4x the loss: every id is
-    # wrong and in range, and the sizes match.
-    ck_vocab = args.vocab or ck.get("vocab_id")
-    # GUARDED ON THE WRONG KEY UNTIL 2026-09-03. The condition was `"vocab" in d` while
-    # prepare_sft.pack_and_save writes "vocab_id" (only the pre-2026-08 arith_* packs carry a
-    # bare "vocab"). So for every pack built by the current packer the assert was skipped and
-    # the run took the WARNING branch instead -- "the pack predates vocabulary fingerprinting"
-    # printed about a pack that carries the fingerprint. The check whose comment says a wrong
-    # vocabulary "trains silently at ~4x the loss" has therefore never once fired, and its
-    # warning read as a property of the pack rather than a defect in the reader.
-    pack_vocab = d.get("vocab_id", d.get("vocab"))
-    if ck_vocab and pack_vocab is not None:
-        assert pack_vocab == ck_vocab, (
-            f"{args.sft_path} was packed against vocabulary {pack_vocab} but "
-            f"{args.resume} was trained on {ck_vocab}; repack with "
-            "`datagen/prepare_sft_math.py --tokenizer <the base's tokenizer.json>`"
-        )
-        if is_main:
-            print(f"vocab_id matches: {ck_vocab}", flush=True)
-    elif is_main:
-        missing = "the checkpoint" if not ck_vocab else "the pack"
-        print(f"WARNING {missing} predates vocabulary fingerprinting; verify by hand", flush=True)
+
     # A pack built against a stale holdout set may contain held-out questions.
     # Refuse, the same way a vocab_id mismatch refuses.
     #
@@ -292,6 +253,51 @@ def main():
         # anything. Not a refusal, because the pack did record what it was built against.
         print(f"WARNING {holdout_path} missing; {args.sft_path} claims holdout_fp "
               f"{d['holdout_fp']} and nothing here can verify it", flush=True)
+
+    ck = torch.load(args.resume, map_location="cpu", weights_only=False)
+    for k, v in ck.get("cfg", {}).items():
+        setattr(Cfg, k, v)
+    Cfg.batch = args.batch
+    Cfg.epochs = args.epochs
+    # Before ANY save: SAVE_INTERVAL writes .stepN checkpoints mid-run, and an interrupted
+    # run's last .stepN is precisely the file someone has to identify later.
+    Cfg.lr_scale = args.lr_scale
+    # grad_ckpt must stay ON: FP8 e4m3 backward goes NaN without it.
+    if args.no_grad_ckpt:
+        print("WARNING --no_grad_ckpt is deprecated; use --no-grad_ckpt (hyphen), the "
+              "spelling train.py uses. Honoured this once.", flush=True)
+        args.grad_ckpt = False
+    Cfg.grad_ckpt = args.grad_ckpt
+
+    torch.manual_seed(Cfg.seed)
+    torch.set_float32_matmul_precision("high")
+    runlog = (
+        RunLog(re.sub(r"^ckpt_", "", os.path.splitext(os.path.basename(args.out))[0])) if is_main else print
+    )
+    amp = device.startswith("cuda")
+
+    # A pack from another vocabulary trains silently at ~4x the loss: every id is
+    # wrong and in range, and the sizes match.
+    ck_vocab = args.vocab or ck.get("vocab_id")
+    # GUARDED ON THE WRONG KEY UNTIL 2026-09-03. The condition was `"vocab" in d` while
+    # prepare_sft.pack_and_save writes "vocab_id" (only the pre-2026-08 arith_* packs carry a
+    # bare "vocab"). So for every pack built by the current packer the assert was skipped and
+    # the run took the WARNING branch instead -- "the pack predates vocabulary fingerprinting"
+    # printed about a pack that carries the fingerprint. The check whose comment says a wrong
+    # vocabulary "trains silently at ~4x the loss" has therefore never once fired, and its
+    # warning read as a property of the pack rather than a defect in the reader.
+    pack_vocab = d.get("vocab_id", d.get("vocab"))
+    if ck_vocab and pack_vocab is not None:
+        assert pack_vocab == ck_vocab, (
+            f"{args.sft_path} was packed against vocabulary {pack_vocab} but "
+            f"{args.resume} was trained on {ck_vocab}; repack with "
+            "`datagen/prepare_sft_math.py --tokenizer <the base's tokenizer.json>`"
+        )
+        if is_main:
+            print(f"vocab_id matches: {ck_vocab}", flush=True)
+    elif is_main:
+        missing = "the checkpoint" if not ck_vocab else "the pack"
+        print(f"WARNING {missing} predates vocabulary fingerprinting; verify by hand", flush=True)
     assert Cfg.fone == ("values" in d), (
         f"checkpoint fone={Cfg.fone} but {args.sft_path} "
         f"{'has' if 'values' in d else 'has no'} values; repack with datagen/prepare_sft_math.py --fone"
@@ -502,6 +508,10 @@ def main():
                        f"-> step0 {g['lr']:.3g}")
 
     step = 0
+    assert LigerFusedLinearCrossEntropyLoss is not None, (
+        "this path builds the loss and needs liger_kernel; it is installed on the pod but "
+        "not in the CPU image. --check_pack is the cardless gate and does not reach here."
+    )
     flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
     weight = raw_model.head.weight[: raw_model.cfg.vocab]
 
