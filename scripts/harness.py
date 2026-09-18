@@ -2656,11 +2656,22 @@ def check_ci_selftest_partition(root):
         return FAIL, (f"{len(dead)} runnable map entr(ies) are not filesystem selftest carriers "
                       f"(dead registration: entry kept after the file stopped carrying a "
                       f"selftest): {', '.join(dead[:4])}")
+    # COVERAGE COUNT (fb, #514 motivation): on the pre-#514 base 248/277 SELFTEST_FILES members
+    # appeared nowhere in ci.yml, so a selftest registered only in the hook map had no CI run.
+    # After this change a hook-runnable selftest is either EXECUTED in CI (driver enumeration or
+    # an explicit step) or in CI_SELFTEST_EXCLUDE with a reason the bare image cannot satisfy;
+    # the silent set -- registered, runnable here, with neither a CI run nor a reason -- is the
+    # gap class and must read 0. The number is derived from the buckets, never hardcoded.
+    executed_ci = counts["driver"] + counts["explicit"]
+    reasoned_excluded = counts["exclude"]
+    silent_uncovered = sum(1 for b in buckets.values()
+                           if b not in ("driver", "explicit", "exclude", "needs"))
     return PASS, (f"map {len(buckets)} vs filesystem {len(fs)} (reconciled, "
                   f"{len(needs_only)} needs-only non-carrier by design): "
-                  f"{counts['driver']} driver, {counts['explicit']} explicit-ci, "
-                  f"{counts['exclude']} excluded covered in CI; {counts['needs']} NEEDS "
-                  f"exemption(s); no unregistered/dead entry")
+                  f"{executed_ci} executed in CI ({counts['driver']} driver + "
+                  f"{counts['explicit']} explicit), {reasoned_excluded} reasoned CI-excluded, "
+                  f"{counts['needs']} NEEDS exemption(s); registered-but-uncovered {silent_uncovered} "
+                  f"(must be 0); no unregistered/dead entry")
 
 
 def check_probe_numbers_unique(root):
