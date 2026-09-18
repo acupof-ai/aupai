@@ -7,6 +7,7 @@ A is gc'd, and the prod census is structural (no optimizer allocation); the full
 backward is GPU-deferred (#497).
 """
 
+import atexit
 import gc
 import os
 import sys
@@ -32,6 +33,37 @@ from v41f.vocab import fingerprint  # noqa: E402
 
 VOCAB = 12800
 _SMALL = dict()
+
+# EVERY scratch dir this file makes goes through _scratch(). Nine call sites used bare
+# `tempfile.mkdtemp(prefix="td_gN_")` and never removed them; `_selftest` papers over that
+# with a process-private TMPDIR root it rmtree's at the end, so the leak only shows on the
+# DIRECT-RUN path this module's docstring advertises (`--gate <name>`, `--run <kind>`),
+# which inherits the ambient TMPDIR -- /tmp on a normal box. Measured 2026-09-18 on digest:
+# 31 `td_eq_*/c.pt` blobs of ~2.49 GB each, 77 GB, had filled the ROOT filesystem to 100%,
+# which took out unrelated selftests with ENOSPC (two `launch_gate` reds appeared only on
+# the second red-list run, on an unchanged commit). The `c.pt` files are model checkpoints,
+# so one leaked dir is not a rounding error.
+# The paths must outlive individual functions (a later gate in the same process reads what
+# an earlier one wrote), so this is atexit + rmtree rather than TemporaryDirectory, and
+# atexit also covers the `sys.exit(2)` refusal branches.
+_SCRATCH = []
+
+
+def _scratch(prefix):
+    d = tempfile.mkdtemp(prefix=prefix)
+    _SCRATCH.append(d)
+    return d
+
+
+def _clean_scratch():
+    import shutil
+
+    for d in _SCRATCH:
+        shutil.rmtree(d, ignore_errors=True)
+    _SCRATCH.clear()
+
+
+atexit.register(_clean_scratch)
 
 
 def _cfg(mode):
@@ -91,7 +123,7 @@ def gate_buffers_in_model_not_master():
     cfg = _cfg("off")
     m = _build(cfg)
     st = TrainState(m, lr=1e-3)
-    d = tempfile.mkdtemp(prefix="td_g6_")
+    d = _scratch(prefix="td_g6_")
     f = os.path.join(d, "c.pt")
     save_train_checkpoint(f, model=m, cfg=cfg, state=st, tokenizer=synthetic_tokenizer())
     blob = torch.load(f, map_location="cpu", weights_only=False)
@@ -115,7 +147,7 @@ def gate_alias_survives_save_load():
     assert st.master["head.weight"].data_ptr() == named["head.weight"].data_ptr()
     bfname = "layers.0.attn.qproj.wq_b.weight"
     assert st.master[bfname].data_ptr() != named[bfname].data_ptr()
-    d = tempfile.mkdtemp(prefix="td_g7_")
+    d = _scratch(prefix="td_g7_")
     f = os.path.join(d, "c.pt")
     save_train_checkpoint(f, model=m, cfg=cfg, state=st, tokenizer=synthetic_tokenizer())
     del m, st
@@ -138,7 +170,7 @@ def gate_tokenizer_and_vocab_id():
     cfg = _cfg("off")
     m = _build(cfg)
     st = TrainState(m, lr=1e-3)
-    d = tempfile.mkdtemp(prefix="td_g3_")
+    d = _scratch(prefix="td_g3_")
     f = os.path.join(d, "c.pt")
     tok = synthetic_tokenizer()
     save_train_checkpoint(f, model=m, cfg=cfg, state=st, tokenizer=tok)
@@ -228,7 +260,7 @@ def gate_optim_named_roundtrip_and_reorder():
     each refuse. Every load is its own process (an 180M model + AdamW per load OOMs in one)."""
     import subprocess
 
-    d = tempfile.mkdtemp(prefix="td_g2_")
+    d = _scratch(prefix="td_g2_")
     env = dict(os.environ, OMP_NUM_THREADS="2")
 
     def sp(*args, check_rc=0):
@@ -256,7 +288,7 @@ def gate_inference_refuses_train_blob():
     cfg = _cfg("off")
     m = _build(cfg)
     st = TrainState(m, lr=1e-3)
-    d = tempfile.mkdtemp(prefix="td_m11_")
+    d = _scratch(prefix="td_m11_")
     f = os.path.join(d, "c.pt")
     save_train_checkpoint(f, model=m, cfg=cfg, state=st, tokenizer=synthetic_tokenizer())
     try:
@@ -299,7 +331,7 @@ def _one_run(kind):
     cfg = _cfg("off")
     m = _build(cfg)
     st = TrainState(m, lr=1e-2)
-    f = os.path.join(tempfile.mkdtemp(prefix="td_eq_"), "c.pt")
+    f = os.path.join(_scratch(prefix="td_eq_"), "c.pt")
     for i, ids in enumerate(batches):
         if kind in ("restart", "fresh") and i == k:
             save_train_checkpoint(f, model=m, cfg=cfg, state=st, tokenizer=synthetic_tokenizer(), step=i)
@@ -457,7 +489,7 @@ def gate_legacy_engram_config_refused_on_load():
     finally:
         torch.set_default_dtype(prev)
     st = TrainState(m, lr=1e-3)
-    d = tempfile.mkdtemp(prefix="td_legacy_")
+    d = _scratch(prefix="td_legacy_")
     f = os.path.join(d, "c.pt")
     save_train_checkpoint(f, model=m, cfg=cfg, state=st, tokenizer=tok)
     del m, st
@@ -495,7 +527,7 @@ def gate_master_saved_bf16_refused():
     cfg = _cfg("off")
     m = _build(cfg)
     st = TrainState(m, lr=1e-3)
-    d = tempfile.mkdtemp(prefix="td_m2_")
+    d = _scratch(prefix="td_m2_")
     f = os.path.join(d, "c.pt")
     save_train_checkpoint(f, model=m, cfg=cfg, state=st, tokenizer=synthetic_tokenizer())
     blob = torch.load(f, map_location="cpu", weights_only=False)
@@ -516,7 +548,19 @@ def gate_master_saved_bf16_refused():
     print("  M2: a master tensor saved as bf16 is refused on load")
 
 
+def _stray_td(root):
+    """The leak predicate. One implementation, shared by the live guard and its selftest.
+
+    Only `td_` entries count: torch's compile cache lands under TMPDIR by design and is not
+    this file's to remove. Asserting the root was EMPTY fired on `torchinductor_chenkailun.c`
+    and named `_scratch()` as the fix for a dir this test never created -- a guard with a
+    known false positive gets switched off.
+    """
+    return [x for x in sorted(os.listdir(root)) if x.startswith("td_")]
+
+
 def _selftest():
+    _leakguard_selftest()
     # Each gate builds a 180M model + fp32 master + AdamW (~2.5 GB) and several do save/load,
     # so running all seven in one process accumulates enough to OOM a laptop. Run each gate in
     # its OWN process (process-private memory, returned to the OS on exit); a failure in any
@@ -526,7 +570,7 @@ def _selftest():
 
     # one process-private scratch root handed to every gate as TMPDIR (mkdtemp honours it);
     # a failed run leaves multi-GB blobs, so remove only our own root, never a shared prefix.
-    root = tempfile.mkdtemp(prefix="td_p1_root_")
+    root = _scratch(prefix="td_p1_root_")
     gates = [
         "gate_census_membership",
         "gate_buffers_in_model_not_master",
@@ -553,9 +597,88 @@ def _selftest():
                 print(r.stderr)
                 raise AssertionError(f"{name} failed (rc={r.returncode})")
             print(r.stdout.strip().splitlines()[-1])
+            # THE LEAK GUARD. A child that exits leaves no scratch dir of OURS behind: if it
+            # did, the direct-run path would keep filling the ambient /tmp exactly as it did
+            # on 2026-09-18 (77 GB, root filesystem to 100%). Checked per gate, right after
+            # the child exits, while a leak is still attributable to the gate that caused it
+            # -- one check at the end cannot say which gate leaked, and naming the producer
+            # is the whole point. The parent's rmtree below would otherwise erase the evidence.
+            stray = _stray_td(root)
+            if stray:
+                raise AssertionError(
+                    f"{name} left {len(stray)} scratch entr(ies) under its TMPDIR root: "
+                    f"{stray[:4]} -- a dir this file created outlived the child. Route it "
+                    f"through _scratch()."
+                )
     finally:
         shutil.rmtree(root, ignore_errors=True)
     print("p1 train ckpt OK")
+
+
+def _leakguard_selftest():
+    """Prove the per-gate leak guard DISCRIMINATES, on worlds built from the real predicate.
+
+    A guard that never fires and a guard that always fires both pass a "the suite is green"
+    reading, so the predicate is driven against four child processes that differ only in
+    what they leave under TMPDIR. Cheap and model-free: no gate is run, so this can live in
+    CI where the 180M gates cannot.
+
+    It calls `_stray_td`, the SAME function the live guard calls, rather than restating the
+    `td_` filter. A selftest that re-implements its subject certifies the re-implementation:
+    the two agree today and the guard can change alone tomorrow, which is the drift this
+    whole case exists to prevent.
+
+    CALLED FROM `_selftest()` (genB 2026-09-18). It was reachable only by typing
+    `--leakguard`, which no CI job and no hook entry names -- 76 lines of four-world
+    discrimination that would never have run. `_selftest()` is what `ci.yml` invokes for
+    this module and what the hook's SELFTEST_FILES entry runs, so the wiring is the fix.
+
+    The two `torchinductor_*` worlds are the ones a naive `assert not os.listdir(root)` gets
+    wrong, and it got them wrong in practice on 2026-09-18 -- which is why the predicate
+    filters on `td_` rather than asserting emptiness.
+    """
+    import subprocess
+    import tempfile
+
+    guard = _stray_td
+
+    worlds = [
+        (
+            "a leaking child (mkdtemp, no cleanup)",
+            "import tempfile; tempfile.mkdtemp(prefix='td_x_')",
+            True,
+        ),
+        (
+            "a clean child",
+            "import tempfile, shutil; shutil.rmtree(tempfile.mkdtemp(prefix='td_x_'))",
+            False,
+        ),
+        (
+            "a child that only warms the torch cache",
+            "import os, tempfile; os.makedirs(os.path.join(tempfile.gettempdir(), 'torchinductor_x'))",
+            False,
+        ),
+        (
+            "a leaking child that also warms the cache",
+            "import os, tempfile; tempfile.mkdtemp(prefix='td_x_'); "
+            "os.makedirs(os.path.join(tempfile.gettempdir(), 'torchinductor_x'))",
+            True,
+        ),
+    ]
+    for why, code, want_fire in worlds:
+        root = tempfile.mkdtemp(prefix="td_lg_root_")
+        try:
+            subprocess.run([sys.executable, "-c", code], env=dict(os.environ, TMPDIR=root), check=True)
+            fired = bool(guard(root))
+            assert fired == want_fire, f"leak guard wrong on {why!r}: fired={fired} want={want_fire}"
+        finally:
+            import shutil
+
+            shutil.rmtree(root, ignore_errors=True)
+    print(
+        "leak guard OK: fires on a leaked td_ dir, silent on a clean child AND on torch's "
+        "own cache dir (4/4 worlds)"
+    )
 
 
 if __name__ == "__main__":
@@ -572,5 +695,7 @@ if __name__ == "__main__":
         _g2_try_load(a[a.index("--loadblob") + 1], a[a.index("--loadblob") + 2])
     elif "--m2" in a:
         _m2_worker(a[a.index("--m2") + 1])
+    elif "--leakguard" in a:
+        _leakguard_selftest()
     else:
         _selftest()
