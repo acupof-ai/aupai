@@ -1707,6 +1707,12 @@ def main():
         "scripts/test_rep_stop_flag.py",
         "scripts/test_resume_accumulates.py",
         "scripts/test_score_matrix_failpath.py",
+        # Both directions of sft_math.py's unstamped-pack refusal, by RUNNING the real
+        # script against a real (minimal) checkpoint. CPU-only: sft_math.py guards its
+        # liger import, so the gate is reachable without the CUDA kernel. Registered
+        # 2026-09-19 -- until then this file asserted a checkpoint-error TEXT present in
+        # both orderings, so it stayed green while the ordering it named was backwards.
+        "scripts/test_sft_holdout_gate.py",
         "scripts/test_sft_lr_provenance.py",
         "scripts/test_split_bitwise.py",
         # A mid-run SFT checkpoint must carry optimizer state. It writes a checkpoint from a
