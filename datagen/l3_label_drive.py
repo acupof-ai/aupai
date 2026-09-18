@@ -334,6 +334,7 @@ def _crash_child(spec_path):
 
 def _selftest() -> int:
     import http.server
+    import shutil
     import socketserver
     import tempfile
 
@@ -430,10 +431,18 @@ def _selftest() -> int:
     # Record the write/fsync call order on fake handles and assert the ledger is durable
     # BEFORE the out commit marker; removing or reordering the ledger fsync fails here.
     class _RecFH:
-        def __init__(self, log, tag):
+        """A fake handle over a REAL temp-file fd, because that is what production hands
+        _write_durable: it opens out/ledger with open(..., "a") and fsyncs those real files.
+
+        It opened os.devnull until #542, with the comment "a real fd so os.fsync(fileno())
+        runs" -- true on macOS, where fsync(/dev/null) succeeds, and false on Linux, where it
+        returns EINVAL. So the fixture modelled an fd production never passes, and the
+        selftest failed on ubuntu for a property of the double rather than of the code.
+        A temp file is fsync-able on both platforms and is the object under test."""
+
+        def __init__(self, log, tag, path):
             self._log, self._tag = log, tag
-            self._fd = os.open(os.devnull, os.O_RDWR)  # a real fd so os.fsync(fileno()) runs
-            self.tag = tag
+            self._fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
 
         def write(self, s):
             self._log.append((self._tag, "write"))
@@ -443,6 +452,9 @@ def _selftest() -> int:
 
         def fileno(self):
             return self._fd
+
+        def close(self):
+            os.close(self._fd)
 
     # production calls os.fsync(fh.fileno()) directly; wrap os.fsync so the call is attributed
     # to whichever handle's fd it fsyncs, preserving the exact ordering.
@@ -462,26 +474,33 @@ def _selftest() -> int:
         "score": None, "rubric_dims": {"content_quality": 3}, "cut": None,
         "model": "m", "backend": "openai", "stratum": {}, "rubric_kind": "natural_language",
         "record_id": "lab", "src_sha": None, "truncated": False}
-    out_fh = _RecFH(order_log, "out")
-    led_fh = _RecFH(order_log, "ledger")
-    os.fsync = _rec_fsync
+    _fh_dir = tempfile.mkdtemp(prefix="l3_fh_")
     try:
-        _write_durable(out_fh, led_fh, {"sample_id": "x"}, _valid_ledger_row)
+        out_fh = _RecFH(order_log, "out", os.path.join(_fh_dir, "out"))
+        led_fh = _RecFH(order_log, "ledger", os.path.join(_fh_dir, "ledger"))
+        os.fsync = _rec_fsync
+        try:
+            _write_durable(out_fh, led_fh, {"sample_id": "x"}, _valid_ledger_row)
+        finally:
+            os.fsync = _real_fsync
+        assert [f"{t}.{o}" for t, o in order_log] == \
+            ["ledger.write", "ledger.flush", "ledger.fsync",
+             "out.write", "out.flush", "out.fsync"], order_log
+        # no-ledger path: only the out write/fsync happens
+        order_log.clear()
+        out_fh = _RecFH(order_log, "out", os.path.join(_fh_dir, "out2"))
+        led_fh = None
+        os.fsync = _rec_fsync
+        try:
+            _write_durable(out_fh, None, {"sample_id": "y"}, None)
+        finally:
+            os.fsync = _real_fsync
+        assert [f"{t}.{o}" for t, o in order_log] == ["out.write", "out.flush", "out.fsync"], order_log
     finally:
-        os.fsync = _real_fsync
-    assert [f"{t}.{o}" for t, o in order_log] == \
-        ["ledger.write", "ledger.flush", "ledger.fsync",
-         "out.write", "out.flush", "out.fsync"], order_log
-    # no-ledger path: only the out write/fsync happens
-    order_log.clear()
-    out_fh = _RecFH(order_log, "out")
-    led_fh = None
-    os.fsync = _rec_fsync
-    try:
-        _write_durable(out_fh, None, {"sample_id": "y"}, None)
-    finally:
-        os.fsync = _real_fsync
-    assert [f"{t}.{o}" for t, o in order_log] == ["out.write", "out.flush", "out.fsync"], order_log
+        out_fh.close()
+        if led_fh is not None:
+            led_fh.close()
+        shutil.rmtree(_fh_dir, ignore_errors=True)
 
     # duplicate pool sample_ids -> loud nonzero refusal BEFORE any teacher call or write;
     # the canonical builder guarantees uniqueness, so this is a foreign/hand-edited pool.
