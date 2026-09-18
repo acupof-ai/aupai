@@ -344,14 +344,13 @@ def gate_prod_census_structural():
     from v41f.config import v41f_s
 
     cfg = dataclasses.replace(
-        v41f_s(),
-        engram_compressed_vocab_size=6,
+        v41f_s(tokenizer=synthetic_tokenizer()),
         engram_n_heads=2,
         engram_head_dim=8,
         engram_vocab_size=20,
         engram_pad_id=2,
     )
-    cfg = cfg.with_derived_engram()
+    cfg = cfg.with_derived_engram(tokenizer=synthetic_tokenizer())
     six = {
         f"layers.{l}.attn.indexer.{w}.weight"
         for l in cfg.index_source_layers

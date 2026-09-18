@@ -26,6 +26,10 @@ jobs:
       # wiring gate (an implemented section that fails to arm exits nonzero).
       - run: python tests/v41f/test_p1_assembly_keys.py --selftest
       - run: python tests/v41f/test_p1_indexer_freeze.py --selftest
+      # Engram ON config gate (de): a bare V41FConfig() must not validate. Runs here as well
+      # as in the hook because the defect it guards is cheap to reintroduce by editing a
+      # default, and the failure it prevents surfaces only at model build.
+      - run: python tests/v41f/test_p1_config_gate.py --selftest
       - run: python tests/v41f/test_p1_train_ckpt.py
       # Whole-machine train->save->fresh-process resume smoke (0e): bit-exact checkpoint at
       # load and a single-threaded 1-step bit-exact continuation (cross-platform). Heavy x3
