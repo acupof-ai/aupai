@@ -49,6 +49,41 @@ merely descriptive.
 Candidate 4 is already excluded for the seeded case by the measurement above, and
 `diag_resume_bimodal.py --diag-arm` re-tests it per run. Candidates 1 and 2 are the live ones.
 
+### One mechanism already excluded, and what the exclusion bought
+
+Tested 2026-09-19 on a detached copy of `main`: make `_save_optim_named` silently `continue` past
+one *populated* param (the silent branch in §3), then run the gate and read its own reported
+signature.
+
+| leaf whose state was dropped | `max|delta|` | `n_diff` |
+|---|---|---|
+| `layers.0.…qproj.wq_b.weight` (the probed leaf) | 3.325e-02 | 524288/524288 |
+| `layers.0` (other leaves) | 3.300e-02 | 524288/524288 |
+| `layers.3` | 1.521e-02 | 523668/524288 |
+| `head.weight` | 1.479e-02 | 522632/524288 |
+| `embed.weight` | — | **no divergence** |
+| CI, for comparison | **1.334e-02** | **506533/524288** |
+
+A single silently-reset leaf is therefore **not** the explanation of the CI numbers: three
+informative rows land at 99.7-100% against CI's 96.6%, and `max|delta|` moves by more than 2x with
+the leaf choice. The mechanism predicts 0% (a leaf not feeding the probe) or ~100% (one that does);
+96.6% is neither. It remains live as a possible cause of a *differently-shaped* red.
+
+Two requirements follow, and they are not optional:
+
+1. **Record per-leaf contribution, not the probed tensor's aggregate.** Each dropped leaf produces a
+   measurably different `(max|delta|, n_diff)` pair, so a signature taken from a real red is
+   evidence about *which* state diverged. Aggregating over the probed tensor discards exactly that
+   inference. Emit, per leaf and per comparison point, its own `max|delta|` and `n_diff`.
+2. **`embed.weight` is an open question for the instrumentation, not a footnote.** It carries real
+   optimizer state (`exp_avg` nonzero, `step=2.0`, bf16-native, in-group) and skipping it on save
+   produced **zero** divergence in the probed leaf, while skipping `head.weight` produced 99.7%.
+   The cause is not established. A plausible account is that the probed leaf's gradient path does
+   not reach `embed.weight`, but that is a hypothesis to *test*, not to assume: dump whether each
+   leaf's restored optimizer state equals its control-side counterpart, so "this leaf's state was
+   lost" and "this leaf's loss was invisible to the probe" are separate, recorded facts. Do not
+   explain the anomaly away in the write-up; it is a question the dump must answer.
+
 ## Required instrumentation
 
 Extend `diag_resume_bimodal.py`. Do not build a second diagnostic.
@@ -136,13 +171,22 @@ did not raise is evidence about *names*, not about *values*, and this makes that
    trajectories, plus the checkpoint sha and the key-set comparison.
 3. The per-param presence assertion fires on a copy where `_save_optim_named`'s `if not st: continue`
    is changed to drop one populated param.
-4. Both directions of the ordering are asserted the same way #564 does it: read the fact out of the
+4. **Per-leaf contribution is present and discriminating.** On that same copy, the dump contains a
+   per-leaf `(max|delta|, n_diff)` for every sampled leaf, not only the probed tensor's aggregate,
+   and dropping *different* leaves produces *different* recorded numbers. Reuse the table above as
+   the known-answer set: a build whose per-leaf output is identical for `head.weight` and
+   `layers.0` has collapsed the discriminator the spec exists to provide.
+5. **The `embed.weight` question is answered by data, not by an assumption.** The dump records, per
+   leaf, whether its restored optimizer state equals its control-side counterpart — so "state lost"
+   and "state lost but invisible to the probe" are separately readable.
+6. Both directions of the ordering are asserted the same way #564 does it: read the fact out of the
    source, do not infer it from printed output.
 
 ## What this spec does not claim
 
 It does not claim the cause is candidate 1 or 2. It makes each candidate's signature separable and
-makes the red run carry its own evidence. If the first red-after-merge shows candidates 1-3 all
-clean with the divergence present before the load boundary, the conclusion is that the seeded
-determinism does not hold on that runner, and the measurement to run is the seeded cross-process
-pair from the table above **on that runner**, not on the laptop.
+makes the red run carry its own evidence. It **excludes** one specific mechanism: a single silently
+reset optimizer leaf does not produce CI's 96.6%/1.334e-02 (measured, table above). If the first
+red-after-merge shows candidates 1-3 all clean with the divergence present before the load boundary,
+the conclusion is that the seeded determinism does not hold on that runner, and the measurement to
+run is the seeded cross-process pair from the table above **on that runner**, not on the laptop.
