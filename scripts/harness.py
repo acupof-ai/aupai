@@ -2116,6 +2116,161 @@ def _hook_selftest_maps(src):
     return sf, reasons
 
 
+_SELFTEST_FLAGS = ("--selftest", "--selfcheck", "--self-check")
+_SELFTEST_RESULT = re.compile(r"selftest[^a-zA-Z]{0,4}(OK|PASS)")
+
+
+def _py_carries_selftest(src, rel):
+    """AST-level test that a python file actually DISPATCHES a selftest, not merely mentions one.
+
+    String/substring matching is the bug: strip_docstrings leaves inline comments and help
+    strings, so `help="...run with --selftest"` or a comment `# same as foo's --selftest`
+    marked 59 files that have no selftest entry at all, and a coverage set padded by prose
+    silently drops real registrations. A file is a carrier only when it has executable evidence:
+      - add_argument(<flag>) registers one, or
+      - a <flag> constant is compared against argv (the `if "--selftest" in sys.argv` form), or
+      - it defines selftest()/_selftest(), or
+      - it prints the repo's selftest result contract from a real call, or
+      - it is a test_*.py that runs assertions at module scope and exits at column 0
+        (the pre-__main__ direct-run test scripts).
+    """
+    import ast
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return False
+
+    def _is_argv(n):
+        return any(isinstance(x, ast.Attribute) and x.attr == "argv"
+                   or isinstance(x, ast.Name) and x.id == "argv"
+                   for x in ast.walk(n))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument":
+                if any(isinstance(a, ast.Constant) and a.value in _SELFTEST_FLAGS
+                       for a in node.args):
+                    return True
+            # a real print/write whose literal text is the selftest result contract, including an
+            # f-string whose constant segments carry the contract.
+            if isinstance(node.func, ast.Name) and node.func.id in ("print", "write"):
+                for a in node.args:
+                    consts = []
+                    if isinstance(a, ast.Constant):
+                        consts = [a.value]
+                    elif isinstance(a, ast.JoinedStr):
+                        consts = [v.value for v in a.values
+                                  if isinstance(v, ast.Constant)]
+                    if any(isinstance(c, str) and _SELFTEST_RESULT.search(c) for c in consts):
+                        return True
+        if isinstance(node, ast.Compare):
+            # `flag in sys.argv`, `sys.argv[1:] in (["--selftest"], ...)`, etc. The flag constant
+            # can sit inside a list/tuple comparator and argv inside a subscript, so walk both.
+            text_const = {n.value for n in ast.walk(node)
+                          if isinstance(n, ast.Constant) and n.value in _SELFTEST_FLAGS}
+            if text_const and _is_argv(node):
+                return True
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and node.name in ("selftest", "_selftest"):
+            return True
+    # A runnable test file with the standard `if __name__ == "__main__": ...` entry whose block
+    # actually invokes something (a bare `pass` guard is not a selftest), or module-scope
+    # assertions ending in a column-0 sys.exit (the older direct-run test scripts).
+    if re.search(r"(^|/)test_[\w-]+\.py$|_selftest\.py$", rel):
+        guarded = any(
+            isinstance(n, ast.If)
+            and any(isinstance(x, ast.Constant) and x.value == "__main__"
+                    for x in ast.walk(n.test))
+            and any(isinstance(x, ast.Call) for x in ast.walk(n))
+            for n in tree.body)
+        if guarded:
+            return True
+        has_exit = any(isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
+                       and isinstance(n.value.func, ast.Attribute)
+                       and n.value.func.attr == "exit"
+                       and isinstance(n.value.func.value, ast.Name)
+                       and n.value.func.value.id == "sys"
+                       and getattr(n, "col_offset", 1) == 0
+                       for n in tree.body)
+        has_assert = any(isinstance(n, ast.Assert) or
+                         (isinstance(n, ast.Expr) and isinstance(n.value, ast.Call))
+                         for n in tree.body)
+        if has_exit and has_assert:
+            return True
+    return False
+
+
+def _sh_carries_selftest(src):
+    """A shell file dispatches selftest: a `--selftest` token or `selftest)` case after the
+    shebang, with comment lines stripped so documented usage does not count."""
+    code = "\n".join(ln for ln in src.splitlines()
+                     if ln.strip() and not ln.lstrip().startswith("#"))
+    return ("--selftest" in code) or bool(re.search(r"\bselftest\)", code))
+
+
+def _git_tracked_text_paths(root):
+    """Every tracked candidate path that can carry a selftest, from `git ls-files`.
+
+    Independent of os.walk: walk_tracked's _SKIP_DIRS drops `runs/` (where the registered
+    runs/audit_0904 selftests live) and its suffix filter drops the extensionless python hook
+    scripts/hooks/pre-commit. The tracked set is the real population, so read that; accept
+    .py/.sh and any extensionless file with a python/sh shebang.
+    """
+    try:
+        # --cached (committed) PLUS --others --exclude-standard (present but not yet committed).
+        # The second is needed because the harness selftest's broken worlds copy the real
+        # scripts/ tree into a freshly `git init`'d temp repo without committing: a cached-only
+        # listing is empty there, so a selftest file the world deliberately un-gates would be
+        # invisible and the mutation would pass green. --exclude-standard keeps gitignored data
+        # artifacts out in both shapes.
+        out = subprocess.run(
+            ["git", "-C", root, "ls-files", "-z", "--cached", "--others",
+             "--exclude-standard"],
+            capture_output=True, check=True).stdout.decode("utf-8", "replace")
+    except Exception:
+        return []
+    paths = []
+    for rel in out.split("\0"):
+        if not rel:
+            continue
+        if rel.endswith((".py", ".sh")):
+            paths.append(rel)
+            continue
+        p = os.path.join(root, rel)
+        try:
+            with open(p, "rb") as f:
+                first = f.readline()
+        except OSError:
+            continue
+        if first.startswith(b"#!") and (b"python" in first or b"/sh" in first or b"bash" in first):
+            paths.append(rel)
+    return paths
+
+
+def _filesystem_selftest_paths(root):
+    """Tracked files that carry a runnable selftest, enumerated FROM THE FILESYSTEM.
+
+    Independent of the hook's SELFTEST_FILES/NEEDS_DATA map -- the second source the partition
+    reconciles against, so a selftest missing from the map (or a dead map entry) is visible.
+    Detection is structural (AST for python, comment-stripped scan for shell), so prose that
+    mentions the flag never counts as coverage.
+    """
+    have = set()
+    for rel in _git_tracked_text_paths(root):
+        p = os.path.join(root, rel)
+        try:
+            body = open(p, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        if rel.endswith(".sh"):
+            if _sh_carries_selftest(body):
+                have.add(rel)
+            continue
+        if _py_carries_selftest(body, rel):
+            have.add(rel)
+    return have
+
+
 def check_selftests_are_gated(root):
     """Every file carrying its own --selftest is in the hook's SELFTEST_FILES map.
 
@@ -2174,62 +2329,7 @@ def check_selftests_are_gated(root):
                          f"file is there. Write it, or drop the entry until you do: "
                          f"{', '.join(never[:4])}")
         return FAIL, f"{len(stale)} hook map entry(ies) name a missing file. " + "; ".join(parts)
-    have = set()
-    # walk_tracked, not an os.listdir over four hand-named directories. The list was
-    # ("eval", "scripts", "datagen", "probes"), so mathbank/ was outside what the check
-    # looked at entirely and "42 files, all gated" was true of that subset and silent
-    # about the rest -- the same shape as the predicate bug recorded below, one level up:
-    # a gate that cannot see a file cannot report it missing. mathbank/dist_check.py
-    # carries a selftest and was invisible here (de, 2026-09-02, MEASURED at 42 vs 43).
-    for p, body in walk_tracked(root, (".py",)):
-        rel = os.path.relpath(p, root)
-        # `--selftest` anywhere in the CODE, not `"--selftest"` next to `add_argument`.
-        # The narrow predicate assumed every selftest is wired through argparse; nine
-        # files dispatch on sys.argv instead (scripts/eval_artifacts.py:
-        # `sys.exit(_selftest() if "--selftest" in sys.argv else 0)`), and the
-        # gate reported "27 files, all gated" while those nine ran nowhere. A gate
-        # that cannot see a file cannot report it missing, so its PASS counted only
-        # the files it already understood -- the check encoding an assumption about
-        # where the interesting case lives, which is this repo's named class, in
-        # the check written to catch that class (de, 2026-09-01, on 62's gate).
-        #
-        # Docstrings blanked, because the widening reached one file too far: prose
-        # SAYING a file carries no `--selftest` matched as if it carried one. MEASURED
-        # 2026-09-02 at 44 raw vs 42 stripped -- scripts/test_resume_accumulates.py,
-        # whose docstring explains why it deliberately has no selftest flag, and
-        # scripts/test_serve_history.py, whose usage line quotes the flag its body never
-        # reads. Only the first was ever reported, because the second happens to be in
-        # the map: a false positive hides wherever the answer is right by accident.
-        if "--selftest" in strip_docstrings(body):
-            have.add(rel)
-        # A RUNNABLE test_*.py IS A SELFTEST WHETHER OR NOT IT CARRIES THE FLAG (de,
-        # 2026-09-04, measured: 63 test_*.py tracked, 53 runnable by `if __name__`, 19 of
-        # those in neither map). The population above is "files containing the string --selftest", so a
-        # test_*.py with a main() and no flag was outside this check by construction --
-        # the third time this check's population has been narrower than its property, after
-        # the four-directory listdir blind to mathbank/ and the argparse-only predicate
-        # blind to nine sys.argv dispatchers. Both earlier widenings are recorded above as
-        # the same lesson, and both times the PASS counted only the files the check already
-        # understood.
-        #
-        # The case that made it concrete: scripts/test_score_exit.py, 13 cases over
-        # run_ddp.sh's exit codes and row close, never run at any commit -- and the commit
-        # that CHANGED run_ddp.sh printed `selftests 0.03s`, which reads as "ran, fast" and
-        # means "ran zero". scripts/test_resume_accumulates.py is the demonstration that the
-        # old population was not merely incomplete but blind on purpose: its docstring
-        # explains that it deliberately carries no flag, so stripping docstrings correctly
-        # excluded it, and it is a runnable test nobody ran.
-        #
-        # `if __name__` and not `def main(`: algorithms/test_rlvr_reward_suite.py asserts at
-        # module scope with no main() at all, so a main()-shaped predicate would have missed
-        # it -- the same defect one more level down. (I first wrote that three files were in
-        # that shape; measured, the other two are already gated. One is enough to decide the
-        # predicate.) The invoker passes --selftest to every entry, so a file here must
-        # tolerate an unknown argument or get a SELFTEST_FLAG override; that is a property of
-        # the file, checked by running it, not something this check can assert.
-        elif (re.search(r"(^|/)test_[\w-]+\.py$", rel)
-                and re.search(r"^if __name__", strip_docstrings(body), re.M)):
-            have.add(rel)
+    have = _filesystem_selftest_paths(root)
     missing = sorted(have - gated)
     if missing:
         return FAIL, (f"{len(missing)} file(s) carry a selftest but are not in the hook's "
@@ -2270,18 +2370,12 @@ CI_SELFTEST_EXCLUDE = {
     "datagen/build_dd09_full.py": "needs data/tokenizer.json (gitignored) to build the dd09 mix",
     "datagen/count_code_dirs.py": "needs data/tokenizer.json (gitignored)",
     "datagen/count_corpus_dir.py": "needs data/corpus shards (gitignored)",
-    "scripts/count_dir.py": "walks data/corpus (gitignored); nothing to count in CI",
     "eval/code_fewshot.py": "its --selfcheck reads data/tokenizer.json (gitignored pod artifact, not pip-installable); the selftest prints an explicit skip in that case",
+    "scripts/count_dir.py": "its --selftest reads data/tokenizer.json (gitignored pod artifact, not pip-installable); the selftest prints an explicit skip in that case",
     # by design refuse outside a specific real tree -- not portable assertions.
     "scripts/test_merge_main_ancestor.py": "refuses unless run from the worktree holding the merged branch",
     "scripts/test_pod_sync_stamp.py": "deliberate ALLOW_DIRECT_RUN guard; row/claim/watchdog created by hand",
     "scripts/test_reachability_fresh.py": "compares against the committed runs/reachability.txt derived artifact, not reproducible mid-CI",
-    # SLOW in CI (time, not correctness): these genuinely run at COMMIT time on a developer
-    # machine (they are in SELFTEST_FILES and the hook executes them); the bounded CI driver
-    # cannot afford them. The reason states that the hook still runs them, so exclusion never
-    # means 'nobody runs it'.
-    "scripts/merge_main.sh": "slow in CI: 85 selftest worlds exceed the driver timeout; it genuinely runs at commit time on the developer machine via the pre-commit hook",
-    "datagen/l2_code_chunk_pool.py": "slow in CI (>120s build); it genuinely runs at commit time on the developer machine via the pre-commit hook",
     # optional third-party kernel not installed in the CPU image.
     "scripts/test_sft_moe_cfg.py": "imports liger_kernel, which is not installed in the CPU CI image",
     # process isolation. isolate.py's selftest runs the full detector on the HOST's sandbox
@@ -2358,6 +2452,103 @@ def ci_selftest_flags(src):
     return flags
 
 
+_SELFTEST_TAIL = 200
+
+
+def _run_one_selftest(root, rel, flag, timeout, env):
+    """Run one registered selftest, STREAMING output and killing the whole group on timeout.
+
+    Returns (status, {"rc", "lines"}); status in {"pass","fail","timeout"}; lines is the live
+    output tail. Two failure shapes this prevents (3b, §298):
+      - output is not held fully buffered until exit: PYTHONUNBUFFERED plus a reader thread
+        prints each line as it arrives, so a killed child leaves the lines before the hang;
+      - a timeout is LOUD: the caller prints a machine-readable
+        "CI-SELFTESTS: TIMEOUT after Ns running <rel>" line and exits nonzero. A silent quit at
+        ~115s (the old communicate()-only path) is indistinguishable from success.
+    The child starts its own session and is killed as a GROUP: subprocess's timeout kills only
+    the direct child, and a grandchild holding the stdout pipe keeps communicate() hanging.
+    """
+    import signal
+    import threading
+
+    interp = ["bash"] if rel.endswith(".sh") else [sys.executable]
+    args = interp + [os.path.join(root, rel)] + ([flag] if flag else [])
+    run_env = dict(env)
+    run_env.setdefault("PYTHONUNBUFFERED", "1")
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, bufsize=1, env=run_env, cwd=root, start_new_session=True)
+    lines = []
+
+    def _reader():
+        for line in proc.stdout:
+            lines.append(line.rstrip("\n"))
+            if len(lines) > _SELFTEST_TAIL:
+                del lines[:len(lines) - _SELFTEST_TAIL]
+            print(f"    [{rel}] {line.rstrip()}", flush=True)
+
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+    try:
+        proc.wait(timeout=timeout)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+    t.join(timeout=5)
+    detail = {"rc": proc.returncode, "lines": list(lines)}
+    if timed_out:
+        return "timeout", detail
+    return ("pass" if proc.returncode == 0 else "fail"), detail
+
+
+def _run_ci_targets(targets, flags, timeout, fail_fast, env, root):
+    """Drive repo-relative selftest paths; return the process exit code.
+
+    Factored out of cmd_ci_selftests so the harness selftest can drive a guaranteed-hang target
+    and prove the timeout is loud and nonzero, rather than only that the parser lists targets.
+    """
+    failed = []
+    for i, rel in enumerate(targets, 1):
+        if not os.path.exists(os.path.join(root, rel)):
+            print(f"CI-SELFTESTS: FAIL {rel}: registered but missing on disk", flush=True)
+            return 1
+        flag = flags.get(rel, "--selftest")
+        shown = f" {flag}" if flag else ""
+        print(f"CI-SELFTESTS: [{i}/{len(targets)}] RUN {rel}{shown}", flush=True)
+        status, detail = _run_one_selftest(root, rel, flag, timeout, env)
+        if status == "timeout":
+            print(f"CI-SELFTESTS: TIMEOUT after {timeout:.0f}s running {rel} -- its process "
+                  f"group was killed (mark it slow/excluded, or fix the hang). Last output "
+                  f"before the kill:", flush=True)
+            for ln in detail["lines"][-12:]:
+                print("    " + ln, flush=True)
+            failed.append(rel)
+            if fail_fast:
+                return 1
+            continue
+        if status == "fail":
+            print(f"CI-SELFTESTS: FAIL {rel}{shown} (exit {detail['rc']})", flush=True)
+            for ln in detail["lines"][-12:]:
+                print("    " + ln, flush=True)
+            failed.append(rel)
+            if fail_fast:
+                return 1
+    if failed:
+        print(f"CI-SELFTESTS: {len(failed)} of {len(targets)} target(s) failed: "
+              f"{', '.join(failed)}", flush=True)
+        return 1
+    print(f"CI-SELFTESTS: {len(targets)} target(s) passed", flush=True)
+    return 0
+
+
 def cmd_ci_selftests(argv):
     """Run every driver-bucket registered selftest, bounded; report EVERY failure, nonzero exit.
 
@@ -2382,59 +2573,7 @@ def cmd_ci_selftests(argv):
     targets = sorted(p for p, b in buckets.items() if b == "driver")
     env = dict(os.environ)
     env["CUDA_VISIBLE_DEVICES"] = ""  # CPU image: never let a selftest silently claim a card
-    failed, ran = [], 0
-    for p in targets:
-        if not os.path.exists(os.path.join(ROOT, p)):
-            print(f"ci-selftests: FAIL {p}: registered but missing on disk")
-            return 1
-        fl = flags.get(p, "--selftest")
-        interp = ["bash"] if p.endswith(".sh") else [sys.executable]
-        args = interp + [os.path.join(ROOT, p)] + ([fl] if fl else [])
-        # NEW PROCESS GROUP, killed as a GROUP on timeout. subprocess.run(timeout=) kills only
-        # the direct child and then reaps its pipes; a selftest that spawns a grandchild which
-        # inherits the stdout pipe (card_claim does) keeps that pipe open, so communicate()
-        # never returns and the runner hangs FOREVER well past the timeout. Start each selftest
-        # in its own group (start_new_session) and on timeout terminate/kill the whole group.
-        import signal
-        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                text=True, env=env, cwd=ROOT, start_new_session=True)
-        try:
-            out, _err = proc.communicate(timeout=a.timeout)
-            rc = proc.returncode
-            timed_out = False
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            out = ""
-            try:
-                os.killpg(proc.pid, signal.SIGTERM)
-                proc.wait(timeout=5)
-            except Exception:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                proc.wait()
-        if timed_out:
-            print(f"ci-selftests: FAIL {p}: exceeded {a.timeout:.0f}s and its process group "
-                  f"was killed (mark it slow/excluded, or fix the hang)")
-            failed.append(p)
-            if a.fail_fast:
-                return 1
-            continue
-        ran += 1
-        if rc != 0:
-            tail = out.strip().splitlines()[-8:]
-            print(f"ci-selftests: FAIL {p} {fl or ''} (exit {rc})")
-            for line in tail:
-                print("    " + line)
-            failed.append(p)
-            if a.fail_fast:
-                return 1
-    if failed:
-        print(f"ci-selftests: {len(failed)} of {ran} ran failed: {', '.join(failed)}")
-        return 1
-    print(f"ci-selftests: {ran} registered selftest(s) passed (driver bucket)")
-    return 0
+    return _run_ci_targets(targets, flags or {}, a.timeout, a.fail_fast, env, ROOT)
 
 
 def check_ci_selftest_partition(root):
@@ -2489,10 +2628,39 @@ def check_ci_selftest_partition(root):
                      if not os.path.exists(os.path.join(root, k)))
     if missing:
         return FAIL, f"CI_SELFTEST_EXCLUDE names a missing file: {', '.join(missing[:4])}"
-    return PASS, (f"{counts['driver']} driver-run, {counts['explicit']} explicit-ci step(s), "
-                  f"{counts['exclude']} CI-image/slow-excluded are covered in CI; "
-                  f"{counts['needs']} NEEDS_DATA exemption(s) never run at commit time; "
-                  f"no uncovered runnable bucket")
+
+    # BIDIRECTIONAL RECONCILIATION AGAINST THE FILESYSTEM (de blocker). The map-derived buckets
+    # are one source; the filesystem is the independent second source. Enumerate selftest
+    # carriers from the tree WITHOUT reading SELFTEST_FILES. Then:
+    #   - a selftest carrier in NO bucket (not even needs) is unregistered -> it runs nowhere;
+    #   - a runnable map member (driver/explicit/exclude) that is NOT a filesystem carrier is a
+    #     DEAD registration (the entry was dropped/renamed but stays in a map) -> fail.
+    # Two identities must both hold:
+    #   fs carriers ⊆ all buckets   (every carrier is accounted for: runs somewhere or is a
+    #                               named needs exemption) -> unregistered must be empty;
+    #   runnable buckets ⊆ fs       (every driver/explicit/exclude entry is a real carrier, not a
+    #                               dead registration) -> dead must be empty.
+    # The totals need not be equal: a NEEDS entry may name a file that is not a portable carrier
+    # at all (datagen/sandbox_exec.py uses _self_check and needs root), which is map-only by
+    # design, not a miss.
+    fs = _filesystem_selftest_paths(root)
+    runnable = {p for p, b in buckets.items() if b != "needs"}
+    needs_only = sorted(set(buckets) - fs)  # NEEDS files that are intentionally not carriers
+    unregistered = sorted(fs - set(buckets))
+    dead = sorted(p for p in runnable - fs if os.path.exists(os.path.join(root, p)))
+    if unregistered:
+        return FAIL, (f"{len(unregistered)} filesystem selftest carrier(s) are in NO hook bucket "
+                      f"(run nowhere at commit time and uncovered in CI): "
+                      f"{', '.join(unregistered[:4])}")
+    if dead:
+        return FAIL, (f"{len(dead)} runnable map entr(ies) are not filesystem selftest carriers "
+                      f"(dead registration: entry kept after the file stopped carrying a "
+                      f"selftest): {', '.join(dead[:4])}")
+    return PASS, (f"map {len(buckets)} vs filesystem {len(fs)} (reconciled, "
+                  f"{len(needs_only)} needs-only non-carrier by design): "
+                  f"{counts['driver']} driver, {counts['explicit']} explicit-ci, "
+                  f"{counts['exclude']} excluded covered in CI; {counts['needs']} NEEDS "
+                  f"exemption(s); no unregistered/dead entry")
 
 
 def check_probe_numbers_unique(root):
