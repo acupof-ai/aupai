@@ -63,35 +63,68 @@ def main():
     # two prints (A) and, the pure form of the original defect, putting `if bad: return 1`
     # ABOVE both prints (C) -- and the old assertion missed both. An ordering assertion that
     # only looks at one gap cannot see an early return placed before the gap.
-    # THE WINDOW STARTS AT THE SUMMARY BANNER, NOT AT THE FAIL PRINT. A window anchored on
-    # the FAIL print cannot see `if bad: return 1` placed ABOVE both prints -- the original
-    # defect in its purest form, a failing run that exits before any summary line -- because
-    # the return is then behind the window's own start. de measured that miss. The banner is
-    # the first thing in the region, so it precedes an early return inserted anywhere in it.
-    #
-    # NOT A BARE `find("if bad:")` EITHER: harness.py holds other `if bad:` guards hundreds
-    # of thousands of characters earlier (measured: the first bare match at 54550 against the
-    # summary block at 1654184), which anchors the window on an unrelated function and makes
-    # the check meaningless in both directions -- it passed on the correct tree only because
-    # an unrelated `\n        return` landed inside that 231 KB span.
-    _banner = "THE SUMMARY PRINTS ON EVERY PATH, INCLUDING FAILURE."
-    assert src.count(_banner) == 1, (
-        f"the summary banner appears {src.count(_banner)} times in harness.py, so the window "
-        f"below has no single start and this case cannot check anything")
-    i_stage = src.find(_banner)
+    # An ANCHORED WINDOW WAS TRIED TWICE AND ESCAPED TWICE. The first version anchored on the
+    # FAIL print and sliced `src[i_bad:i_sum]`; when `i_sum < i_bad` that slice is EMPTY and
+    # `"return 1" not in ""` is True, so it passed vacuously (de, four worlds). The second
+    # anchored on the summary banner comment and de stepped over it by one line (a return
+    # immediately ABOVE a comment that starts the window is outside it) -- on that tree the
+    # selftest passed while a real `harness check` with a failing invariant printed NOTHING.
+    # No anchor is used below; see the early-return assertion.
+    _anchor = "stages(res)"
+    assert src.count(_anchor) == 1, (
+        f"{_anchor!r} appears {src.count(_anchor)} times in harness.py, so the window has no "
+        f"single start and this case cannot check anything")
+    i_stage = src.find(_anchor)
     i_fail = src.find('if bad:\n        print(f"\\n{len(bad)} invariant(s) FAILED')
     i_sum = src.find('NOT run here: {\', \'.join(skipped)}')
     i_auth = src.find("authority: {len(EVIDENCE)")
-    for _name, _i in (("the summary banner", i_stage),
+    for _name, _i in (("the summary block's anchor", i_stage),
                       ("the invariant-FAIL print", i_fail),
                       ("the skip/denominator print", i_sum),
                       ("the authority line", i_auth)):
         assert _i != -1, (
             f"cannot locate {_name} in harness.py, so this ordering case cannot check "
             f"anything -- a rename must red here, not pass")
+    # NO `if bad:` BLOCK IN main() RETURNS BEFORE THE SUMMARY -- ASSERTED WITHOUT AN ANCHOR.
+    # Two earlier versions anchored a window on a fixed position inside the block (first the
+    # FAIL print, then the banner comment) and de escaped each by moving the return one line
+    # further up: the banner is the block's first COMMENT, so a return immediately above it
+    # sits outside a window that starts at it. On that tree the selftest passed while a real
+    # `harness check` with a failing invariant printed NOTHING -- no FAIL list, no denominator,
+    # no authority line. Any fixed anchor can be stepped over by one line.
+    #
+    # THE PREDICATE IS THE DEFECT ITSELF, SCANNED AS A BLOCK. It is not "any return before the
+    # summary" (main holds 22 legitimate `return cmd_*(...)` dispatches there, so that reds on
+    # the correct tree) and not a text shape: the pre-fix code was
+    # `if bad: / print(...) / return 1`, three lines, so a regex for `if bad:` immediately
+    # followed by `return` finds the mutation but MISSES the real thing it exists to prevent.
+    # What is asserted is the property: an `if bad:` guard in main() whose body returns. Its
+    # block is walked by indentation, so the return may sit anywhere inside the guard.
+    # MEASURED: 0 on the correct tree, 1 on the pre-fix revision (a27c50b0^), and 1 in each of
+    # de's worlds -- return above the FAIL print / above the banner / above the block's stage
+    # call / between the banner and the FAIL print.
+    i_main = src.rfind("\ndef main(", 0, i_auth)
+    assert i_main != -1, "cannot locate `def main(` above the authority line in harness.py"
+    early = []
+    for _m in re.finditer(r"^([ \t]*)if bad:[^\n]*\n", src[i_main:i_auth], re.M):
+        _ind = len(_m.group(1))
+        for _line in src[i_main + _m.end():i_auth].split("\n"):
+            if not _line.strip():
+                continue
+            if len(_line) - len(_line.lstrip()) <= _ind:
+                break
+            if re.search(r"\breturn\b", _line):
+                early.append(_m.group(0).strip() + " -> " + _line.strip())
+                break
+    assert not early, (
+        f"main() has an `if bad:` guard that returns before its summary ({early}), so a run "
+        f"with a failing invariant reports the FAIL list -- or nothing at all -- and never "
+        f"states what did not run. The reader most in need of that line is the one who cannot "
+        f"see it. Move the return below the summary prints, or collapse it into the single "
+        f"`return 1 if bad else 0` that follows them.")
     assert i_stage < i_fail < i_sum < i_auth, (
         f"harness.py's summary prints are out of order or outside the block "
-        f"(banner={i_stage}, FAIL={i_fail}, skip={i_sum}, authority={i_auth}): the "
+        f"(anchor={i_stage}, FAIL={i_fail}, skip={i_sum}, authority={i_auth}): the "
         f"reader-facing summary must follow the FAIL line and precede the authority line")
     assert "\n        return" not in src[i_stage:i_auth], (
         "harness.py returns between the invariant-FAIL line and the authority line, so a run "
