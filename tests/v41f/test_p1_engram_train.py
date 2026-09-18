@@ -64,7 +64,7 @@ def _build(cfg, tok, max_batch_size=2):
 
 def small_cfg():
     tok = _tokenizer()
-    return v41f_small(vocab_size=len(tok), engram_compressed_vocab_size=6, **SMALL).with_derived_engram(), tok
+    return v41f_small(vocab_size=len(tok), tokenizer=tok, **SMALL), tok
 
 
 def test_engram_on_small_completes_a_training_step():
@@ -121,7 +121,7 @@ def test_production_config_is_structure_only():
     """
     try:
         tok = _tokenizer()
-        cfg = V41FConfig(vocab_size=len(tok), engram_compressed_vocab_size=6).with_derived_engram()
+        cfg = V41FConfig(vocab_size=len(tok)).with_derived_engram(tokenizer=tok)
     except Exception as e:  # noqa: BLE001
         raise AssertionError(f"production cfg/tokenizer harness unavailable: {e}") from e
     n_layers = len(cfg.engram_layer_ids)
