@@ -334,9 +334,14 @@ def test_regression_indexer_forward_still_returns_plain_idxs():
 
 
 def test_invalid_mode_is_loud():
-    """The switch validates rather than silently training nothing."""
+    """The switch validates rather than silently training nothing.
+
+    engram is pinned OFF so this asserts ONE property. Without the pin the config inherits
+    the prod default (engram ON with unset derived fields) and validate() raises about the
+    engram first, so an unknown mode could pass unnoticed behind an unrelated message.
+    """
     try:
-        V41FConfig(**{**_SHAPE, "indexer_train_mode": "yes"}).validate()
+        V41FConfig(**{**_SHAPE, "engram_layer_ids": (), "indexer_train_mode": "yes"}).validate()
     except ValueError as e:
         assert "indexer_train_mode" in str(e), e
     else:
