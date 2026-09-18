@@ -22,6 +22,7 @@ gate's own wording is what these cases read, and the checkpoint is a real (minim
 ordering is asserted directly below, with the corrupt-checkpoint case, and it is the one
 assertion that reds if the gate is moved back below the load.
 """
+import atexit
 import hashlib
 import os
 import subprocess
@@ -31,6 +32,20 @@ import tempfile
 import torch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_SCRATCH = []
+
+
+def _clean():
+    """Remove the run logs this test caused. sft_math.py writes runs/<name>.log inside the
+    tree whatever --out points at, so every case registers its log here."""
+    for p in _SCRATCH:
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
+atexit.register(_clean)
 HOLDOUT = os.path.join(ROOT, "data", "eval", "holdout_hashes.txt")
 live = hashlib.sha256(open(HOLDOUT, "rb").read()).hexdigest()[:16]
 
@@ -65,10 +80,18 @@ def pack(fp):
     return p
 
 
-def run(pack_path, extra=(), ckpt_path=None):
+def run(pack_path, extra=(), ckpt_path=None, out=None):
+    # RunLog writes `runs/<basename(--out)>.log` relative to ROOT, NOT next to --out, so
+    # pointing --out at /tmp does not keep the file out of the tree: `--out /tmp/x.pt` still
+    # creates runs/x.log. Each case names its own log and the caller removes it. (de,
+    # 2026-09-19: a run of this test left runs/x.log in the tree.)
+    out = out or _tmp(".pt")
+    log = os.path.join(ROOT, "runs", os.path.splitext(os.path.basename(out))[0] + ".log")
+    if log not in _SCRATCH:
+        _SCRATCH.append(log)
     r = subprocess.run([sys.executable, os.path.join(ROOT, "sft_math.py"),
                         "--resume", ckpt_path or ckpt(), "--sft_path", pack_path,
-                        "--out", "/tmp/x.pt", *extra],
+                        "--out", out, *extra],
                        capture_output=True, text=True, cwd=ROOT,
                        env={**os.environ, "CUDA_VISIBLE_DEVICES": "", "FLA_FLASH_KDA": "0"})
     out = r.stdout + r.stderr
@@ -124,6 +147,25 @@ check("live stamp prints no unknown-status line", "holdout status unknown" not i
 o = run(pack(None), ckpt_path=_tmp(".pt", BROKEN_CKPT_BODY))
 check("gate refuses before the checkpoint is loaded", "carries NO holdout_fp" in o, o)
 check("the broken checkpoint was never reached", "UnpicklingError" not in o and "could not find MARK" not in o, o)
+
+# 6. THE LIGER GUARD SITS BETWEEN THE --check_pack RETURN AND THE LOSS CALL. The assert cannot
+#    be reached from a test without building a real 180M model, but its PLACEMENT is the whole
+#    property, and placement is a source fact. Two ways to get it wrong, both measured:
+#      - guard BEFORE `if args.check_pack:` -> --check_pack refuses on a liger-less box, so the
+#        cardless gate the phi launchers run (runs/v42_phi_sft.sh) stops working entirely;
+#      - guard AFTER the flce call -> it never runs, and the box dies calling None.
+#    MUTATION: move the assert either side of that window and this case reds.
+_sm = open(os.path.join(ROOT, "sft_math.py"), encoding="utf-8").read().splitlines()
+def _idx(needle):
+    return next((i for i, l in enumerate(_sm) if needle in l), None)
+_guard = _idx("assert LigerFusedLinearCrossEntropyLoss is not None")
+_cp    = _idx("if args.check_pack:")
+_call  = _idx("flce = LigerFusedLinearCrossEntropyLoss(")
+check("liger guard is present", _guard is not None, "_guard is None")
+check("liger guard is after the --check_pack return", _guard is not None and _cp is not None and _guard > _cp,
+      f"guard={_guard} check_pack={_cp}")
+check("liger guard is before the loss call", _guard is not None and _call is not None and _guard < _call,
+      f"guard={_guard} call={_call}")
 
 print(f"\n{'ALL OK' if not fails else 'FAILED: ' + ', '.join(fails)}")
 sys.exit(1 if fails else 0)
