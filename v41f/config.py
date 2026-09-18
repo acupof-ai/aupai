@@ -11,6 +11,7 @@ v41f_s() size, measured by scripts/v41f_param_count.py: 0.9046 B total params,
 210.95 M active/token (23.32%). This is the faithful V4.1-Flash-S config, not the retired
 ~350M-active r3 gate line; do not retune these shapes toward that older number.
 """
+
 from dataclasses import dataclass, fields, replace
 from typing import Literal
 
@@ -68,7 +69,7 @@ class V41FConfig:
     engram_max_ngram_size: int = 4
     engram_n_heads: int = 4
     engram_head_dim: int = 128
-    engram_vocab_size: int = 65536          # hash-bucket modulus, NOT compressed-vocab size
+    engram_vocab_size: int = 65536  # hash-bucket modulus, NOT compressed-vocab size
     engram_pad_id: int = 2
     # Table rows per engram layer, one entry per engram layer. The class default () is the
     # OFF path; a config with engram_layer_ids set must carry the values EngramLayout
@@ -83,7 +84,7 @@ class V41FConfig:
     n_mtp_layers: int = 1
     dspark_block_size: int = 5
     dspark_target_layer_ids: tuple[int, ...] = (8,)
-    dspark_markov_rank: int = 0             # 0 = Markov head not built (P3 omits it)
+    dspark_markov_rank: int = 0  # 0 = Markov head not built (P3 omits it)
     dspark_noise_token_id: int = 0
     # draft-block experts; 0 falls back to the backbone counts (ref get_moe_config `or`)
     dspark_n_routed_experts: int = 0
@@ -102,7 +103,8 @@ class V41FConfig:
         if len(self.compress_ratios) != self.n_layers:
             raise ValueError(
                 f"compress_ratios has {len(self.compress_ratios)} entries, "
-                f"need one per layer ({self.n_layers})")
+                f"need one per layer ({self.n_layers})"
+            )
         if self.head_dim <= self.rope_head_dim:
             raise ValueError("head_dim must exceed rope_head_dim (nope + rope split)")
         if self.n_heads % self.o_groups:
@@ -114,13 +116,40 @@ class V41FConfig:
             raise ValueError("activated experts exceed routed experts")
         if self.hc_mult < 1:
             raise ValueError("hc_mult >= 1")
+        # ENGRAM ON REQUIRES BOTH DERIVED FIELDS. Neither has a usable default: the class
+        # default is () and 0, and with engram_layer_ids non-empty that pair reaches Engram
+        # and dies there -- compressed_vocab_size on an assert inside NgramHashState, and
+        # num_embeddings on a tuple index inside Engram. Both are loud, but they fire at
+        # CONSTRUCTION, after a caller has already committed to a shape and a card; the
+        # whole point of validate() is to reject the config where it is cheap to see.
+        # They also cannot be filled from `self` alone: the compressed size is measured off
+        # the real tokenizer, which is why with_derived_engram takes one.
+        if self.engram_layer_ids:
+            if not self.engram_num_embeddings:
+                raise ValueError(
+                    "engram_layer_ids is non-empty (engram ON) but engram_num_embeddings is "
+                    "empty: build the config with with_derived_engram(tokenizer=...) so the "
+                    "table rows are derived from the layout, not left at the () default"
+                )
+            if any(n <= 0 for n in self.engram_num_embeddings):
+                raise ValueError(
+                    f"engram_num_embeddings must all be positive, got {self.engram_num_embeddings}"
+                )
+            if self.engram_compressed_vocab_size <= 0:
+                raise ValueError(
+                    "engram_layer_ids is non-empty (engram ON) but "
+                    "engram_compressed_vocab_size is "
+                    f"{self.engram_compressed_vocab_size}: it is measured from the real "
+                    "tokenizer, so build with with_derived_engram(tokenizer=...) rather than "
+                    "leaving the default"
+                )
         if self.engram_num_embeddings and len(self.engram_num_embeddings) != len(self.engram_layer_ids):
             raise ValueError(
                 f"engram_num_embeddings has {len(self.engram_num_embeddings)} entries for "
-                f"{len(self.engram_layer_ids)} engram layers")
+                f"{len(self.engram_layer_ids)} engram layers"
+            )
         if self.indexer_train_mode not in ("off", "ste"):
-            raise ValueError(
-                f"indexer_train_mode must be 'off' or 'ste', got {self.indexer_train_mode!r}")
+            raise ValueError(f"indexer_train_mode must be 'off' or 'ste', got {self.indexer_train_mode!r}")
 
     def derived_engram_num_embeddings(self) -> tuple[int, ...]:
         """Table rows per engram layer = that layer's sum of bucket primes.
@@ -140,28 +169,76 @@ class V41FConfig:
             return ()
         return tuple(sum(p for ngram in layer for p in ngram) for layer in layout.primes)
 
-    def with_derived_engram(self) -> "V41FConfig":
-        """A copy with engram_num_embeddings filled from the layout; raises if the engram is
-        on and no tokenizer was supplied, because a compressed-vocab size of 0 cannot have
-        been measured and Engram asserts on it."""
-        return replace(self, engram_num_embeddings=self.derived_engram_num_embeddings())
+    def with_derived_engram(self, tokenizer=None) -> "V41FConfig":
+        """A copy with BOTH derived engram fields filled: engram_num_embeddings from the
+        layout, engram_compressed_vocab_size measured from the tokenizer.
+
+        The tokenizer is required whenever the engram is on, and this is the only place the
+        compressed size can come from -- it is `build_compressed_token_map`'s return, a
+        property of the tokenizer object, not of any config field. A caller that leaves the
+        engram off may omit it.
+
+        Raises rather than returning a config validate() would reject: an engram-on config
+        built without a tokenizer cannot have its compressed size measured, and passing the
+        () / 0 defaults forward only moves the failure to model construction.
+        """
+        from .engram import build_compressed_token_map
+
+        derived = self.derived_engram_num_embeddings()
+        if self.engram_layer_ids:
+            if tokenizer is None:
+                raise ValueError(
+                    "engram_layer_ids is non-empty but no tokenizer was supplied: "
+                    "engram_compressed_vocab_size is measured from the tokenizer "
+                    "(build_compressed_token_map) and has no other source. Pass the tokenizer "
+                    "object, or clear engram_layer_ids to build the OFF path."
+                )
+            _, compressed = build_compressed_token_map(tokenizer)
+            return replace(
+                self,
+                engram_num_embeddings=derived,
+                engram_compressed_vocab_size=compressed,
+            )
+        return replace(self, engram_num_embeddings=derived)
 
     @property
     def nope_head_dim(self) -> int:
         return self.head_dim - self.rope_head_dim
 
 
-def v41f_s() -> V41FConfig:
-    """Trainable 8xH20 config."""
-    c = V41FConfig()
+def v41f_s(tokenizer) -> V41FConfig:
+    """Trainable 8xH20 config, VALIDATED and buildable.
+
+    The tokenizer is REQUIRED. Engram is ON by default, so both derived fields have to be
+    built from the tokenizer -- engram_compressed_vocab_size is measured off it and has no
+    other source. There is deliberately no tokenizer-less form: a config that skips the
+    checks cannot be told apart from one that passed them at the call site, and the next
+    person to build a model from the returned object would get the AssertionError inside
+    NgramHashState that this gate exists to prevent. A caller that wants the raw SHAPE for
+    arithmetic asks for it by name -- `V41FConfig()` -- which says what it is.
+    """
+    if tokenizer is None:
+        raise ValueError(
+            "v41f_s() requires a tokenizer: engram is ON by default and "
+            "engram_compressed_vocab_size is measured from it. Pass the tokenizer object, or "
+            "use V41FConfig() for a shape-only unvalidated config."
+        )
+    c = V41FConfig().with_derived_engram(tokenizer=tokenizer)
     c.validate()
     return c
 
 
-def v41f_small(**over) -> V41FConfig:
+def v41f_small(*, tokenizer=None, **over) -> V41FConfig:
     """Upstream-small reference shape for P0 allclose (CPU). Mirrors ModelArgs defaults:
     dim1024 / 5 layers / 8 experts / q_lora256 / head_dim128 / rope32 / hc_mult4.
-    Overrides move it onto our pure-torch path (no vision, no TP)."""
+    Overrides move it onto our pure-torch path (no vision, no TP).
+
+    VALIDATED, like v41f_s. The default here is engram OFF, so the common call needs no
+    tokenizer; an override that turns the engram ON must supply one, because the two derived
+    fields are then built from it. Doing the derivation HERE rather than exposing a
+    half-built config is the same rule v41f_s follows: one name, one validity level, so a
+    returned config is always one a model can be built from.
+    """
     c = V41FConfig(
         vocab_size=12800,
         dim=1024,
@@ -192,13 +269,25 @@ def v41f_small(**over) -> V41FConfig:
     )
     for k, v in over.items():
         c = __import__("dataclasses").replace(c, **{k: v})
+    if c.engram_layer_ids:
+        if tokenizer is None:
+            raise ValueError(
+                "v41f_small() was given engram_layer_ids (engram ON) but no tokenizer: the "
+                "compressed-vocab size is measured from it. Pass tokenizer=..., or leave the "
+                "engram off."
+            )
+        c = c.with_derived_engram(tokenizer=tokenizer)
     c.validate()
     return c
 
 
 if __name__ == "__main__":
-    for name, c in (("v41f_s", v41f_s()), ("v41f_small", v41f_small())):
+    # Shape inspection only: V41FConfig() is the unvalidated shape, which is exactly what
+    # this block wants (it prints field counts, builds nothing).
+    for name, c in (("v41f_s", V41FConfig()), ("v41f_small", v41f_small())):
         n = sum(1 for _ in fields(c))
-        print(f"{name}: dim{c.dim} L{c.n_layers} h{c.n_heads}hd{c.head_dim} "
-              f"E{c.n_routed_experts}top{c.n_activated_experts} hc{c.hc_mult} "
-              f"ratios={c.compress_ratios} ({n} fields)")
+        print(
+            f"{name}: dim{c.dim} L{c.n_layers} h{c.n_heads}hd{c.head_dim} "
+            f"E{c.n_routed_experts}top{c.n_activated_experts} hc{c.hc_mult} "
+            f"ratios={c.compress_ratios} ({n} fields)"
+        )
