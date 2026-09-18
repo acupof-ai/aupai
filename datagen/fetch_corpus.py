@@ -571,13 +571,29 @@ def _looks_like_html_error(path, n=512):
     A shard's first bytes are jsonl `{`/`[`, or a parquet/gz magic -- none of them can
     start with `<`. Deliberately format-free: a per-extension table would have to model
     fourteen manifest builders, three of which carry no extension at all (RedPajama's
-    names files), and the property under test is only "is this the object or a page"."""
+    names files), and the property under test is only "is this the object or a page".
+
+    THE BOM IS STRIPPED FIRST, and that is not tidiness. `bytes.lstrip()` strips ASCII
+    whitespace only, so a page served as `\\xef\\xbb\\xbf<!DOCTYPE html>` passed this
+    check -- measured 2026-09-19 in review: the same 403 page, refused without the BOM and
+    accepted with it. Both BOM orders are stripped (`\\xef\\xbb\\xbf` UTF-8,
+    `\\xff\\xfe`/`\\xfe\\xff` UTF-16), because an error page's encoding is the server's
+    choice. A real shard carrying a BOM (a jsonl file UTF-8-SIG) is still accepted, since
+    stripping leaves its `{`.
+
+    Content-Type is not consulted and does not need to be: it is a claim by the same
+    server that lied about the body, and the servers in this chain answer `text/html` for
+    a parquet resolve on some paths. The bytes are the evidence."""
     try:
         with open(path, "rb") as f:
-            head = f.read(n).lstrip().lower()
+            head = f.read(n)
     except OSError:
         return False
-    return head.startswith(b"<")
+    for bom in (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff"):
+        if head.startswith(bom):
+            head = head[len(bom):]
+            break
+    return head.lstrip().lower().startswith(b"<")
 
 
 def _fetch_one(url_chain, part, name, prev_host):
@@ -855,6 +871,26 @@ def _selftest():
         with open(os.path.join(d, "pq.part"), "wb") as fp:
             fp.write(b"PAR1" + b"\x00" * 64)
         assert not _looks_like_html_error(os.path.join(d, "pq.part")), "a parquet shard is not a page"
+        # (a5) THE PREFIX VARIANTS THE `<` CHECK MISSES WITHOUT THE BOM STRIP. `lstrip()` is
+        # ASCII whitespace only, so `\xef\xbb\xbf<!DOCTYPE html>` passed the check while the
+        # same page without the BOM was refused -- measured in review 2026-09-19. Asserted both
+        # ways: the BOM'd page is refused, and a BOM'd REAL shard is still accepted, so the
+        # strip cannot become a way to smuggle a page past by prefixing a BOM to a real one.
+        for _pfx, _nm in ((b"\xef\xbb\xbf", "utf8"), (b"\xff\xfe", "utf16le"), (b"\xfe\xff", "utf16be")):
+            with open(os.path.join(d, "bom.part"), "wb") as fp:
+                fp.write(_pfx + b"<!DOCTYPE html><html><body>403</body></html>")
+            assert _looks_like_html_error(os.path.join(d, "bom.part")), (
+                f"[{_nm}] a BOM-prefixed error page must be refused, not accepted for lacking '<'")
+            with open(os.path.join(d, "bomreal.part"), "wb") as fp:
+                fp.write(_pfx + b'{"text": "real shard"}\n')
+            assert not _looks_like_html_error(os.path.join(d, "bomreal.part")), (
+                f"[{_nm}] a BOM-prefixed real shard must still be accepted")
+        with open(os.path.join(d, "ws.part"), "wb") as fp:
+            fp.write(b"\n\n   <html><body>403</body></html>")
+        assert _looks_like_html_error(os.path.join(d, "ws.part")), "a whitespace-led page must be refused"
+        with open(os.path.join(d, "xml.part"), "wb") as fp:
+            fp.write(b"<?xml version='1.0'?><Error><Code>403</Code></Error>")
+        assert _looks_like_html_error(os.path.join(d, "xml.part")), "an XML error body must be refused"
         _rm(part)  # leave `part` clean: test (a) below resumes onto it and a stale file makes
         # curl -C - exit 33 (range not satisfiable), which failed a LATER assertion for a
         # reason that had nothing to do with what it tests. Measured, this session.
