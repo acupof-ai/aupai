@@ -57,8 +57,21 @@ def git(*a):
     return subprocess.run(["git", *a], cwd=ROOT, capture_output=True, text=True)
 
 
-def lines(rev, path=EXP):
-    r = git("show", f"{rev}:{path}")
+def main_ref():
+    """The integration ref the test reads ledger data from. Resolve LOCAL main first; on a CI PR
+    checkout there is no local main branch but fetch-depth:0 leaves origin/main, so fall back to
+    it. Never fall back to HEAD -- that would silently turn "a row on main" into "a row in the
+    current checkout", the latent assumption worlds 5-6 exist to catch. Both absent => loud FAIL.
+    """
+    for ref in ("main", "origin/main"):
+        if git("rev-parse", "--verify", "--quiet", ref).returncode == 0:
+            return ref
+    raise SystemExit("need a local 'main' or 'origin/main' ref to read runs/ ledgers (CI must "
+                     "checkout with fetch-depth:0); refusing to fall back to HEAD")
+
+
+def lines(rev=None, path=EXP):
+    r = git("show", f"{rev or main_ref()}:{path}")
     if r.returncode:
         return None
     return [ln for ln in r.stdout.splitlines() if ln.strip()]
@@ -160,7 +173,7 @@ def _worlds():
     a, b = lines("c3a5a23^"), lines("c3a5a23")
     W.append(("c3a5a23: append one done event", a, b, False, "+1 row, 0 keys added"))
 
-    real = lines("main")
+    real = lines()
     assert real, "runs/experiments.jsonl is absent on main"
     grp = defaultdict(list)
     for n, ln in enumerate(real):
@@ -315,7 +328,7 @@ def selftest():
             )
 
     # key_present must be STRICTLY weaker: whatever it flags, subsume flags too.
-    real = lines("main")
+    real = lines()
     grp = defaultdict(list)
     for n, ln in enumerate(real):
         o = obj(ln)
