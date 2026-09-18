@@ -70,6 +70,19 @@ python3 datagen/fetch_corpus.py --source ms_starcoder_py # -> data/raw/ms_starco
 # add --target_bytes / --stream_n --stream_i to cap size or shard across workers
 ```
 
+**Manifest name files are fetch inputs, not code.** Each `_manifest_*` reads a names file under
+`data/raw/` (`rp1t_c4_manifest.txt`, `ms_starcoder_py_manifest.txt`); these are per-run fetch
+artifacts, **not tracked in git and absent on the laptop** -- they lived on the lost emptyDir.
+At the 2026-09-18 audit the ONLY surviving copies are off-repo on the digest machine, in the
+persistent aupai data tree under `/data00/home/chenkailun.c/aupai-cimap` inside that checkout's
+`data/raw/`: `ms_starcoder_py_manifest.txt` (59 names, verified) alongside the three surviving
+`rp1t_*_manifest.txt` files. Copy them from that digest `data/raw/` before fetching on the new
+node. Cite the digest machine + `data/raw/` directory, never a `wt-*` personal-worktree PATH
+(those are deleted routinely). On a fresh node that cannot reach the digest tree, regenerate the
+name lists from source (the 59 ModelScope python parquet for starcoder; the RedPajama c4
+listing for en_c4), treat the fetched bytes as a new fetch, and record the regeneration in the
+run row.
+
 **SOURCE STATE, checked before relying on the commands above. Probe first, do not discover this
 at fetch time:**
 
