@@ -72,6 +72,27 @@ def load(path=PATH):
     return out
 
 
+def binding(r):
+    """'both' | 'local-only' | 'incomplete'.
+
+    A ruling the ledger can only half-verify must SAY so. The failure this exists for:
+    a row missing `pod_fp` compares `None != pf` on every read, so the ruling is inert --
+    present, plausible, and covering nothing. Silently never matching is the worst of the
+    three states because it reads exactly like a ruling that is working.
+
+    'local-only' is the declared, checked-in answer for a ruling whose other side is
+    unrecoverable (the pod row is gone with the pod). It is not a free pass: the row must
+    carry `binding: local-only` explicitly, and settled() then verifies the half it has.
+    Anything else missing a fingerprint is 'incomplete' -- new data, and a failure."""
+    have_l = bool(r.get("local_fp"))
+    have_p = bool(r.get("pod_fp"))
+    if have_l and have_p:
+        return "both"
+    if r.get("binding") == "local-only" and have_l:
+        return "local-only"
+    return "incomplete"
+
+
 def index(path=PATH):
     """{(ledger, key): row} for lookup by the check and the puller."""
     return {(led, key): r for led, key, r in load(path)}
@@ -83,15 +104,29 @@ def settled(ledger, key, local_row, pod_row, idx=None):
     A ruling settles the key ONLY while both sides still hold the rows it was made about.
     The stale case returns a reason rather than False alone, because "no ruling" and "the
     ruling was about other rows" are different situations for the reader: the first needs a
-    decision, the second needs a re-decision and says what changed."""
+    decision, the second needs a re-decision and says what changed.
+
+    The half-bound case is a THIRD situation and gets its own words: the ruling was issued
+    against a pod row that no longer exists anywhere, so only the local half can be checked.
+    It never settles a key on the pod side -- it cannot -- and it says so instead of
+    comparing a real fingerprint against None and reporting "a different POD row"."""
     idx = index() if idx is None else idx
     r = idx.get((ledger, tuple(key) if isinstance(key, list) else key))
     if r is None:
         return False, None
+    b = binding(r)
+    if b == "incomplete":
+        return False, (f"ruled {r.get('date')} by {r.get('ruled_by')} is INCOMPLETE: it carries "
+                       f"local_fp={r.get('local_fp')!r} pod_fp={r.get('pod_fp')!r} and no "
+                       f"`binding: local-only` acknowledging it -- this ruling covers nothing")
     lf, pf = fingerprint(local_row), fingerprint(pod_row)
     if r.get("local_fp") != lf:
         return False, (f"ruled {r.get('date')} by {r.get('ruled_by')} about a different LOCAL "
                        f"row ({r.get('local_fp')}, now {lf}) -- re-read it")
+    if b == "local-only":
+        return False, (f"ruled {r.get('date')} by {r.get('ruled_by')} binds the LOCAL row only: "
+                       f"the pod row was unrecoverable, so this ruling cannot settle a pod-side "
+                       f"difference (pod_fp absent, now {pf})")
     if r.get("pod_fp") != pf:
         return False, (f"ruled {r.get('date')} by {r.get('ruled_by')} about a different POD "
                        f"row ({r.get('pod_fp')}, now {pf}) -- re-read it")
@@ -156,14 +191,42 @@ def _selftest():
 
     for led, key, r in load():
         assert r.get("winner") in WINNERS, f"{key}: winner {r.get('winner')!r}"
-        for f in ("ledger", "key", "winner", "why", "ruled_by", "date", "local_fp", "pod_fp"):
+        for f in ("ledger", "key", "winner", "why", "ruled_by", "date", "local_fp"):
             assert r.get(f) not in (None, ""), f"{key}: {f} is empty"
+        # pod_fp is required UNLESS the row declares the half binding. An undeclared missing
+        # fingerprint is the silent-inert case: settled() would compare None against a real
+        # digest forever and report "a different POD row" -- a ruling that looks live and
+        # covers nothing. The declaration is the difference between a known limit and a bug.
+        assert r.get("pod_fp") or r.get("binding") == "local-only", (
+            f"{key}: pod_fp is empty and the row does not declare `binding: local-only` -- "
+            f"add pod_fp, or declare the half binding so it is visible")
+        assert binding(r) != "incomplete", f"{key}: binding is incomplete"
         assert led and led.startswith("runs/"), f"{key}: ledger {led!r}"
+
+    # A half-bound ruling must be VISIBLE as half-bound, and must not settle a pod-side
+    # difference it never saw. Both directions, on a fixture rather than on the live row.
+    _hb = {("runs/experiments.jsonl", ("n", "t")): {
+        "winner": "local", "local_fp": fingerprint(a), "binding": "local-only",
+        "date": "2026-09-18", "ruled_by": "fb", "why": "pod row unrecoverable"}}
+    assert binding(_hb[("runs/experiments.jsonl", ("n", "t"))]) == "local-only"
+    _ok, _why = settled("runs/experiments.jsonl", ("n", "t"), a, b, _hb)
+    assert not _ok and "LOCAL row only" in _why, (ok, _why)
+    # An UNDECLARED missing fingerprint is incomplete, and settled() says so rather than
+    # reporting a pod-row mismatch it cannot have measured.
+    _inc = {("runs/experiments.jsonl", ("n", "t")): {
+        "winner": "local", "local_fp": fingerprint(a),
+        "date": "2026-09-18", "ruled_by": "fb", "why": "no pod_fp and no declaration"}}
+    assert binding(_inc[("runs/experiments.jsonl", ("n", "t"))]) == "incomplete"
+    _ok, _why = settled("runs/experiments.jsonl", ("n", "t"), a, b, _inc)
+    assert not _ok and "INCOMPLETE" in _why, (ok, _why)
 
     print(f"ledger_resolutions selftest OK: fingerprint is order-insensitive and invalidated "
           f"by any field edit; a ruling settles a key only while BOTH rows are unchanged, "
           f"and a changed side reopens it naming which; an unruled key reports no reason; a "
-          f"JSON list key matches its tuple; {len(load())} recorded ruling(s) well-formed")
+          f"JSON list key matches its tuple; a declared half-bound ruling is visible AS "
+          f"half-bound and never settles the side it cannot check, while an undeclared empty "
+          f"fingerprint reports INCOMPLETE instead of a mismatch it never measured; "
+          f"{len(load())} recorded ruling(s) well-formed")
     return 0
 
 
