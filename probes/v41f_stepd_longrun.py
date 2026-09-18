@@ -30,6 +30,7 @@ memory-starved run is SIGKILLed with rc137, not a Python traceback).
 import dataclasses
 import gc
 import json
+import math
 import os
 import sys
 import time
@@ -177,7 +178,6 @@ def run(form, steps, batch):
         "bad_master": [n for n, p in st.master.items() if not torch.isfinite(p).all()],
         "bad_run": [n for n, p in model.named_parameters() if not torch.isfinite(p).all()],
         "backbone_probe": backbone_probe,
-        "nan_or_inf": False,
     }
 
 
@@ -191,6 +191,15 @@ _GAP_BOUND = 2e-3
 _DESCENT_MARGIN = 1.0
 
 
+def _fin(form, name, x):
+    # Explicit finite gate: a NaN slips through every NaN-aware-looking comparison
+    # (nan > bound, nan <= eps, nan < margin are all False), so a validator that only
+    # compares would print PASS on a NaN field. Check the number itself first.
+    if not isinstance(x, (int, float)) or not math.isfinite(float(x)):
+        raise AssertionError(f"{form}: {name} is not finite: {x!r}")
+    return float(x)
+
+
 def validate(d):
     form = d["form"]
     if d["bad_master"] or d["bad_run"]:
@@ -201,25 +210,34 @@ def validate(d):
         raise AssertionError(f"{form}: frozen leaves moved: {d['frozen_moved'][:3]}")
     if d["n_frozen"] != EXPECT_FROZEN[form]:
         raise AssertionError(f"{form}: n_frozen {d['n_frozen']} != {EXPECT_FROZEN[form]}")
-    six = list(d["six_drift"].values())
-    if form == "ste":
-        bad = [k for k, v in d["six_drift"].items() if v <= _SIX_LEAF_EPS]
-        if bad:
-            raise AssertionError(f"ste: SIX leaves did not update: {bad[:3]}")
-    elif any(v > 0.0 for v in six):
-        raise AssertionError(f"{form}: SIX leaves must stay frozen, drift={six}")
-    if not d["mv_last"] or not d["mv_last"][4] or d["mv_last"][3] < 1.0:
+    # every SIX drift is a real number; ste must move all four, the others must freeze all.
+    for k, v in d["six_drift"].items():
+        vv = _fin(form, f"six_drift[{k}]", v)
+        if form == "ste" and vv <= _SIX_LEAF_EPS:
+            raise AssertionError(f"ste: SIX leaf did not update: {k}={vv}")
+        if form != "ste" and vv != 0.0:
+            raise AssertionError(f"{form}: SIX leaf must stay frozen: {k}={vv}")
+    mv = d["mv_last"]
+    if not mv:
+        raise AssertionError(f"{form}: missing optimizer m/v record")
+    _fin(form, "exp_avg_max", mv[1])
+    _fin(form, "exp_avg_sq_max", mv[2])
+    vpos = _fin(form, "exp_avg_sq_positive_fraction", mv[3])
+    if not mv[4] or vpos < 1.0:
         raise AssertionError(f"{form}: optimizer m/v not finite/positive")
-    if d["gap_last_max"] > _GAP_BOUND:
-        raise AssertionError(f"{form}: master-bf16 gap {d['gap_last_max']} > {_GAP_BOUND}")
+    gap = _fin(form, "gap_last_max", d["gap_last_max"])
+    if gap > _GAP_BOUND:
+        raise AssertionError(f"{form}: master-bf16 gap {gap} > {_GAP_BOUND}")
     # descent: 40-step selftest records first/last 8-step windows; the committed 160-step
-    # evidence records full pool-cycle delta. Accept either, whichever schema is present.
+    # evidence records full pool-cycle delta. Either schema (unknown keys are ignored, so the
+    # committed evidence keeps its legacy nan_or_inf field untouched).
     if "win_first8" in d:
-        margin = d["win_first8"] - d["win_last8"]
-        label = "first8->last8"
+        a, b = _fin(form, "win_first8", d["win_first8"]), _fin(form, "win_last8", d["win_last8"])
+        margin, label = a - b, "first8->last8"
     else:
-        margin = -(d["cycle_delta"] or 0.0)
-        label = "cycle_first->last"
+        if d.get("cycle_delta") is None:
+            raise AssertionError(f"{form}: no descent signal (windows or cycle_delta)")
+        margin, label = -_fin(form, "cycle_delta", d["cycle_delta"]), "cycle_first->last"
     if margin < _DESCENT_MARGIN:
         raise AssertionError(f"{form}: weak/no descent {label} margin {margin:.3f}")
     return True
@@ -298,9 +316,38 @@ def _selftest():
             ({"bad_master": ["x"]}, "non-finite master"),
             ({"gap_last_max": _GAP_BOUND * 10}, "diverged gap"),
             ({"win_first8": 0.0, "win_last8": 0.0}, "no descent"),
+            # NaN compares False to every bound, so without the explicit finite gate these
+            # PASS -- genB measured a NaN slipping end to end. Both descent schemas covered.
+            ({"win_first8": float("nan"), "win_last8": float("nan")}, "NaN windows"),
         )
         base = dict(records["off"])
         for patch, label in mutants:
+            broken = dict(base)
+            broken.update(patch)
+            try:
+                validate(broken)
+            except AssertionError:
+                continue
+            raise AssertionError(f"validate() failed to catch mutant: {label}")
+        # the cycle-delta schema (160-step evidence) takes a different branch; mutate it on a
+        # record with the window keys removed so the NaN cannot be shadowed by windows.
+        cycle_broken = dict(base)
+        cycle_broken.pop("win_first8", None)
+        cycle_broken.pop("win_last8", None)
+        cycle_broken["cycle_delta"] = float("nan")
+        try:
+            validate(cycle_broken)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("validate() failed to catch mutant: NaN cycle delta")
+        # NaN in the non-descent numeric fields must also be caught.
+        for patch, label in (
+            ({"gap_last_max": float("nan")}, "NaN gap"),
+            ({"mv_last": [40, float("nan"), 1.0, 1.0, True]}, "NaN exp_avg"),
+            ({"mv_last": [40, 1.0, float("nan"), 1.0, True]}, "NaN exp_avg_sq"),
+            ({"six_drift": {k: float("nan") for k in base["six_drift"]}}, "NaN six drift"),
+        ):
             broken = dict(base)
             broken.update(patch)
             try:
@@ -318,11 +365,38 @@ def _selftest():
             raise AssertionError("validate() failed to catch a frozen SIX leaf in ste mode")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+    # The same flag also guards the committed 160-step evidence (cheap, no model), so the
+    # evidence files are not unguarded. cwd is repo_root under the hook and for direct runs.
+    ev = os.path.join(_ROOT, "runs", "longrun")
+    if os.path.isdir(ev):
+        validate_committed(ev)
     print("v41f step-D longrun selftest OK")
+
+
+def validate_committed(directory):
+    """Run the SAME validate() over the committed 160-step evidence JSONs, so the evidence
+    files have a guard (a probe --selftest alone only guards freshly generated records).
+    Unknown keys are ignored: the evidence predates a schema field removal and must keep its
+    bytes. Refuses if the directory holds none of the expected forms."""
+    import glob
+
+    paths = sorted(glob.glob(os.path.join(directory, "v41f_longrun_*.json")))
+    if not paths:
+        raise AssertionError(f"no v41f_longrun_*.json under {directory}")
+    seen = []
+    for path in paths:
+        d = json.load(open(path))
+        validate(d)
+        seen.append(d["form"])
+    print(f"committed longrun evidence OK: {', '.join(seen)} ({len(paths)} file(s))")
 
 
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         _selftest()
+    elif "--validate-committed" in sys.argv:
+        i = sys.argv.index("--validate-committed")
+        directory = sys.argv[i + 1] if i + 1 < len(sys.argv) else os.path.join("runs", "longrun")
+        validate_committed(directory)
     else:
         main(sys.argv)
