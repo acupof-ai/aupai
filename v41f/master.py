@@ -327,11 +327,12 @@ def load_train_checkpoint(path, *, tokenizer, max_batch_size: int = 4, lr: float
             if t.dtype != torch.float32:
                 raise AssertionError(f"master {n} loaded as {t.dtype}, expected float32")
             if n in state.fp32_native:
-                if t.data_ptr() != named[n].data_ptr():
-                    # torch.load preserves sharing only when same object graph; verify alias.
-                    state.master[n] = named[n]
-                else:
-                    state.master[n] = named[n]
+                # fp32-native master IS the model Parameter (G7, one storage). The alias is
+                # ASSERTED by the loop below, not by a branch here: this used to read
+                # `if t.data_ptr() != named[n].data_ptr(): ... else: ...` with both arms
+                # assigning named[n], so it could not fail and asserted nothing while reading
+                # like a guard.
+                state.master[n] = named[n]
             else:
                 p = torch.nn.Parameter(t.clone())
                 state.master[n] = p
