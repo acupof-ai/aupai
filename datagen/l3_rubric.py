@@ -101,8 +101,10 @@ def build_prompt(text: str, rubric: dict) -> str:
         lines.append(f"{i}. {dim}: {rubric['dimensions'][dim]}")
     lines += [
         "",
-        "Respond with ONLY a JSON object on one line, no prose, no code fence:",
-        json.dumps({d: f"<{MIN_SCORE}-{MAX_SCORE} int>" for d in _DIMS}),
+        "Respond with ONLY a JSON object on one line, no prose, no code fence. It has the",
+        "four integer scores plus a short single-sentence 'reason' string:",
+        json.dumps({d: f"<{MIN_SCORE}-{MAX_SCORE} int>" for d in _DIMS}
+                   | {"reason": "<one short sentence>"}),
         "",
         "Document:",
         text[:6000],
@@ -110,7 +112,28 @@ def build_prompt(text: str, rubric: dict) -> str:
     return "\n".join(lines)
 
 
-def parse_scores(raw: str, rubric: dict) -> dict:
+REASON_KEY = "reason"
+
+
+def parse_scores_with_reason(raw: str, rubric: dict):
+    """Like parse_scores but also returns the teacher's short 'reason' string ("" when
+    absent). The reason is error-analysis metadata for the L2 encoder build; it is NOT
+    written to the score ledger (which carries rubric_dims only) — keep it in the label
+    jsonl / a sidecar. Dimensions stay loud-validated exactly as parse_scores."""
+    scores = parse_scores(raw, rubric, _allow_reason=True)
+    fence = re.search(r"\{.*\}", raw.strip(), re.S)
+    reason = ""
+    if fence:
+        try:
+            r = json.loads(fence.group(0)).get(REASON_KEY, "")
+            if isinstance(r, str):
+                reason = r.strip()
+        except json.JSONDecodeError:
+            reason = ""
+    return scores, reason
+
+
+def parse_scores(raw: str, rubric: dict, _allow_reason: bool = False) -> dict:
     """Parse the teacher's reply into {dim:int}. Loud failure: the first malformed or
     out-of-range/missing dimension raises with the raw tail, so a bad teacher never
     silently becomes a training label."""
