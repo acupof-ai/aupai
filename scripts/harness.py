@@ -15223,13 +15223,22 @@ _CITE_SHA_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
 #: it does NOT retire a backlog of reported false hits. A raw regex hit and a REPORTED one are
 #: different populations -- the check reports only inside a sentence naming train.py with no
 #: sha, after `_CITE_RE.sub` has run -- and measured on this tree the two differ completely:
-#: 306 raw slice hits, of which the check would have reported ZERO. The baseline agrees: its
-#: `abbreviated_bare_count` was 0 and `allowed_bare` held 2 keys, so it could not have been
-#: absorbing hundreds of anything. (I wrote the opposite first, from the raw count alone; a
-#: reader would have gone looking for debt that never existed.) The narrower true statement is
-#: enough to justify the change: ~200 raw hits stop matching, and any one of them would become
-#: a false report the moment it landed in a sentence naming train.py -- which is how this was
-#: found. `_selftest_train_cite_abbreviated_form` world 4 pins the behaviour.
+#: 309 raw slice hits over 306 lines, of which the check would have reported ZERO. The baseline
+#: agrees: its `abbreviated_bare_count` was 0 and `allowed_bare` held 2 keys, so it could not
+#: have been absorbing hundreds of anything. (I wrote the opposite first, from the raw count
+#: alone; a reader would have gone looking for debt that never existed.)
+#:
+#: HITS AND LINES ARE DIFFERENT COUNTS and this line had them swapped. Removed: 309 hits over
+#: 306 lines; surviving matches: 204 over 173. genB read the 204 as "removed" first (a
+#: comparison that forgot to negate) and I wrote 306 where the hit count was 309 -- two errors
+#: that cancelled, because 204 and 309 happen to be close in this tree. Every one of the 309
+#: removed hits is preceded by `[` (checked per hit, zero exceptions), which is the property
+#: that makes the exclusion safe rather than merely convenient.
+#:
+#: The narrower true statement is enough to justify the change: 309 raw hits stop matching, and
+#: any one of them would become a false report the moment it landed in a sentence naming
+#: train.py -- which is how this was found. `_selftest_train_cite_abbreviated_form` world 4
+#: pins the behaviour.
 #:
 #: The example is DESCRIBED, not written: spelling it out here would make this comment the very
 #: hit it explains, which is what happened on the first draft of this paragraph.
