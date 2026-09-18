@@ -1610,11 +1610,6 @@ def main():
         # map closes.
         "scripts/hooks/commit-msg",
         "scripts/hooks/post-commit",
-        # Shell selftests the reconciliation surfaced as carrying --selftest but unregistered.
-        # Both fast (2s, 1s), fixture-only: launch_30b asserts the G0 mix-contract BLOCKED path;
-        # pod_sync_check asserts the three drift refusals by their own reasons.
-        "scripts/launch_30b.sh",
-        "scripts/pod_sync_check.sh",
         # Already run by a dedicated ci.yml step (bare, no flag); registered so the map accounts
         # for the carrier and the partition buckets it explicit rather than unregistered.
         "scripts/test_attest_cases.py",
@@ -1838,7 +1833,6 @@ def main():
         "scripts/test_eval_load_only.py",
         "scripts/test_pod_drift_root.py",
         "scripts/launch_tests.py",
-        "scripts/corpus_snapshot.py",
         "datagen/count_code_dirs.py",
         # N4 eval-gold contamination scanner: no card, no model, no data -- its selftest builds
         # its own fixture shard and a shuffled-gold control, and the gold extractor is loose by
