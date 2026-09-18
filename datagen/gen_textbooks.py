@@ -183,6 +183,15 @@ def main():
         except SystemExit:
             model = "qwen38-27b"
 
+    if not SEEDS.exists():
+        raise SystemExit(
+            f"topic seeds missing: {SEEDS}\n"
+            "This path is deliberately not tracked in git (new textbook generation was "
+            "stopped 2026-09-14, option B).\n"
+            "Recover the seeds from ~/aupai-keep/topic_seeds_cs_v1/topic_seeds_cs.jsonl "
+            "(sha256 76c3552f48998695fede0196b54a71fc6dc1463181681f4fd5986c04adeac26b) "
+            "and copy them back to this path."
+        )
     with SEEDS.open(encoding="utf-8") as f:
         topics = [json.loads(l)["topic"] for l in f
                   if l.strip() and json.loads(l).get("topic")]
