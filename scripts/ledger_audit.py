@@ -132,7 +132,23 @@ KEYS = {
     # Measured on main: (ckpt, milestone) gives 8 distinct keys over 13 rows with 0 None-rows,
     # and 5 rows folding onto an earlier key, which is the re-measurement the writer intends.
     # Rejected: (milestone,) alone leaves 3 rows at None. (de, 1e's authorization, 2026-09-03)
-    "runs/milestones.jsonl":    lambda r: (r.get("ckpt"), r.get("milestone")),
+    #
+    # CORRECTION ROWS CARRY NO ckpt AND NO milestone -- they are not milestone records at all.
+    # The file grew a second row shape: `kind=correction` rows amend earlier rows by name
+    # (`corrects` lists the ckpts they fix) and have no checkpoint of their own. Keying them on
+    # (ckpt, milestone) puts every correction row on (None, None): measured 2026-09-18, that
+    # folds BOTH correction rows onto one key, so subsume asks only "is the last row preserved
+    # somewhere" and either one could leave unread -- the same inert-key failure the paragraph
+    # above records, reintroduced by a new row shape rather than by a wrong field list.
+    # Their identity is what they amend and which field they amend it in: (corrects, field).
+    # Measured on main's 33 rows: 0 None-rows and 26 distinct keys, against 2 None-rows and 25
+    # for the flat (ckpt, milestone). Filling ckpt/milestone into these rows would be inventing
+    # provenance they do not have -- the key follows the row's identity, not the other way round.
+    "runs/milestones.jsonl":    lambda r: (
+        (r.get("ckpt"), r.get("milestone"))
+        if r.get("kind") != "correction"
+        else (tuple(r.get("corrects") or ()), r.get("field"))
+    ),
     # (ckpt, profile), NOT (ckpt, measured): write_records replaces same-(ckpt, profile) and
     # eval/score_matrix.py:578 records why -- "a milestone-profile record must never replace a
     # checkpoint's full record". Keying on `measured` would make every re-score a NEW audit key
