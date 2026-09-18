@@ -508,6 +508,10 @@ def main():
                        f"-> step0 {g['lr']:.3g}")
 
     step = 0
+    assert LigerFusedLinearCrossEntropyLoss is not None, (
+        "this path builds the loss and needs liger_kernel; it is installed on the pod but "
+        "not in the CPU image. --check_pack is the cardless gate and does not reach here."
+    )
     flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
     weight = raw_model.head.weight[: raw_model.cfg.vocab]
 
