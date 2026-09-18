@@ -47,6 +47,10 @@ jobs:
       - run: python scripts/test_fewshot_demos.py
       - run: python scripts/test_fewshot_stop.py
       - run: python scripts/test_pod_ps_judge.py
+      # Both directions of sft_math.py's unstamped-pack refusal, by running the real script.
+      # The holdout gate now sits ABOVE the checkpoint load, so these cases read the
+      # gate's own wording; the corrupt-checkpoint case reds if that order is reversed.
+      - run: python scripts/test_sft_holdout_gate.py
       - run: python scripts/test_attest_cases.py
       - run: python scripts/test_score_matrix_failpath.py
       - run: python scripts/test_free_card.py
