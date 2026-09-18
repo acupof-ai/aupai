@@ -100,22 +100,34 @@ def main():
     # followed by `return` finds the mutation but MISSES the real thing it exists to prevent.
     # What is asserted is the property: an `if bad:` guard in main() whose body returns. Its
     # block is walked by indentation, so the return may sit anywhere inside the guard.
+    #
+    # THE GUARD LINE'S OWN TAIL IS PART OF THE BODY. `if bad: return 1` is a legal single-line
+    # form, and the first version of this scan matched `^([ \t]*)if bad:[^\n]*\n` -- the
+    # `[^\n]*` swallowed everything after the colon, so that form's return was never seen as a
+    # line of the body and the world escaped (de, 2026-09-19: on a real failing-invariant run
+    # that tree printed NOTHING -- no FAIL list, no denominator, no authority line -- while this
+    # selftest passed). The tail is therefore searched before the indent walk.
+    #
     # MEASURED: 0 on the correct tree, 1 on the pre-fix revision (a27c50b0^), and 1 in each of
     # de's worlds -- return above the FAIL print / above the banner / above the block's stage
-    # call / between the banner and the FAIL print.
+    # call / between the banner and the FAIL print / the single-line guard form.
     i_main = src.rfind("\ndef main(", 0, i_auth)
     assert i_main != -1, "cannot locate `def main(` above the authority line in harness.py"
     early = []
-    for _m in re.finditer(r"^([ \t]*)if bad:[^\n]*\n", src[i_main:i_auth], re.M):
+    for _m in re.finditer(r"^([ \t]*)if bad:(.*)$", src[i_main:i_auth], re.M):
         _ind = len(_m.group(1))
-        for _line in src[i_main + _m.end():i_auth].split("\n"):
-            if not _line.strip():
-                continue
-            if len(_line) - len(_line.lstrip()) <= _ind:
-                break
-            if re.search(r"\breturn\b", _line):
-                early.append(_m.group(0).strip() + " -> " + _line.strip())
-                break
+        _tail, _hit = _m.group(2), bool(re.search(r"\breturn\b", _m.group(2)))
+        if not _hit:
+            for _line in src[i_main + _m.end() + 1:i_auth].split("\n"):
+                if not _line.strip():
+                    continue
+                if len(_line) - len(_line.lstrip()) <= _ind:
+                    break
+                if re.search(r"\breturn\b", _line):
+                    _hit, _tail = True, _line
+                    break
+        if _hit:
+            early.append(_m.group(0).strip() + " -> " + _tail.strip())
     assert not early, (
         f"main() has an `if bad:` guard that returns before its summary ({early}), so a run "
         f"with a failing invariant reports the FAIL list -- or nothing at all -- and never "
