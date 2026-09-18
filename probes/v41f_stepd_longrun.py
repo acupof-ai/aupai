@@ -212,9 +212,16 @@ def validate(d):
         raise AssertionError(f"{form}: optimizer m/v not finite/positive")
     if d["gap_last_max"] > _GAP_BOUND:
         raise AssertionError(f"{form}: master-bf16 gap {d['gap_last_max']} > {_GAP_BOUND}")
-    margin = d["win_first8"] - d["win_last8"]
+    # descent: 40-step selftest records first/last 8-step windows; the committed 160-step
+    # evidence records full pool-cycle delta. Accept either, whichever schema is present.
+    if "win_first8" in d:
+        margin = d["win_first8"] - d["win_last8"]
+        label = "first8->last8"
+    else:
+        margin = -(d["cycle_delta"] or 0.0)
+        label = "cycle_first->last"
     if margin < _DESCENT_MARGIN:
-        raise AssertionError(f"{form}: weak/no descent first8->last8 margin {margin:.3f}")
+        raise AssertionError(f"{form}: weak/no descent {label} margin {margin:.3f}")
     return True
 
 
