@@ -2354,9 +2354,16 @@ def check_selftests_are_gated(root):
                           f"already runs the selftest, which is a coverage claim nothing "
                           f"recomputes: {', '.join(covered)} -- state why it cannot run "
                           f"here (cost, data, root), not what supposedly covers it")
+    # Print the UNION and the overlap, not just the two raw literal sizes. A path may sit in both
+    # maps (a PARTIAL tuple in NEEDS_DATA that is also in SELFTEST_FILES), so the two literal
+    # sizes double-count it; a reader comparing them to the partition's disjoint-bucket total
+    # would otherwise see a gap that is not there (de, #514).
+    sf_set, nd_set = set(gated_paths), set(needs_data)
+    both = sf_set & nd_set
     return PASS, (f"{len(have)} selftest-carrying file(s), all gated by the hook; "
-                  f"map literal {len(gated_paths)} SELFTEST_FILES + {len(needs_data)} "
-                  f"NEEDS_DATA entries (ast)")
+                  f"map literal {len(sf_set)} SELFTEST_FILES + {len(nd_set)} NEEDS_DATA, "
+                  f"{len(sf_set | nd_set)} unique ({len(both)} in both maps, NEEDS/PARTIAL "
+                  f"overrides) (ast)")
 
 
 # Registered selftests the COMMIT HOOK can run but the bare CI image cannot, with the reason.
