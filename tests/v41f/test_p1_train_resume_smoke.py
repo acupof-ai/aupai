@@ -76,8 +76,7 @@ BIND_DETECT_FLOOR = 1e-1
 
 
 def _build(tok):
-    cfg = v41f_small(vocab_size=len(tok), engram_compressed_vocab_size=6, **_SMALL)
-    cfg = cfg.with_derived_engram()
+    cfg = v41f_small(vocab_size=len(tok), tokenizer=tok, **_SMALL)
     prev = torch.get_default_dtype()
     torch.set_default_dtype(torch.bfloat16)
     try:
