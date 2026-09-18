@@ -655,7 +655,7 @@ def _check_filter_tier(domain, filters):
         )
 
 
-def _evaluated_reasons(phase):
+def _evaluated_reasons(phase, near_dedup=False):
     """The reason categories the pass writing this stamp actually evaluates.
 
     A CLOSED SET PER PASS, because the two passes evaluate different things and the stamp
@@ -699,11 +699,20 @@ def _evaluated_reasons(phase):
 
     Case (h) in the selftest reads these keys off the functions' AST and fails if this
     list falls behind, which is how the `eval_contaminated` omission was caught.
+
+    `near_dedup` IS THE ONE CATEGORY THAT DEPENDS ON THE RUN'S CONFIG, NOT ON THE PASS
+    (genB 2026-09-18). Both passes increment it only under `not a.no_near_dedup`, so a
+    set that always named it would zero-fill `near_dup: 0` into a build that ran
+    `--no_near_dedup` and never evaluated the predicate -- the same false claim the
+    closed set exists to prevent, in the opposite direction. The caller passes
+    `not a.no_near_dedup`, so the key is present exactly when the pass could have
+    incremented it.
     """
+    base = ["kept", "holdout", "exact_dup"]
     if phase:
-        return ["kept", "holdout", "exact_dup"]
-    return ["kept", "holdout", "exact_dup", "near_dup", "short", "long", "bad_bytes",
-            "eval_contaminated"]
+        return base + (["near_dup"] if near_dedup else [])
+    return base + ["short", "long", "bad_bytes", "eval_contaminated"] + (
+        ["near_dup"] if near_dedup else [])
 
 
 def _zero_fill_reasons(reasons, evaluated):
@@ -746,7 +755,7 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_ke
     # shard's mtime older than the settle window, file set stable across two reads.
     _settle_dir(out, domain, SETTLE_S)
 
-    evaluated = _evaluated_reasons(phase)
+    evaluated = _evaluated_reasons(phase, near_dedup=not a.no_near_dedup)
     _zero_fill_reasons(reasons, evaluated)
 
     stats = {
@@ -1712,7 +1721,7 @@ def _selftest_preflight():
         # is still written and still carries the rule_fp, so a reader can tell "nothing was
         # held out under rule X" from "no slice exists". Both halves asserted, because a
         # flag that skipped the write would also pass a does-not-raise test. Reachability
-        # is the point of the case: :649 read allow_empty_slice through getattr and no
+        # is the point of the case: `main` read allow_empty_slice through getattr and no
         # add_argument defined it, so the escape hatch the refusal names could not be
         # opened from the CLI, and the b2 build stopped with 152 shards and no stamp.
         _emit_holdout_slice(hp, "empty_ok", [], allow_empty=True)
@@ -1730,7 +1739,7 @@ def _selftest_preflight():
         # on the parsed literal rather than by substring. The first version of this case did
         # `"--allow_empty_slice" in source`, which a mutant renaming the flag to
         # "--allow_empty_slice_XX" satisfied -- measured 2026-09-07, the negative control was
-        # green when it should have gone red. :649 reads the option through getattr, so a flag
+        # green when it should have gone red. The getattr in `main` reads the option, so a flag
         # that is absent or renamed leaves the documented escape hatch unreachable and the
         # empty-slice refusal points at nothing; that stopped the b2 build with 152 shards
         # written and no stamp.
@@ -1748,7 +1757,7 @@ def _selftest_preflight():
         }
         if "--allow_empty_slice" not in _flags:
             raise AssertionError(
-                f"(e) no add_argument defines --allow_empty_slice, so :649's getattr is "
+                f"(e) no add_argument defines --allow_empty_slice, so the getattr in main is "
                 f"unreachable from the CLI; flags found: {sorted(f for f in _flags if 'empty' in f)}")
         ok += 1
         # stale slice: frozen under a DIFFERENT rule_fp -> must refuse
@@ -1821,10 +1830,24 @@ def _selftest_preflight():
         raise AssertionError("(g) mutation control did not reproduce the missing-key defect")
     ok += 1
     # the non-phase set is the wider one and must include the light-filter categories
-    _full = _evaluated_reasons(None)
-    for _c in ("short", "long", "bad_bytes", "near_dup"):
+    _full = _evaluated_reasons(None, near_dedup=True)
+    for _c in ("short", "long", "bad_bytes"):
         if _c not in _full:
             raise AssertionError(f"(g) the worker-phase set omits a category it evaluates: {_c}")
+    ok += 1
+    # near_dup IS CONFIG-DEPENDENT, NOT PASS-DEPENDENT (genB 2026-09-18). Both passes
+    # increment it only under `not a.no_near_dedup`, so the set must name it exactly when
+    # the run could have evaluated the predicate. A set that always named it would
+    # zero-fill `near_dup: 0` into a `--no_near_dedup` build -- a filter said to have run
+    # and found nothing, when it never ran. MUTATION: the config is ON and the key is
+    # absent -> red by name, which is the missing-key defect this pair of cases exists for.
+    for _phase in ("phase", None):
+        if "near_dup" not in _evaluated_reasons(_phase, near_dedup=True):
+            raise AssertionError(f"(g) near-dedup ON but near_dup absent from the {_phase} set")
+        if "near_dup" in _evaluated_reasons(_phase, near_dedup=False):
+            raise AssertionError(
+                f"(g) near-dedup OFF and the {_phase} set still names near_dup, so a build "
+                f"that ran --no_near_dedup would stamp a filter it never called as 0")
     ok += 1
 
     # (h) THE WHITELIST MUST TRACK THE FILTERS (fb 2026-09-18). _evaluated_reasons is a
@@ -1842,7 +1865,7 @@ def _selftest_preflight():
         for _r in _ast_h.walk(_fn)
         if isinstance(_r, _ast_h.Return) and isinstance(_r.value, _ast_h.Constant) and isinstance(_r.value.value, str)
     }
-    _worker_set = set(_evaluated_reasons(None))
+    _worker_set = set(_evaluated_reasons(None, near_dedup=True))
     _missing = sorted(_light_keys - _worker_set)
     if _missing:
         raise AssertionError(
@@ -1881,7 +1904,7 @@ def main():
         action="store_true",
         help="permit a phase whose holdout slice holds zero documents. The slice is still "
         "written and still freezes the holdout rule_fp -- this only lifts the non-empty "
-        "requirement, for the case :1242 names: a fresh first-build of a genuinely "
+        "requirement, for the case _emit_holdout_slice refuses on: a fresh first-build of a genuinely "
         "non-overlapping source. code_py_starcoder and code_py_rp1t both carry n=0 slices",
     )
     ap.add_argument(
