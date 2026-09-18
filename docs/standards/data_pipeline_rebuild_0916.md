@@ -70,6 +70,34 @@ python3 datagen/fetch_corpus.py --source ms_starcoder_py # -> data/raw/ms_starco
 # add --target_bytes / --stream_n --stream_i to cap size or shard across workers
 ```
 
+**SOURCE STATE, checked before relying on the commands above. Probe first, do not discover this
+at fetch time:**
+
+```bash
+python3 scripts/probe_source_urls.py --manifest data/raw/rp1t_c4_manifest.txt \
+    --base https://data.together.xyz/redpajama-data-1T/v1.0.0/c4/ --n 8
+```
+
+| source | state (2026-09-19) | evidence |
+|---|---|---|
+| `rp1t_c4` (`data.together.xyz`) | **BLOCKED — Cloudflare 403 at the host level** | root and every probed file return 403 with a 4.5 KB "Attention Required!" page; browser UA and direct (no-proxy) both 403 |
+| `ms_starcoder_py` (modelscope) | **reachable** | 8/8 probed return 200 with real content-lengths (~380 MiB each) and a confirmed `PAR1` tail magic |
+
+**The c4 block does NOT affect anything already built** — `en_c4_stage2` (242 shards /
+11.3M docs) and its `_dc` are complete, and the surviving `data/raw/rp1t_c4/` (32 files, 26 GB)
+is intact. It affects a FUTURE node rebuild, which is what this recipe is for: step 2a above
+cannot run as written.
+
+**Do not silently substitute a mirror.** Checked 2026-09-19: HF `togethercomputer/RedPajama-Data-1T`
+and the community mirror carry only `urls/` and loading scripts, no data files (`c4/` is 404);
+`allenai/c4` en IS reachable on HF and hf-mirror (206 range works, all 1000 `.json.gz` present)
+but it is **raw C4** (`gz`, `text`+`timestamp`+`url`+`meta`), whereas the surviving `rp1t_c4` is
+RedPajama's **processed** pure-JSONL form (`text` only, ~846 MB/file). Swapping them is swapping
+corpora — every `corpus_fp` changes and no historical number stays comparable. Choosing between
+re-running RedPajama's processing pipeline and accepting raw C4 is a user decision, not a
+substitution a rebuild may make quietly. See **#570** for the source-loss record and the options.
+
+
 **2b. Build raw → `data/corpus/<domain>/`** with `datagen/build_corpus.py` (NOT
 `clean_corpus.py`: its `DOMAIN_SOURCE` maps only web_hq/cci3/en/code_rp1t and does **not**
 cover either rebuild domain — that is expected, build_corpus is the path here). The en cell is
