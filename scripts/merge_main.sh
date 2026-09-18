@@ -12,6 +12,10 @@ MAIN=/Users/bytedance/code/aupai
 # resolves against whatever directory the caller has cd'd into, which _gcase does. Absolute at
 # startup is the only spelling that is right in both.
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Single implementation of the local-main fast-forward / divergence / checked-out guard.
+# The python pre-commit hook invokes the same file, so the two call sites cannot drift.
+# shellcheck source=scripts/lib_ff_main.sh
+. "$SCRIPT_DIR/lib_ff_main.sh"
 # Overridable so --selftest can drive the real predicate against fixture locks instead of a
 # reimplementation of it. Nothing else sets these.
 LOCK=${MERGE_LOCK_DIR:-$MAIN/.git/merge_main.lock}
@@ -502,63 +506,12 @@ print(state + ' ' + sha + ' ' + str(r.get('databaseId') or '?'))
 # never force-moved), 2 on a fetch/compare failure so an offline laptop is told freshness is
 # unknown rather than merging on an assumed-current main.
 _fetch_and_check_behind() {
-  _fm="$1"
-  _fm_err="$(mktemp 2>/dev/null || mktemp -t mmfetch)"
-  if ! git -C "$_fm" fetch origin main >"$_fm_err" 2>&1; then
-    echo "merge_main: REFUSING: could not fetch origin/main, so local main's freshness is unknown:" >&2
-    sed 's/^/  git: /' "$_fm_err" >&2
-    rm -f "$_fm_err"
-    echo "  Fix network/tunnel access and re-run. Merging on an unfetched main risks landing a" >&2
-    echo "  tree behind origin (de-80)." >&2
-    return 2
-  fi
-  rm -f "$_fm_err"
-  # commits origin/main has that local main lacks (behind); empty when level or ahead.
-  _behind_n=$(git -C "$_fm" rev-list --count main..origin/main 2>/dev/null)
-  case "$_behind_n" in
-    ''|*[!0-9]*) echo "merge_main: REFUSING: could not compare local main to origin/main" >&2; return 2 ;;
-    0) return 0 ;;
-    *)
-      # Local main is behind. Distinguish STRICT ANCESTOR (fast-forwardable) from DIVERGED.
-      # The integration tree is normally on a detached HEAD, so the checked-out branch is not
-      # main and `git fetch origin main:main` moves the main REF ONLY -- it never touches the
-      # working tree or HEAD (a checkout would, which is the advice this replaces and which
-      # people mistook for the fix). Measured 2026-09-18: after a PR merge the local main ref
-      # sat 13 commits behind origin/main and blocked the next ledger merge; a detached
-      # "checkout to newest" moved HEAD and left the compared ref stale (de-80, de, 3b).
-      _ahead_n=$(git -C "$_fm" rev-list --count origin/main..main 2>/dev/null)
-      case "$_ahead_n" in
-        ''|*[!0-9]*) echo "merge_main: REFUSING: could not compare local main ahead-count to origin/main" >&2; return 2 ;;
-        0)
-          # Strict ancestor: ff the ref only. Refuse on ANY non-fast-forward result; never
-          # force and never `|| true`, because silently swallowing a failure here is exactly
-          # the sideways move the ancestry hook exists to stop.
-          if ! git -C "$_fm" fetch -q origin main:main 2>&1; then
-            echo "merge_main: REFUSING: local main was fast-forwardable but 'git fetch origin main:main' failed" >&2
-            echo "  Run it by hand in the integration tree and re-run merge_main:" >&2
-            echo "    git -C $_fm fetch origin main:main" >&2
-            return 2
-          fi
-          if [ "$(git -C "$_fm" rev-parse main)" != "$(git -C "$_fm" rev-parse origin/main)" ]; then
-            echo "merge_main: REFUSING: after fetch origin main:main the local main ref still does not equal origin/main" >&2
-            echo "  Inspect the refs manually; do not force:" >&2
-            echo "    git -C $_fm rev-list --left-right --count main...origin/main" >&2
-            return 2
-          fi
-          echo "merge_main: local main was $_behind_n commit(s) behind; fast-forwarded the ref to origin/main (working tree untouched)." >&2
-          return 0 ;;
-        *)
-          # Both behind and ahead: the refs DIVERGED. A fetch refspec would reject non-ff, and
-          # forcing it would sideways-move main past a local commit -- the precise move the
-          # ancestry hook forbids. Refuse loud, change nothing, hand over the diagnosis.
-          echo "merge_main: REFUSING: local main DIVERGED from origin/main ($_behind_n behind, $_ahead_n ahead)." >&2
-          echo "  This is not a fast-forward, so it is not auto-synced and will never be forced." >&2
-          echo "  Inspect both sides; the local-only commit(s) must be merged or deliberately dropped by a human:" >&2
-          echo "    git -C $_fm log --oneline origin/main..main   # local-only" >&2
-          echo "    git -C $_fm log --oneline main..origin/main   # origin-only" >&2
-          return 1 ;;
-      esac
-  esac
+  # DELEGATES to the single implementation in lib_ff_main.sh (sourced at the top), which the
+  # python pre-commit hook also calls. Preserves the historical rc contract:
+  #   0 ok (level/ahead, or strict-ancestor auto-ff); 1 diverged; 2 fetch/compare failure;
+  #   3 a linked worktree has main checked out -- new hard FAIL (free that worktree first).
+  ff_main_ref "$1"
+  return $?
 }
 
 _push_origin_main() {
@@ -1672,9 +1625,27 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
   fi
   rm -rf "$_d"
 
-  # W5 BEHIND-GATE WIRING, source-level (de-80 part B). W4 above drives the real helper (behind
-  # refuses, level passes), but reaching the merge path needs a whole two-repo integration world
-  # for one line of branchless shell -- the same ceiling push W3 documents. What this catches is
+  # W4-lib: the delegating function must actually REACH the single helper, not carry an inline
+  # copy. The merge path calls _fetch_and_check_behind; assert its body delegates to ff_main_ref
+  # and the script sourced lib_ff_main.sh -- the bash-side half of "both call sites use one
+  # implementation" (the python hook side is checked in its own selftest). Without this a future
+  # edit could re-inline the logic and the worlds above would still pass against the copy.
+  if grep -q '^\. "\$SCRIPT_DIR/lib_ff_main.sh"' "$0" \
+     && awk '/^_fetch_and_check_behind\(\) \{/,/^\}/' "$0" | grep -q '^  ff_main_ref "\$1"$'; then
+    echo "  ok   behind W4-lib merge_main sources lib_ff_main.sh and _fetch_and_check_behind delegates to ff_main_ref"
+  else
+    echo "  FAIL behind W4-lib: the behind guard no longer delegates to the shared lib_ff_main.sh" >&2
+    _fails=$((_fails + 1))
+  fi
+  # And the helper's own 3-world contract must pass from the bash side via its real self-check.
+  if _ff_selftest >/dev/null 2>&1; then
+    echo "  ok   behind W4-lib the shared helper's own selftest passes when invoked from merge_main"
+  else
+    echo "  FAIL behind W4-lib: lib_ff_main.sh --selftest failed from the bash call site" >&2
+    _fails=$((_fails + 1))
+  fi
+
+
   # the wiring mutation: the helper defined but never invoked before the merge.
   #
   # COUNT ONLY THE PRODUCTION CALL, AND REQUIRE EXACTLY ONE. The earlier form grepped the whole

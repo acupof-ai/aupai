@@ -16,8 +16,8 @@ parameter count. ACTIVE means parameters touched on the compute path of one toke
 - The LM head and embedding are counted separately; tie_word_embeddings collapses
   them (official V4.1-Flash config has tie_word_embeddings=false).
 
-Two v41f_s() configs are not yet fully specified and are reported honestly, not
-silently zeroed:
+Two fields of the prod shape are not yet fully specified and are reported honestly, not
+silently zeroed (this counts V41FConfig() shape; v41f_s() would require the tokenizer):
 - engram_num_embeddings=() : the n-gram table rows are filled in from the real
   tokenizer at build; until then the engram dense projection is countable but the
   embedding TABLE is reported as 0/uncounted (--engram-rows supplies it).
@@ -25,13 +25,14 @@ silently zeroed:
   draft layer's attention ratio is unspecified; --include-mtp counts it assuming
   the ratio-0 (window-only) shape its forward asserts.
 """
+
 import argparse
 import json
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).absolute().parents[1]))
-from v41f.config import V41FConfig, v41f_s  # noqa: E402
+from v41f.config import V41FConfig  # noqa: E402
 
 
 def _expert(dim: int, inter: int) -> int:
@@ -43,19 +44,26 @@ def attention_params(c: V41FConfig) -> dict:
     """Dense per-token attention core, identical in every backbone layer."""
     H, hd, g = c.n_heads, c.head_dim, c.o_groups
     ql, ol = c.q_lora_rank, c.o_lora_rank
-    q_a = c.dim * ql                 # down-project to q latent
+    q_a = c.dim * ql  # down-project to q latent
     q_norm = ql
-    q_b = ql * (H * hd)             # up-project Q for every head
-    wkv = c.dim * hd                # ONE MQA K/V head
+    q_b = ql * (H * hd)  # up-project Q for every head
+    wkv = c.dim * hd  # ONE MQA K/V head
     kv_norm = hd
-    wo_a = (H * hd) * ol            # (H*hd/g) x (g*ol) collapses to H*hd*ol
+    wo_a = (H * hd) * ol  # (H*hd/g) x (g*ol) collapses to H*hd*ol
     wo_b = (g * ol) * c.dim
     sink = H
     base = q_a + q_norm + q_b + wkv + kv_norm + wo_a + wo_b + sink
-    return {"q_lora_down": q_a, "q_norm": q_norm, "q_up_all_heads": q_b,
-            "mqa_kv": wkv, "kv_norm": kv_norm,
-            "grouped_out_a": wo_a, "grouped_out_b": wo_b, "attn_sink": sink,
-            "total": base}
+    return {
+        "q_lora_down": q_a,
+        "q_norm": q_norm,
+        "q_up_all_heads": q_b,
+        "mqa_kv": wkv,
+        "kv_norm": kv_norm,
+        "grouped_out_a": wo_a,
+        "grouped_out_b": wo_b,
+        "attn_sink": sink,
+        "total": base,
+    }
 
 
 def indexer_params(c: V41FConfig, layer_id: int) -> dict:
@@ -66,9 +74,13 @@ def indexer_params(c: V41FConfig, layer_id: int) -> dict:
     owns = layer_id in c.kv_source_layers
     wk = c.head_dim * ihd if owns else 0
     k_norm = ihd if owns else 0
-    return {"indexer_q": q, "indexer_weights_proj": wproj,
-            "indexer_wk_owner": wk, "indexer_k_norm_owner": k_norm,
-            "total": q + wproj + wk + k_norm}
+    return {
+        "indexer_q": q,
+        "indexer_weights_proj": wproj,
+        "indexer_wk_owner": wk,
+        "indexer_k_norm_owner": k_norm,
+        "total": q + wproj + wk + k_norm,
+    }
 
 
 def compressor_params(c: V41FConfig, ratio: int) -> dict:
@@ -76,8 +88,12 @@ def compressor_params(c: V41FConfig, ratio: int) -> dict:
     wkv = c.dim * c.head_dim
     wgate = c.dim * c.head_dim if ratio > 1 else 0
     norm = c.head_dim
-    return {"compressor_wkv": wkv, "compressor_wgate": wgate,
-            "compressor_norm": norm, "total": wkv + wgate + norm}
+    return {
+        "compressor_wkv": wkv,
+        "compressor_wgate": wgate,
+        "compressor_norm": norm,
+        "total": wkv + wgate + norm,
+    }
 
 
 def moe_params(c: V41FConfig, n_routed: int, n_act: int) -> dict:
@@ -90,10 +106,16 @@ def moe_params(c: V41FConfig, n_routed: int, n_act: int) -> dict:
     gate = gate_w + gate_bias
     total = routed_total + shared + gate
     active = n_act * pe + shared + gate
-    return {"routed_experts_total": routed_total,
-            "shared_expert": shared, "gate": gate,
-            "total": total, "active": active,
-            "n_routed": n_routed, "n_active": n_act, "per_expert": pe}
+    return {
+        "routed_experts_total": routed_total,
+        "shared_expert": shared,
+        "gate": gate,
+        "total": total,
+        "active": active,
+        "n_routed": n_routed,
+        "n_active": n_act,
+        "per_expert": pe,
+    }
 
 
 def hyperconn_params(c: V41FConfig) -> dict:
@@ -105,12 +127,12 @@ def hyperconn_params(c: V41FConfig) -> dict:
     one_base = mix_hc
     one_scale = 3
     per_layer = 2 * (one_fn + one_base + one_scale)
-    return {"mix_proj": 2 * one_fn, "bases": 2 * one_base, "scales": 2 * one_scale,
-            "total": per_layer}
+    return {"mix_proj": 2 * one_fn, "bases": 2 * one_base, "scales": 2 * one_scale, "total": per_layer}
 
 
-def count(c: V41FConfig, engram_rows: int = 0, include_mtp: bool = False,
-          tied_embeddings: bool = False) -> dict:
+def count(
+    c: V41FConfig, engram_rows: int = 0, include_mtp: bool = False, tied_embeddings: bool = False
+) -> dict:
     attn = attention_params(c)
     hc = hyperconn_params(c)
 
@@ -132,13 +154,21 @@ def count(c: V41FConfig, engram_rows: int = 0, include_mtp: bool = False,
         norms = 2 * c.dim  # attn_norm + ffn_norm
         layer_total = a["attn_plus_side_total"] + moe["total"] + hc["total"] + norms
         layer_active = attn["total"] + extra + moe["active"] + hc["total"] + norms
-        layers.append({"layer": L, "ratio": ratio,
-                       "is_kv_source": L in c.kv_source_layers,
-                       "is_index_source": L in c.index_source_layers,
-                       "attn": a["attn_plus_side_total"],
-                       "moe_total": moe["total"], "moe_active": moe["active"],
-                       "hyperconn": hc["total"], "norms": norms,
-                       "total": layer_total, "active": layer_active})
+        layers.append(
+            {
+                "layer": L,
+                "ratio": ratio,
+                "is_kv_source": L in c.kv_source_layers,
+                "is_index_source": L in c.index_source_layers,
+                "attn": a["attn_plus_side_total"],
+                "moe_total": moe["total"],
+                "moe_active": moe["active"],
+                "hyperconn": hc["total"],
+                "norms": norms,
+                "total": layer_total,
+                "active": layer_active,
+            }
+        )
 
     backbone_total = sum(x["total"] for x in layers)
     backbone_active = sum(x["active"] for x in layers)
@@ -148,9 +178,7 @@ def count(c: V41FConfig, engram_rows: int = 0, include_mtp: bool = False,
     engram_dense = engram_table = 0
     if c.engram_layer_ids:
         n_cols = (c.engram_max_ngram_size - 1) * c.engram_n_heads
-        engram_dense = (
-            n_cols * c.engram_head_dim * (c.dim * (c.hc_mult + 1))
-            + 2 * c.hc_mult * c.dim)
+        engram_dense = n_cols * c.engram_head_dim * (c.dim * (c.hc_mult + 1)) + 2 * c.hc_mult * c.dim
         engram_table = len(c.engram_layer_ids) * engram_rows * c.engram_head_dim
 
     # embeddings + head
@@ -169,23 +197,42 @@ def count(c: V41FConfig, engram_rows: int = 0, include_mtp: bool = False,
         m_moe = moe_params(c, dspark_routed, dspark_act)
         main_proj = c.dim * len(c.dspark_target_layer_ids) * c.dim
         conf = (c.dim + c.dspark_markov_rank) * 1
-        mtp_total = (attn["total"] + m_moe["total"] + hc["total"] + 3 * c.dim
-                     + main_proj + conf)
-        mtp_active = (attn["total"] + m_moe["active"] + hc["total"] + 3 * c.dim
-                      + main_proj + conf)
-        mtp_detail = {"moe_total": m_moe["total"], "moe_active": m_moe["active"],
-                      "main_proj": main_proj, "confidence_head": conf}
+        mtp_total = attn["total"] + m_moe["total"] + hc["total"] + 3 * c.dim + main_proj + conf
+        mtp_active = attn["total"] + m_moe["active"] + hc["total"] + 3 * c.dim + main_proj + conf
+        mtp_detail = {
+            "moe_total": m_moe["total"],
+            "moe_active": m_moe["active"],
+            "main_proj": main_proj,
+            "confidence_head": conf,
+        }
 
     total = backbone_total + engram_dense + engram_table + embed + head + final_norm + mtp_total
     active = backbone_active + engram_dense + engram_table + embed + head + final_norm + mtp_active
 
     return {
-        "config": {k: getattr(c, k) for k in
-                   ("dim", "n_layers", "n_heads", "head_dim", "rope_head_dim",
-                    "q_lora_rank", "o_lora_rank", "o_groups", "vocab_size",
-                    "n_routed_experts", "n_activated_experts", "n_shared_experts",
-                    "moe_inter_dim", "hc_mult", "index_n_heads", "index_head_dim",
-                    "index_topk", "n_mtp_layers")},
+        "config": {
+            k: getattr(c, k)
+            for k in (
+                "dim",
+                "n_layers",
+                "n_heads",
+                "head_dim",
+                "rope_head_dim",
+                "q_lora_rank",
+                "o_lora_rank",
+                "o_groups",
+                "vocab_size",
+                "n_routed_experts",
+                "n_activated_experts",
+                "n_shared_experts",
+                "moe_inter_dim",
+                "hc_mult",
+                "index_n_heads",
+                "index_head_dim",
+                "index_topk",
+                "n_mtp_layers",
+            )
+        },
         "module_templates": {
             "attention_per_layer": attn,
             "hyperconn_per_layer": hc,
@@ -214,11 +261,13 @@ def count(c: V41FConfig, engram_rows: int = 0, include_mtp: bool = False,
 
 def _print_human(r: dict) -> None:
     cfg = r["config"]
-    print(f"V41F-S  dim={cfg['dim']} layers={cfg['n_layers']} heads={cfg['n_heads']} "
-          f"head_dim={cfg['head_dim']} experts={cfg['n_routed_experts']} "
-          f"top{cfg['n_activated_experts']}+{cfg['n_shared_experts']}shared "
-          f"inter={cfg['moe_inter_dim']} hc_mult={cfg['hc_mult']} "
-          f"vocab={cfg['vocab_size']}")
+    print(
+        f"V41F-S  dim={cfg['dim']} layers={cfg['n_layers']} heads={cfg['n_heads']} "
+        f"head_dim={cfg['head_dim']} experts={cfg['n_routed_experts']} "
+        f"top{cfg['n_activated_experts']}+{cfg['n_shared_experts']}shared "
+        f"inter={cfg['moe_inter_dim']} hc_mult={cfg['hc_mult']} "
+        f"vocab={cfg['vocab_size']}"
+    )
     print("-" * 72)
     for x in r["layers"]:
         tag = []
@@ -226,28 +275,35 @@ def _print_human(r: dict) -> None:
             tag.append("kv-src")
         if x["is_index_source"]:
             tag.append("idx-src")
-        print(f"  L{x['layer']:<2} r={x['ratio']} {' '.join(tag):<14} "
-              f"attn={x['attn']:>11,} moe_tot={x['moe_total']:>11,} "
-              f"moe_act={x['moe_active']:>10,} hc={x['hyperconn']:>9,} "
-              f"tot={x['total']:>12,} act={x['active']:>12,}")
+        print(
+            f"  L{x['layer']:<2} r={x['ratio']} {' '.join(tag):<14} "
+            f"attn={x['attn']:>11,} moe_tot={x['moe_total']:>11,} "
+            f"moe_act={x['moe_active']:>10,} hc={x['hyperconn']:>9,} "
+            f"tot={x['total']:>12,} act={x['active']:>12,}"
+        )
     print("-" * 72)
-    print(f"  backbone (n_layers)         total={r['backbone_total']:>14,} "
-          f"active={r['backbone_active']:>14,}")
+    print(
+        f"  backbone (n_layers)         total={r['backbone_total']:>14,} active={r['backbone_active']:>14,}"
+    )
     print(f"  engram dense projection           {r['engram_dense']:>12,}")
-    print(f"  engram table (rows={r['engram_table_rows_assumed']})          "
-          f"{r['engram_table_params']:>12,}  (0 = rows pending tokenizer)")
+    print(
+        f"  engram table (rows={r['engram_table_rows_assumed']})          "
+        f"{r['engram_table_params']:>12,}  (0 = rows pending tokenizer)"
+    )
     print(f"  embedding                         {r['embedding']:>12,}")
-    print(f"  lm_head ({'tied' if r['tied_embeddings'] else 'untied'})            "
-          f"{r['lm_head']:>12,}")
+    print(f"  lm_head ({'tied' if r['tied_embeddings'] else 'untied'})            {r['lm_head']:>12,}")
     print(f"  final norm                        {r['final_norm']:>12,}")
     if r["mtp_included"]:
-        print(f"  MTP/DSpark draft layer            {r['mtp'] and sum(v for v in r['mtp'].values() if isinstance(v,int)):>12,}")
+        print(
+            f"  MTP/DSpark draft layer            {r['mtp'] and sum(v for v in r['mtp'].values() if isinstance(v, int)):>12,}"
+        )
     print("=" * 72)
-    print(f"  TOTAL PARAMS                 {r['total_params']:>16,} "
-          f"({r['total_params']/1e9:.4f} B)")
-    print(f"  ACTIVE PARAMS / TOKEN        {r['active_params_per_token']:>16,} "
-          f"({r['active_params_per_token']/1e6:.3f} M)")
-    print(f"  active fraction              {r['active_fraction']*100:>15.2f}%")
+    print(f"  TOTAL PARAMS                 {r['total_params']:>16,} ({r['total_params'] / 1e9:.4f} B)")
+    print(
+        f"  ACTIVE PARAMS / TOKEN        {r['active_params_per_token']:>16,} "
+        f"({r['active_params_per_token'] / 1e6:.3f} M)"
+    )
+    print(f"  active fraction              {r['active_fraction'] * 100:>15.2f}%")
     print(f"  MoE total across layers      {r['moe_total_all_layers']:>16,}")
     print(f"  MoE active across layers     {r['moe_active_all_layers']:>16,}")
 
@@ -257,13 +313,31 @@ def _selftest() -> int:
     # dim=8 inter=4 -> one expert = 3*8*4 = 96.
     # 2 routed experts top1: routed 192; 1 shared 96; gate w=2*8=16 + bias 2 = 18.
     # MoE total 192+96+18 = 306; active 1*96+96+18 = 210.
-    c = V41FConfig(dim=8, n_layers=1, n_heads=2, head_dim=8, rope_head_dim=4,
-                   q_lora_rank=4, o_lora_rank=4, o_groups=2, vocab_size=10,
-                   n_routed_experts=2, n_activated_experts=1, moe_inter_dim=4,
-                   hc_mult=1, compress_ratios=(0,), kv_source_layers=(),
-                   index_source_layers=(), index_n_heads=1, index_head_dim=4,
-                   engram_layer_ids=(), n_mtp_layers=0, dspark_block_size=0,
-                   dspark_target_layer_ids=(), candidate_source_layer=-1)
+    c = V41FConfig(
+        dim=8,
+        n_layers=1,
+        n_heads=2,
+        head_dim=8,
+        rope_head_dim=4,
+        q_lora_rank=4,
+        o_lora_rank=4,
+        o_groups=2,
+        vocab_size=10,
+        n_routed_experts=2,
+        n_activated_experts=1,
+        moe_inter_dim=4,
+        hc_mult=1,
+        compress_ratios=(0,),
+        kv_source_layers=(),
+        index_source_layers=(),
+        index_n_heads=1,
+        index_head_dim=4,
+        engram_layer_ids=(),
+        n_mtp_layers=0,
+        dspark_block_size=0,
+        dspark_target_layer_ids=(),
+        candidate_source_layer=-1,
+    )
     assert _expert(8, 4) == 96
     m = moe_params(c, 2, 1)
     assert m["per_expert"] == 96 and m["routed_experts_total"] == 192
@@ -273,8 +347,14 @@ def _selftest() -> int:
     # tied: embed counted once, no head
     assert r["embedding"] == 10 * 8 and r["lm_head"] == 0
     # total == sum of module pieces (self-consistency identity)
-    pieces = (r["backbone_total"] + r["engram_dense"] + r["engram_table_params"]
-              + r["embedding"] + r["lm_head"] + r["final_norm"])
+    pieces = (
+        r["backbone_total"]
+        + r["engram_dense"]
+        + r["engram_table_params"]
+        + r["embedding"]
+        + r["lm_head"]
+        + r["final_norm"]
+    )
     assert r["total_params"] == pieces
     # hc_mult=1 -> mix_hc=(2+1)*1=3, hc_dim=8: per layer 2*(3*8 + 3 + 3)=60
     assert hyperconn_params(c)["total"] == 60
@@ -286,16 +366,23 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--json", action="store_true")
-    ap.add_argument("--engram-rows", type=int, default=0,
-                    help="rows per engram hash table (tokenizer-derived; 0=uncounted)")
-    ap.add_argument("--include-mtp", action="store_true",
-                    help="count the DSpark draft layer assuming ratio-0 attention")
+    ap.add_argument(
+        "--engram-rows",
+        type=int,
+        default=0,
+        help="rows per engram hash table (tokenizer-derived; 0=uncounted)",
+    )
+    ap.add_argument(
+        "--include-mtp", action="store_true", help="count the DSpark draft layer assuming ratio-0 attention"
+    )
     ap.add_argument("--tied", action="store_true", help="tie embedding and LM head")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
-    r = count(v41f_s(), engram_rows=a.engram_rows, include_mtp=a.include_mtp,
-              tied_embeddings=a.tied)
+    # V41FConfig(), not v41f_s(): this counts SHAPE, building nothing, and the engram ON
+    # default cannot be validated without a tokenizer to measure the compressed vocab from.
+    # The bare name says "unvalidated shape"; v41f_s would refuse exactly as intended.
+    r = count(V41FConfig(), engram_rows=a.engram_rows, include_mtp=a.include_mtp, tied_embeddings=a.tied)
     if a.json:
         print(json.dumps(r, indent=2))
     else:
