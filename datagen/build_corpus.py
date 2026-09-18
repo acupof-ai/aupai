@@ -655,6 +655,73 @@ def _check_filter_tier(domain, filters):
         )
 
 
+def _evaluated_reasons(phase):
+    """The reason categories the pass writing this stamp actually evaluates.
+
+    A CLOSED SET PER PASS, because the two passes evaluate different things and the stamp
+    must not claim otherwise. The worker phase applies reject_light (short/long/bad_bytes)
+    and ends in reject_holdout; the global pass re-checks the holdout condition under its
+    own name (`holdout`) beside exact_dup and near_dup -- it never calls reject_light, so a
+    `short: 0` there would assert a filter that this pass does not run.
+
+    `eval_contaminated` AND `holdout` ARE BOTH HERE BECAUSE THEY ARE NOT THE SAME
+    PREDICATE, though both key on `datagen/holdout.py:is_holdout` over the same 305k-hash
+    set. `reject_holdout` tests THREE tiers -- the whole document, the QA-stripped body,
+    and then each line <=500 chars. The global pass (`_global_pass` and
+    `_parallel_exact_pass`, every `is_holdout(...)` call site there) tests only the first
+    two. So a document whose held-out question appears as a single SHORT LINE inside an
+    otherwise-clean page is `eval_contaminated` in the worker phase and is NOT `holdout`
+    in the global pass -- the counts answer different questions and neither may stand in
+    for the other.
+
+    Named by FUNCTION, not line number, deliberately: an earlier revision of this comment
+    cited :448/:809/:881 and :1284/:1348, and every one of those went stale the moment this
+    file was edited -- which is to say immediately. A reader who trusts a line number here
+    is misled by exactly the change that made the comment worth writing.
+
+    WHY THE GLOBAL PASS MAY SKIP TIER 3, AND THE PRECONDITION THAT MAKES IT SAFE. It skips
+    the per-line scan because its input is not raw text: it reads `w*_*.jsonl`, which only
+    the worker phase writes, and the worker phase ran all three tiers on every original
+    document (reject_light ends in reject_holdout). A document reaching a w* shard already
+    passed the per-line test on the same bytes. **That is a precondition of the CALLER, not
+    a property of this function** -- `_parallel_exact_pass` reused over shards from any
+    other producer would let line-level contamination through silently, because the layer
+    that catches it never ran. The per-line scan is O(lines) sha1s per doc and is the
+    reason it is not simply repeated here.
+
+    NO FINGERPRINT COVERS THIS PRECONDITION. `fp_filters` hashes the `filters/*.py`
+    PATTERNS, not this file, so a corpus whose w* shards came from a build_corpus.py
+    without the tier-3 scan carries a stamp identical to one that had it. The evidence for
+    a given build is the code content itself: the worker run that produced this rebuild's
+    shards used build_corpus.py sha256 `aea79cfe7845c1455d85f3e916cd4b2cbec51a87c4604ed3a23bf24aa98817c`
+    (digest tree HEAD 856b815d, verified to contain the three-tier `reject_holdout`).
+    Recorded in the PR, not in the artifact -- see the PR description for the rebuild batch.
+
+    Case (h) in the selftest reads these keys off the functions' AST and fails if this
+    list falls behind, which is how the `eval_contaminated` omission was caught.
+    """
+    if phase:
+        return ["kept", "holdout", "exact_dup"]
+    return ["kept", "holdout", "exact_dup", "near_dup", "short", "long", "bad_bytes",
+            "eval_contaminated"]
+
+
+def _zero_fill_reasons(reasons, evaluated):
+    """Give every evaluated category an explicit count, so 0 is a value and not an absence.
+
+    `reasons` is a Counter: a category it never increments is simply missing from the
+    stamp, which makes two different worlds write indistinguishable files -- a pass whose
+    holdout layer ran and held out 0 documents, and a pass whose holdout layer never ran.
+    Measured 2026-09-18 on en_c4_stage2 (holdout genuinely ran, found 0 across 11.3M docs);
+    `"holdout" in reasons` is exactly how a downstream reader tries to tell those apart.
+
+    Only `evaluated` is filled. The rare reject categories keep appearing only when they
+    fired, or the field stops being evidence of anything.
+    """
+    for c in evaluated:
+        reasons.setdefault(c, 0)
+
+
 def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_keys=None):
     import sys as _sys
 
@@ -679,8 +746,12 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_ke
     # shard's mtime older than the settle window, file set stable across two reads.
     _settle_dir(out, domain, SETTLE_S)
 
+    evaluated = _evaluated_reasons(phase)
+    _zero_fill_reasons(reasons, evaluated)
+
     stats = {
         "domain": domain, "reasons": dict(reasons), "kept": kept,
+        "evaluated_reasons": evaluated,
         "kept_chars": kept_chars, "kept_tokens": int(kept_chars / CHARS_PER_TOKEN),
         "filters": a.filters, "workers": a.workers, "n_shards": nshards,
         # One stamp over the verified shards: what produced them (filters) and
@@ -1725,6 +1796,63 @@ def _selftest_preflight():
     if _tokens_status(1, 1) != "measured":
         raise AssertionError("(f) a single-shard domain counted whole was not measured")
     ok += 4
+
+    # (g) A ZERO COUNT MUST BE A FIELD, NOT A MISSING KEY (fb ruling 2026-09-18). The
+    #     stamp is read by people and by downstream code; a genuine 0 and a layer that
+    #     never ran must not write the same file. en_c4_stage2 is the real case: its
+    #     holdout layer ran over 11.3M docs and held out 0.
+    #
+    #     World 1: an empty Counter through the real helper -> every EVALUATED category
+    #     present with value 0. World 2: the MUTATION -- the fill removed -- must leave
+    #     the key absent, which is the old behaviour and the defect. Both directions,
+    #     because a helper that filled nothing would pass a one-sided test.
+    _zeroed = Counter()
+    _zero_fill_reasons(_zeroed, _evaluated_reasons("phase"))
+    for _c in ("kept", "holdout", "exact_dup"):
+        if _c not in _zeroed or _zeroed[_c] != 0:
+            raise AssertionError(f"(g) {_c} not zero-filled into the stamp: {dict(_zeroed)}")
+    if "short" in _zeroed:
+        raise AssertionError("(g) the --phase set filled a worker-phase-only category")
+    ok += 1
+    _mutated = Counter()
+    for _c in _evaluated_reasons("phase"):
+        pass  # MUTATION: the fill removed
+    if "holdout" in _mutated:
+        raise AssertionError("(g) mutation control did not reproduce the missing-key defect")
+    ok += 1
+    # the non-phase set is the wider one and must include the light-filter categories
+    _full = _evaluated_reasons(None)
+    for _c in ("short", "long", "bad_bytes", "near_dup"):
+        if _c not in _full:
+            raise AssertionError(f"(g) the worker-phase set omits a category it evaluates: {_c}")
+    ok += 1
+
+    # (h) THE WHITELIST MUST TRACK THE FILTERS (fb 2026-09-18). _evaluated_reasons is a
+    #     hand-maintained closed set, so a NEW reject category added to reject_light would
+    #     silently never be zero-filled -- the same missing-key defect, reintroduced by an
+    #     unrelated edit, with no test failing. Read the keys off the real function's AST
+    #     rather than restating them, so this cannot drift from the code it guards.
+    #     MUTATION: adding a return to reject_light that is not in the set must fail here.
+    import ast as _ast_h  # local: this case must not depend on a sibling case's import
+
+    _light_keys = {
+        _r.value.value
+        for _fn in _ast_h.walk(_ast_h.parse(open(__file__, encoding="utf-8").read()))
+        if isinstance(_fn, _ast_h.FunctionDef) and _fn.name in ("reject_light", "reject_holdout")
+        for _r in _ast_h.walk(_fn)
+        if isinstance(_r, _ast_h.Return) and isinstance(_r.value, _ast_h.Constant) and isinstance(_r.value.value, str)
+    }
+    _worker_set = set(_evaluated_reasons(None))
+    _missing = sorted(_light_keys - _worker_set)
+    if _missing:
+        raise AssertionError(
+            f"(h) reject_light/reject_holdout can return {_missing}, which the worker-phase "
+            f"evaluated set does not carry -- a count of 0 for these would be a missing key")
+    ok += 1
+    if not _light_keys:
+        raise AssertionError("(h) the AST read found no reject keys -- the walk is broken, "
+                             "so this guard would pass on anything")
+    ok += 1
 
     # (the settle cases 1-4 + foreign-live-pid refuse live with gate (a) above)
     print(f"build_corpus selftest OK: {ok} gates refuse on their failing world (incl. T7-2 settle + holdout-slice gate)")

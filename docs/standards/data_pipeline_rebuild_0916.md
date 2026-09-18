@@ -73,24 +73,73 @@ python3 datagen/fetch_corpus.py --source ms_starcoder_py # -> data/raw/ms_starco
 **2b. Build raw → `data/corpus/<domain>/`** with `datagen/build_corpus.py` (NOT
 `clean_corpus.py`: its `DOMAIN_SOURCE` maps only web_hq/cci3/en/code_rp1t and does **not**
 cover either rebuild domain — that is expected, build_corpus is the path here). The en cell is
-a domain-suffix rebuild, so `--phase` is REQUIRED to freeze the held-out slice; the recorded
-lost-run shape was:
+a domain-suffix rebuild, so `--phase` is REQUIRED to freeze the held-out slice.
+
+**Two stages, and the output directory is the operator's step.** The build REFUSES to create
+it (`REFUSE: output dir ... does not exist; mkdir is the operator's step`, `_preflight`), so `mkdir`
+first. Then run the worker phase WITHOUT `--global-only`, and the global pass separately:
 
 ```bash
+mkdir -p data/corpus/en_c4_stage2 data/corpus/code_py_starcoder
+
+# stage 1 — worker clean (raw -> w*_*.jsonl). NO --global-only here: it is the
+# stage-2 re-run switch and REFUSEs when no w* shards exist yet (`_global_pass`).
 python3 datagen/build_corpus.py --domain en_c4 \
     --out data/corpus/en_c4_stage2 --phase <this-rebuild-phase> \
     --source 'jsonl:data/raw/rp1t_c4/*.jsonl' \
-    --filters light --no_near_dedup --global-only --workers <N>
+    --filters light --no_near_dedup --workers <N> --allow_empty_slice
 python3 datagen/build_corpus.py --domain code_py_starcoder \
     --out data/corpus/code_py_starcoder --phase <this-rebuild-phase> \
     --source 'jsonl:data/raw/ms_starcoder_py/*.jsonl' \
     --filters light --workers <N>
+
+# stage 2 — global exact-dedup + holdout over the w* shards. --global-only AND
+# --no_near_dedup AND workers>1 is what selects the PARALLEL pass (`_parallel_exact_pass`); without
+# --global-only the same work runs serially at ~1 shard/min.
+python3 datagen/build_corpus.py --domain en_c4 \
+    --out data/corpus/en_c4_stage2 --phase <this-rebuild-phase> \
+    --source 'jsonl:data/raw/rp1t_c4/*.jsonl' \
+    --filters light --no_near_dedup --global-only --workers <N> --allow_empty_slice
+python3 datagen/build_corpus.py --domain code_py_starcoder \
+    --out data/corpus/code_py_starcoder --phase <this-rebuild-phase> \
+    --source 'jsonl:data/raw/ms_starcoder_py/*.jsonl' \
+    --filters light --no_near_dedup --global-only --workers <N>
 ```
+
+**`--allow_empty_slice` on `en_c4` only, and why.** A build carrying `--phase` freezes this
+phase's held-out slice, and an EMPTY slice is refused by default (`_emit_holdout_slice`). `en_c4` is English
+web prose and has **zero** whole-document hash matches against the 16 eval-question sets:
+measured 2026-09-18, 0 hits over 280,862 sampled docs and 0 across all 11.3M. Empty is the
+truth there, and the flag still freezes the slice with its `rule_fp` so a cross-stage reader
+can confirm nothing was held out. **Do NOT copy the flag to `code_py_starcoder`**: the code
+holdout sets (`code_holdout_500`, `code_holdout_v2_500`, keyed on `instruction`) can genuinely
+hit code, and a nonzero hit is the normal outcome. Note the 13-gram decontamination in 2c is a
+DIFFERENT mechanism (n-gram containment, not whole-question hash equality); en_c4's historical
+7 dropped rows belong to that layer, not this one.
+
+**`--no_near_dedup` is what the two-stage shape needs for `en_c4`, and it is an operator
+decision for `code_py_starcoder`.** The flag skips the MinHash near-dedup (~30ms/doc, pure
+python) "for already-deduped sources" — measured 2026-09-18, `en_c4` has 0 exact duplicates
+in a 374k-document sample, consistent with upstream c4 already being deduplicated. It is also
+one of the three conditions that select the PARALLEL global pass (`_parallel_exact_pass`), so a stage 2 without
+it runs serially at ~1 shard/min. **The starcoder commands above do not carry it**, matching
+the recipe as originally recorded; if starcoder's source is NOT already near-deduped, decide
+deliberately which you want — the MinHash pass, or the faster serial global pass — rather
+than adding the flag to make the commands look symmetric. The near-dedup removed-fraction is
+a separately reported fact either way.
 
 `<this-rebuild-phase>` and `--workers`/`--target_tokens` are operator-decided per the new
 hardware; pin them in the run's experiment row. `--filters` has only two tiers (`web`, the
 default, and `light`); `web`'s `not_zh` (>=60% CJK) would delete a code corpus and build_corpus
 REFUSEs `code_py_starcoder+web`, so `--filters light` is required (confirm with `--dry` first).
+
+**No historical baseline exists for this rebuild's rates.** The 2026-09-16 pod loss took every
+`build_corpus_stats.json`; nothing on disk holds one (checked 2026-09-18). So the exact-dup,
+reject and holdout rates measured here are the NEW baseline, not a regression comparison
+against the lost run. What the lost run left is a total (`facts/corpus_supply.json#cs.en_c4_stage2_landed`,
+83 shards / 3,887,759 docs / 2.4011B tokens, post-dedup) — and a total is not comparable across
+a different fetch, since this rebuild's input was 32 of 1024 raw shards while the lost run's
+fetch size is not recorded anywhere.
 
 **2c. Restore the 13-gram holdout bases, then decontaminate.**
 `scripts/filter_gate_domains.py` exits immediately unless these are present (it does NOT

@@ -1089,6 +1089,25 @@ def main():
         # version guarded on len(gram_set) < N and missed a 15-token doc that does span a
         # 13-gram. The selftest pins planted solution+prompt grams as hits.
         "scripts/audit_gate_contamination.py",
+        # Rebuilds the two decontam benchmark bases from upstream (3b). Registered because a
+        # wrong-population file passed every schema check: data/eval/mbpp_holdouts.jsonl is the
+        # 974-row MBPP-train set (key `text`), NOT the sanitized-427 set (key `prompt`), and the
+        # selftest refuses a 427-row file and a non-contiguous id set at that path.
+        "scripts/rebuild_eval_bases.py",
+        # Post-fetch verification where the manifest's expected_bytes is hardcoded 0. Registered
+        # because the first version PRINTED `.part` leftovers and then exited 0 on the same run.
+        # The selftest asserts the exit code for a .part leftover, a torn tail and a
+        # content-length mismatch.
+        "scripts/verify_fetch.py",
+        # Enumerates the driver red list and reconciles it against the issue->PR map (3b).
+        # Registered because the parser reported "0 red(s)" against a driver that had failed 7:
+        # it matched a lowercase marker and treated TIMEOUT, which is not a FAIL line, as green.
+        "scripts/ci_redlist_reconcile.py",
+        # Shard-by-shard comparator for the parallel-vs-serial exact pass (3b). Registered
+        # because `_parallel_exact_pass`'s "byte-identical to the serial pass" is a docstring
+        # claim over the code that decides a multi-GB corpus's exact bytes. The selftest drives
+        # the two ways a divergence appears: a 1-byte shard diff and an extra shard.
+        "scripts/compare_built_dirs.py",
         # The production 13-gram DROP module shared by the five non-Ultra filter runs and 0e's
         # UltraData aggregate (ae-7). Registered because a false negative ships a gate answer
         # into the mix and a false positive silently drops rows: the selftest pins planted
