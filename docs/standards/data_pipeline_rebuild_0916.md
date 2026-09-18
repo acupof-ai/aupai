@@ -101,10 +101,20 @@ because the 13-gram decontam identity depends on them.
 
 - `data/eval/humaneval/humaneval_164.jsonl` — canonical 164-task HumanEval set (the same
   file `eval/humaneval_gen.py` reads as DATA_PATH). Controlled source, byte-verify.
-- `data/eval/mbpp/mbpp_holdouts.jsonl` — the r3 clean 338/427 subset. It is DERIVED, not a
-  single download: take external `data/eval/sanitized-mbpp.json` (non-git) and filter to the
-  tracked id list `runs/contam_r3_mbpp_union.json` (`r3_mbpp_clean`, 338 ids) per
-  `eval/mbpp_gen.py:47-51`. The union list IS on `main`; the sanitized MBPP source is not.
+- `data/eval/mbpp_holdouts.jsonl` — the **974-row MBPP-train set, key `text`, ids 1..974**,
+  from external `google-research/mbpp.jsonl`. This is the file `filter_gate_domains.py` reads
+  (`MBPP_REL`); with `ensure_ascii=True` its bytes are identical to upstream, sha256
+  `ccf64cea…`. **An earlier revision of this bullet named
+  `data/eval/mbpp/mbpp_holdouts.jsonl` and called it "the r3 clean 338/427 subset" — the path
+  and the identity are both wrong.** The path is flat (there is no `mbpp/` directory), and the
+  338/427 subset is a different file for a different consumer: `eval/mbpp_gen.py` derives it
+  at run time from `data/eval/sanitized-mbpp.json` (`DATA_PATH`) filtered to the tracked id
+  list `runs/contam_r3_mbpp_union.json` (`r3_mbpp_clean`, `CLEAN_PATH`), keyed on `prompt`.
+  `datagen/holdout.py` carries both as registry entries (`mbpp_holdouts_974` keyed `text`,
+  `mbpp_sanitized_427` keyed `prompt`); they share zero task_ids, so restoring the wrong one
+  gives the right shape and the wrong questions and passes every count check. To tell them
+  apart, hash each row's question with `datagen.holdout.qhash` and require it to resolve
+  against the registry body — the one property neither file can fake.
 
 Then decontaminate `en_c4_stage2` → `en_c4_stage2_dc` and `code_py_starcoder` →
 `code_py_starcoder_dc`:
