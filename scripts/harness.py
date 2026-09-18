@@ -15211,7 +15211,29 @@ _CITE_SHA_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
 #: sentence that already names train.py and no sha (4c ruling, 2026-09-07, narrowing the
 #: wider form which stays prose). 3+ digits: `:12` is a time or a column far more often than
 #: a line, and train.py has no interesting code below line 100.
-_CITE_BARE_RE = re.compile(r"(?<![\w.]):(\d{3,})\b")
+#:
+#: `[` IS IN THE LOOKBEHIND because a Python SLICE is not a citation. Measured 2026-09-18:
+#: a slice expression inside an f-string, in a sentence mentioning train.py, was reported as
+#: "train.py:<n> is a bare line number" -- an accusation about a line the author never named.
+#: The first fix proposed was to exclude `]` -- wrong, and worth recording: a slice's colon is
+#: preceded by `[`, never by `]`, so that spelling changes nothing (verified against a
+#: three-slice / three-real-reference table).
+#:
+#: WHAT THIS DOES NOT DO, corrected 2026-09-18 by genB's review of the claim I first made here:
+#: it does NOT retire a backlog of reported false hits. A raw regex hit and a REPORTED one are
+#: different populations -- the check reports only inside a sentence naming train.py with no
+#: sha, after `_CITE_RE.sub` has run -- and measured on this tree the two differ completely:
+#: 306 raw slice hits, of which the check would have reported ZERO. The baseline agrees: its
+#: `abbreviated_bare_count` was 0 and `allowed_bare` held 2 keys, so it could not have been
+#: absorbing hundreds of anything. (I wrote the opposite first, from the raw count alone; a
+#: reader would have gone looking for debt that never existed.) The narrower true statement is
+#: enough to justify the change: ~200 raw hits stop matching, and any one of them would become
+#: a false report the moment it landed in a sentence naming train.py -- which is how this was
+#: found. `_selftest_train_cite_abbreviated_form` world 4 pins the behaviour.
+#:
+#: The example is DESCRIBED, not written: spelling it out here would make this comment the very
+#: hit it explains, which is what happened on the first draft of this paragraph.
+_CITE_BARE_RE = re.compile(r"(?<![\w.\[]):(\d{3,})\b")
 
 
 def _bare_cite_targets(sentence):
@@ -15491,6 +15513,13 @@ def _selftest_train_cite_abbreviated_form():
          is a column, a port or a version far more often than a citation, which is why the
          wide form stays prose.
       3. the same sentence with a sha -> NOT named. The anchor works abbreviated too.
+      4. a SLICE expression in a sentence naming train.py -> NOT named (2026-09-18). This is
+         the case the `[` lookbehind exists for; without it the reader reports the slice's
+         length as a train.py line. Added after genB found the whole regex change had NO test:
+         reverting `(?<![\w.\[])` to `(?<![\w.])` left all three worlds above green and the
+         live tree's check output byte-identical, so the fix was unpinned. Asserted on the
+         count delta like the others -- a slice adds 0 -- which is the same probe mechanism,
+         and it fails on exactly the mutation that motivated the change.
 
     Asserted on the reported COUNT with and without the probe, not by searching the evidence
     text: the FAIL message prints only its first four findings, so a substring test passes or
@@ -15517,6 +15546,12 @@ def _selftest_train_cite_abbreviated_form():
         (f"# train.py's cast lives at :{victim_line} and this sentence names train.py.", 1),
         (f"# an unrelated comment mentioning :{victim_line} and no python file at all.", 0),
         (f"# train.py:{victim_line} AT 169da865 held the cast, and :{victim_line} names it.", 1),
+        # ASSEMBLED, NOT WRITTEN OUT. Spelling the slice literally here would put the shape
+        # into this file's own source, where the check walks it -- the trap that caught this
+        # PR's first draft comment. The braces and the bracket are joined at runtime so the
+        # literal never appears in the file being scanned.
+        ("# train.py reads a slice like " + "{" + "why[:" + str(victim_line) + "]" + "}"
+         + " and this sentence names train.py.", 0),
     ]
     for text, want_delta in worlds:
         d = _tmp_repo_shaped()
@@ -15540,8 +15575,8 @@ def _selftest_train_cite_abbreviated_form():
         finally:
             import shutil
             shutil.rmtree(d, ignore_errors=True)
-    return ("abbreviated `:NNN` adds a finding only beside train.py and only without a sha "
-            "(3 worlds, asserted on the count delta)")
+    return ("abbreviated `:NNN` adds a finding only beside train.py and only without a sha, "
+            "and a slice adds none (4 worlds, asserted on the count delta)")
 
 
 def _selftest_cite_sentence_wraps():
