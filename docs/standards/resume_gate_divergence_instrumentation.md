@@ -144,8 +144,19 @@ This is the silent branch the spec exists to make loud. `_save_optim_named` skip
 AdamW state dict is falsy (`if not st: continue  # never stepped`), and `_load_optim_named` treats a
 name absent from `state_by_name` as `if rec is None: continue` — i.e. **"never stepped"**. So
 "the saver dropped this param's state" and "this param never had state" are the same state to the
-loader, and a save-side omission resumes silently with a fresh optimizer for that tensor. Nothing
-raises.
+loader, and a save-side omission resumes silently with a fresh optimizer for that tensor.
+
+**"Silent" means nothing on the load path raises — not that the run stays green.** Measured
+2026-09-19 on a copy that drops one populated param: the `--run restart` worker exits **rc=0**
+(the loader takes its `rec is None` branch and says nothing), while the full gate exits **rc=1**.
+The trajectory diverges because the optimizer really did lose that tensor's state. So this is not a
+hypothesis about a failure mode that currently hides; it is an *unattributed* failure — the gate is
+already red and nothing names why. That is the whole job of this instrumentation, and it is why the
+presence assertion below is a requirement rather than a nicety.
+
+The wording matters because the wrong reading is the opposite of the truth: "nothing raises"
+describes the reader, and a reader that stays quiet while the gate goes red is exactly the gap
+between a symptom (a red gate) and a cause (this param lost its state).
 
 Required: on the load side, assert that every in-group name whose control trajectory had non-empty
 optimizer state at step K is present in `state_by_name`. A name that is absent while its
@@ -200,10 +211,29 @@ did not raise is evidence about *names*, not about *values*, and this makes that
 
    Use a save-side mislabel **between two same-shaped leaves** instead: on a copy, relabel
    `layers.0.attn.qproj.wq_b.weight`'s optimizer record as `layers.3.attn.qproj.wq_b.weight`.
-   Measured 2026-09-19: the restart worker exits **rc=0** — it escapes the shape check (shapes
-   match), the name-set check (both names are in-group) and the per-name identity assertion (which
-   compares whatever `state_by_name[n]` holds against itself). This is the hole the pass-through
-   check below exists to close, and it is the mutation the diagnostic must red on.
+   Measured 2026-09-19, and the pair is the point:
+
+   | invocation | rc |
+   |---|---|
+   | `--run restart` (the worker alone) | **0** |
+   | `--gate gate_resume_equivalent_to_uninterrupted` (the whole gate) | **1**, `max|delta|=3.330e-02 n_diff=524288/524288` |
+   | the gate on the unmutated tree | 0 |
+
+   The gap is in the reader, not the writer. The worker exits 0 because nothing on the load path
+   notices: the label and the state move together, so the shape check (`:155`) sees matching shapes,
+   the name-set check sees both names in-group, and the identity loop at `:177-184` compares
+   `opt.state[master[n]]` against `sbn[n]` — the *same* relabelled key on both sides, so the
+   comparison is self-consistent and cannot disagree. The hole is in `_load_optim_named`'s read
+   side: it binds whatever `state_by_name[n]` holds to whatever `param_names` calls `n`, with no
+   independent record of which tensor the values came from. The gate nonetheless goes red, because
+   the relabelled state does change the trajectory — which is exactly the CI failure being
+   investigated.
+
+   **So the acceptance is a PAIR: worker rc=0 AND gate rc=1.** An earlier revision of this spec said
+   only "the gate must be rc=0", which was wrong and was wrong for an instructive reason: it was
+   written from a run of `--run restart` alone, without ever running the full gate under the mutant.
+   The diagnostic's job is to make an *existing* red attributable — not to manufacture one. A spec
+   that asks the diagnostic to redden a green gate has mistaken the instrument for the fault.
 2. On a green run, the dump contains `exp_avg`/`exp_avg_sq`/`step` for every sampled leaf, both
    trajectories, plus the checkpoint sha and the key-set comparison.
 3. The per-param presence assertion fires on a copy where `_save_optim_named`'s `if not st: continue`
