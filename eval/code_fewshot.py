@@ -154,23 +154,31 @@ def selfcheck():
     # lived inline in main()'s batch loop, where --selfcheck could not reach it and the
     # only way to run it was a pod with a checkpoint.
     from tokenizers import Tokenizer
-    tok = Tokenizer.from_file(TOK_PATH)
-    ka = evals[:6]
-    ka_ok = ka_empty = 0
-    for r in ka:
-        # what generate_batch hands back for a perfect greedy continuation:
-        # the reference solution followed by the closing fence
-        gen_ids = tok.encode(r["reference_code"] + "\n```\n").ids
-        _, code = continuation_code(gen_ids, None, tok, None, False)
-        if not code.strip():
-            ka_empty += 1
-        elif code.strip() == r["reference_code"].strip():
-            ka_ok += 1
-        else:
-            print(f"  KNOWN-ANSWER FAIL: {r['instruction'][:36]} -> {code[:60]!r}")
-    print(f"decode known-answer: {ka_ok}/{len(ka)} recovered, "
-          f"empty-continuation rate {ka_empty / len(ka):.0%}")
-    ka_fails = (len(ka) - ka_ok) + ka_empty
+    # The decode known-answer section needs the real tokenizer (a gitignored pod artifact).
+    # On a CPU CI checkout / laptop without data/tokenizer.json it cannot run; print an explicit
+    # SKIP line (still rc0) rather than crashing on from_file. The CI driver's partition treats
+    # this file as excluded specifically on that missing artifact.
+    if not os.path.exists(TOK_PATH):
+        print("decode known-answer: SKIPPED (data/tokenizer.json absent; gitignored pod artifact)")
+        ka_fails = 0
+    else:
+        tok = Tokenizer.from_file(TOK_PATH)
+        ka = evals[:6]
+        ka_ok = ka_empty = 0
+        for r in ka:
+            # what generate_batch hands back for a perfect greedy continuation:
+            # the reference solution followed by the closing fence
+            gen_ids = tok.encode(r["reference_code"] + "\n```\n").ids
+            _, code = continuation_code(gen_ids, None, tok, None, False)
+            if not code.strip():
+                ka_empty += 1
+            elif code.strip() == r["reference_code"].strip():
+                ka_ok += 1
+            else:
+                print(f"  KNOWN-ANSWER FAIL: {r['instruction'][:36]} -> {code[:60]!r}")
+        print(f"decode known-answer: {ka_ok}/{len(ka)} recovered, "
+              f"empty-continuation rate {ka_empty / len(ka):.0%}")
+        ka_fails = (len(ka) - ka_ok) + ka_empty
     if os.geteuid() != 0:
         # The two cases below execute code, and datagen/sandbox_exec.py:169 refuses without
         # root. Skipping them off-pod is what lets the decode case above run in the hook on a
