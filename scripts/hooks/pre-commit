@@ -1064,6 +1064,14 @@ def main():
         # planted known-positive control must be caught in the main path, not only in the
         # selftest. The selftest is the only place those two refusals are exercised.
         "datagen/gen_exercises.py",
+        # The synthetic textbook generator (de/3b). Registered because its seeds path is
+        # NOT tracked in git -- this hook's own ALLOWED list refuses new data/ paths -- so
+        # the file it reads has no second copy in the repo and a bare FileNotFoundError
+        # told a reader nothing. The guard now verifies the seeds' sha256, not just their
+        # presence, and its two failure paths (missing vs wrong-content) carry opposite
+        # instructions. The selftest mutation-checks it: dropping the hash comparison
+        # leaves the existence-only guard that passed any truncated or stale copy.
+        "datagen/gen_textbooks.py",
         # The synthetic self-repetition metric (3b). Registered because its acceptance is a
         # known-answer world: N identical docs must give exact_dup=(N-1)/N and R1 distinct
         # rate=1/N, and identical/disjoint MinHash signatures must hit the 1.0/0.0 band
