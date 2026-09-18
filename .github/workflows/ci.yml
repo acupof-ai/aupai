@@ -70,6 +70,12 @@ jobs:
       # the opposite of verifying one.
       - run: python datagen/holdout.py --check
       - run: python datagen/holdout.py --selftest
+      # The seeds-guard check. It builds its own fixtures, so it covers the guard fully
+      # here too -- CI has no ~/aupai-keep, and the first version gated its strongest
+      # cases behind that file's existence, so CI ran one case while the summary named
+      # four and a mutation of the hash check stayed green. Any machine without the real
+      # seeds now reports them as an explicit SKIP, never as a case that ran.
+      - run: python datagen/gen_textbooks.py --selftest
       - run: python scripts/tokenizer_report.py --selftest
       - run: python scripts/tokenizer_eval.py --selftest
       - run: python scripts/harness.py --selftest
