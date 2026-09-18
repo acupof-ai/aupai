@@ -294,6 +294,34 @@ def _run_pair(cdir, rdir, env):
     return 0, compare_iter(cdir, rdir)
 
 
+def gate_once(out):
+    """Single real-gate sample for cross-run tracking (one independent run = one sample; within
+    a job repeats are correlated, proven by the 8/8 and 24/24 same-color jobs). Prints the env
+    header, runs the REAL gate, and on red prints the FULL signature/stderr. Always exits 0;
+    on red the raw gate output is also saved under `out` for the actions artifact upload."""
+    os.makedirs(out, exist_ok=True)
+    env = dict(os.environ)
+    env["OMP_NUM_THREADS"] = os.environ.get("GATE_OMP", "2")
+    if os.environ.get("GATE_MKL"):
+        env["MKL_NUM_THREADS"] = os.environ["GATE_MKL"]
+    hdr = env_header()
+    print("GATEONCE ENV " + json.dumps(hdr))
+    g = subprocess.run(
+        [sys.executable, _GATE_TEST, "--gate",
+         "gate_resume_equivalent_to_uninterrupted"],
+        capture_output=True, text=True, env=env)
+    if g.returncode == 0:
+        print("GATEONCE RESULT green")
+        return 0
+    print("GATEONCE RESULT red")
+    print("GATEONCE SIG_BEGIN")
+    print(g.stderr.strip()[-2000:])
+    print("GATEONCE SIG_END")
+    with open(os.path.join(out, "red_gate_stderr.txt"), "w") as f:
+        f.write("ENV " + json.dumps(hdr) + "\n\n" + g.stderr)
+    return 0
+
+
 def pair_once(out):
     """A single diag control/restart pair (spawned itself by the colocator so it is a sibling
     of the gate child). Prints one RED/GREEN line; non-zero exit never fails CI here."""
@@ -506,6 +534,7 @@ def main():
     ap.add_argument("--diag-colocate", type=int, metavar="RUNS")
     ap.add_argument("--stress", type=int, default=0, metavar="CORES")
     ap.add_argument("--diag-pair", action="store_true")
+    ap.add_argument("--gate-once", action="store_true")
     ap.add_argument("--diag-arm", choices=["control", "restart"])
     ap.add_argument("--diag-selftest", action="store_true")
     ap.add_argument("out", nargs="?", default=None)
@@ -514,6 +543,8 @@ def main():
         return selftest()
     if a.diag_arm:
         arm(a.diag_arm, a.out)
+    elif a.gate_once:
+        gate_once(a.out or os.path.join("/tmp", "diag_gate_once"))
     elif a.diag_pair:
         pair_once(a.out or os.path.join("/tmp", "diag_pair_out"))
     elif a.diag_colocate:
