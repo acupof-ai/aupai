@@ -2319,7 +2319,7 @@ def ci_selftest_flags(src):
 
 
 def cmd_ci_selftests(argv):
-    """Run every driver-bucket registered selftest, bounded, fail-fast with the failing name.
+    """Run every driver-bucket registered selftest, bounded; report EVERY failure, nonzero exit.
 
     This is the single CI entry that closes the hook-map vs explicit-CI-list gap (#502): it
     enumerates SELFTEST_FILES/PARTIAL from the hook at runtime, so a newly registered
@@ -2327,6 +2327,8 @@ def cmd_ci_selftests(argv):
     """
     ap = argparse.ArgumentParser(prog="harness ci-selftests")
     ap.add_argument("--timeout", type=float, default=120.0)
+    ap.add_argument("--fail-fast", action="store_true",
+                    help="stop at the first failing selftest (default: run all, report all)")
     a = ap.parse_args(argv)
     hook = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
     src = open(hook, encoding="utf-8").read()
@@ -2373,7 +2375,10 @@ def cmd_ci_selftests(argv):
         if timed_out:
             print(f"ci-selftests: FAIL {p}: exceeded {a.timeout:.0f}s and its process group "
                   f"was killed (mark it slow/excluded, or fix the hang)")
-            return 1
+            failed.append(p)
+            if a.fail_fast:
+                return 1
+            continue
         ran += 1
         if rc != 0:
             tail = out.strip().splitlines()[-8:]
@@ -2381,9 +2386,10 @@ def cmd_ci_selftests(argv):
             for line in tail:
                 print("    " + line)
             failed.append(p)
-            break
+            if a.fail_fast:
+                return 1
     if failed:
-        print(f"ci-selftests: {len(failed)} of {ran} ran failed; the rest were not reached")
+        print(f"ci-selftests: {len(failed)} of {ran} ran failed: {', '.join(failed)}")
         return 1
     print(f"ci-selftests: {ran} registered selftest(s) passed (driver bucket)")
     return 0
