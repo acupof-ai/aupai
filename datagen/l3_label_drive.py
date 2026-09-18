@@ -475,7 +475,8 @@ def _selftest() -> int:
         "model": "m", "backend": "openai", "stratum": {}, "rubric_kind": "natural_language",
         "record_id": "lab", "src_sha": None, "truncated": False}
     _fh_dir = tempfile.mkdtemp(prefix="l3_fh_")
-    try:
+    out_fh = led_fh = None  # bound before the try: a constructor raise must not be masked by
+    try:                    # an UnboundLocalError out of the finally below (genB, #546 review)
         out_fh = _RecFH(order_log, "out", os.path.join(_fh_dir, "out"))
         led_fh = _RecFH(order_log, "ledger", os.path.join(_fh_dir, "ledger"))
         os.fsync = _rec_fsync
@@ -486,8 +487,11 @@ def _selftest() -> int:
         assert [f"{t}.{o}" for t, o in order_log] == \
             ["ledger.write", "ledger.flush", "ledger.fsync",
              "out.write", "out.flush", "out.fsync"], order_log
-        # no-ledger path: only the out write/fsync happens
+        # no-ledger path: only the out write/fsync happens. Close the first pair before
+        # rebinding -- a fixture testing fd discipline must not leak its own fds.
         order_log.clear()
+        out_fh.close()
+        led_fh.close()
         out_fh = _RecFH(order_log, "out", os.path.join(_fh_dir, "out2"))
         led_fh = None
         os.fsync = _rec_fsync
@@ -497,7 +501,8 @@ def _selftest() -> int:
             os.fsync = _real_fsync
         assert [f"{t}.{o}" for t, o in order_log] == ["out.write", "out.flush", "out.fsync"], order_log
     finally:
-        out_fh.close()
+        if out_fh is not None:
+            out_fh.close()
         if led_fh is not None:
             led_fh.close()
         shutil.rmtree(_fh_dir, ignore_errors=True)
