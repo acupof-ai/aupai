@@ -46,6 +46,55 @@ def main():
     assert re.search(r"\d+ FAIL of \d+ run", joined), \
         f"the summary states no denominator, so 0 FAIL still reads as all-clear:\n{joined}"
 
+    # THE ORDERING CASE, ON A TEXT FIXTURE -- NOT ON A LIVE `harness check`. The assertions
+    # above can only run when THIS machine has skips and no failing invariant, so they cannot
+    # reach the case that matters: a run where `bad` is non-empty. That is exactly where the
+    # old print order dropped the denominator line behind an early `return 1`, and the live
+    # dependency is also what made this file's own failure mode a strike-2 timeout under the
+    # CI driver. Asserted on the source and on a fixture instead, so it cannot depend on the
+    # timing or the environment of the run that happens to be executing it.
+    #
+    # MUTATION: put the `if bad: return 1` back above the `if skipped:` print and this reds.
+    src = open(os.path.join(ROOT, "scripts", "harness.py"), encoding="utf-8").read()
+    i_bad = src.find('if bad:\n        print(f"\\n{len(bad)} invariant(s) FAILED')
+    i_sum = src.find('NOT run here: {\', \'.join(skipped)}')
+    assert i_bad != -1, "cannot locate the invariant-FAIL print in harness.py"
+    assert i_sum != -1, "cannot locate the skip/denominator print in harness.py"
+    # the early return must not sit between them
+    between = src[i_bad:i_sum]
+    assert "return 1" not in between, (
+        "harness.py returns 1 before printing the skip/denominator line, so a run with a "
+        "failing invariant reports the FAIL list and never states what did not run -- the "
+        "reader most in need of that line is the one who cannot see it. Move the return "
+        "below the summary prints.")
+    # and the summary must still be emitted before any return at all: the FAIL must not be
+    # the last thing on stdout
+    i_auth = src.find("authority: {len(EVIDENCE)")
+    assert i_sum < i_auth, "the skip/denominator line must print before the authority line"
+    print("selftest OK: ordering case -- the denominator line is not behind the FAIL return")
+
+    # THE DEADLINE IS ASSERTED TOO, because this file's own failure in the #567 ci-selftests
+    # job was not an assertion at all: no_hardcoded_cache_path scans every .py/.sh in the tree,
+    # takes 2.2s by hand, and exceeded the 5s default on a 2-core runner -- strike 1 in CI's
+    # explicit `harness check` step, strike 2 inside THIS file's selftest, so the step FAILed
+    # with "a second consecutive timeout". main's CI never ran that driver, so the second
+    # strike was unreachable there and the missing budget went unseen.
+    #
+    # WHAT IS ASSERTED IS THE PROPERTY, NOT THE CONSTANT: the check must not sit on the
+    # default deadline. That reds both ways it can regress -- the entry deleted, or pulled
+    # back down to the default -- without restating the number itself.
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import harness as _H  # noqa: E402
+    _t = _H._CHECK_TIMEOUTS.get("no_hardcoded_cache_path")
+    assert _t is not None, (
+        "no_hardcoded_cache_path is back on the default _CHECK_TIMEOUT: it is a repo-scope "
+        "AST scan of every .py/.sh and exceeds 5s on a 2-core runner, where it times out to "
+        "a FAIL by strike 2 rather than by any assertion failing")
+    assert _t > _H._CHECK_TIMEOUT, (
+        f"no_hardcoded_cache_path's budget ({_t}) is not above the default "
+        f"({_H._CHECK_TIMEOUT}), so the entry no longer buys it anything")
+    print(f"selftest OK: no_hardcoded_cache_path budget {_t}s > default {_H._CHECK_TIMEOUT}s")
+
     print(f"selftest OK ({n_skip} skipped, summary states both count and denominator)")
     return 0
 
