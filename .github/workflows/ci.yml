@@ -118,13 +118,15 @@ jobs:
   # DIAGNOSTIC ONLY, not a fix and never a gate: gate_resume_equivalent_to_uninterrupted is
   # byte-identical on a clean physical host (digest OMP 1/2/4, pinned and unpinned, 14/14) but
   # goes red on ubuntu runners with a byte-identical 1.334e-2 / 506533 / first0 signature on
-  # ~half the runs of the SAME blob. This job recreates the exact gate trajectory up to 6 times
-  # IN the runner and, on the first red, prints the environment (threads/affinity/cgroup quota)
-  # and the FIRST divergent microstage plus the fp32-alias audit -- so the cause is localized on
-  # the machine that exhibits it. continue-on-error is scoped to THIS job only; the required
-  # check job above keeps the real gate fail-closed. Single-iter red probability ~0.6 from the
-  # observed 3/5, so six independent attempts miss with ~0.4^6 ~ 0.4%; each iteration is
-  # independent (fresh processes). Exits 0 by construction.
+  # ~half the runs of the SAME blob. The first diag-only capture (two runs, six pairs each)
+  # stayed 12/12 GREEN on a runner while the real gate reds ~0.6 there -- P(all green)=0.4^12,
+  # so the diag body was NOT the same trigger. This job therefore runs a CO-LOCATED
+  # discriminator: each iteration spawns the REAL gate and a diag pair as SYMMETRIC sibling
+  # children with one shared env (same spawn structure, same OMP injection); a different red
+  # rate isolates the test body (e.g. the diag's per-step torch.save allocations moving a
+  # nondeterministic kernel), equal rates confirm the diag is a faithful trap and it then
+  # localizes the first divergent microstage. continue-on-error is scoped to THIS job only;
+  # the required check job above keeps the real gate fail-closed. Exits 0 by construction.
   diag-resume:
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -136,5 +138,5 @@ jobs:
       - run: pip install numpy
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: python tests/v41f/diag_resume_bimodal.py --diag-selftest
-      - name: capture first bimodal red (6 attempts; non-blocking diagnostic)
-        run: python tests/v41f/diag_resume_bimodal.py --diag-orch 6
+      - name: co-located real-gate vs diag red-rate discriminator (8 pairs; non-blocking)
+        run: python tests/v41f/diag_resume_bimodal.py --diag-colocate 8

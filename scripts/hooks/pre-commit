@@ -2485,6 +2485,12 @@ def main():
         # model-free/cheap (tier constants); the real ~180M x3-process run is an explicit CI
         # step. Distinct from de's single-step test_p1_train_smoke (no save/load there).
         "tests/v41f/test_p1_train_resume_smoke.py",
+        # Non-blocking bimodal-resume CI diagnostic (0e). Its --diag-selftest is model-free and
+        # proves the comparator is non-empty (green world, a planted 1.3% mutant localized,
+        # loss-function identity, alias-audit break); the heavy runner capture is an explicit
+        # continue-on-error CI job, never a production gate. Registered so a selftest-bearing
+        # file cannot sit outside the hook map and silently never run.
+        "tests/v41f/diag_resume_bimodal.py",
         # Engram ON config gate (de, 2026-09-18). Registered because its checks are `test_*`
         # but the defect it guards is a CONFIG-shape one: a bare V41FConfig() has engram ON
         # (engram_layer_ids=(1,)) while both derived fields sit at ()/0, and nothing in the
