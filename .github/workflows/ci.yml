@@ -34,6 +34,13 @@ jobs:
       # than making a production-blocker fix wait on a CI refactor's merge order.
       - run: python tests/v41f/test_p1_config_gate.py --selftest
       - run: python tests/v41f/test_p1_train_ckpt.py
+      # Step-D long-horizon numeric hygiene: off+ste at 40 steps, separate processes, with
+      # frozen/SIX/finite/descent assertions and in-process mutants (~2-4 min CPU). The full
+      # 160-step evidence is runs/longrun/*.json, too slow for CI; --selftest is the gate.
+      - run: python probes/v41f_stepd_longrun.py --selftest
+      # Cheap guard for the committed 160-step evidence JSONs (no model): the same validate()
+      # over runs/longrun/, so a tampered/stale evidence file cannot sit there unchecked.
+      - run: python probes/v41f_stepd_longrun.py --validate-committed runs/longrun
       # Whole-machine train->save->fresh-process resume smoke (0e): bit-exact checkpoint at
       # load and a single-threaded 1-step bit-exact continuation (cross-platform). Heavy x3
       # model build runs here; the pre-commit hook runs the model-free --selftest.

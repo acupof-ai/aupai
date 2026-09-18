@@ -1847,6 +1847,13 @@ def main():
         # AST and synthetic-outcome checks over the cell table and the verdict, no GPU. The real
         # run needs a card; the test does not.
         "probes/kda_shape_fault.py",
+        # Step-D long-horizon numeric hygiene (98). --selftest runs off+ste at 40 steps in
+        # separate processes (~4 min CPU, 180M model + fp32 master + AdamW each), asserts
+        # frozen 8/4, SIX off=0/ste>0, finite m/v, bounded bf16 gap, real descent, and the
+        # off/ste backbone bit-identity; six in-process mutants each must go red. Registered
+        # so a probe that printed a JSON nobody read could not pass -- the assertions are the
+        # gate. The 160-step evidence JSONs live in runs/longrun/; CI runs the 40-step form.
+        "probes/v41f_stepd_longrun.py",
         "scripts/stale_claims.py",
         "scripts/merge_score_row.py",
         "scripts/trace_classes.py",
