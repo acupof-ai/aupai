@@ -1,5 +1,10 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  # manual trigger for the diag-resume causal stress matrix (A/B/C/D arms); no inputs needed,
+  # the arms are the job matrix. Push/PR runs keep the unloaded control only.
+  workflow_dispatch:
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -115,21 +120,29 @@ jobs:
       # two steps above already cover, and exit 0 -- a green that means nothing. The chain
       # is covered by `E2E_GPU=<idx> python scripts/test_e2e.py` on the pod, and nowhere else.
 
-  # DIAGNOSTIC ONLY, not a fix and never a gate: gate_resume_equivalent_to_uninterrupted is
-  # byte-identical on a clean physical host (digest OMP 1/2/4, pinned and unpinned, 14/14) but
-  # goes red on ubuntu runners with a byte-identical 1.334e-2 / 506533 / first0 signature on
-  # ~half the runs of the SAME blob. The first diag-only capture (two runs, six pairs each)
-  # stayed 12/12 GREEN on a runner while the real gate reds ~0.6 there -- P(all green)=0.4^12,
-  # so the diag body was NOT the same trigger. This job therefore runs a CO-LOCATED
-  # discriminator: each iteration spawns the REAL gate and a diag pair as SYMMETRIC sibling
-  # children with one shared env (same spawn structure, same OMP injection); a different red
-  # rate isolates the test body (e.g. the diag's per-step torch.save allocations moving a
-  # nondeterministic kernel), equal rates confirm the diag is a faithful trap and it then
-  # localizes the first divergent microstage. continue-on-error is scoped to THIS job only;
-  # the required check job above keeps the real gate fail-closed. Exits 0 by construction.
+  # DIAGNOSTIC ONLY, not a fix and never a gate. Investigates the runner-only bimodal red of
+  # gate_resume_equivalent_to_uninterrupted (byte-identical 1.334e-2/506533/first0 on red runs;
+  # clean physical host 14/14 green; an unstressed co-located job was 8/8 green for BOTH the
+  # real gate and the diag -> the trigger is cross-run/scheduler contention selecting one of
+  # two discrete paths, not per-run random noise). The push-time step is one unloaded co-located
+  # control. The CAUSAL arms run ONLY on manual workflow_dispatch (4 arms x 6, small to not burn
+  # resident CI): A unloaded threads=2 control; B +4-core outer-sibling load threads=2; C same load
+  # with oneDNN OFF (threads=2); D same load threads=1 oneDNN default. B-red/C-green => oneDNN
+  # path selection is the lever; B-red/D-green/C-red => plain multithreaded reduction. Burners
+  # are outer siblings with the same env, never in the test process. threads=1 / oneDNN-off are
+  # diagnostic arms only and MUST NOT be merged as the gate fix (green-but-blind). The required
+  # check job above keeps the real gate fail-closed; this job exits 0 by construction.
   diag-resume:
     runs-on: ubuntu-latest
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arm: "A_idle_t2",       stress: "0", gate_omp: "2", onednn: "" }
+          - { arm: "B_load_t2",       stress: "4", gate_omp: "2", onednn: "" }
+          - { arm: "C_load_t2_nodnn", stress: "4", gate_omp: "2", onednn: "0" }
+          - { arm: "D_load_t1",       stress: "4", gate_omp: "1", onednn: "" }
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -138,5 +151,12 @@ jobs:
       - run: pip install numpy
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: python tests/v41f/diag_resume_bimodal.py --diag-selftest
-      - name: co-located real-gate vs diag red-rate discriminator (8 pairs; non-blocking)
+      - name: unloaded co-located control (push; 8 pairs)
+        if: github.event_name != 'workflow_dispatch'
         run: python tests/v41f/diag_resume_bimodal.py --diag-colocate 8
+      - name: "causal arm ${{ matrix.arm }}: 6 co-located pairs, stress=${{ matrix.stress }}"
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GATE_OMP: "${{ matrix.gate_omp }}"
+          GATE_ONEDNN: "${{ matrix.onednn }}"
+        run: python tests/v41f/diag_resume_bimodal.py --diag-colocate 6 --stress "${{ matrix.stress }}"

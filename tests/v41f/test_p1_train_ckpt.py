@@ -321,10 +321,27 @@ def gate_refresh_does_not_touch_alias():
 # Resume equivalence (design section 3): save/load mid-run is bit-exact with running on ----
 
 
+def _apply_diag_thread_env():
+    """DIAGNOSTIC-ONLY thread/engine knob for the runner bimodal investigation (#549). It is a
+    strict no-op unless the non-default env is set, so the required gate is unchanged in normal
+    CI. GATE_OMP pins the intra-op pool AND OMP_NUM_THREADS (the subprocess env below reads it,
+    default "2"); GATE_ONEDNN=0 disables the oneDNN/MKLDNN engine before any tensor op. Used to
+    tell a oneDNN code-path selection apart from plain multithreaded reduction under load.
+    Never a production setting: threads=1 / oneDNN-off are diagnostic arms, not a fix."""
+    omp = os.environ.get("GATE_OMP")
+    if omp:
+        os.environ["OMP_NUM_THREADS"] = omp
+        os.environ.setdefault("MKL_NUM_THREADS", omp)
+        torch.set_num_threads(int(omp))
+    if os.environ.get("GATE_ONEDNN") == "0":
+        torch.backends.mkldnn.enabled = False
+
+
 def _one_run(kind):
     """Subprocess worker: run one trajectory, write probe master/run tensor bytes to stdout."""
     from v41f.train import train_step
 
+    _apply_diag_thread_env()
     batches = [_ids(_cfg("off"), s, seq=16) for s in range(4)]
     k = 2
     torch.manual_seed(123)
@@ -354,7 +371,9 @@ def gate_resume_equivalent_to_uninterrupted():
     Each trajectory runs in its own process (each builds+updates an ~2.5 GB model)."""
     import subprocess
 
-    env = dict(os.environ, OMP_NUM_THREADS="2")
+    # default "2" keeps the required gate byte-identical; GATE_OMP lets the #549 diagnostic
+    # arms vary the worker thread count, and GATE_* passes through dict(os.environ).
+    env = dict(os.environ, OMP_NUM_THREADS=os.environ.get("GATE_OMP", "2"))
 
     def run(kind):
         r = subprocess.run(
