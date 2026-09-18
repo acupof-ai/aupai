@@ -339,15 +339,21 @@ def gate_resume_equivalent_to_uninterrupted():
     # gate runs its subprocesses at OMP_NUM_THREADS=2 (set inside the worker), so the outer
     # CI thread count is not the lever; the measured magnitude is what separates the two.
     def _eq(tag, want, got):
-        if not torch.equal(want, got):
-            d = (want.float() - got.float()).abs()
-            n_diff = int((d > 0).sum().item())
-            first = int(torch.nonzero(d > 0, as_tuple=False)[0].item()) if n_diff else -1
+        wf, gf = want.float(), got.float()
+        if not torch.equal(wf, gf):
+            # mismatch predicate MUST match torch.equal: ~eq is True for NaN too, whereas
+            # abs()>0 is False for NaN and would report n_diff=0 next to a failing assert --
+            # a NaN (the failure this gate exists to catch) reading as "zero diff".
+            neq = ~torch.eq(wf, gf)
+            n_diff = int(neq.sum().item())
+            n_nan = int(torch.isnan(wf).sum().item() + torch.isnan(gf).sum().item())
+            first = int(torch.nonzero(neq, as_tuple=False)[0].item()) if n_diff else -1
+            d = (wf - gf).abs()
             raise AssertionError(
                 f"{tag} differs after save/load resume: max|delta|={d.max().item():.3e} "
-                f"n_diff={n_diff}/{d.numel()} first_flat_idx={first} "
-                f"(1e-8..1e-3 sparse = thread/BLAS noise; O(1) or a wholesale shift = real "
-                f"regression)")
+                f"n_diff={n_diff}/{d.numel()} first_flat_idx={first} n_nan={n_nan} "
+                f"(n_nan>0 = NaN corruption; 1e-8..1e-3 sparse = thread/BLAS noise; "
+                f"O(1) or a wholesale shift = real regression)")
 
     _eq("fp32 master", cm, rm)
     _eq("bf16 run weight", cb, rb)
