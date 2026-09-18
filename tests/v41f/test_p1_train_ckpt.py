@@ -331,8 +331,32 @@ def gate_resume_equivalent_to_uninterrupted():
     cm, cb = run("control")
     rm, rb = run("restart")
     fm, _ = run("fresh")
-    assert torch.equal(cm, rm), "fp32 master differs after save/load resume"
-    assert torch.equal(cb, rb), "bf16 run weight differs after save/load resume"
+
+    # DIAGNOSE, do not guess the cause: on a bit-exact failure print the magnitude, the FIRST
+    # offending flat index, and how many elements differ. ~1e-8..1e-3 over a handful of
+    # elements is thread/BLAS bf16 reduction noise (cross-process, order-dependent); an O(1)
+    # delta or a wholesale index shift is a real name-bind / copy / dtype regression. This
+    # gate runs its subprocesses at OMP_NUM_THREADS=2 (set inside the worker), so the outer
+    # CI thread count is not the lever; the measured magnitude is what separates the two.
+    def _eq(tag, want, got):
+        wf, gf = want.float(), got.float()
+        if not torch.equal(wf, gf):
+            # mismatch predicate MUST match torch.equal: ~eq is True for NaN too, whereas
+            # abs()>0 is False for NaN and would report n_diff=0 next to a failing assert --
+            # a NaN (the failure this gate exists to catch) reading as "zero diff".
+            neq = ~torch.eq(wf, gf)
+            n_diff = int(neq.sum().item())
+            n_nan = int(torch.isnan(wf).sum().item() + torch.isnan(gf).sum().item())
+            first = int(torch.nonzero(neq, as_tuple=False)[0].item()) if n_diff else -1
+            d = (wf - gf).abs()
+            raise AssertionError(
+                f"{tag} differs after save/load resume: max|delta|={d.max().item():.3e} "
+                f"n_diff={n_diff}/{d.numel()} first_flat_idx={first} n_nan={n_nan} "
+                f"(n_nan>0 = NaN corruption; 1e-8..1e-3 sparse = thread/BLAS noise; "
+                f"O(1) or a wholesale shift = real regression)")
+
+    _eq("fp32 master", cm, rm)
+    _eq("bf16 run weight", cb, rb)
     assert not torch.equal(cm, fm), "a fresh optimizer must diverge (anti-tautology failed)"
     print("  resume: save/load mid-run bit-identical to control; fresh optim diverges")
 
