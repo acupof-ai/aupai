@@ -3372,7 +3372,25 @@ def check_main_advances_by_ancestry(root):
                  # the discarded commit is dangling (only reflog) and its content is a strict
                  # subset already on origin/main. Recorded pair = (discarded, reset destination).
                  ("7aa7217dfdb3db12d9d210189d3a20a76cb3e013",
-                  "f4a4626e609ec3c6e21f2e97ca1afc2070518860")}
+                  "f4a4626e609ec3c6e21f2e97ca1afc2070518860"),
+                 # 2026-09-18: controller (fb) ran `git update-ref refs/heads/main
+                 # refs/remotes/origin/main` on the integration tree after a push-NFF divergence
+                 # (old 9066a334 -> new 437374e8 here), which is the sideways move recorded.
+                 # The divergence: de's `merge_main.sh de-master-deadbranch-tmp` wrote its CAS
+                 # 9066a334 on local main and its push was refused non-fast-forward because
+                 # origin had moved when #548 merged; de reported it rather than touching the
+                 # ref, and fb verified the tree clean and both local-only commits de's before
+                 # clearing it. Relative to the merge base 74cfeba5 the two discarded commits
+                 # (a0775665, de's #549 review row; 9066a334, the merge CAS) carry exactly one
+                 # line, runs/review.jsonl. No code or data was on the discarded side.
+                 # WHERE THE CONTENT SURVIVES, stated exactly: a0775665 IS on
+                 # origin/de-master-deadbranch (it is an ancestor), so the row returns by
+                 # re-running merge_main; 9066a334 itself exists only on the local
+                 # de-master-deadbranch-tmp and is not on any remote. (de's own proposed
+                 # recovery, an update-ref, was retracted before anyone acted on it for exactly
+                 # the reason this set exists: it is the sideways move the check catches.)
+                 ("9066a3349b25757c4388e92dc6daf6b3cdaf112c",
+                  "437374e8d73d1d9492ad65031769a5576ca06f40")}
     jumps = []
     unsigned = []
     for ln in lines:
