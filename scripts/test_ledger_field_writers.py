@@ -72,6 +72,18 @@ def _run(argv, cwd=ROOT):
                           cwd=cwd)
 
 
+def _main_ref():
+    """local main, else origin/main (CI fetch-depth:0 PR checkout). Never HEAD: worlds 5-6 pin a
+    REAL commit on the integrated branch, and HEAD would silently substitute the checkout under
+    test. Raise if neither exists so the field test fails loudly instead of checking nothing."""
+    for ref in ("main", "origin/main"):
+        if subprocess.run(["git", "-C", ROOT, "rev-parse", "--verify", "--quiet", ref],
+                          capture_output=True, text=True).returncode == 0:
+            return ref
+    raise SystemExit("need local 'main' or 'origin/main' to cite a real evidence commit "
+                     "(CI needs fetch-depth:0); refusing to fall back to HEAD")
+
+
 def _rows(path):
     if not os.path.exists(path):
         return []
@@ -180,7 +192,7 @@ def main():
         # ambiguous, so git shows none by default). Asking for the tip found sha=8cba65f1 with
         # touched=[] and the world had no evidence path to cite -- a fixture that looked broken
         # while the code was fine.
-        sha = subprocess.run(["git", "-C", ROOT, "rev-list", "-1", "--no-merges", "main"],
+        sha = subprocess.run(["git", "-C", ROOT, "rev-list", "-1", "--no-merges", _main_ref()],
                              capture_output=True, text=True, timeout=60).stdout.strip()
         touched = subprocess.run(
             ["git", "-C", ROOT, "show", "--pretty=", "--name-only", sha],
