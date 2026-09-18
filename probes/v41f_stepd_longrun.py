@@ -141,6 +141,8 @@ def run(form, steps, batch):
     wins = sum(1 for a, b in zip(first_c, last_c) if b < a)
     frozen_moved = [n for n in frozen if float(named[n].float().sum()) != frozen_sum0[n]]
     six_drift = {n: float((named[n].float() - six0[n]).abs().max()) for n in six}
+    win = 8
+    backbone_probe = round(float(st.master[PROBE_BF16].float().sum()), 2)
     return {
         "form": form,
         "steps": steps,
@@ -154,10 +156,12 @@ def run(form, steps, batch):
         "loss_first": losses[0][1],
         "loss_last": losses[-1][1],
         "loss_min": min(v for _, v in losses),
+        "win_first8": round(sum(all_loss[:win]) / win, 4),
+        "win_last8": round(sum(all_loss[-win:]) / win, 4),
         "cycle_means": [round(x, 4) for x in cyc],
-        "cycle_first_mean": round(cyc[0], 4),
-        "cycle_last_mean": round(cyc[-1], 4),
-        "cycle_delta": round(cyc[-1] - cyc[0], 4),
+        "cycle_first_mean": round(cyc[0], 4) if cyc else None,
+        "cycle_last_mean": round(cyc[-1], 4) if cyc else None,
+        "cycle_delta": round(cyc[-1] - cyc[0], 4) if cyc else None,
         "same_batch_wins": f"{wins}/{POOL}",
         "loss_curve": losses,
         "point_min": round(min(v for _, v in losses), 4),
@@ -172,8 +176,46 @@ def run(form, steps, batch):
         "six_drift": {k: round(v, 8) for k, v in sorted(six_drift.items())},
         "bad_master": [n for n, p in st.master.items() if not torch.isfinite(p).all()],
         "bad_run": [n for n, p in model.named_parameters() if not torch.isfinite(p).all()],
+        "backbone_probe": backbone_probe,
         "nan_or_inf": False,
     }
+
+
+# Structural + learning invariants asserted on EVERY run, so a JSON nobody reads is not the
+# point: a broken freeze, a non-finite weight, a diverged bf16 gap, or no descent exits
+# nonzero instead of printing a file. n_frozen and SIX are form-specific: off/engram freeze
+# F+SIX (8); ste freezes only F (4) and the four SIX indexer leaves must actually update.
+EXPECT_FROZEN = {"off": 8, "ste": 4, "engram_on": 8}
+_SIX_LEAF_EPS = 1e-6
+_GAP_BOUND = 2e-3
+_DESCENT_MARGIN = 1.0
+
+
+def validate(d):
+    form = d["form"]
+    if d["bad_master"] or d["bad_run"]:
+        raise AssertionError(
+            f"{form}: non-finite master/run weights: {d['bad_master'][:3]} {d['bad_run'][:3]}"
+        )
+    if d["frozen_moved"]:
+        raise AssertionError(f"{form}: frozen leaves moved: {d['frozen_moved'][:3]}")
+    if d["n_frozen"] != EXPECT_FROZEN[form]:
+        raise AssertionError(f"{form}: n_frozen {d['n_frozen']} != {EXPECT_FROZEN[form]}")
+    six = list(d["six_drift"].values())
+    if form == "ste":
+        bad = [k for k, v in d["six_drift"].items() if v <= _SIX_LEAF_EPS]
+        if bad:
+            raise AssertionError(f"ste: SIX leaves did not update: {bad[:3]}")
+    elif any(v > 0.0 for v in six):
+        raise AssertionError(f"{form}: SIX leaves must stay frozen, drift={six}")
+    if not d["mv_last"] or not d["mv_last"][4] or d["mv_last"][3] < 1.0:
+        raise AssertionError(f"{form}: optimizer m/v not finite/positive")
+    if d["gap_last_max"] > _GAP_BOUND:
+        raise AssertionError(f"{form}: master-bf16 gap {d['gap_last_max']} > {_GAP_BOUND}")
+    margin = d["win_first8"] - d["win_last8"]
+    if margin < _DESCENT_MARGIN:
+        raise AssertionError(f"{form}: weak/no descent first8->last8 margin {margin:.3f}")
+    return True
 
 
 def main(argv):
@@ -183,6 +225,7 @@ def main(argv):
     form = argv[4] if len(argv) > 4 else "off"
     os.makedirs(outdir, exist_ok=True)
     out = run(form, steps, batch)
+    validate(out)
     path = os.path.join(outdir, f"v41f_longrun_{form}.json")
     with open(path, "w") as fh:
         json.dump(out, fh)
@@ -206,5 +249,73 @@ def main(argv):
     print(path)
 
 
+# -- selftest -------------------------------------------------------------------------------
+# Two forms at 40 steps (off and ste cover the n_frozen 8/4 difference and the SIX off=0 /
+# ste>0 dispatch; engram_on is the same requires_grad set as off and already carried by its
+# committed 160-step JSON). Each form is its own subprocess: one 180M model + fp32 master +
+# AdamW is ~2.5 GB, so two in one process OOMs a laptop. The parent additionally proves the
+# STE/off BACKBONE identity across processes (bit-identical backbone probe), then mutates one
+# record and asserts validate() goes red -- a self-assertion nobody mutates would be blind.
+SELFTEST_STEPS = 40
+_SELFTEST_FORMS = ("off", "ste")
+
+
+def _selftest():
+    import shutil
+    import subprocess
+    import tempfile
+
+    tmp = tempfile.mkdtemp(prefix="plr_selftest_")  # process-private; removed in finally
+    env = dict(os.environ, OMP_NUM_THREADS="2")
+    records = {}
+    try:
+        for form in _SELFTEST_FORMS:
+            r = subprocess.run(
+                [sys.executable, __file__, str(SELFTEST_STEPS), "1", tmp, form],
+                capture_output=True,
+                text=True,
+                env=env,
+            )
+            if r.returncode != 0:
+                print(r.stdout)
+                print(r.stderr)
+                raise AssertionError(f"selftest form {form} failed (rc={r.returncode})")
+            records[form] = json.load(open(os.path.join(tmp, f"v41f_longrun_{form}.json")))
+        if records["off"]["backbone_probe"] != records["ste"]["backbone_probe"]:
+            raise AssertionError("off/ste backbone must be bit-identical (STE forward identity)")
+
+        # mutation: every guard must catch its own broken record.
+        mutants = (
+            ({"n_frozen": 7}, "frozen count"),
+            ({"frozen_moved": ["x"]}, "moved frozen leaf"),
+            ({"bad_master": ["x"]}, "non-finite master"),
+            ({"gap_last_max": _GAP_BOUND * 10}, "diverged gap"),
+            ({"win_first8": 0.0, "win_last8": 0.0}, "no descent"),
+        )
+        base = dict(records["off"])
+        for patch, label in mutants:
+            broken = dict(base)
+            broken.update(patch)
+            try:
+                validate(broken)
+            except AssertionError:
+                continue
+            raise AssertionError(f"validate() failed to catch mutant: {label}")
+        ste_broken = dict(records["ste"])
+        ste_broken["six_drift"] = {k: 0.0 for k in ste_broken["six_drift"]}
+        try:
+            validate(ste_broken)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("validate() failed to catch a frozen SIX leaf in ste mode")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("v41f step-D longrun selftest OK")
+
+
 if __name__ == "__main__":
-    main(sys.argv)
+    if "--selftest" in sys.argv:
+        _selftest()
+    else:
+        main(sys.argv)
