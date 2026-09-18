@@ -54,8 +54,13 @@ def train_step(
     draft_prefix_len: int | None = None,
     draft_weight: float = 0.0,
     draft_pos_weights=None,
+    state=None,
 ):
     """forward -> CE (+ optional DSpark multi-token CE) -> backward -> AdamW(step).
+
+    With `state` (a v41f.master.TrainState) the optimizer arg is ignored and the step runs
+    the bf16-forward / fp32-master path (refresh -> forward -> backward -> cast grads to fp32
+    -> step the master optimizer). state=None keeps the existing optimizer-based call.
 
     The backbone term is always `shifted_cross_entropy` over the whole sequence. The draft
     term is added only when `draft_prefix_len` is given AND `draft_weight` is non-zero, so
@@ -67,6 +72,32 @@ def train_step(
     from `last_loss_terms` when a caller wants to watch them; a tuple return would have
     changed the contract for all of them to serve one new one.
     """
+    global _last_loss_terms
+    if state is not None:
+        state.zero_model_grads()
+        state.refresh_bf16()
+        logits, main_hidden = model(input_ids)
+        backbone = shifted_cross_entropy(logits, input_ids, ignore_index=ignore_index)
+        total = backbone
+        draft = None
+        if draft_prefix_len is not None and draft_weight:
+            if main_hidden is None:
+                raise ValueError("draft_prefix_len was given but the model returned no main_hidden")
+            draft = dspark_loss(
+                model,
+                main_hidden,
+                input_ids,
+                draft_prefix_len,
+                pos_weights=draft_pos_weights,
+                ignore_index=ignore_index,
+            )
+            total = backbone + draft_weight * draft
+        total.backward()
+        state.collect_master_grads()
+        state.optimizer.step()
+        _last_loss_terms = (backbone.detach(), draft.detach() if draft is not None else None)
+        return total.detach()
+
     optimizer.zero_grad(set_to_none=True)
     logits, main_hidden = model(input_ids)
     backbone = shifted_cross_entropy(logits, input_ids, ignore_index=ignore_index)
@@ -85,7 +116,6 @@ def train_step(
         total = backbone + draft_weight * draft
     total.backward()
     optimizer.step()
-    global _last_loss_terms
     _last_loss_terms = (backbone.detach(), draft.detach() if draft is not None else None)
     return total.detach()
 
