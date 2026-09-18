@@ -252,6 +252,80 @@ def compare_iter(cdir, rdir):
     return first
 
 
+def _run_pair(cdir, rdir, env):
+    """One control + restart pair as two children with a SHARED env; returns (rc, first)."""
+    rc = 0
+    for kind, d in (("control", cdir), ("restart", rdir)):
+        r = subprocess.run([sys.executable, __file__, "--diag-arm", kind, d],
+                           capture_output=True, text=True, env=env)
+        if r.returncode != 0:
+            rc = r.returncode
+            print(f"  {kind} arm CRASHED rc={r.returncode}\n{r.stderr[-1200:]}")
+    if rc != 0:
+        return rc, None
+    return 0, compare_iter(cdir, rdir)
+
+
+def pair_once(out):
+    """A single diag control/restart pair (spawned itself by the colocator so it is a sibling
+    of the gate child). Prints one RED/GREEN line; non-zero exit never fails CI here."""
+    os.makedirs(out, exist_ok=True)
+    env = dict(os.environ, OMP_NUM_THREADS=os.environ.get("GATE_OMP", "2"))
+    cdir, rdir = os.path.join(out, "c"), os.path.join(out, "r")
+    for d in (cdir, rdir):
+        os.makedirs(d, exist_ok=True)
+    rc, first = _run_pair(cdir, rdir, env)
+    if rc:
+        print("DIAGPAIR ARM-CRASH")
+        return 0
+    print("DIAGPAIR RED " + (first or "") if first else "DIAGPAIR GREEN")
+    return 0
+
+
+_GATE_TEST = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "test_p1_train_ckpt.py")
+
+
+def coloc(runs, out):
+    """Co-located discriminator: each iteration spawns TWO sibling children with one shared
+    env injection path -- the REAL gate (test_p1_train_ckpt.py --gate gate_resume_...) and one
+    diag pair. Process tree is symmetric by construction (both are children of this orch;
+    neither runs in the orch's own torch context), so a different red rate isolates the test
+    BODY, not spawn structure or outer-process torch init. Continues even on a mismatch."""
+    os.makedirs(out, exist_ok=True)
+    env = dict(os.environ, OMP_NUM_THREADS=os.environ.get("GATE_OMP", "2"))
+    print("COLOCATE ENV " + json.dumps(env_header()))
+    print("process tree: orch -> [sibling: real gate subprocess] and [sibling: diag pair] "
+          "each iteration; the diag pair then spawns control/restart, exactly as the real "
+          "gate's --gate spawns its own control/restart workers.")
+    gate_red = diag_red = 0
+    diverge = []
+    for it in range(runs):
+        idir = os.path.join(out, f"co{it}")
+        os.makedirs(idir, exist_ok=True)
+        g = subprocess.run(
+            [sys.executable, _GATE_TEST, "--gate", "gate_resume_equivalent_to_uninterrupted"],
+            capture_output=True, text=True, env=env)
+        g_is_red = g.returncode != 0
+        d = subprocess.run([sys.executable, __file__, "--diag-pair", os.path.join(idir, "d")],
+                           capture_output=True, text=True, env=env)
+        line = next((l for l in d.stdout.splitlines() if l.startswith("DIAGPAIR")), "DIAGPAIR ?")
+        d_is_red = line.startswith("DIAGPAIR RED") or line.startswith("DIAGPAIR ARM")
+        gate_red += g_is_red
+        diag_red += d_is_red
+        tag = "" if g_is_red == d_is_red else "  <-- GATE/DIAG DISAGREE"
+        if tag:
+            sig = (g.stderr or g.stdout)[-600:]
+            diverge.append((it, sig, line))
+        gsig = "RED" if g_is_red else "green"
+        print(f"iter {it}: gate={gsig} {line}{tag}")
+    print(f"\nCOLOCATE SUMMARY over {runs}: gate_red={gate_red} diag_red={diag_red} "
+          f"disagreements={len(diverge)}; same trigger only if the two rates match. "
+          f"exits 0 regardless.")
+    for it, sig, line in diverge[:3]:
+        print(f"--- disagreement iter {it}: {line}\n{sig}")
+
+
 def orch(runs, out):
     os.makedirs(out, exist_ok=True)
     env = dict(os.environ, OMP_NUM_THREADS=os.environ.get("GATE_OMP", "2"))
@@ -263,19 +337,12 @@ def orch(runs, out):
         cdir, rdir = os.path.join(idir, "c"), os.path.join(idir, "r")
         for d in (cdir, rdir):
             os.makedirs(d, exist_ok=True)
-        rc = 0
-        for kind, d in (("control", cdir), ("restart", rdir)):
-            r = subprocess.run([sys.executable, __file__, "--diag-arm", kind, d],
-                               capture_output=True, text=True, env=env)
-            if r.returncode != 0:
-                rc = r.returncode
-                print(f"iter {it} {kind} arm CRASHED rc={r.returncode}\n{r.stderr[-1500:]}")
+        rc, first = _run_pair(cdir, rdir, env)
         if rc != 0:
             print(f"iter {it}: ARM CRASH (IO/infra, not a tensor divergence)")
             reds += 1
             continue
         print(f"iter {it}:")
-        first = compare_iter(cdir, rdir)
         if first is None:
             print("  GREEN (all microstages bit-identical)")
         else:
@@ -377,6 +444,8 @@ def selftest():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--diag-orch", type=int, metavar="RUNS")
+    ap.add_argument("--diag-colocate", type=int, metavar="RUNS")
+    ap.add_argument("--diag-pair", action="store_true")
     ap.add_argument("--diag-arm", choices=["control", "restart"])
     ap.add_argument("--diag-selftest", action="store_true")
     ap.add_argument("out", nargs="?", default=None)
@@ -385,11 +454,14 @@ def main():
         return selftest()
     if a.diag_arm:
         arm(a.diag_arm, a.out)
+    elif a.diag_pair:
+        pair_once(a.out or os.path.join("/tmp", "diag_pair_out"))
+    elif a.diag_colocate:
+        coloc(a.diag_colocate, a.out or os.path.join("/tmp", "diag_colocate_out"))
     elif a.diag_orch:
-        out = a.out or os.path.join("/tmp", "diag_resume_out")
-        orch(a.diag_orch, out)
+        orch(a.diag_orch, a.out or os.path.join("/tmp", "diag_resume_out"))
     else:
-        ap.error("need --diag-orch RUNS, --diag-arm, or --diag-selftest")
+        ap.error("need --diag-colocate/--diag-orch RUNS, --diag-pair, --diag-arm, or --selftest")
     return 0
 
 
