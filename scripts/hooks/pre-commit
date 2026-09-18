@@ -2385,6 +2385,14 @@ def main():
         # from cfg and frozen in both modes, and that off/ste differ by exactly the indexer
         # projections. Mutants: a dropped freeze and a missing unfreeze each go red by name.
         "tests/v41f/test_p1_indexer_freeze.py",
+        # step D fp32-master training checkpoint (98): name-keyed optim_named, buffer routing,
+        # fp32-native alias through save/load, tokenizer/vocab_id refusal, and save/load-resume
+        # bit-equivalence. Gate fns are subprocess-isolated (180M models OOM one process).
+        "tests/v41f/test_p1_train_ckpt.py",
+        # Whole-machine train->checkpoint->fresh-process RESUME smoke (0e). --selftest is
+        # model-free/cheap (tier constants); the real ~180M x3-process run is an explicit CI
+        # step. Distinct from de's single-step test_p1_train_smoke (no save/load there).
+        "tests/v41f/test_p1_train_resume_smoke.py",
         # v41f-S config-formula total/active parameter counter (3b); --selftest pins a
         # hand-computed tiny config so the total=sum-of-modules identity cannot silently rot.
         "scripts/v41f_param_count.py",
@@ -2850,7 +2858,9 @@ def main():
     # the intersection below.
     _V41F_SUBJECT_TESTS = {"tests/v41f/p0_selftest.py", "tests/v41f/p1_selftest.py",
                           "tests/v41f/test_p1_assembly_keys.py",
-                          "tests/v41f/test_p1_indexer_freeze.py"}
+                          "tests/v41f/test_p1_indexer_freeze.py",
+                          "tests/v41f/test_p1_train_ckpt.py",
+                          "tests/v41f/test_p1_train_resume_smoke.py"}
     _subject_tests = set()
     for _subj in staged("AM"):
         _subject_tests |= TESTS_FOR_SUBJECT.get(_subj, set())
