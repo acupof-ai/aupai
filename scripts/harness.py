@@ -2359,16 +2359,38 @@ def cmd_ci_selftests(argv):
         fl = flags.get(p, "--selftest")
         interp = ["bash"] if p.endswith(".sh") else [sys.executable]
         args = interp + [os.path.join(ROOT, p)] + ([fl] if fl else [])
+        # NEW PROCESS GROUP, killed as a GROUP on timeout. subprocess.run(timeout=) kills only
+        # the direct child and then reaps its pipes; a selftest that spawns a grandchild which
+        # inherits the stdout pipe (card_claim does) keeps that pipe open, so communicate()
+        # never returns and the runner hangs FOREVER well past the timeout. Start each selftest
+        # in its own group (start_new_session) and on timeout terminate/kill the whole group.
+        import signal
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, env=env, cwd=ROOT, start_new_session=True)
         try:
-            r = subprocess.run(args, capture_output=True, text=True, env=env,
-                               timeout=a.timeout, cwd=ROOT)
+            out, _err = proc.communicate(timeout=a.timeout)
+            rc = proc.returncode
+            timed_out = False
         except subprocess.TimeoutExpired:
-            print(f"ci-selftests: FAIL {p}: exceeded {a.timeout:.0f}s (mark it slow or fix it)")
+            timed_out = True
+            out = ""
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+                proc.wait(timeout=5)
+            except Exception:
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                proc.wait()
+        if timed_out:
+            print(f"ci-selftests: FAIL {p}: exceeded {a.timeout:.0f}s and its process group "
+                  f"was killed (mark it slow/excluded, or fix the hang)")
             return 1
         ran += 1
-        if r.returncode != 0:
-            tail = (r.stdout + r.stderr).strip().splitlines()[-8:]
-            print(f"ci-selftests: FAIL {p} {fl or ''} (exit {r.returncode})")
+        if rc != 0:
+            tail = out.strip().splitlines()[-8:]
+            print(f"ci-selftests: FAIL {p} {fl or ''} (exit {rc})")
             for line in tail:
                 print("    " + line)
             failed.append(p)
