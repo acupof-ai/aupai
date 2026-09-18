@@ -231,6 +231,13 @@ def validate(d):
     # descent: 40-step selftest records first/last 8-step windows; the committed 160-step
     # evidence records full pool-cycle delta. Either schema (unknown keys are ignored, so the
     # committed evidence keeps its legacy nan_or_inf field untouched).
+    #
+    # SCHEMA BRANCH IS EXCLUSIVE: if win_first8 is present the cycle_delta key is never read,
+    # and vice versa. To reproduce a NaN false-negative you MUST inject NaN into the keys of
+    # the SAME schema the branch actually reads -- a NaN in win_first8 while a cycle_delta is
+    # also present is silently ignored (and conversely). The selftest builds its cycle_delta
+    # mutant on a record with both window keys deleted for exactly this reason; do not "simplify"
+    # that by injecting onto the window record (a near-miss that reads green, genB 2026-09-19).
     if "win_first8" in d:
         a, b = _fin(form, "win_first8", d["win_first8"]), _fin(form, "win_last8", d["win_last8"])
         margin, label = a - b, "first8->last8"
