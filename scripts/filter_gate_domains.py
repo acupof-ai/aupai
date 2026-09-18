@@ -101,7 +101,19 @@ def filter_domain(domain, root, out_root, workers):
     src = os.path.join(root, "data", "corpus", domain)
     dst = os.path.join(out_root, f"{domain}_dc")
     os.makedirs(dst, exist_ok=True)
-    files = sorted(glob.glob(os.path.join(src, "*.jsonl")))
+    # THE HOLDOUT SLICE IS METADATA, NOT CORPUS. A build carrying --phase writes
+    # {out}/holdout_slice_{phase}.jsonl beside its shards, and a plain `*.jsonl` glob picks it
+    # up: measured on the 2026-09-19 en_c4_stage2 rebuild, `shards_total` read 243 and
+    # `rows_scanned` 11,309,623 where the corpus is 242 shards and 11,309,622 documents -- the
+    # extra shard and the extra row are both this one file, whose only line is
+    # {"phase": ..., "rule_fp": ..., "n": ...}. It is not a document and cannot be
+    # decontaminated; counting it makes a reader take 243 for a shard count.
+    # `build_corpus.py` already refuses this file in a rewrite set (`_near_write_stats`'s
+    # assert); this is the same rule at the other reader.
+    files = sorted(
+        p for p in glob.glob(os.path.join(src, "*.jsonl"))
+        if not os.path.basename(p).startswith("holdout_slice_")
+    )
     if not files:
         return {"domain": domain, "error": "no source shards"}
 
@@ -258,6 +270,37 @@ def _selftest():
         # recomputed) beside its own decontam_fp.
         assert stamp["filters_fp"] == source_filters_fp, stamp
         assert stamp["decontam_fp"], "stamp must keep its own decontam_fp"
+
+        # THE HOLDOUT SLICE IS NOT A SHARD. A --phase build leaves holdout_slice_{phase}.jsonl
+        # in the source dir beside its shards, and a bare `*.jsonl` glob counts it. Measured on
+        # the 2026-09-19 en_c4_stage2 rebuild: shards_total 243 and rows_scanned 11,309,623
+        # against a real 242 shards / 11,309,622 documents -- both off by exactly this file.
+        #
+        # THE MUTATION IS THE ASSERTION'S OTHER ARM: the same slice added to the SAME fixture
+        # must not move either count. Without the exclusion this case goes red by name, which is
+        # what makes it a test of the fix rather than of the fixture. A slice whose content is
+        # valid-looking JSON is used deliberately: a file the shard parser would happily read is
+        # the harder case, and the one a glob actually admits.
+        with open(os.path.join(src, "holdout_slice_p.jsonl"), "w") as fh:
+            fh.write(json.dumps({"phase": "p", "rule_fp": "f" * 16, "n": 0}) + "\n")
+        with_slice = filter_domain("dom", root, os.path.join(root, "data", "corpus"), 1)
+        assert with_slice["shards_total"] == st["shards_total"], (
+            f"a holdout_slice_ file moved shards_total: {st['shards_total']} -> "
+            f"{with_slice['shards_total']} -- the slice is metadata, not a shard")
+        assert with_slice["rows_scanned"] == st["rows_scanned"], (
+            f"a holdout_slice_ file moved rows_scanned: {st['rows_scanned']} -> "
+            f"{with_slice['rows_scanned']} -- its header line is not a document")
+        assert with_slice["rows_dropped"] == st["rows_dropped"], with_slice
+        # and the slice itself must not be COPIED into the _dc dir as if it were a shard: the
+        # counts above would still be right if the file were merely relabelled downstream.
+        assert not os.path.exists(
+            os.path.join(root, "data", "corpus", "dom_dc", "holdout_slice_p.jsonl")), \
+            "the filter carried a holdout_slice file through as corpus"
+        # the real shards are still all there -- an exclusion that dropped s0/s1 would pass the
+        # three assertions above by emptying the work.
+        assert with_slice["shards_rewritten"] == st["shards_rewritten"], with_slice
+        assert with_slice["shards_hardlinked"] == st["shards_hardlinked"], with_slice
+        os.remove(os.path.join(src, "holdout_slice_p.jsonl"))
 
         # SOURCE MISSING filters_fp -> the decontam run FAILs loud (no false inheritance);
         # no _dc stamp is written, so the launch guard cannot be faked on unknown provenance.
