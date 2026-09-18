@@ -3391,7 +3391,6 @@ def check_main_advances_by_ancestry(root):
                  # the reason this set exists: it is the sideways move the check catches.)
                  ("9066a3349b25757c4388e92dc6daf6b3cdaf112c",
                   "437374e8d73d1d9492ad65031769a5576ca06f40")}
-    # MUTANT probe: pretend a DIFFERENT pair was recorded; must not excuse the real one
     jumps = []
     unsigned = []
     for ln in lines:
