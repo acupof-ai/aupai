@@ -18,10 +18,15 @@ sys.path.insert(0, str(_HERE))  # tests/v41f: ref_oracle sibling
 sys.path.insert(0, str(_HERE.parents[1]))  # repo root: v41f package
 
 import torch  # noqa: E402
-
 from ref_oracle import synthetic_tokenizer  # noqa: E402
+
 from v41f.config import v41f_small  # noqa: E402
-from v41f.master import TrainState, save_train_checkpoint, load_train_checkpoint, OptimStateError  # noqa: E402
+from v41f.master import (  # noqa: E402
+    OptimStateError,
+    TrainState,
+    load_train_checkpoint,
+    save_train_checkpoint,
+)
 from v41f.model import V41FModel  # noqa: E402
 from v41f.vocab import fingerprint  # noqa: E402
 
@@ -365,17 +370,17 @@ def gate_resume_equivalent_to_uninterrupted():
 # prod backward is GPU-deferred per #497). Pins the requires_grad name SETS on the default.
 def gate_prod_census_structural():
     import dataclasses
+
     from v41f.config import v41f_s
 
     cfg = dataclasses.replace(
-        v41f_s(),
-        engram_compressed_vocab_size=6,
+        v41f_s(tokenizer=synthetic_tokenizer()),
         engram_n_heads=2,
         engram_head_dim=8,
         engram_vocab_size=20,
         engram_pad_id=2,
     )
-    cfg = cfg.with_derived_engram()
+    cfg = cfg.with_derived_engram(tokenizer=synthetic_tokenizer())
     six = {
         f"layers.{l}.attn.indexer.{w}.weight"
         for l in cfg.index_source_layers
@@ -418,6 +423,70 @@ def _m2_worker(path):
     except (AssertionError, ValueError, RuntimeError) as e:
         print(f"refused bf16 master: {str(e)[:70]}")
         sys.exit(0)
+
+
+def gate_legacy_engram_config_refused_on_load():
+    """A blob whose engram-ON config lacks the derived fields is refused AT LOAD, by name.
+
+    MEASURED 2026-09-18 (genA, second read of #529): load_train_checkpoint rebuilt the
+    config and went straight to V41FModel, so this blob died inside NgramHashState with
+    `AssertionError (6, 0)` -- the deep failure the config gate exists to move up, only
+    moved from a fresh run to a resume, where the caller has a checkpoint in hand and no
+    reason to suspect its config. The guard is on the rebuilt config, so the mutant that
+    kills it is the guard line itself.
+    """
+
+    from v41f.config import v41f_small
+
+    tok = synthetic_tokenizer()
+    cfg = v41f_small(
+        vocab_size=len(tok),
+        tokenizer=tok,
+        engram_layer_ids=(1,),
+        engram_max_ngram_size=4,
+        engram_n_heads=2,
+        engram_head_dim=8,
+        engram_vocab_size=20,
+        engram_pad_id=2,
+    )
+    m = None  # engram-ON build needs the tokenizer; done below
+    prev = torch.get_default_dtype()
+    torch.set_default_dtype(torch.bfloat16)
+    try:
+        m = V41FModel(cfg, max_batch_size=2, max_seq_len=64, tokenizer=tok)
+    finally:
+        torch.set_default_dtype(prev)
+    st = TrainState(m, lr=1e-3)
+    d = tempfile.mkdtemp(prefix="td_legacy_")
+    f = os.path.join(d, "c.pt")
+    save_train_checkpoint(f, model=m, cfg=cfg, state=st, tokenizer=tok)
+    del m, st
+    gc.collect()
+
+    # the legacy shape: engram ON, both derived fields back at their unusable defaults
+    blob = torch.load(f, map_location="cpu", weights_only=False)
+    assert blob["config"]["engram_layer_ids"], "fixture drift: needs an engram-ON blob"
+    blob["config"] = {
+        **blob["config"],
+        "engram_num_embeddings": [],
+        "engram_compressed_vocab_size": 0,
+    }
+    legacy = os.path.join(d, "legacy.pt")
+    torch.save(blob, legacy)
+
+    try:
+        load_train_checkpoint(legacy, tokenizer=tok, max_batch_size=2)
+    except ValueError as e:
+        msg = str(e)
+        assert "engram" in msg and "with_derived_engram" in msg, msg
+        print("  legacy engram config refused at load by name (not in NgramHashState)")
+        return
+    except AssertionError as e:
+        raise AssertionError(
+            "the legacy blob still died deep in model construction instead of being refused "
+            f"at load: {e!r} -- move the guard ahead of the V41FModel build"
+        ) from e
+    raise AssertionError("a legacy engram-ON config with unset derived fields loaded clean")
 
 
 def gate_master_saved_bf16_refused():
@@ -468,6 +537,7 @@ def _selftest():
         "gate_refresh_does_not_touch_alias",
         "gate_resume_equivalent_to_uninterrupted",
         "gate_prod_census_structural",
+        "gate_legacy_engram_config_refused_on_load",
         "gate_master_saved_bf16_refused",
     ]
     env = dict(os.environ)

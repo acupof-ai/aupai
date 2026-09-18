@@ -1202,6 +1202,10 @@ def main():
         # and pod_sync_check's three-refusal suite. Both are CPU, no pod/data.
         "scripts/launch_30b.sh",
         "scripts/pod_sync_check.sh",
+        # The single-impl local-main fast-forward helper merge_main.sh and the python hook both
+        # call; its --selftest builds the ff / checked-out / diverged worlds. Registered here so an
+        # edit to either caller (merge_main.sh, this hook) selects it.
+        "scripts/lib_ff_main.sh",
         # The review-row lookup merge_main.sh's gate calls. Registered because this logic spent its
         # whole life in a heredoc inside merge_main.sh, where nothing could reach it -- and what it
         # hid was that it read only the invoking worktree's review.jsonl, a union-merged ledger, so
@@ -2447,6 +2451,15 @@ def main():
         # model-free/cheap (tier constants); the real ~180M x3-process run is an explicit CI
         # step. Distinct from de's single-step test_p1_train_smoke (no save/load there).
         "tests/v41f/test_p1_train_resume_smoke.py",
+        # Engram ON config gate (de, 2026-09-18). Registered because its checks are `test_*`
+        # but the defect it guards is a CONFIG-shape one: a bare V41FConfig() has engram ON
+        # (engram_layer_ids=(1,)) while both derived fields sit at ()/0, and nothing in the
+        # production path filled them. validate() accepted that config, so the first refusal
+        # was an AssertionError/IndexError inside V41FModel construction. uv run a `v41f/`
+        # change and this file joins the subject set; the gate then asserts validate()
+        # refuses the bare default, that with_derived_engram requires the tokenizer it
+        # documents, and that the OFF path still needs neither.
+        "tests/v41f/test_p1_config_gate.py",
         # v41f-S config-formula total/active parameter counter (3b); --selftest pins a
         # hand-computed tiny config so the total=sum-of-modules identity cannot silently rot.
         "scripts/v41f_param_count.py",
@@ -2923,7 +2936,8 @@ def main():
                           "tests/v41f/test_p1_assembly_keys.py",
                           "tests/v41f/test_p1_indexer_freeze.py",
                           "tests/v41f/test_p1_train_ckpt.py",
-                          "tests/v41f/test_p1_train_resume_smoke.py"}
+                          "tests/v41f/test_p1_train_resume_smoke.py",
+                          "tests/v41f/test_p1_config_gate.py"}
     _subject_tests = set()
     for _subj in staged("AM"):
         _subject_tests |= TESTS_FOR_SUBJECT.get(_subj, set())
