@@ -28,7 +28,6 @@ import subprocess
 import sys
 
 import torch
-import torch.nn.functional as F
 
 
 def _repo_on_path():
@@ -41,13 +40,22 @@ def _repo_on_path():
 
 _repo_on_path()
 from ref_oracle import synthetic_tokenizer  # noqa: E402
+from v41f import train as v41f_train  # noqa: E402
 from v41f.config import v41f_small  # noqa: E402
+from v41f.loss import shifted_cross_entropy  # noqa: E402
 from v41f.model import V41FModel  # noqa: E402
 from v41f.master import TrainState, save_train_checkpoint, load_train_checkpoint  # noqa: E402
 
 SEED = 123
 B, T = 2, 16
 N, K = 4, 2
+
+# The loss MUST be the exact function object the gate's train_step calls
+# (v41f.train imports shifted_cross_entropy from v41f.loss). A re-inlined
+# F.cross_entropy here would run a different computation (no fp32 cast of the
+# logits) and compound into a different 4-step trajectory; the selftest pins
+# identity, not numeric closeness.
+LOSS_FN = shifted_cross_entropy
 
 
 def _cgroup_cpu_quota():
@@ -159,8 +167,7 @@ def arm(kind, out):
         st.refresh_bf16()
         logits, _ = m(batches[i])
         _save(out, f"fwd_s{i}.logits", logits)
-        loss = F.cross_entropy(logits[:, :-1].reshape(-1, logits.size(-1)),
-                               batches[i][:, 1:].reshape(-1))
+        loss = LOSS_FN(logits, batches[i], ignore_index=-100)
         loss.backward()
         for j, n in enumerate(leaves):
             g = named[n].grad
@@ -295,7 +302,19 @@ def _write_arm_dir(d, env, leaves, stages, *, broken_build=(), broken_load=()):
 def selftest():
     """The diagnostic must not be an empty watcher: green world reports no divergence, a
     planted divergence is localized to exactly its microstage, and env/alias fields exist."""
+    import inspect
     import tempfile
+    import v41f.loss as _vloss
+    # The diag's loss must be the SAME FUNCTION OBJECT the gate's train_step calls (identity,
+    # not numeric closeness: the bimodal signature is itself a small per-step drift that a
+    # tolerance would admit). A mutant that re-inlines F.cross_entropy reds here by identity.
+    assert LOSS_FN is _vloss.shifted_cross_entropy is v41f_train.shifted_cross_entropy, (
+        "diag loss is not v41f.loss.shifted_cross_entropy — trajectory would differ from the "
+        "gate's; import and call that function, do not reimplement shift+CE")
+    src = inspect.getsource(arm)
+    assert "LOSS_FN(" in src and "F.cross_entropy" not in src, (
+        "arm must compute its loss through LOSS_FN (the gate's function), not an inlined "
+        "F.cross_entropy (which skips shifted_cross_entropy's fp32 logits cast)")
     root = tempfile.mkdtemp(prefix="diag_selftest_")
     leaves = ["a", "b", "c"]
     env = env_header()
