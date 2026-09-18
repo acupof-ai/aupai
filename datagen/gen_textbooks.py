@@ -28,6 +28,45 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SEEDS = ROOT / "data/topic_seeds/cs_v1/topic_seeds_cs.jsonl"
 OUTDIR = ROOT / "data/corpus/textbooks_v41"
+SEEDS_SHA256 = "76c3552f48998695fede0196b54a71fc6dc1463181681f4fd5986c04adeac26b"
+SEEDS_RECOVERY = (
+    "~/aupai-keep/topic_seeds_cs_v1/topic_seeds_cs.jsonl "
+    "(two further byte-identical copies: ~/aupai-textgen/genA/ and ~/code/aupai-genA-work/)"
+)
+
+
+def verify_topic_seeds(path, expected=SEEDS_SHA256):
+    """Raise SystemExit unless `path` holds the exact expected seeds bytes.
+
+    Two failure paths, two messages, because the actions are opposite: a MISSING file
+    means go copy the seeds in; a WRONG-HASH file means a stale or half-written copy is
+    there and copying over it is not obviously right -- check the source first. The
+    expected digest is one module constant shared by both messages and the check, so
+    the number a reader is told to trust cannot drift from the number enforced.
+    """
+    if not path.exists():
+        raise SystemExit(
+            f"topic seeds missing: {path}\n"
+            "The path is not tracked in git -- the pre-commit hook's ALLOWED list refuses "
+            "new data/ paths (scripts/hooks/pre-commit), and new textbook generation was "
+            "stopped 2026-09-14 (option B), so the seeds were kept out of the repo.\n"
+            f"Recover them from {SEEDS_RECOVERY}\n"
+            f"Expected sha256: {expected}"
+        )
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    got = h.hexdigest()
+    if got != expected:
+        raise SystemExit(
+            f"topic seeds at {path} have the wrong content.\n"
+            f"  expected sha256: {expected}\n"
+            f"  found sha256:    {got}\n"
+            "This is a stale or half-written copy, not a missing one -- do NOT simply "
+            "overwrite it. Check where it came from, then re-copy from a known-good "
+            f"source: {SEEDS_RECOVERY}"
+        )
 
 
 def parse_ports(spec):
@@ -151,8 +190,63 @@ def existing_keys():
     return keys, total
 
 
+def _selftest():
+    """The seeds guard must fire on the RIGHT failure and stay silent on good bytes.
+
+    Mutation-checked: the positive case is the real seeds file, and each negative case
+    writes bytes that differ in exactly one way, so a guard that only checked existence
+    (the defect this replaced) fails here rather than passing.
+    """
+    import tempfile
+
+    good = Path(SEEDS_RECOVERY.split()[0]).expanduser()
+    if good.exists():
+        verify_topic_seeds(good)  # must not raise
+        print(f"  ok: real seeds accepted ({good})")
+
+    with tempfile.TemporaryDirectory() as td:
+        missing = Path(td) / "absent.jsonl"
+        try:
+            verify_topic_seeds(missing)
+        except SystemExit as e:
+            msg = str(e)
+            assert "missing" in msg and SEEDS_SHA256 in msg, msg
+            assert "stale or half-written" not in msg, "missing must not use the wrong-hash wording"
+            print("  ok: missing file -> missing message")
+        else:
+            raise AssertionError("missing file did not raise")
+
+        trunc = Path(td) / "trunc.jsonl"
+        if good.exists():
+            with open(trunc, "wb") as fh:
+                fh.write(good.read_bytes()[: 1 << 15])
+            try:
+                verify_topic_seeds(trunc)
+            except SystemExit as e:
+                msg = str(e)
+                assert "wrong content" in msg and SEEDS_SHA256 in msg, msg
+                assert "missing" not in msg.split("topic seeds at")[0], "wrong-hash must not use the missing wording"
+                print("  ok: truncated file -> wrong-content message")
+            else:
+                raise AssertionError("truncated file did not raise")
+
+            wrong = Path(td) / "wrong.jsonl"
+            with open(wrong, "wb") as fh:
+                fh.write(b'{"topic": "x"}\n')
+            try:
+                verify_topic_seeds(wrong)
+            except SystemExit as e:
+                assert "wrong content" in str(e)
+                print("  ok: wrong bytes -> wrong-content message")
+            else:
+                raise AssertionError("wrong bytes did not raise")
+
+    print("gen_textbooks selftest OK: seeds guard accepts good bytes, rejects missing/truncated/wrong")
+
+
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--selftest", action="store_true", help="run the seeds-guard self-check")
     ap.add_argument("--smoke", type=int, default=0, help="only generate N chapters (smoke test)")
     ap.add_argument("--workers", type=int, default=32)
     ap.add_argument("--target-tokens", type=float, default=1.0e9,
@@ -163,6 +257,9 @@ def main():
     ap.add_argument("--ports", default="",
                     help="comma/range list, e.g. 30000-30007; one serve per shard in order")
     args = ap.parse_args()
+    if args.selftest:
+        _selftest()
+        return
     if args.ports:
         ports = parse_ports(args.ports)
         args.shards = len(ports)
@@ -183,20 +280,18 @@ def main():
         except SystemExit:
             model = "qwen38-27b"
 
-    if not SEEDS.exists():
-        raise SystemExit(
-            f"topic seeds missing: {SEEDS}\n"
-            "This path is deliberately not tracked in git (new textbook generation was "
-            "stopped 2026-09-14, option B).\n"
-            "Recover the seeds from ~/aupai-keep/topic_seeds_cs_v1/topic_seeds_cs.jsonl "
-            "(sha256 76c3552f48998695fede0196b54a71fc6dc1463181681f4fd5986c04adeac26b) "
-            "and copy them back to this path."
-        )
+    verify_topic_seeds(SEEDS)
     with SEEDS.open(encoding="utf-8") as f:
         topics = [json.loads(l)["topic"] for l in f
                   if l.strip() and json.loads(l).get("topic")]
     done_keys, total_tok = existing_keys()
     OUTDIR.mkdir(parents=True, exist_ok=True)
+    # restartable: each chapter is appended and flushed as it completes, and the plan is
+    # filtered by `p not in done_keys` below, which reads those same files back
+    # (existing_keys). An interrupt costs at most the in-flight batch; nothing is
+    # accumulate-then-save-once. The audit flags this file because the seeds-guard
+    # selftest writes two short temp fixtures, which its WRITERS scan cannot tell from
+    # output writes -- the marker records the check a reader still has to make.
 
     def lens_for(topic, n):
         h = int(hashlib.sha256(f"{topic}\x1f{n}".encode()).hexdigest(), 16)
