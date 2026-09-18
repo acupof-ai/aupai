@@ -193,55 +193,83 @@ def existing_keys():
 def _selftest():
     """The seeds guard must fire on the RIGHT failure and stay silent on good bytes.
 
-    Mutation-checked: the positive case is the real seeds file, and each negative case
-    writes bytes that differ in exactly one way, so a guard that only checked existence
-    (the defect this replaced) fails here rather than passing.
+    Every case builds its own fixture, so the whole set runs anywhere -- CI, a fresh
+    clone, a machine with no seeds. The first version gated its three strongest cases
+    behind `if good.exists()`, reading the real seeds off one laptop: on CI only the
+    "missing" case executed while the summary printed all four names, and the mutation
+    stayed green there because the hash comparison was never reached. A case that is
+    skipped must not be counted, and the count must not be printed as if it ran.
     """
     import tempfile
 
-    good = Path(SEEDS_RECOVERY.split()[0]).expanduser()
-    if good.exists():
-        verify_topic_seeds(good)  # must not raise
-        print(f"  ok: real seeds accepted ({good})")
+    ran, skipped = [], []
 
     with tempfile.TemporaryDirectory() as td:
-        missing = Path(td) / "absent.jsonl"
+        td = Path(td)
+
+        # Positive control: a fixture whose bytes we hash ourselves, so the guard has
+        # something correct to accept without depending on any file outside this test.
+        good_bytes = b'{"topic": "t0"}\n{"topic": "t1"}\n'
+        good_sha = hashlib.sha256(good_bytes).hexdigest()
+        good = td / "good.jsonl"
+        with open(good, "wb") as fh:
+            fh.write(good_bytes)
+        verify_topic_seeds(good, good_sha)  # must not raise
+        ran.append("fixture with the right bytes accepted")
+
+        # Missing.
+        missing = td / "absent.jsonl"
         try:
-            verify_topic_seeds(missing)
+            verify_topic_seeds(missing, good_sha)
         except SystemExit as e:
             msg = str(e)
-            assert "missing" in msg and SEEDS_SHA256 in msg, msg
+            assert "missing" in msg and good_sha in msg, msg
             assert "stale or half-written" not in msg, "missing must not use the wrong-hash wording"
-            print("  ok: missing file -> missing message")
+            ran.append("missing file -> missing message")
         else:
             raise AssertionError("missing file did not raise")
 
-        trunc = Path(td) / "trunc.jsonl"
-        if good.exists():
-            with open(trunc, "wb") as fh:
-                fh.write(good.read_bytes()[: 1 << 15])
-            try:
-                verify_topic_seeds(trunc)
-            except SystemExit as e:
-                msg = str(e)
-                assert "wrong content" in msg and SEEDS_SHA256 in msg, msg
-                assert "missing" not in msg.split("topic seeds at")[0], "wrong-hash must not use the missing wording"
-                print("  ok: truncated file -> wrong-content message")
-            else:
-                raise AssertionError("truncated file did not raise")
+        # Truncated: same prefix as the good bytes, shorter. This is the case that
+        # distinguishes a hash check from the existence-only guard it replaced.
+        trunc = td / "trunc.jsonl"
+        with open(trunc, "wb") as fh:
+            fh.write(good_bytes[: len(good_bytes) // 2])
+        try:
+            verify_topic_seeds(trunc, good_sha)
+        except SystemExit as e:
+            msg = str(e)
+            assert "wrong content" in msg and good_sha in msg, msg
+            assert msg.index("wrong content") < msg.index(good_sha), "wrong-hash message must lead"
+            ran.append("truncated file -> wrong-content message")
+        else:
+            raise AssertionError("truncated file did not raise")
 
-            wrong = Path(td) / "wrong.jsonl"
-            with open(wrong, "wb") as fh:
-                fh.write(b'{"topic": "x"}\n')
-            try:
-                verify_topic_seeds(wrong)
-            except SystemExit as e:
-                assert "wrong content" in str(e)
-                print("  ok: wrong bytes -> wrong-content message")
-            else:
-                raise AssertionError("wrong bytes did not raise")
+        # Wrong bytes, right length class.
+        wrong = td / "wrong.jsonl"
+        with open(wrong, "wb") as fh:
+            fh.write(b'{"topic": "x"}\n')
+        try:
+            verify_topic_seeds(wrong, good_sha)
+        except SystemExit as e:
+            assert "wrong content" in str(e)
+            ran.append("wrong bytes -> wrong-content message")
+        else:
+            raise AssertionError("wrong bytes did not raise")
 
-    print("gen_textbooks selftest OK: seeds guard accepts good bytes, rejects missing/truncated/wrong")
+    # The real seeds, when this machine has them. A SKIP, said out loud, and never
+    # counted among the cases above.
+    real = Path(SEEDS_RECOVERY.split()[0]).expanduser()
+    if real.exists():
+        verify_topic_seeds(real)
+        ran.append("real seeds accepted (sha256 matches)")
+    else:
+        skipped.append(f"real seeds not present at {real} -- not checked here")
+
+    print(f"gen_textbooks selftest OK: {len(ran)} case(s) ran")
+    for r in ran:
+        print(f"  ran: {r}")
+    for s in skipped:
+        print(f"  SKIP: {s}")
 
 
 def main():
