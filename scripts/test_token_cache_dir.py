@@ -17,14 +17,20 @@ WHAT IS TESTED:
   3. env unset + NVMe absent returns dirname(TOKEN_CACHE). This is the load-bearing guard: an
      unconditional return of the NVMe path hands a laptop or a fresh pod _domain_seqs' "refusing to
      retokenize" absent-cache refusal, where tokenizing is the correct behaviour.
-  4. All three of 1-3 hold for harness's torch-free FALLBACK too, with train unimportable. A
-     fallback one step behind the accessor it stands in for is this function's own incident in a
-     smaller place.
+  4. All three of 1-3 hold for harness's torch-free path, which since 2026-09-07 is the DEFAULT:
+     it is tried FIRST and `import train` is what it falls through to. THE "no torch" LABEL ON
+     THIS ACCESSOR IS A MISNOMER, measured rather than argued: hiding `train` in sys.modules
+     changes nothing, because the scrape answers before any import is attempted -- with train
+     importable and with it hidden, the call returns the same string and `train` never enters
+     sys.modules either way. So this accessor IS the primary path, and worlds 1-3 already compare
+     it against train's accessor directly. The equivalence gate this file exists for is therefore
+     already load-bearing, not a separate case: dropping the NVMe step from the scrape FAILS
+     world 2 in this very loop (measured).
   5. ONE definition of the string. train and harness both read eval/cache_guard.NVME_CACHE_DIR;
      run_ddp.sh's literal is the unavoidable second copy (a shell cannot import python) and must
      equal it. A third copy means the next move breaks two of the three.
 
-restartable: yes -- temp dirs only, removed in a finally; os.environ and cache_guard.NVME_CACHE_DIR
+# restartable: yes -- temp dirs only, removed in a finally; os.environ and cache_guard.NVME_CACHE_DIR
 are restored, and sys.modules is left as found. Nothing reads or writes a real cache.
 """
 import os
@@ -51,10 +57,18 @@ def _train_default():
 
 
 def _accessors():
-    """The two accessors under test, each with train importable or not.
+    """The two accessors under test: train's, and harness's.
 
-    harness._token_cache_dir delegates to train's when torch is present, so the pair is (train's,
-    harness's fallback) -- exercising harness with train importable would only re-run case 1.
+    THE DOCSTRING HERE USED TO SAY harness "delegates to train's when torch is present, so the
+    pair is (train's, harness's fallback)". That stopped being true on 2026-09-07 (commit
+    1bd9ed76): harness answers from the source-scrape BEFORE importing train, so with torch
+    present it does NOT delegate. Measured both ways on the current tree --
+    harness._token_cache_dir() returns the same string with train importable and with
+    sys.modules["train"] = None, and `train` stays out of sys.modules in both. So the second
+    accessor is not a degraded stand-in for the first; it is the path callers actually get, and
+    comparing the two IS the equivalence assertion. Hiding `train` below is kept anyway: it is
+    what pins the FALL-THROUGH (a non-literal TOKEN_CACHE must reach the import), which is the
+    one branch where train must be imported, and it is exercised separately.
     """
     import train
 
@@ -70,7 +84,7 @@ def _accessors():
                 sys.modules["train"] = saved
 
     return [("train._token_cache_dir", train._token_cache_dir),
-            ("harness fallback (no torch)", harness_fallback)]
+            ("harness (primary; train hidden to pin the fall-through)", harness_fallback)]
 
 
 def main():
@@ -180,6 +194,72 @@ def main():
         if saved_harness_env is not None:
             os.environ["HARNESS_TOKEN_CACHE_DIR"] = saved_harness_env
         shutil.rmtree(tmp, ignore_errors=True)
+
+        # WORLD 5: THE FALL-THROUGH. Layer 3 of the accessor's three decision layers: with a
+        # NON-LITERAL TOKEN_CACHE the scrape must refuse to answer and the caller must reach
+        # `import train` instead -- and the value must still be right. All three asserted, because
+        # each fails differently: a regex that matched an expression would answer from a string it
+        # never evaluated; a fall-through that threw would take the check down; a fall-through that
+        # returned the wrong constant would reintroduce 2026-09-05 one layer down.
+        #
+        # Run against a COPY of train.py via a redirected ROOT, never by editing the real file.
+        # Measured on the real tree: literal -> 0.0011s and train stays out of sys.modules;
+        # non-literal -> 5.408s, train enters, value unchanged. So the fast path is CONDITIONAL by
+        # code, and this world is what shows the condition is enforced rather than incidental.
+        tmp_root = os.path.join(tmp, "ft_root")
+        os.makedirs(tmp_root, exist_ok=True)
+        shutil.copy(os.path.join(ROOT, "train.py"), os.path.join(tmp_root, "train.py"))
+        ftp = os.path.join(tmp_root, "train.py")
+        fsrc = open(ftp, encoding="utf-8").read()
+        # World 5's replacement: non-literal ON PURPOSE so the scrape's regex must MISS and the
+        # caller must reach `import train`. It must still be VALID python in the copy, so it is
+        # built from a name the same file defines -- a bare undefined name would make the import
+        # raise, and the assertion below would blame the fall-through for the fixture's bug
+        # (measured: that is exactly what an earlier draft of this world did).
+        # The expression must be valid python AND reconstruct the real value, so that a
+        # fall-through which runs returns exactly what the literal path returns -- otherwise this
+        # world fails for the fixture's arithmetic instead of for the ordering it tests. Two earlier
+        # drafts did: an undefined name raised, and an empty root produced "/" then "//". os.path.join
+        # is the construction the real constant's consumers use, so it is used here too.
+        # CACHE_ROOT is `default` ITSELF, not its dirname: `default` is already the DIRECTORY the
+        # accessor returns, so dirname(default) is "/" on an absolute path and the fixture would
+        # reconstruct the wrong root (measured: it returned "/" and then "//" before that).
+        _base = os.path.basename(default)
+        if not _base:
+            fails.append(f"world 5 fixture: the accessor's default {default!r} has no basename, so "
+                         f"this world cannot build a non-literal constant that reconstructs it.")
+        ft_sub = f'TOKEN_CACHE = os.path.join(CACHE_ROOT, "{_base}")'
+        fsrc = re.sub(r"^TOKEN_CACHE\s*=.*$",
+                      f"CACHE_ROOT = {default!r}\n" + ft_sub,
+                      fsrc, count=1, flags=re.M)
+        open(ftp, "w", encoding="utf-8").write(fsrc)
+        saved_root = harness.ROOT
+        saved_nvme2 = cache_guard.NVME_CACHE_DIR
+        harness.ROOT = tmp_root
+        cache_guard.NVME_CACHE_DIR = os.path.join(tmp, "no_such_nvme")   # force the constant layer
+        saved_train = sys.modules.get("train", "__absent__")
+        sys.modules.pop("train", None)
+        try:
+            got = harness._token_cache_dir()
+            imported = "train" in sys.modules
+        except Exception as e:      # noqa: BLE001
+            got, imported = f"{type(e).__name__}: {e}", False
+        finally:
+            harness.ROOT = saved_root
+            cache_guard.NVME_CACHE_DIR = saved_nvme2
+            if saved_train == "__absent__":
+                sys.modules.pop("train", None)
+            else:
+                sys.modules["train"] = saved_train
+        if not imported:
+            fails.append(f"world 5: with a non-literal TOKEN_CACHE the accessor returned {got!r} "
+                         f"WITHOUT importing train. The scrape must not answer from an expression "
+                         f"it cannot evaluate -- that is a second definition of the cache dir "
+                         f"deciding silently, the 2026-09-02 incident rebuilt.")
+        elif got != default:
+            fails.append(f"world 5: the fall-through ran but returned {got!r} instead of "
+                         f"{default}. Reaching the authority and then disagreeing with it is the "
+                         f"same defect one layer down.")
 
     if fails:
         print("test_token_cache_dir FAILED:")

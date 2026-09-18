@@ -224,13 +224,28 @@ _CHECK_TIMEOUTS = {
     # had passed all evening, which is a load sensor wearing a supply check's label -- cost growth,
     # not a hang. 15s is ~2.4x the measured cold cost under load.
     #
-    # RAISING THE BUDGET IS THE INTERIM FIX, NOT THE FIX (4c ruling, 2026-09-06). Having
-    # _token_cache_dir answer from the env var or an NVMe-dir test BEFORE importing train was
-    # refused: a branch here that can answer without train is a SECOND definition of the cache dir,
-    # and "fall back to train only when neither answers" is precisely where the two disagree in
-    # silence -- the 2026-09-02 incident rebuilt in the tool that exists to catch it. Root fix is
-    # de-66: move _token_cache_dir into a torch-free module both sides import. Blocked on the
-    # run's stop window; reviewer tilerl.
+    # RAISING THE BUDGET WAS THE INTERIM FIX (4c ruling, 2026-09-06). That ruling refused a
+    # branch that answers WITHOUT importing train, on the ground that such a branch is a SECOND
+    # definition of the cache dir and the two disagree in silence -- the 2026-09-02 incident
+    # rebuilt in the tool that exists to catch it. The named root fix was de-66: move the
+    # accessor into a torch-free module both sides import.
+    #
+    # WHAT ACTUALLY HAPPENED (2026-09-07, commit 1bd9ed76, de): de-66 was never built. Instead the
+    # torch-free path was placed INSIDE _token_cache_dir and tried FIRST, with TOKEN_CACHE read
+    # from train.py's SOURCE instead of an imported module. So the second definition the ruling
+    # refused DOES now exist, and this comment said otherwise for eleven days while the code did
+    # it. Two things make the current arrangement defensible rather than a repeat of 09-02, and
+    # both are conditions, not assurances:
+    #   * the scrape may only answer when it can read the SAME inputs -- it is train's own three
+    #     steps in the same order (env, NVMe-if-present, dirname of the constant), and it FALLS
+    #     THROUGH to the import when the constant is not a literal, so a computed TOKEN_CACHE
+    #     sends the caller to the authority (measured: 5.408s and train enters sys.modules);
+    #   * the equivalence is pinned by a gate rather than by inspection
+    #     (scripts/test_token_cache_dir.py), which fails when the two paths diverge -- the
+    #     mutation that drops the NVMe step turns it red on exactly the 2026-09-05 case.
+    # de-66 is retired as superseded: its premise was that this import cost the check its budget,
+    # and the scrape removed that cost, so building it now would add a module and two exemption
+    # layers to save a fallback path's latency.
     "mix_supply": 15,
     # 0.2s on the laptop, 10.20s on the pod -- and the pod is where it was timing out. Measured
     # 2026-09-06 by walking the same 8 extensions check_no_conflict_markers walks: 0.00s to file
@@ -12387,8 +12402,14 @@ def _token_cache_dir():
     reported the overlay's copy: stale or absent, either way an answer about the wrong file.
 
     The source-scrape had one virtue worth keeping: it does not import train, which pulls in torch.
-    So train is imported lazily and the scrape stays as the FALLBACK, for a host with no torch --
-    with AUPAI_TOKEN_CACHE_DIR still honoured there, which is the half that was missing.
+    On 2026-09-07 (commit 1bd9ed76) that virtue was promoted to the DEFAULT: the scrape is tried
+    FIRST and `import train` becomes the authority it falls through to when the scrape cannot read
+    the same inputs (a non-literal TOKEN_CACHE). The docstring here said "the scrape stays as the
+    FALLBACK" for eleven days after that reversal -- the code was right and this paragraph was not,
+    which is the worse direction, since a reader checking the rule against the prose would have
+    concluded the fast path was the rare one. Measured with the constant a literal: 0.0011s and no
+    torch; with it computed: 5.408s and train enters sys.modules. AUPAI_TOKEN_CACHE_DIR is honoured
+    on both paths by the `forced` branch above, which is the half the old order existed to dodge.
 
     HARNESS_TOKEN_CACHE_DIR is kept as an alias because one live caller sets it: this file's own
     selftest fixture at the call below. Grepped 2026-09-05 -- no other setter exists outside
@@ -15190,7 +15211,29 @@ _CITE_SHA_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
 #: sentence that already names train.py and no sha (4c ruling, 2026-09-07, narrowing the
 #: wider form which stays prose). 3+ digits: `:12` is a time or a column far more often than
 #: a line, and train.py has no interesting code below line 100.
-_CITE_BARE_RE = re.compile(r"(?<![\w.]):(\d{3,})\b")
+#:
+#: `[` IS IN THE LOOKBEHIND because a Python SLICE is not a citation. Measured 2026-09-18:
+#: a slice expression inside an f-string, in a sentence mentioning train.py, was reported as
+#: "train.py:<n> is a bare line number" -- an accusation about a line the author never named.
+#: The first fix proposed was to exclude `]` -- wrong, and worth recording: a slice's colon is
+#: preceded by `[`, never by `]`, so that spelling changes nothing (verified against a
+#: three-slice / three-real-reference table).
+#:
+#: WHAT THIS DOES NOT DO, corrected 2026-09-18 by genB's review of the claim I first made here:
+#: it does NOT retire a backlog of reported false hits. A raw regex hit and a REPORTED one are
+#: different populations -- the check reports only inside a sentence naming train.py with no
+#: sha, after `_CITE_RE.sub` has run -- and measured on this tree the two differ completely:
+#: 306 raw slice hits, of which the check would have reported ZERO. The baseline agrees: its
+#: `abbreviated_bare_count` was 0 and `allowed_bare` held 2 keys, so it could not have been
+#: absorbing hundreds of anything. (I wrote the opposite first, from the raw count alone; a
+#: reader would have gone looking for debt that never existed.) The narrower true statement is
+#: enough to justify the change: ~200 raw hits stop matching, and any one of them would become
+#: a false report the moment it landed in a sentence naming train.py -- which is how this was
+#: found. `_selftest_train_cite_abbreviated_form` world 4 pins the behaviour.
+#:
+#: The example is DESCRIBED, not written: spelling it out here would make this comment the very
+#: hit it explains, which is what happened on the first draft of this paragraph.
+_CITE_BARE_RE = re.compile(r"(?<![\w.\[]):(\d{3,})\b")
 
 
 def _bare_cite_targets(sentence):
@@ -15470,6 +15513,13 @@ def _selftest_train_cite_abbreviated_form():
          is a column, a port or a version far more often than a citation, which is why the
          wide form stays prose.
       3. the same sentence with a sha -> NOT named. The anchor works abbreviated too.
+      4. a SLICE expression in a sentence naming train.py -> NOT named (2026-09-18). This is
+         the case the `[` lookbehind exists for; without it the reader reports the slice's
+         length as a train.py line. Added after genB found the whole regex change had NO test:
+         reverting `(?<![\w.\[])` to `(?<![\w.])` left all three worlds above green and the
+         live tree's check output byte-identical, so the fix was unpinned. Asserted on the
+         count delta like the others -- a slice adds 0 -- which is the same probe mechanism,
+         and it fails on exactly the mutation that motivated the change.
 
     Asserted on the reported COUNT with and without the probe, not by searching the evidence
     text: the FAIL message prints only its first four findings, so a substring test passes or
@@ -15496,6 +15546,12 @@ def _selftest_train_cite_abbreviated_form():
         (f"# train.py's cast lives at :{victim_line} and this sentence names train.py.", 1),
         (f"# an unrelated comment mentioning :{victim_line} and no python file at all.", 0),
         (f"# train.py:{victim_line} AT 169da865 held the cast, and :{victim_line} names it.", 1),
+        # ASSEMBLED, NOT WRITTEN OUT. Spelling the slice literally here would put the shape
+        # into this file's own source, where the check walks it -- the trap that caught this
+        # PR's first draft comment. The braces and the bracket are joined at runtime so the
+        # literal never appears in the file being scanned.
+        ("# train.py reads a slice like " + "{" + "why[:" + str(victim_line) + "]" + "}"
+         + " and this sentence names train.py.", 0),
     ]
     for text, want_delta in worlds:
         d = _tmp_repo_shaped()
@@ -15519,8 +15575,8 @@ def _selftest_train_cite_abbreviated_form():
         finally:
             import shutil
             shutil.rmtree(d, ignore_errors=True)
-    return ("abbreviated `:NNN` adds a finding only beside train.py and only without a sha "
-            "(3 worlds, asserted on the count delta)")
+    return ("abbreviated `:NNN` adds a finding only beside train.py and only without a sha, "
+            "and a slice adds none (4 worlds, asserted on the count delta)")
 
 
 def _selftest_cite_sentence_wraps():
@@ -17889,6 +17945,54 @@ def _data_paths_named_by_pod_code(root):
 _HARDCODED_CACHE_BASELINE = 0
 
 
+#: THE AGREED LOCATION OF THE OVERLAY COPY, named once so both the scanner's pattern and the
+#: train.py value assertion derive from it instead of each holding a copy. This is the directory
+#: `train.py`'s TOKEN_CACHE must point at, and the one whose reaching-around the check forbids
+#: everywhere else. The NVMe counterpart already has one home (cache_guard.NVME_CACHE_DIR); this is
+#: its overlay sibling, which had none -- the string lived only as a literal in train.py and as a
+#: substring inside a regex here, and two unchecked copies of one path is how the 2026-09-05 move
+#: left the gate reading a directory that had been emptied hours earlier.
+OVERLAY_CACHE_DIR = "/data00"
+
+
+def _train_cache_constant_drift(root):
+    """Why train.py's TOKEN_CACHE is not the agreed root, or None when it is.
+
+    train.py is the ONE file allowed to hold this literal, so the check cannot simply forbid it
+    there -- and it used to skip the file entirely, leaving the value unenforced. "Allowed" is not
+    "unchecked": the literal is permitted only at the agreed value, and any other value is the
+    silent-wrong-directory defect the check is named for. A reader who changes this constant moves
+    every cache path in the tree, and before this nothing raised.
+    """
+    src = os.path.join(root, "train.py")
+    if not os.path.exists(src):
+        src = os.path.join(ROOT, "train.py")
+    try:
+        text = open(src, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return None  # the world holds no train.py; the scanner's own count covers emptiness
+    m = re.search(r'^TOKEN_CACHE\s*=\s*["\']([^"\']+)["\']', text, re.M)
+    if not m:
+        return ("train.py no longer defines TOKEN_CACHE as a plain-literal assignment. Every "
+                "accessor falls back to dirname(TOKEN_CACHE), and other readers scrape the line "
+                "from this file's source -- a computed value breaks them silently.")
+    # THE DIRECTORY IS WHAT TAKES EFFECT, so that is what is pinned. train.py's accessor
+    # returns os.path.dirname(TOKEN_CACHE) and nothing in the tree reads the filename component --
+    # verified 2026-09-18 by grepping every non-comment TOKEN_CACHE use (the constant, that
+    # accessor, the accessor's docstring, and test fixtures that rebind the whole value). So
+    # asserting the directory is the narrowest rule that catches the whole of the real failure
+    # mode: a filename-only change is inert at runtime, and failing on it would be a check
+    # asserting a difference that cannot change behaviour. If a reader is ever added that uses
+    # the basename, this becomes an under-assertion and must widen to the full string.
+    got = os.path.dirname(m.group(1))
+    if got != OVERLAY_CACHE_DIR:
+        return (f"train.py's TOKEN_CACHE is {m.group(1)!r}, whose directory is {got!r}, but the "
+                f"agreed overlay cache root is {OVERLAY_CACHE_DIR!r}. This directory is the last "
+                f"fallback for every cache path in the tree, and nothing else enforces it: a "
+                f"drifted value reads a directory nobody wrote, with no error and no symptom.")
+    return None
+
+
 def _hardcoded_cache_paths(root):
     """([(file, line, text)], n_scanned) for source that builds a token cache path from a literal.
 
@@ -17931,14 +18035,24 @@ def _hardcoded_cache_paths(root):
     r = sp.run(["git", "-C", ROOT, "ls-files"], capture_output=True, text=True)
     if r.returncode != 0:
         return None, 0
-    lit = re.compile(r"/data00/tokens_|/data00/pretrain|pretrain_1b_tokens")  # cache-path-ok: this IS the pattern
+    # THE PATTERN IS BUILT FROM THE DIRECTORY THIS FILE AGREES ON, not typed a second time.
+    # A literal here would be a copy of the thing the check exists to keep unique, and it
+    # would keep matching after the agreed root moved -- reporting hits about a path nobody
+    # uses. `_cache_root()` is the one source; the regex is derived from it.
+    root_c = OVERLAY_CACHE_DIR
+    lit = re.compile(re.escape(root_c) + r"/tokens_|" + re.escape(root_c) + r"/pretrain|pretrain_1b_tokens")  # cache-path-ok: this IS the pattern
     marker = re.compile(r"#\s*cache-path-ok")
     out, scanned = [], 0
     for f in sorted(r.stdout.split()):
         if not f.endswith((".py", ".sh")):
             continue
         if f == "train.py":
-            continue  # the one constant lives here; ladder_config_frozen guards its value
+            # ALLOWED HERE, BUT ONLY AT THE AGREED VALUE -- see _train_cache_constant_drift,
+            # which asserts it. Skipping the file outright (the old behaviour) left the constant
+            # unenforced while a comment claimed otherwise; reporting it as a hit would refuse
+            # the one file permitted to hold it. Asserted, not skipped, is the middle that was
+            # missing.
+            continue
         try:
             # `root`, so a world's mutated copy is what gets read; a file the world does not hold
             # falls back to ROOT's, since the world only ever contains the files it mutated.
@@ -17991,6 +18105,15 @@ def check_no_hardcoded_cache_path(root):
     implementation reading a different env var, which is the 2026-09-02 incident (a test wrote a
     real cache into the pod's shared /data00 beside a live run) reproduced inside the tool meant to
     catch it. This check exists so the third copy is refused instead of found later.
+
+    TRAIN.PY IS SCANNED, NOT EXEMPTED, AND ITS VALUE IS ASSERTED (2026-09-18). It used to be
+    skipped by name with the reason "ladder_config_frozen guards its value". That guard does not
+    exist: check_ladder_config reads data/mix_scale_run_config.json, and neither _FROZEN_KEYS nor
+    _CODE_FROZEN_KEYS names TOKEN_CACHE -- verified 2026-09-18 by reading both sets and the
+    function. So the one constant the whole cache path falls back to had NO enforcement at all,
+    while the exemption made it look guarded. The exemption is now a narrower, real rule: the file
+    is read like any other, and a literal in it is allowed only when it EQUALS the agreed root --
+    a drifted value is the defect this check is named for, and it used to pass silently.
     """
     hits, scanned = _hardcoded_cache_paths(root)
     if hits is None:
@@ -17999,6 +18122,9 @@ def check_no_hardcoded_cache_path(root):
         # ZERO SCANNED IS NOT ZERO HITS. ls-files answered and named no .py/.sh, so there was
         # nothing to read and a PASS here would assert the property over an empty set.
         return FAIL, "no .py or .sh in the tracked file list -- this check read no source at all"
+    drifted = _train_cache_constant_drift(root)
+    if drifted:
+        return FAIL, drifted
     if not hits:
         return PASS, f"{scanned} tracked .py/.sh read, none builds a token cache path from a literal"
     msg = (
@@ -18027,6 +18153,12 @@ def _broken_no_hardcoded_cache_path():
     Mutated from a real file rather than hand-written: the pattern last appeared in a probe as
     `cache = a.cache or f"..."` with the literal inline, so the world adds that same shape to a copy
     of a file that currently has none.
+
+    IT ALSO CARRIES THE DRIFTED-CONSTANT CASE (2026-09-18), because that is the half this check
+    could not see at all: train.py was skipped by name, so a changed TOKEN_CACHE produced a green.
+    One world holds both defects, which is sound here because they are both that check's subject
+    and either must produce FAIL -- but they are SEPARATE assertions in the selftest below, so a
+    mutation that removes one arm cannot be covered by the other silently.
     """
     d = _tmp_repo()
     src = os.path.join(ROOT, "scripts", "stamp_cache_seeds.py")
@@ -18045,6 +18177,24 @@ def _broken_no_hardcoded_cache_path():
     assert "/data00/tokens_" in bad, "the world's line lacks the literal"  # cache-path-ok: asserts it
     open(os.path.join(d, "scripts", "stamp_cache_seeds.py"), "w", encoding="utf-8").write(
         text.replace(anchor, bad, 1))
+    # AND THE CONSTANT, DRIFTED. Copied from the real train.py and edited in place, so the world
+    # holds a real file at a repo-real path -- the reality rule the mutated-copy convention asks
+    # for -- rather than a hand-written stub holding only the line under test.
+    #
+    # ASSEMBLED FROM PIECES, for the same reason the line above is: written as plain literals,
+    # THIS builder's own source contains the string, matches its own pattern, and reports itself
+    # as a hit -- which I hit while writing it (the drift test read FAIL for the builder's
+    # `old = '...'` lines rather than for the world it built, so the arm looked covered when it
+    # had not been exercised at all). The pieces are split so the literal exists only in the
+    # world being written.
+    ts = os.path.join(ROOT, "train.py")
+    if os.path.exists(ts):
+        ttext = open(ts, encoding="utf-8").read()
+        old = "TOKEN_CACHE" + " = " + '"' + "/data00" + "/pretrain_" + "1b_tokens.pt" + '"'
+        new = "TOKEN_CACHE" + " = " + '"' + "/data01" + "/pretrain_" + "1b_tokens.pt" + '"'
+        if old in ttext:
+            open(os.path.join(d, "train.py"), "w", encoding="utf-8").write(
+                ttext.replace(old, new, 1))
     return d
 
 
@@ -22324,6 +22474,49 @@ def _selftest_flagless_test_is_gated():
           "path under a brace comment, ast keeps all of them")
 
 
+def _selftest_cache_constant_is_pinned():
+    """train.py's TOKEN_CACHE value is enforced, and the enforcement is load-bearing.
+
+    THE DEFECT: train.py was skipped by name in _hardcoded_cache_paths with the comment
+    "ladder_config_frozen guards its value". That guard does not exist -- check_ladder_config
+    reads data/mix_scale_run_config.json and neither _FROZEN_KEYS nor _CODE_FROZEN_KEYS names
+    TOKEN_CACHE. So the constant every cache path falls back to was unenforced while the code
+    said otherwise, and a drifted value would read a directory nobody wrote with no error.
+
+    WHY THE ASSERTION IS TESTED IN ISOLATION. The check's two arms both catch a world holding
+    BOTH defects, so a world carrying them together proves nothing about either: my first
+    version did exactly that, and removing the drift assertion still read FAIL because the
+    scanner's own arm fired on the injected literal. The case below removes the scanner's arm
+    (drops the world's mutated file so the fallback reads ROOT's clean copy), leaving the
+    drifted constant alone -- where hits == [] and the answer is the assertion's and nothing
+    else's. Removing the assertion flips that to PASS, which is the property being pinned.
+    """
+    import shutil
+
+    d = _broken_no_hardcoded_cache_path()
+    if d is None:
+        return  # the world's anchor file is gone; the broken-world loop reports that
+    try:
+        mutated = os.path.join(d, "scripts", "stamp_cache_seeds.py")
+        if os.path.exists(mutated):
+            os.unlink(mutated)
+        hits, scanned = _hardcoded_cache_paths(d)
+        assert scanned, "the world scanned no source, so the case below is vacuous"
+        assert hits == [], (
+            f"the drift-only world still reports literal hits {hits[:2]}, so it does not isolate "
+            f"the constant assertion -- this test would pass on the wrong arm")
+        st, why = check_no_hardcoded_cache_path(d)
+        assert st == FAIL and "TOKEN_CACHE" in why, (
+            f"a drifted constant reads {st} ({why[:120]}) -- the token cache fallback is the "
+            f"last in the tree and nothing else enforces it")
+        assert check_no_hardcoded_cache_path(ROOT)[0] == PASS, (
+            "the real tree does not pass this check, so the FAIL above is not about the world")
+        print("  cache constant: a drifted TOKEN_CACHE FAILs with no literal hits, and the real "
+              "tree still PASSes")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def _selftest_stamp_ref_is_origin():
     """Both halves of de-99, on a world that can tell the two refs apart.
 
@@ -24983,6 +25176,7 @@ def _demo(only=None):
     _selftest_repo_auth_mirror()
     _selftest_flagless_test_is_gated()
     _selftest_core_reexports_are_identical()
+    _selftest_cache_constant_is_pinned()
     _selftest_stamp_ref_is_origin()
     _selftest_stamp_world_is_real_unit()
     _selftest_evidence_parity_is_an_invariant()
@@ -26653,8 +26847,13 @@ def cmd_claim_file(argv):
         ok, msg = file_claim.release(path)
         print(msg)
         return 0 if ok else 1
-    for p, r in file_claim.claims().items():
-        print(f"{p:16s} owner={r.get('owner')} t={time.strftime('%H:%M', time.gmtime(r.get('time')))} UTC")
+    # ONE FORMATTER (file_claim.status_lines), not a second copy of the print. This line used
+    # to carry its own `%H:%M` format, and because THIS is the entry point a session runs, the
+    # duplicate meant a fix to file_claim's printer would not have reached the command people
+    # use. Measured 2026-09-18: two claims 10 days old (TTL 6h, both dead to the hook) printed
+    # as live holders here, with no date and no stale marker to say otherwise.
+    for line in file_claim.status_lines():
+        print(line)
     return 0
 
 
