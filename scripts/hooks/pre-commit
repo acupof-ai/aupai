@@ -1190,6 +1190,10 @@ def main():
         # a case that only read the `case` pattern would pass for a version whose exemption never
         # reached the branch.
         "scripts/merge_main.sh",
+        # The single-impl local-main fast-forward helper merge_main.sh and the python hook both
+        # call; its --selftest builds the ff / checked-out / diverged worlds. Registered here so an
+        # edit to either caller (merge_main.sh, this hook) selects it.
+        "scripts/lib_ff_main.sh",
         # The review-row lookup merge_main.sh's gate calls. Registered because this logic spent its
         # whole life in a heredoc inside merge_main.sh, where nothing could reach it -- and what it
         # hid was that it read only the invoking worktree's review.jsonl, a union-merged ledger, so
