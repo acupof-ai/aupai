@@ -26,10 +26,6 @@ sys.path.insert(
     0,
     os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts"),
 )
-import pyarrow.parquet as pq  # noqa: E402
-from count_tokens import count_docs  # noqa: E402
-from tokenizers import Tokenizer  # noqa: E402
-
 from filters.secrets import redact_text  # noqa: E402
 
 POD = "/work/aupai"
@@ -37,6 +33,13 @@ BOILER = re.compile(r"^(let me think|okay,? let'?s|hmm,?)\W*$", re.I)
 
 
 def measure(parquet, tokenizer):
+    # Heavy deps imported INSIDE measure, not at module top: pyarrow/tokenizers/count_tokens
+    # are absent from the CPU CI image, while the POD/BOILER constants this module also exports
+    # are imported by render_fable5_cot's self-check. A top-level pyarrow import made that check
+    # fail to even load in CI (#514). Same lazy-import shape as build_corpus/scan_*.
+    import pyarrow.parquet as pq  # noqa: E402
+    from count_tokens import count_docs  # noqa: E402
+    from tokenizers import Tokenizer  # noqa: E402
     tok = Tokenizer.from_file(tokenizer)
     f = pq.ParquetFile(parquet)
     n = kept = red_rows = 0
