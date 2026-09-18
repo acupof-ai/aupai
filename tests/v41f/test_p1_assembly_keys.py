@@ -199,10 +199,10 @@ def _build_engram_on_small():
         return None
     tok = synthetic_tokenizer()
     cfg = v41f_small(
-        vocab_size=len(tok), engram_compressed_vocab_size=6,
+        vocab_size=len(tok), tokenizer=tok,
         engram_layer_ids=(1,), engram_max_ngram_size=4, engram_n_heads=2,
         engram_head_dim=8, engram_vocab_size=20, engram_pad_id=2,
-    ).with_derived_engram()
+    )
     torch.set_default_dtype(torch.bfloat16)
     try:
         model = V41FModel(cfg, max_batch_size=2, max_seq_len=64, tokenizer=tok).eval()
