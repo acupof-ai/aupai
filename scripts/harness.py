@@ -145,6 +145,16 @@ _CHECK_TIMEOUTS = {
     # is the thing it exists not to do. 60s is ~5x the worst measurement, matching the ratio
     # the entries around it use, and still nowhere near a hang.
     "frozen_args_parse": 60,
+    # Measured on this laptop 2026-09-18: 3.9s solo with 27 git subprocesses across ~4
+    # temp-repo fixtures, but 7.14 / 10.97 / 9.30s while three other sessions' `harness
+    # check` ran concurrently (load average 14.8-18.7). Its cost is git spawns, which
+    # scale with whatever else is on the machine, not with the tree -- so it straddles
+    # the 5s default and the machine's load decides whether it runs. It banked 2
+    # consecutive strikes and FAILed with "has not actually run since", refusing a
+    # commit, while passing by hand seconds later: the deadline-nothing-can-meet case.
+    # 30s is ~3x the worst loaded measurement and ~8x the solo one, matching the ratio
+    # the entries around it use, and still far under a hang.
+    "test_integration_tree_guard": 30,
     "eval_sft_template_contamination": 90,
     # Measured on the pod, 2026-09-01: 0.8s to load the 1.5GB pack, 0.2s to flatten
     # 192M tokens, and 0.127s per probe x 76 probes = 9.7s of search. It was never
