@@ -56,22 +56,49 @@ def main():
     #
     # MUTATION: put the `if bad: return 1` back above the `if skipped:` print and this reds.
     src = open(os.path.join(ROOT, "scripts", "harness.py"), encoding="utf-8").read()
-    i_bad = src.find('if bad:\n        print(f"\\n{len(bad)} invariant(s) FAILED')
+    # EVERY index is located and asserted non-negative BEFORE any comparison. The first
+    # version of this case found only i_bad and i_sum and then sliced `src[i_bad:i_sum]`:
+    # when i_sum < i_bad that slice is EMPTY and `"return 1" not in ""` is True, so the
+    # assertion passed vacuously. de measured it (2026-09-19) on four worlds -- swapping the
+    # two prints (A) and, the pure form of the original defect, putting `if bad: return 1`
+    # ABOVE both prints (C) -- and the old assertion missed both. An ordering assertion that
+    # only looks at one gap cannot see an early return placed before the gap.
+    # THE WINDOW STARTS AT THE SUMMARY BANNER, NOT AT THE FAIL PRINT. A window anchored on
+    # the FAIL print cannot see `if bad: return 1` placed ABOVE both prints -- the original
+    # defect in its purest form, a failing run that exits before any summary line -- because
+    # the return is then behind the window's own start. de measured that miss. The banner is
+    # the first thing in the region, so it precedes an early return inserted anywhere in it.
+    #
+    # NOT A BARE `find("if bad:")` EITHER: harness.py holds other `if bad:` guards hundreds
+    # of thousands of characters earlier (measured: the first bare match at 54550 against the
+    # summary block at 1654184), which anchors the window on an unrelated function and makes
+    # the check meaningless in both directions -- it passed on the correct tree only because
+    # an unrelated `\n        return` landed inside that 231 KB span.
+    _banner = "THE SUMMARY PRINTS ON EVERY PATH, INCLUDING FAILURE."
+    assert src.count(_banner) == 1, (
+        f"the summary banner appears {src.count(_banner)} times in harness.py, so the window "
+        f"below has no single start and this case cannot check anything")
+    i_stage = src.find(_banner)
+    i_fail = src.find('if bad:\n        print(f"\\n{len(bad)} invariant(s) FAILED')
     i_sum = src.find('NOT run here: {\', \'.join(skipped)}')
-    assert i_bad != -1, "cannot locate the invariant-FAIL print in harness.py"
-    assert i_sum != -1, "cannot locate the skip/denominator print in harness.py"
-    # the early return must not sit between them
-    between = src[i_bad:i_sum]
-    assert "return 1" not in between, (
-        "harness.py returns 1 before printing the skip/denominator line, so a run with a "
-        "failing invariant reports the FAIL list and never states what did not run -- the "
-        "reader most in need of that line is the one who cannot see it. Move the return "
-        "below the summary prints.")
-    # and the summary must still be emitted before any return at all: the FAIL must not be
-    # the last thing on stdout
     i_auth = src.find("authority: {len(EVIDENCE)")
-    assert i_sum < i_auth, "the skip/denominator line must print before the authority line"
-    print("selftest OK: ordering case -- the denominator line is not behind the FAIL return")
+    for _name, _i in (("the summary banner", i_stage),
+                      ("the invariant-FAIL print", i_fail),
+                      ("the skip/denominator print", i_sum),
+                      ("the authority line", i_auth)):
+        assert _i != -1, (
+            f"cannot locate {_name} in harness.py, so this ordering case cannot check "
+            f"anything -- a rename must red here, not pass")
+    assert i_stage < i_fail < i_sum < i_auth, (
+        f"harness.py's summary prints are out of order or outside the block "
+        f"(banner={i_stage}, FAIL={i_fail}, skip={i_sum}, authority={i_auth}): the "
+        f"reader-facing summary must follow the FAIL line and precede the authority line")
+    assert "\n        return" not in src[i_stage:i_auth], (
+        "harness.py returns between the invariant-FAIL line and the authority line, so a run "
+        "with a failing invariant reports the FAIL list and never states what did not run -- "
+        "the reader most in need of that line is the one who cannot see it. Move the return "
+        "below the summary prints.")
+    print("selftest OK: ordering case -- no return between the FAIL line and the authority line")
 
     # THE DEADLINE IS ASSERTED TOO, because this file's own failure in the #567 ci-selftests
     # job was not an assertion at all: no_hardcoded_cache_path scans every .py/.sh in the tree,
