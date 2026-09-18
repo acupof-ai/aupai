@@ -50,6 +50,19 @@ SEED = 123
 B, T = 2, 16
 N, K = 4, 2
 
+
+def _apply_engine_env():
+    """Mirror test_p1_train_ckpt._apply_diag_thread_env in the diag arms: GATE_OMP pins the
+    intra-op pool, GATE_ONEDNN=0 disables oneDNN before any tensor op. No-op by default."""
+    omp = os.environ.get("GATE_OMP")
+    if omp:
+        torch.set_num_threads(int(omp))
+    if os.environ.get("GATE_ONEDNN") == "0":
+        torch.backends.mkldnn.enabled = False
+
+
+_apply_engine_env()
+
 # The loss MUST be the exact function object the gate's train_step calls
 # (v41f.train imports shifted_cross_entropy from v41f.loss). A re-inlined
 # F.cross_entropy here would run a different computation (no fp32 cast of the
@@ -77,6 +90,17 @@ def _cgroup_cpu_quota():
     return None
 
 
+def _cpu_model():
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith("model name"):
+                    return line.split(":", 1)[1].strip()
+    except OSError:
+        pass
+    return platform.processor() or "unknown"
+
+
 def env_header():
     aff = "n/a"
     if hasattr(os, "sched_getaffinity"):
@@ -92,13 +116,17 @@ def env_header():
     return {
         "torch": torch.__version__,
         "platform": platform.platform(),
+        "cpu_model": _cpu_model(),
         "intra_op_threads": torch.get_num_threads(),
         "interop_threads": interop,
         "cpu_count": os.cpu_count(),
         "affinity_cpus": aff,
         "cgroup_cpu_quota_cores": _cgroup_cpu_quota(),
+        "mkldnn_available": bool(torch.backends.mkldnn.is_available()),
+        "mkldnn_enabled": bool(getattr(torch.backends.mkldnn, "enabled", None)),
         "OMP_NUM_THREADS": os.environ.get("OMP_NUM_THREADS"),
         "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS"),
+        "GATE_ONEDNN": os.environ.get("GATE_ONEDNN"),
     }
 
 
@@ -286,42 +314,73 @@ _GATE_TEST = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "test_p1_train_ckpt.py")
 
 
-def coloc(runs, out):
+_BURNCpu = ("import os,sys,time\n"
+            "# outer-sibling CPU burner: saturate one core to inject scheduling contention\n"
+            "t=time.time()+float(sys.argv[1])\n"
+            "x=0.0\n"
+            "while time.time()<t:\n"
+            "    for i in range(200000): x+=i\n"
+    )
+
+
+def _start_burn(n, seconds):
+    """Spawn n outer-sibling processes that each pin a core busy for `seconds`. They are
+    siblings of the gate/diag children (never in-process), so they inject only scheduler
+    contention, matching the hypothesis that a busy shared runner trips a nondeterministic
+    bf16 reduction. Returns Popen handles; caller terminates them."""
+    return [subprocess.Popen([sys.executable, "-c", _BURNCpu, str(seconds)])
+            for _ in range(n)] if n else []
+
+
+def coloc(runs, out, stress=0):
     """Co-located discriminator: each iteration spawns TWO sibling children with one shared
     env injection path -- the REAL gate (test_p1_train_ckpt.py --gate gate_resume_...) and one
     diag pair. Process tree is symmetric by construction (both are children of this orch;
     neither runs in the orch's own torch context), so a different red rate isolates the test
-    BODY, not spawn structure or outer-process torch init. Continues even on a mismatch."""
+    BODY, not spawn structure or outer-process torch init. `stress` adds outer-sibling burner
+    processes for the whole run (contention arm). Continues even on a mismatch."""
     os.makedirs(out, exist_ok=True)
-    env = dict(os.environ, OMP_NUM_THREADS=os.environ.get("GATE_OMP", "2"))
-    print("COLOCATE ENV " + json.dumps(env_header()))
-    print("process tree: orch -> [sibling: real gate subprocess] and [sibling: diag pair] "
-          "each iteration; the diag pair then spawns control/restart, exactly as the real "
-          "gate's --gate spawns its own control/restart workers.")
+    env = dict(os.environ)
+    env["OMP_NUM_THREADS"] = os.environ.get("GATE_OMP", "2")
+    if os.environ.get("GATE_MKL"):
+        env["MKL_NUM_THREADS"] = os.environ["GATE_MKL"]
+    print("COLOCATE ENV " + json.dumps(env_header()) + f" stress_outer_siblings={stress}")
+    print("process tree: orch -> [outer siblings: burners] + [sibling: real gate subprocess] "
+          "and [sibling: diag pair] each iteration; the diag pair then spawns control/restart, "
+          "exactly as the real gate's --gate spawns its own control/restart workers.")
+    # burners live for the whole sweep; each gate/diag pair takes ~25s, give headroom.
+    burn = _start_burn(stress, runs * 60 + 120)
     gate_red = diag_red = 0
     diverge = []
-    for it in range(runs):
-        idir = os.path.join(out, f"co{it}")
-        os.makedirs(idir, exist_ok=True)
-        g = subprocess.run(
-            [sys.executable, _GATE_TEST, "--gate", "gate_resume_equivalent_to_uninterrupted"],
-            capture_output=True, text=True, env=env)
-        g_is_red = g.returncode != 0
-        d = subprocess.run([sys.executable, __file__, "--diag-pair", os.path.join(idir, "d")],
-                           capture_output=True, text=True, env=env)
-        line = next((l for l in d.stdout.splitlines() if l.startswith("DIAGPAIR")), "DIAGPAIR ?")
-        d_is_red = line.startswith("DIAGPAIR RED") or line.startswith("DIAGPAIR ARM")
-        gate_red += g_is_red
-        diag_red += d_is_red
-        tag = "" if g_is_red == d_is_red else "  <-- GATE/DIAG DISAGREE"
-        if tag:
-            sig = (g.stderr or g.stdout)[-600:]
-            diverge.append((it, sig, line))
-        gsig = "RED" if g_is_red else "green"
-        print(f"iter {it}: gate={gsig} {line}{tag}")
-    print(f"\nCOLOCATE SUMMARY over {runs}: gate_red={gate_red} diag_red={diag_red} "
-          f"disagreements={len(diverge)}; same trigger only if the two rates match. "
-          f"exits 0 regardless.")
+    try:
+        for it in range(runs):
+            idir = os.path.join(out, f"co{it}")
+            os.makedirs(idir, exist_ok=True)
+            g = subprocess.run(
+                [sys.executable, _GATE_TEST, "--gate",
+                 "gate_resume_equivalent_to_uninterrupted"],
+                capture_output=True, text=True, env=env)
+            g_is_red = g.returncode != 0
+            d = subprocess.run([sys.executable, __file__, "--diag-pair",
+                                os.path.join(idir, "d")],
+                               capture_output=True, text=True, env=env)
+            line = next((l for l in d.stdout.splitlines() if l.startswith("DIAGPAIR")),
+                        "DIAGPAIR ?")
+            d_is_red = line.startswith("DIAGPAIR RED") or line.startswith("DIAGPAIR ARM")
+            gate_red += g_is_red
+            diag_red += d_is_red
+            tag = "" if g_is_red == d_is_red else "  <-- GATE/DIAG DISAGREE"
+            if tag:
+                sig = (g.stderr or g.stdout)[-600:]
+                diverge.append((it, sig, line))
+            gsig = "RED" if g_is_red else "green"
+            print(f"iter {it}: gate={gsig} {line}{tag}")
+    finally:
+        for p in burn:
+            p.terminate()
+    print(f"\nCOLOCATE SUMMARY over {runs} (stress={stress}): gate_red={gate_red} "
+          f"diag_red={diag_red} disagreements={len(diverge)}; same trigger only if the two "
+          f"rates match. exits 0 regardless.")
     for it, sig, line in diverge[:3]:
         print(f"--- disagreement iter {it}: {line}\n{sig}")
 
@@ -445,6 +504,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--diag-orch", type=int, metavar="RUNS")
     ap.add_argument("--diag-colocate", type=int, metavar="RUNS")
+    ap.add_argument("--stress", type=int, default=0, metavar="CORES")
     ap.add_argument("--diag-pair", action="store_true")
     ap.add_argument("--diag-arm", choices=["control", "restart"])
     ap.add_argument("--diag-selftest", action="store_true")
@@ -457,7 +517,8 @@ def main():
     elif a.diag_pair:
         pair_once(a.out or os.path.join("/tmp", "diag_pair_out"))
     elif a.diag_colocate:
-        coloc(a.diag_colocate, a.out or os.path.join("/tmp", "diag_colocate_out"))
+        coloc(a.diag_colocate, a.out or os.path.join("/tmp", "diag_colocate_out"),
+              stress=a.stress)
     elif a.diag_orch:
         orch(a.diag_orch, a.out or os.path.join("/tmp", "diag_resume_out"))
     else:
