@@ -2277,6 +2277,13 @@ CI_SELFTEST_EXCLUDE = {
     "scripts/test_reachability_fresh.py": "compares against the committed runs/reachability.txt derived artifact, not reproducible mid-CI",
     # optional third-party kernel not installed in the CPU image.
     "scripts/test_sft_moe_cfg.py": "imports liger_kernel, which is not installed in the CPU CI image",
+    # process isolation. isolate.py's selftest runs the full detector on the HOST's sandbox
+    # (bwrap/nsjail/firejail, root+unshare, or macOS sandbox-exec); a bare non-root Linux CI
+    # runner offers none, so isolate REFUSES by its own safety contract. The exclusion means
+    # 'this environment cannot run it safely'; it must never become an ALLOW_UNISOLATED bypass
+    # that relaxes the isolation contract. The sandbox-free detector cases stay covered via
+    # algorithms/code_reward.py's PARTIAL --selftest-detector, which does run in CI.
+    "algorithms/isolate.py": "needs a process-isolation sandbox (bwrap/nsjail/firejail/root-unshare/sandbox-exec); bare non-root CI runner offers none and isolate correctly REFUSES",
 }
 
 
