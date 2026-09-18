@@ -43,6 +43,7 @@ ACCEPTANCE, measured 2026-09-07 -- three mutants, each killing a DIFFERENT world
   always-empty (never refuse)                   -> W1, W3
 """
 
+import importlib.machinery
 import importlib.util
 import os
 import shutil
