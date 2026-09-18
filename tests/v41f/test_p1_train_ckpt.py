@@ -548,7 +548,19 @@ def gate_master_saved_bf16_refused():
     print("  M2: a master tensor saved as bf16 is refused on load")
 
 
+def _stray_td(root):
+    """The leak predicate. One implementation, shared by the live guard and its selftest.
+
+    Only `td_` entries count: torch's compile cache lands under TMPDIR by design and is not
+    this file's to remove. Asserting the root was EMPTY fired on `torchinductor_chenkailun.c`
+    and named `_scratch()` as the fix for a dir this test never created -- a guard with a
+    known false positive gets switched off.
+    """
+    return [x for x in sorted(os.listdir(root)) if x.startswith("td_")]
+
+
 def _selftest():
+    _leakguard_selftest()
     # Each gate builds a 180M model + fp32 master + AdamW (~2.5 GB) and several do save/load,
     # so running all seven in one process accumulates enough to OOM a laptop. Run each gate in
     # its OWN process (process-private memory, returned to the OS on exit); a failure in any
@@ -591,11 +603,7 @@ def _selftest():
             # the child exits, while a leak is still attributable to the gate that caused it
             # -- one check at the end cannot say which gate leaked, and naming the producer
             # is the whole point. The parent's rmtree below would otherwise erase the evidence.
-            # Only `td_` entries count: torch's compile cache lands under TMPDIR by design
-            # and is not this file's to remove. Asserting the root was EMPTY fired on
-            # `torchinductor_chenkailun.c` and named `_scratch()` as the fix for a dir this
-            # test never created -- a guard with a known false positive gets switched off.
-            stray = [x for x in sorted(os.listdir(root)) if x.startswith("td_")]
+            stray = _stray_td(root)
             if stray:
                 raise AssertionError(
                     f"{name} left {len(stray)} scratch entr(ies) under its TMPDIR root: "
@@ -615,6 +623,16 @@ def _leakguard_selftest():
     what they leave under TMPDIR. Cheap and model-free: no gate is run, so this can live in
     CI where the 180M gates cannot.
 
+    It calls `_stray_td`, the SAME function the live guard calls, rather than restating the
+    `td_` filter. A selftest that re-implements its subject certifies the re-implementation:
+    the two agree today and the guard can change alone tomorrow, which is the drift this
+    whole case exists to prevent.
+
+    CALLED FROM `_selftest()` (genB 2026-09-18). It was reachable only by typing
+    `--leakguard`, which no CI job and no hook entry names -- 76 lines of four-world
+    discrimination that would never have run. `_selftest()` is what `ci.yml` invokes for
+    this module and what the hook's SELFTEST_FILES entry runs, so the wiring is the fix.
+
     The two `torchinductor_*` worlds are the ones a naive `assert not os.listdir(root)` gets
     wrong, and it got them wrong in practice on 2026-09-18 -- which is why the predicate
     filters on `td_` rather than asserting emptiness.
@@ -622,8 +640,7 @@ def _leakguard_selftest():
     import subprocess
     import tempfile
 
-    def guard(root):
-        return [x for x in sorted(os.listdir(root)) if x.startswith("td_")]
+    guard = _stray_td
 
     worlds = [
         (
