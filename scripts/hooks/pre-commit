@@ -2703,6 +2703,12 @@ def main():
         # ALONE would have meant it runs only when someone edits the test -- the gap this table
         # exists to close, and the one my own guard fell into before (registered-guard-never-asked).
         "train.py": {"scripts/test_arch_compat.py", "scripts/test_plan_length.py",
+                     # Its subject is train.py's cache-path accessor, read out of the file
+                     # by source span -- so a train.py edit is exactly when it must run.
+                     # It was ONLY in SELFTEST_FILES, so nothing launched it on the
+                     # train.py edit that broke it (68d23a6b) and it stayed dead for
+                     # twelve days. 0.3s.
+                     "scripts/test_cache_dir_knob.py",
                      # Its subject is a class DEFINED in train.py, which it reads out of the file
                      # by source span -- so a train.py edit is exactly when it must run, and
                      # SELFTEST_FILES alone would run it only when someone edits the test. 0.05s
