@@ -573,13 +573,21 @@ def _looks_like_html_error(path, n=512):
     fourteen manifest builders, three of which carry no extension at all (RedPajama's
     names files), and the property under test is only "is this the object or a page".
 
-    THE BOM IS STRIPPED FIRST, and that is not tidiness. `bytes.lstrip()` strips ASCII
-    whitespace only, so a page served as `\\xef\\xbb\\xbf<!DOCTYPE html>` passed this
-    check -- measured 2026-09-19 in review: the same 403 page, refused without the BOM and
-    accepted with it. Both BOM orders are stripped (`\\xef\\xbb\\xbf` UTF-8,
-    `\\xff\\xfe`/`\\xfe\\xff` UTF-16), because an error page's encoding is the server's
-    choice. A real shard carrying a BOM (a jsonl file UTF-8-SIG) is still accepted, since
-    stripping leaves its `{`.
+    THE BOM IS STRIPPED AND THE BODY DECODED, and neither is tidiness. Two escapes were
+    measured in review 2026-09-19, both of which this predicate originally accepted:
+
+    1. `bytes.lstrip()` strips ASCII whitespace only, so a page served as
+       `\\xef\\xbb\\xbf<!DOCTYPE html>` passed while the same page without the BOM was
+       refused.
+    2. Stripping the BOM is NOT enough for UTF-16. A `\\xfe\\xff` (BE) page decodes to
+       `\\x00<\\x00!\\x00D...`, and `lstrip()` does not remove NUL, so `startswith(b"<")`
+       was False and the page was ACCEPTED. LE only worked by accident, because its `<`
+       lands in the first byte.
+
+    So the BOM selects an encoding, the head is decoded, and '<' is looked for there.
+    DECODE FAILURE IS FAIL CLOSED: bytes that are not decodable text are not a shard
+    either, and the one thing this function must never do is let an error page through.
+    A real shard carrying a BOM (a UTF-8-SIG jsonl) still decodes to its `{`.
 
     Content-Type is not consulted and does not need to be: it is a claim by the same
     server that lied about the body, and the servers in this chain answer `text/html` for
@@ -589,11 +597,22 @@ def _looks_like_html_error(path, n=512):
             head = f.read(n)
     except OSError:
         return False
-    for bom in (b"\xef\xbb\xbf", b"\xff\xfe", b"\xfe\xff"):
+    enc = None
+    for bom, name in ((b"\xef\xbb\xbf", "utf-8-sig"), (b"\xff\xfe", "utf-16-le"),
+                      (b"\xfe\xff", "utf-16-be")):
         if head.startswith(bom):
-            head = head[len(bom):]
+            # CONSUME THE BOM. Decoding it as text leaves U+FEFF, which `lstrip()` does not
+            # remove -- the page then starts with "﻿<" and the '<' check fails open a
+            # second time. Measured while fixing the first escape.
+            enc, head = name, head[len(bom):]
             break
-    return head.lstrip().lower().startswith(b"<")
+    try:
+        text = head.decode(enc or "utf-8")
+    except UnicodeDecodeError:
+        # Undecodable in the encoding its own BOM declares: not a shard. Refuse it rather
+        # than fall back to a byte compare, which is what let the BE page through.
+        return bool(enc)
+    return text.lstrip().lower().startswith("<")
 
 
 def _fetch_one(url_chain, part, name, prev_host):
@@ -871,20 +890,34 @@ def _selftest():
         with open(os.path.join(d, "pq.part"), "wb") as fp:
             fp.write(b"PAR1" + b"\x00" * 64)
         assert not _looks_like_html_error(os.path.join(d, "pq.part")), "a parquet shard is not a page"
-        # (a5) THE PREFIX VARIANTS THE `<` CHECK MISSES WITHOUT THE BOM STRIP. `lstrip()` is
-        # ASCII whitespace only, so `\xef\xbb\xbf<!DOCTYPE html>` passed the check while the
-        # same page without the BOM was refused -- measured in review 2026-09-19. Asserted both
-        # ways: the BOM'd page is refused, and a BOM'd REAL shard is still accepted, so the
-        # strip cannot become a way to smuggle a page past by prefixing a BOM to a real one.
-        for _pfx, _nm in ((b"\xef\xbb\xbf", "utf8"), (b"\xff\xfe", "utf16le"), (b"\xfe\xff", "utf16be")):
+        # (a5) THE PREFIX VARIANTS THE BYTE COMPARE MISSES. Two escapes, both measured in
+        # review 2026-09-19, so the fixtures MUST be real encodings: the first version of this
+        # case wrote `bom + b"<!DOCTYPE html>"` -- a BOM followed by bare ASCII -- which is not
+        # a byte sequence any UTF-16 encoder produces, and it passed while the real
+        # `encode("utf-16-be")` page was ACCEPTED (BE decodes to `\x00<\x00!...`, and lstrip
+        # does not remove NUL). A fixture that cannot occur in the world it describes proves
+        # nothing about that world.
+        for _enc, _bom, _nm in (("utf-8", b"\xef\xbb\xbf", "utf8"),
+                                ("utf-16-le", b"\xff\xfe", "utf16le"),
+                                ("utf-16-be", b"\xfe\xff", "utf16be")):
+            _page = b"<!DOCTYPE html><html><body>403</body></html>"
             with open(os.path.join(d, "bom.part"), "wb") as fp:
-                fp.write(_pfx + b"<!DOCTYPE html><html><body>403</body></html>")
+                fp.write(_bom + _page.decode().encode(_enc))
             assert _looks_like_html_error(os.path.join(d, "bom.part")), (
-                f"[{_nm}] a BOM-prefixed error page must be refused, not accepted for lacking '<'")
+                f"[{_nm}] a real {_enc}-encoded error page must be refused")
             with open(os.path.join(d, "bomreal.part"), "wb") as fp:
-                fp.write(_pfx + b'{"text": "real shard"}\n')
+                fp.write(_bom + '{"text": "real shard"}\n'.encode(_enc))
             assert not _looks_like_html_error(os.path.join(d, "bomreal.part")), (
-                f"[{_nm}] a BOM-prefixed real shard must still be accepted")
+                f"[{_nm}] a real {_enc}-encoded shard must still be accepted")
+        # A BOM that declares an encoding the body does not honour: fail closed. The bytes
+        # are not a shard, and the one thing this check must never do is let a page through.
+        # A SURROGATE in UTF-16 is the decode error that is easy to miss: it raises even
+        # though the length is a valid even count, and the length is what the first version
+        # of this fixture varied -- which meant it never reached the decode error at all.
+        with open(os.path.join(d, "bad.part"), "wb") as fp:
+            fp.write(b"\xff\xfe" + b"\x00\xd8")  # U+D800 lone surrogate, UTF-16-LE
+        assert _looks_like_html_error(os.path.join(d, "bad.part")), (
+            "bytes undecodable under their own declared BOM must be refused, not accepted")
         with open(os.path.join(d, "ws.part"), "wb") as fp:
             fp.write(b"\n\n   <html><body>403</body></html>")
         assert _looks_like_html_error(os.path.join(d, "ws.part")), "a whitespace-led page must be refused"
