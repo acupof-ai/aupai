@@ -7,7 +7,9 @@ This gate crosses a PROCESS boundary through the real PR-1 path -- build -> fp32
 TrainState + name-keyed AdamW -> train_step -> save_train_checkpoint -> NEW PROCESS
 load_train_checkpoint -> more train_steps -- and asserts the checkpoint/resume contract:
 
-* loss finite and decreasing on a fixed repeated batch (not NaN, not flat);
+* loss finite on every control and resumed step (no NaN). This gate's subject is save/load
+  fidelity, not convergence: the CI tier runs two steps (loss need not move down);
+  trajectory-vs-control equality is the property under test.
 * checkpoint BIT-EXACT at load: the state handed over at the save step equals the state
   read immediately after load, before any resumed step, on master / exp_avg / exp_avg_sq
   by name (a wrong name bind, a copy-instead-of-alias, or a dtype cast fails this);
@@ -192,8 +194,8 @@ def _compare(out, loose, expect_bind=False):
     bad = []
     cl, full = c["losses"], half + r["losses"]
 
-    if not all(torch.isfinite(torch.tensor(x)) for x in cl):
-        bad.append("non-finite loss")
+    if not all(torch.isfinite(torch.tensor(x)) for x in cl + r["losses"]):
+        bad.append("non-finite loss in control or resumed run")
     if len(full) != len(cl):
         bad.append(f"step count {len(full)} != {len(cl)}")
 
@@ -243,9 +245,9 @@ def _compare(out, loose, expect_bind=False):
         for b in bad:
             print(f"  - {b}")
         return 1
-    print(f"TRAIN RESUME SMOKE GREEN ({'loose' if loose else 'CI'}): loss {cl[0]:.4f}->"
-          f"{cl[-1]:.4f} finite+down; checkpoint bit-exact at load; {len(c['buffers'])} buffers "
-          f"model-only; 4 engram leaves grad")
+    print(f"TRAIN RESUME SMOKE GREEN ({'loose' if loose else 'CI'}): loss finite every step "
+          f"(start {cl[0]:.4f}, end {cl[-1]:.4f}); checkpoint bit-exact at load; "
+          f"{len(c['buffers'])} buffers model-only; 4 engram leaves grad")
     return 0
 
 
