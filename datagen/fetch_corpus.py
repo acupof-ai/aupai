@@ -573,8 +573,8 @@ def _looks_like_html_error(path, n=512):
     fourteen manifest builders, three of which carry no extension at all (RedPajama's
     names files), and the property under test is only "is this the object or a page".
 
-    THE BOM IS STRIPPED AND THE BODY DECODED, and neither is tidiness. Two escapes were
-    measured in review 2026-09-19, both of which this predicate originally accepted:
+    THE BOM IS STRIPPED AND, FOR UTF-16 ONLY, THE BODY DECODED. Three escapes were measured
+    in review 2026-09-19, all of which this predicate originally accepted:
 
     1. `bytes.lstrip()` strips ASCII whitespace only, so a page served as
        `\\xef\\xbb\\xbf<!DOCTYPE html>` passed while the same page without the BOM was
@@ -583,11 +583,18 @@ def _looks_like_html_error(path, n=512):
        `\\x00<\\x00!\\x00D...`, and `lstrip()` does not remove NUL, so `startswith(b"<")`
        was False and the page was ACCEPTED. LE only worked by accident, because its `<`
        lands in the first byte.
+    3. Refusing on decode failure only when a BOM declared an encoding left the no-BOM
+       case fail-OPEN: undecodable bytes returned False, which is "accepted". Measured:
+       `<!DOCTYPE html><html>caf\\xe9</html>` and `<!DOCTYPE html>\\xff<body>` were both
+       ACCEPTED. The docstring said fail closed and the code did not.
 
-    So the BOM selects an encoding, the head is decoded, and '<' is looked for there.
-    DECODE FAILURE IS FAIL CLOSED: bytes that are not decodable text are not a shard
-    either, and the one thing this function must never do is let an error page through.
-    A real shard carrying a BOM (a UTF-8-SIG jsonl) still decodes to its `{`.
+    So '<' is looked for as a BYTE for every encoding whose '<' is the byte 0x3C (ASCII,
+    UTF-8 and their supersets -- which is every format this fetcher handles), and only a
+    UTF-16 BOM changes that, because there '<' is two bytes. Decoding is therefore never
+    needed except for UTF-16, and the no-BOM path cannot fail open because it never
+    decodes. A lone surrogate under a declared UTF-16 BOM raises and is refused: bytes
+    undecodable under their own declared encoding are not a shard either, and the one
+    thing this check must never do is let a page through.
 
     Content-Type is not consulted and does not need to be: it is a claim by the same
     server that lied about the body, and the servers in this chain answer `text/html` for
@@ -597,22 +604,17 @@ def _looks_like_html_error(path, n=512):
             head = f.read(n)
     except OSError:
         return False
-    enc = None
-    for bom, name in ((b"\xef\xbb\xbf", "utf-8-sig"), (b"\xff\xfe", "utf-16-le"),
-                      (b"\xfe\xff", "utf-16-be")):
-        if head.startswith(bom):
-            # CONSUME THE BOM. Decoding it as text leaves U+FEFF, which `lstrip()` does not
-            # remove -- the page then starts with "﻿<" and the '<' check fails open a
-            # second time. Measured while fixing the first escape.
-            enc, head = name, head[len(bom):]
-            break
-    try:
-        text = head.decode(enc or "utf-8")
-    except UnicodeDecodeError:
-        # Undecodable in the encoding its own BOM declares: not a shard. Refuse it rather
-        # than fall back to a byte compare, which is what let the BE page through.
-        return bool(enc)
-    return text.lstrip().lower().startswith("<")
+    if head.startswith(b"\xff\xfe") or head.startswith(b"\xfe\xff"):
+        # CONSUME THE BOM. Decoding it as text leaves U+FEFF, which `lstrip()` does not
+        # remove -- the page then starts with "﻿<" and the check fails open again.
+        # Measured while fixing escape 1.
+        enc = "utf-16-le" if head.startswith(b"\xff\xfe") else "utf-16-be"
+        try:
+            text = head[2:].decode(enc)
+        except UnicodeDecodeError:
+            return True
+        return text.lstrip().lower().startswith("<")
+    return head.lstrip(b"\xef\xbb\xbf").lstrip().lower().startswith(b"<")
 
 
 def _fetch_one(url_chain, part, name, prev_host):
@@ -924,6 +926,24 @@ def _selftest():
         with open(os.path.join(d, "xml.part"), "wb") as fp:
             fp.write(b"<?xml version='1.0'?><Error><Code>403</Code></Error>")
         assert _looks_like_html_error(os.path.join(d, "xml.part")), "an XML error body must be refused"
+        # (a6) NO BOM AND NOT VALID UTF-8. The branch this case exists for: refusing on decode
+        # failure only when a BOM declared an encoding left the no-BOM path fail-OPEN, so
+        # `<!DOCTYPE html>caf\xe9` and `<!DOCTYPE html>\xff` were ACCEPTED while the same page
+        # in pure ASCII was refused (de, 2026-09-19 -- the docstring said fail closed and the
+        # code did not). Latin-1 error pages are no rarer than BOM-prefixed ones. The real
+        # shard below carries the same `\xe9` byte, so the assertion separates the page from
+        # the corpus rather than from the byte.
+        for _bad, _nm in ((b"<!DOCTYPE html><html>caf\xe9</html>", "latin-1 byte"),
+                          (b"<!DOCTYPE html>\xff<body>", "raw 0xff"),
+                          (b"<!DOCTYPE html>\xed\xa0\x80</html>", "utf-8 surrogate")):
+            with open(os.path.join(d, "nobom.part"), "wb") as fp:
+                fp.write(_bad)
+            assert _looks_like_html_error(os.path.join(d, "nobom.part")), (
+                f"[{_nm}] a no-BOM error page with a non-UTF-8 byte must be refused, not accepted")
+        with open(os.path.join(d, "latin1.part"), "wb") as fp:
+            fp.write(b'{"text": "caf\xe9"}\n')
+        assert not _looks_like_html_error(os.path.join(d, "latin1.part")), (
+            "a real shard whose bytes are not valid UTF-8 must still be accepted")
         _rm(part)  # leave `part` clean: test (a) below resumes onto it and a stale file makes
         # curl -C - exit 33 (range not satisfiable), which failed a LATER assertion for a
         # reason that had nothing to do with what it tests. Measured, this session.
