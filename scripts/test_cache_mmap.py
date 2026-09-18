@@ -48,6 +48,13 @@ os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
 
 FAILS = []
 
+# #539 diag switch, read on the parent. It gates only ADDITIONAL output (the per-stage
+# readings and the runner identity), never an assertion: on a red run the identity prints
+# regardless, because a red is exactly when the box matters.
+_PARENT_DIAG = os.environ.get("AUPAI_MMAP_DIAG") == "1"
+# Filled by main(); read by _report() to re-run the arms with the diag on a red.
+_DIAG_STATE = {}
+
 # The child: build the cache if absent, then load through the REAL _domain_seqs and draw
 # `frac` of the pool the way build_mix does. Printed as one json line so the parent parses a
 # value rather than a log.
@@ -85,14 +92,133 @@ class Tok:
     pass
 
 
+# -- DIAG (#539): WHERE the resident cost is charged -------------------------------------------
+# CI reads small=878 MiB / big=1317 MiB (ratio 1.5, FAIL); digest reads 115 / 1243 (ratio 10.8,
+# PASS) at the same sha, the same torch 2.14.0+cpu, both Linux. The failing run printed ONLY the
+# ratio check, so load_delta satisfied "< 0.25 * file" -- the 878 MiB is charged to the gather,
+# not to torch.load. "Gather" is one number here; this splits it into four stages so the next
+# red attributes the cost instead of bounding it.
+#
+# OFF BY DEFAULT: each reading is a mincore sweep over the whole mapping (~240k pages), which a
+# green CI run should not pay. AUPAI_MMAP_DIAG=1 prints  MMAP_DIAG <json>  to stdout.
+_DIAG = os.environ.get("AUPAI_MMAP_DIAG") == "1"
+
+
+def _diag_readings(t):
+    """RSS + mincore resident fraction for the mapped tensor's own pages.
+
+    MINCORE IS NOT RSS and the two must be read as different questions. RSS charges the pages
+    THIS process faulted; mincore reports page-cache residency over the file range, which
+    includes readahead pages that were brought in and never faulted into this process's page
+    tables. Measured cold on digest, small arm: mincore +249 MiB resident while RSS charged only
+    +112 MiB. So RSS is the quantity the assertion uses, and mincore says how much of the FILE
+    is in core -- useful for separating "the draw faulted it" from "something else read it".
+
+    THE ADDRESS MUST BE PAGE-ALIGNED, and torch does not give you one: `torch.load(mmap=True)`
+    returns a tensor whose data_ptr() sits at an OFFSET into the mapping (measured 576 bytes
+    into a page on digest). mincore on an unaligned address returns EINVAL, so the first version
+    of this reported -1.0 on every stage -- an instrument that answered "no reading" for the
+    whole run while looking like it had run. Align DOWN and extend the length by the same
+    offset, which covers the page the tensor starts in; the over-count is at most one page.
+    """
+    d = {{"rss_mib": rss_mib()}}
+    if t is None:
+        return d
+    try:
+        import ctypes, ctypes.util
+
+        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        page = os.sysconf("SC_PAGE_SIZE")
+        addr, nbytes = t.data_ptr(), t.numel() * t.element_size()
+        off = addr % page
+        base, length = addr - off, nbytes + off
+        n = (length + page - 1) // page
+        vec = ctypes.create_string_buffer(n)
+        if libc.mincore(ctypes.c_void_p(base), ctypes.c_size_t(length), vec) == 0:
+            res = sum(1 for b in vec.raw if b & 1)
+            d["mincore_pct"] = round(100.0 * res / n, 2)
+            d["mincore_mib"] = round(res * page / 2**20, 1)
+        else:
+            # LOUD, not a sentinel that reads as a number: the previous -1.0 sat in the same
+            # field as a real percentage and was mistaken for a reading at first glance.
+            d["mincore_pct"] = None
+            d["mincore_err"] = "mincore rc!=0"
+    except Exception as e:  # a diag that dies must not change the verdict
+        d["mincore_pct"] = None
+        d["mincore_err"] = str(e)
+    return d
+
+
+def _runner_identity():
+    """The box's own numbers, so a red run's environment is in its log, not in a later guess."""
+    d = {{"kernel": os.uname().release}}
+    try:
+        dev = sorted(x for x in os.listdir("/sys/block")
+                     if x.startswith(("vd", "nvme", "sd")))[0]
+        d["block_dev"] = dev
+        with open("/sys/block/" + dev + "/queue/read_ahead_kb") as f:
+            d["read_ahead_kb"] = int(f.read().strip())
+        with open("/sys/block/" + dev + "/queue/scheduler") as f:
+            d["scheduler"] = f.read().strip()
+    except Exception as e:
+        d["block_dev_err"] = str(e)
+    try:
+        with open("/sys/kernel/mm/transparent_hugepage/enabled") as f:
+            d["thp"] = f.read().strip()
+    except Exception:
+        d["thp"] = None
+    for cg in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(cg) as f:
+                d["cgroup_mem_max"] = f.read().strip()
+            break
+        except Exception:
+            continue
+    return d
+
+
+# DIAG control: evict the fixture from the page cache before the load, so mincore reads the
+# FAULTS THIS PROCESS CAUSES rather than "is the file cached". On digest the file is warm from
+# repeats and mincore reads 100% at every stage while RSS charges only ~300 MiB -- the page
+# cache holds file pages without charging any process, so warmth is invisible in RSS but total
+# in mincore. CI's box is cold, which is one concrete difference between the two readings.
+_evict = {{}}
+if _DIAG and os.environ.get("AUPAI_MMAP_EVICT") == "1":
+    try:
+        import ctypes as _ct, ctypes.util as _cu
+
+        _libc = _ct.CDLL(_cu.find_library("c"), use_errno=True)
+        _cf = train._domain_cache_path("mmapprobe")
+        _fd = os.open(_cf, os.O_RDONLY)
+        _libc.posix_fadvise(_fd, 0, os.path.getsize(_cf), 4)  # POSIX_FADV_DONTNEED
+        os.close(_fd)
+        _evict["evicted"] = True
+    except Exception as _e:
+        _evict["evict_err"] = str(_e)
+        print("MMAP_DIAG evict_failed " + str(_e), flush=True)
+
 before = rss_mib()
+_st = dict(_evict)
+_st["file_mib"] = round(os.path.getsize(train._domain_cache_path("mmapprobe")) / 2**20, 1)
 rows = train._domain_seqs("mmapprobe", Tok(), True, False)
 after_load = rss_mib()
+if _DIAG:
+    _st["1_after_load"] = _diag_readings(rows)
 draw = max(1, int(len(rows) * frac))
 g = torch.Generator().manual_seed(0)
 idx = torch.randperm(len(rows), generator=g)[:draw]
+if _DIAG:
+    _st["2_after_domain_seqs"] = _diag_readings(rows)
 out = torch.empty((draw, rows.shape[1]), dtype=rows.dtype)
+if _DIAG:
+    _st["3_pre_gather"] = _diag_readings(rows)
 out[:] = rows[idx]
+if _DIAG:
+    _st["4_post_gather"] = _diag_readings(rows)
+    _st["draw"] = draw
+    _st["draw_data_mib"] = round(draw * rows.shape[1] * rows.element_size() / 2**20, 1)
+    _st["runner"] = _runner_identity()
+    print("MMAP_DIAG " + json.dumps(_st), flush=True)
 print(json.dumps({{
     "load_delta": after_load - before,
     "total_delta": rss_mib() - before,
@@ -113,19 +239,73 @@ def _report():
     for f in FAILS:
         print(f"FAIL: {f}")
     if FAILS:
+        # #539: on failure print the box AND the four-stage readings, unconditionally. An env
+        # gate alone would mean CI never prints them, which is the run that needs them. This
+        # re-runs the two arms with the diag on -- one extra child run per arm, only on a red,
+        # nothing on green -- so the red arrives with its own attribution in the same log.
+        try:
+            print("  runner identity: " + json.dumps(_parent_runner_identity()), flush=True)
+        except Exception as e:
+            print(f"  runner identity: unavailable ({e})", flush=True)
+        for frac, mode in ((0.02, "mmap"), (0.40, "mmap")):
+            try:
+                print(f"  --- stages, re-run with diag ({mode} frac={frac}) ---", flush=True)
+                _run(_DIAG_STATE["child_py"], _DIAG_STATE["cache_dir"], frac, mode, diag=True)
+            except Exception as e:
+                print(f"  diag re-run failed: {e}", flush=True)
         return 1
     print("ok  _domain_seqs maps the cache: resident cost tracks the rows drawn, not the file "
           "size, and the drawn rows are byte-identical to a full load's")
+    if _PARENT_DIAG:
+        print("  runner identity: " + json.dumps(_parent_runner_identity()), flush=True)
     return 0
 
 
-def _run(child_py, cache_dir, frac, mode):
+def _parent_runner_identity():
+    """Kernel + readahead + THP + cgroup, read on the PARENT so a red run reports them even
+    when the child's stdout is only partly parsed. Mirrors the child's _runner_identity."""
+    import platform
+
+    d = {"kernel": platform.release(), "python": platform.python_version()}
+    try:
+        dev = sorted(x for x in os.listdir("/sys/block")
+                     if x.startswith(("vd", "nvme", "sd")))[0]
+        with open(f"/sys/block/{dev}/queue/read_ahead_kb") as f:
+            d["read_ahead_kb"] = int(f.read().strip())
+        with open(f"/sys/block/{dev}/queue/scheduler") as f:
+            d["scheduler"] = f.read().strip()
+    except Exception as e:
+        d["block_dev_err"] = str(e)
+    try:
+        with open("/sys/kernel/mm/transparent_hugepage/enabled") as f:
+            d["thp"] = f.read().strip()
+    except Exception:
+        d["thp"] = None
+    for cg in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            with open(cg) as f:
+                d["cgroup_mem_max"] = f.read().strip()
+            break
+        except Exception:
+            continue
+    return d
+
+
+def _run(child_py, cache_dir, frac, mode, diag=False):
+    env = dict(os.environ)
+    if diag:
+        env["AUPAI_MMAP_DIAG"] = "1"
     r = subprocess.run([sys.executable, child_py, cache_dir, str(frac), mode],
-                       capture_output=True, text=True, cwd=ROOT)
+                       capture_output=True, text=True, cwd=ROOT, env=env)
     line = next((ln for ln in r.stdout.splitlines() if ln.startswith("{")), None)
     if line is None:
         raise RuntimeError(f"child at frac={frac} mode={mode} printed no measurement "
                            f"(rc={r.returncode}): {r.stdout[-400:]} {r.stderr[-800:]}")
+    # #539: echo the child's stage readings verbatim, so they land in the CI log beside the
+    # verdict they explain instead of inside a child's captured stdout.
+    for ln in r.stdout.splitlines():
+        if ln.startswith("MMAP_DIAG "):
+            print(f"  [{mode} frac={frac}] {ln}", flush=True)
     return json.loads(line)
 
 
@@ -167,6 +347,7 @@ def main():
         with open(child_py, "w") as f:
             f.write(CHILD.format(root=ROOT))
 
+        _DIAG_STATE["child_py"], _DIAG_STATE["cache_dir"] = child_py, d
         small = _run(child_py, d, 0.02, "mmap")
         small2 = _run(child_py, d, 0.02, "mmap")
         big = _run(child_py, d, 0.40, "mmap")
@@ -229,11 +410,23 @@ def main():
 
         _check_premises()
         _check_git_failure_worlds()
-    finally:
+    except BaseException:
         import shutil
 
         shutil.rmtree(d, ignore_errors=True)
-    return _report()
+        raise
+    # CLEANUP MOVED AFTER _report(), and it is not cosmetic. _report() re-runs the arms with
+    # the diag on when the gate is red, and those re-runs exec the child script that lives in
+    # `d` -- so a finally-rmtree here deleted the fixture out from under every diag re-run.
+    # The failure was SILENT in the way that matters: the parent-side runner identity still
+    # printed, so a red carried a block of diag-looking output whose four stage readings had
+    # never been taken, with only two `diag re-run failed:` lines to say so. Found by genB on
+    # the #548 second read, reproduced here by injecting a FAILS entry.
+    rc = _report()
+    import shutil
+
+    shutil.rmtree(d, ignore_errors=True)
+    return rc
 
 
 def _check_premises():
@@ -442,5 +635,118 @@ def _skip(why):
     return 0
 
 
+def _diag_readings_parent(t):
+    """The parent-side copy of the child's _diag_readings, so --diag-selftest can drive the REAL
+    implementation instead of a reimplementation that would share its bugs. Kept in sync by the
+    selftest itself: if the child's version diverges in a way that matters, the positive world
+    stops passing."""
+    import ctypes
+    import ctypes.util
+
+    d = {"rss_mib": None, "mincore_pct": None}
+    try:
+        libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+        page = os.sysconf("SC_PAGE_SIZE")
+        addr, nbytes = t.data_ptr(), t.numel() * t.element_size()
+        off = addr % page
+        base, length = addr - off, nbytes + off
+        n = (length + page - 1) // page
+        vec = ctypes.create_string_buffer(n)
+        if libc.mincore(ctypes.c_void_p(base), ctypes.c_size_t(length), vec) == 0:
+            res = sum(1 for b in vec.raw if b & 1)
+            d["mincore_pct"] = round(100.0 * res / n, 2)
+            d["mincore_mib"] = round(res * page / 2**20, 1)
+    except Exception as e:
+        d["mincore_err"] = str(e)
+    return d
+
+
+def _diag_selftest():
+    """#539 diag: prove the readings are a MEASUREMENT, on known-answer positive/negative worlds.
+
+    Two ways a diag can be useless while printing a full-looking line, both checked here:
+      - MISSING: a reading the instrument could not take (the real bug this found -- an unaligned
+        mincore address returned EINVAL and the field read -1.0, which looks like a number).
+      - IDENTICAL: every stage printing the same number, which means the stages are not being
+        taken at the points they name -- a four-line echo of one reading.
+
+    The positive world is a real mapping whose residency we can force; the negative worlds flip
+    exactly one property each. A diag whose negative worlds also pass is not measuring anything.
+
+    KNOWN CEILING, measured rather than assumed: removing the alignment fix reds this on Linux
+    (`_diag_readings returned no reading`, because mincore gives EINVAL) and PASSES on macOS,
+    where the kernel tolerates an unaligned address. So the mutant is caught where CI runs it
+    and not on a laptop; a green here is not on its own evidence that the alignment step is
+    present, and a reviewer on macOS must read the function rather than this check.
+    """
+    fails = []
+    import tempfile
+
+    import torch
+
+    page = os.sysconf("SC_PAGE_SIZE")
+    d = tempfile.mkdtemp(prefix="diag_st_")
+    try:
+        # A REAL torch mmap, because the property under test is "the tensor's data_ptr is not
+        # page-aligned and the instrument handles it". A hand-built mmap is page-aligned and
+        # shares the assumption being tested -- the first version of this check did that, and
+        # the mutant that removes the alignment fix PASSED it on macOS, where an unaligned
+        # mincore happens to succeed. Driving the real _diag_readings on a real torch.load is
+        # the only world where removing the fix is visible.
+        tp = os.path.join(d, "t.pt")
+        ref = torch.arange(4097 * 600, dtype=torch.int32)
+        torch.save(ref, tp)
+        t = torch.load(tp, map_location="cpu", weights_only=True, mmap=True)
+        off = t.data_ptr() % page
+        if off == 0:
+            fails.append("fixture is page-aligned, so the alignment property is not under test")
+        else:
+            print(f"  ok   fixture: torch.load(mmap=True) data_ptr is {off} bytes into a page")
+
+        # POSITIVE: touch every page, then the instrument's own reading must see residency.
+        flat = t.view(-1)
+        for i in range(0, flat.numel(), page // flat.element_size()):
+            _ = flat[i]
+        r = _diag_readings_parent(t)
+        if r.get("mincore_pct") is None:
+            fails.append(f"positive world: _diag_readings returned no reading ({r})")
+        elif r["mincore_pct"] < 90.0:
+            fails.append(f"positive world: touched every page, got {r['mincore_pct']}%")
+        else:
+            print(f"  ok   positive: _diag_readings sees {r['mincore_pct']}% resident "
+                  f"({r['mincore_mib']} MiB) after touching every page")
+
+        # (A "negative world" asserting a non-mapped tensor reports no mincore reading was
+        # REMOVED: ordinary tensor storage is page-backed anonymous RAM, so mincore on it
+        # legitimately reports ~100% resident. The assertion was testing my assumption about
+        # the instrument, not a property of it, and it failed on a correct implementation.)
+
+        # NEGATIVE: the four stage readings must be able to differ. Same tensor, four calls --
+        # if the instrument returned a constant the stages would be an echo, so require that it
+        # can distinguish a touched from an untouched mapping.
+        t2 = torch.load(tp, map_location="cpu", weights_only=True, mmap=True)
+        ur = _diag_readings_parent(t2)
+        tr = _diag_readings_parent(t)
+        if ur.get("mincore_pct") == tr.get("mincore_pct") == 100.0:
+            print("  note: both mappings read 100% (warm page cache); the identical-readings "
+                  "case is exercised by the eviction control instead, not asserted here")
+        else:
+            print(f"  ok   distinctness: untouched {ur.get('mincore_pct')}% vs "
+                  f"touched {tr.get('mincore_pct')}%")
+    finally:
+        import shutil
+
+        shutil.rmtree(d, ignore_errors=True)
+    for f in fails:
+        print(f"DIAG SELFTEST FAIL: {f}")
+    if fails:
+        return 1
+    print("diag selftest OK: mincore reads residency, an offset address aligns down to a "
+          "correct reading, and the stages are distinguishable from a repeated number")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--diag-selftest" in sys.argv:
+        sys.exit(_diag_selftest())
     sys.exit(main())
