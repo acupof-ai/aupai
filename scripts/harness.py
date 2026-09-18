@@ -156,6 +156,16 @@ _CHECK_TIMEOUTS = {
     # the entries around it use, and still far under a hang.
     "test_integration_tree_guard": 30,
     "eval_sft_template_contamination": 90,
+    # Measured 2026-09-19: 2.2s solo on an M-series laptop (2.20 / 2.26 / 2.19 over three
+    # runs), but the check is a repo-scope AST scan of every .py/.sh -- it grows with the
+    # tree, not with the change under test -- and on a 2-core CI runner it exceeds the 5s
+    # default. That is the deadline-nothing-can-meet case: in the #567 ci-selftests job it
+    # timed out as strike 1 in the explicit `harness check` step and strike 2 inside
+    # scripts/test_check_summary.py's own selftest, so a check that is GREEN (it PASSes in
+    # 2.2s by hand) FAILed by "a second consecutive timeout". The strike mechanism is right;
+    # the deadline was set for a machine the CI runner is not. 30s is ~13x the laptop
+    # measurement, matching the ratio the entries around it use, and still far under a hang.
+    "no_hardcoded_cache_path": 30,
     # Measured on the pod, 2026-09-01: 0.8s to load the 1.5GB pack, 0.2s to flatten
     # 192M tokens, and 0.127s per probe x 76 probes = 9.7s of search. It was never
     # going to fit 5s, so it timed out on nine consecutive runs and FAILed with
