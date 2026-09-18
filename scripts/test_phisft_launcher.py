@@ -102,6 +102,14 @@ def _build_tree(claim_dir):
     # torchrun = a NON-SHELL python process (a bash stub is refused as a shell holder). It
     # records argv, then either blocks until a die file appears (happy path) or exits
     # immediately non-zero (early-death world), per TORCHRUN_BEHAVIOR.
+    #
+    # It also HOLDS an fd whose path names nvidia, standing in for the /dev/nvidia* fds a real
+    # torchrun holds once it is on a card. The launcher's claim is --require-device, and
+    # card_claim.nvidia_fds counts an fd by `"nvidia" in os.readlink(...)`: a stub holding none
+    # is refused on Linux, where /proc is readable, while macOS abstains (None, never refuses)
+    # and the test passed for the wrong reason. Holding one makes the stub the same OBSERVABLE
+    # shape as the process the assertion is about, without weakening the predicate.
+    dev_fd_path = os.path.join(d, "nvidia0")
     ready = os.path.join(d, "torchrun_ready")
     die = os.path.join(d, "torchrun_die")
     tr = os.path.join(d, "bin", "torchrun")
@@ -109,6 +117,7 @@ def _build_tree(claim_dir):
         f.write(
             "#!" + sys.executable + "\n"
             "import os, sys, time\n"
+            f"_devfd = os.open({dev_fd_path!r}, os.O_CREAT | os.O_RDONLY)\n"
             f"open({ready!r}, 'w').close()\n"
             "with open(os.path.join(os.path.dirname(__file__), '..', 'torchrun_argv'), 'w') as a:\n"
             "    a.write(' '.join(sys.argv[1:]))\n"
@@ -161,6 +170,15 @@ def main():
                 bound = files[0]
                 break
             time.sleep(0.05)
+        # WHERE THE PREDICATE ABSTAINS, SAY SO. On macOS there is no /proc, so nvidia_fds
+        # returns None and --require-device cannot refuse; the claim lands whatever the stub
+        # holds. The assert below therefore cannot fail here for the reason it fails on Linux,
+        # and a green line would otherwise read as "the acceptance path was exercised". It is
+        # not: that path is pinned by card_claim's own w1_dev world on every machine, and by
+        # ubuntu CI here. Printed, never silent.
+        if not os.path.isdir("/proc"):
+            print("SKIP require-device acceptance path linux-only on this host "
+                  "(no /proc): covered by card_claim w1_dev + CI ubuntu")
         assert bound, "launcher left torchrun running with NO live card claim"
         import json
         claim = json.load(open(os.path.join(claim_dir, bound)))
