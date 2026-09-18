@@ -1,0 +1,9 @@
+13dirty  0e-data-fp-readiness  /Users/bytedance/code/aupai-0e
+1dirty  3b-review-rows-0917  /private/tmp/ledger3b
+1dirty  66-review376  /Users/bytedance/code/aupai-66-sampling
+1dirty  de-117-textbooks  /Users/bytedance/code/aupai-de-textbooks
+1dirty  de-v42-gate-followup  /Users/bytedance/code/aupai-v42
+2dirty  66-l3-locked-ledger  /Users/bytedance/code/aupai-66-l3label
+4dirty  ae-gate-mix  /Users/bytedance/code/aupai-ae
+7dirty  fb-v41f-compressor  /Users/bytedance/code/aupai-v41f
+9dirty  genb-l3-funnel-selftests  /Users/bytedance/code/aupai/.claude/worktrees/genB
