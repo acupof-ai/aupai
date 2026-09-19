@@ -38,7 +38,22 @@ jobs:
       # instead of re-listing it), and kept anyway: a few seconds of double-run is cheaper
       # than making a production-blocker fix wait on a CI refactor's merge order.
       - run: python tests/v41f/test_p1_config_gate.py --selftest
-      - run: python tests/v41f/test_p1_train_ckpt.py
+      - name: train checkpoint gates
+        id: train_ckpt
+        # gate_resume_equivalent points its workers here when set; only that gate reads it, the
+        # other gates in the file ignore it. On a red the per-leaf/opt/RNG/ckpt dump survives
+        # for upload below instead of vanishing in a throwaway td_eq_ mkdtemp.
+        env:
+          GATE_DUMP_DIR: ${{ runner.temp }}/gate_resume_dump
+        run: python tests/v41f/test_p1_train_ckpt.py
+      - name: upload resume-equality dump on gate failure
+        if: failure() && steps.train_ckpt.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-resume-dump-${{ github.run_id }}
+          path: ${{ runner.temp }}/gate_resume_dump
+          if-no-files-found: ignore
+          retention-days: 14
       # Step-D long-horizon numeric hygiene: off+ste at 40 steps, separate processes, with
       # frozen/SIX/finite/descent assertions and in-process mutants (~2-4 min CPU). The full
       # 160-step evidence is runs/longrun/*.json, too slow for CI; --selftest is the gate.
