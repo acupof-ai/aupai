@@ -184,6 +184,13 @@ def _selftest():
 
     from tokenizers import Tokenizer
 
+    # data/tokenizer.json is a gitignored pod artifact. On a CPU CI checkout / laptop without it
+    # the selftest cannot build its known-answer tokens; print an explicit SKIP line (still rc0)
+    # rather than crashing on from_file. The CI driver partitions this file out on exactly this
+    # missing artifact.
+    if not os.path.exists(TOK):
+        print("count_dir selftest: SKIPPED (data/tokenizer.json absent; gitignored pod artifact)")
+        return 0
     tok = Tokenizer.from_file(TOK)
     rows = ["hello world", "def f(x):\n    return x + 1", "中文测试", "a b"]
     with tempfile.TemporaryDirectory() as d:

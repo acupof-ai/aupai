@@ -1,5 +1,10 @@
 name: ci
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  # manual trigger for the diag-resume causal stress matrix (A/B/C/D arms); no inputs needed,
+  # the arms are the job matrix. Push/PR runs keep the unloaded control only.
+  workflow_dispatch:
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -8,7 +13,7 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
-      - run: pip install ruff tokenizers numpy pytest
+      - run: pip install ruff tokenizers numpy pytest scipy detect-secrets transformers
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: ruff check --select E9,F train.py sft.py sft_math.py eval scripts datagen algorithms filters
       - run: python -m py_compile train.py sft.py sft_math.py serve.py chat.py infer.py datagen/prepare_sft_math.py eval/*.py scripts/*.py mathbank/*.py datagen/*.py algorithms/*.py filters/*.py
@@ -33,7 +38,22 @@ jobs:
       # instead of re-listing it), and kept anyway: a few seconds of double-run is cheaper
       # than making a production-blocker fix wait on a CI refactor's merge order.
       - run: python tests/v41f/test_p1_config_gate.py --selftest
-      - run: python tests/v41f/test_p1_train_ckpt.py
+      - name: train checkpoint gates
+        id: train_ckpt
+        # gate_resume_equivalent points its workers here when set; only that gate reads it, the
+        # other gates in the file ignore it. On a red the per-leaf/opt/RNG/ckpt dump survives
+        # for upload below instead of vanishing in a throwaway td_eq_ mkdtemp.
+        env:
+          GATE_DUMP_DIR: ${{ runner.temp }}/gate_resume_dump
+        run: python tests/v41f/test_p1_train_ckpt.py
+      - name: upload resume-equality dump on gate failure
+        if: failure() && steps.train_ckpt.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-resume-dump-${{ github.run_id }}
+          path: ${{ runner.temp }}/gate_resume_dump
+          if-no-files-found: ignore
+          retention-days: 14
       # Step-D long-horizon numeric hygiene: off+ste at 40 steps, separate processes, with
       # frozen/SIX/finite/descent assertions and in-process mutants (~2-4 min CPU). The full
       # 160-step evidence is runs/longrun/*.json, too slow for CI; --selftest is the gate.
@@ -41,6 +61,11 @@ jobs:
       # Cheap guard for the committed 160-step evidence JSONs (no model): the same validate()
       # over runs/longrun/, so a tampered/stale evidence file cannot sit there unchecked.
       - run: python probes/v41f_stepd_longrun.py --validate-committed runs/longrun
+      # Non-blocking bimodal-resume diagnostic (0e): this selftest stays in the required
+      # check job so the diagnostic's comparator is proven non-empty; the heavy multi-run
+      # capture lives in the separate diag-resume job below (continue-on-error). It does NOT
+      # replace or relax gate_resume_equivalent_to_uninterrupted above, which stays fail-closed.
+      - run: python tests/v41f/diag_resume_bimodal.py --diag-selftest
       # Whole-machine train->save->fresh-process resume smoke (0e): bit-exact checkpoint at
       # load and a single-threaded 1-step bit-exact continuation (cross-platform). Heavy x3
       # model build runs here; the pre-commit hook runs the model-free --selftest.
@@ -98,7 +123,56 @@ jobs:
       - run: python scripts/tokenizer_eval.py --selftest
       - run: python scripts/harness.py --selftest
       - run: python scripts/harness.py check
+      # Every registered, CI-runnable selftest, enumerated from the hook's SELFTEST_FILES/PARTIAL
+      # map at runtime rather than re-listed here. Closes the gap where a map selftest sat red for
+      # days because nothing in this explicit list ran it (#502). NEEDS_DATA exemptions and the
+      # small reasoned CI_SELFTEST_EXCLUDE set (GPU/gitignored-data/root) are partitioned out by
+      # the ci_selftest_partition check; a newly registered portable selftest is covered without
+      # anyone editing this file.
+      - run: python scripts/harness.py ci-selftests --timeout 300
       # scripts/test_e2e.py is deliberately NOT here. It needs a GPU (KDA is fla/Triton
       # only), so on a runner it could only re-check the mix and the vocabulary that the
       # two steps above already cover, and exit 0 -- a green that means nothing. The chain
       # is covered by `E2E_GPU=<idx> python scripts/test_e2e.py` on the pod, and nowhere else.
+
+  # DIAGNOSTIC ONLY, not a fix and never a gate. Investigates the runner-only red of
+  # gate_resume_equivalent_to_uninterrupted (byte-identical 1.334e-2/506533/first0 on red runs;
+  # clean physical host 14/14 green). The thread/oneDNN/load hypotheses were ALL falsified
+  # (2026-09-19): workers are seeded and seeded threads=1/2 are bit-identical across processes
+  # (0/524288); a 4-arm load x threads x oneDNN matrix was 24/24 green with load demonstrably
+  # active. An earlier 99.9%-gradient-difference "reproduction" was an unseeded-model-init
+  # artifact. Working hypothesis is a real control vs save/load-restart asymmetry (name-keyed
+  # optim rebind / exp_avg / exp_avg_sq / step / serialization), pending de's spec. This job is
+  # a passive instrument that compares the REAL gate against the diag as symmetric sibling
+  # children; push runs an unloaded co-located control, manual workflow_dispatch runs the 4-arm
+  # matrix. Burners are outer siblings, never in the test process; threads=1 / oneDNN-off are
+  # diagnostic arms, not a gate fix. The required check job above keeps the real gate
+  # fail-closed; this job exits 0 by construction.
+  diag-resume:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arm: "A_idle_t2",       stress: "0", gate_omp: "2", onednn: "" }
+          - { arm: "B_load_t2",       stress: "4", gate_omp: "2", onednn: "" }
+          - { arm: "C_load_t2_nodnn", stress: "4", gate_omp: "2", onednn: "0" }
+          - { arm: "D_load_t1",       stress: "4", gate_omp: "1", onednn: "" }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install numpy
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python tests/v41f/diag_resume_bimodal.py --diag-selftest
+      - name: unloaded co-located control (push; 8 pairs)
+        if: github.event_name != 'workflow_dispatch'
+        run: python tests/v41f/diag_resume_bimodal.py --diag-colocate 8
+      - name: "causal arm ${{ matrix.arm }}: 6 co-located pairs, stress=${{ matrix.stress }}"
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GATE_OMP: "${{ matrix.gate_omp }}"
+          GATE_ONEDNN: "${{ matrix.onednn }}"
+        run: python tests/v41f/diag_resume_bimodal.py --diag-colocate 6 --stress "${{ matrix.stress }}"

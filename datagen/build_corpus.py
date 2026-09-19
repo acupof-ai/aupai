@@ -25,7 +25,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
-from holdout import is_holdout  # noqa: E402
+from holdout import HASH_PATH, is_holdout  # noqa: E402
 from loader import format_example  # noqa: E402
 
 OUT_DIR = os.path.join(ROOT, "data", "corpus")
@@ -71,6 +71,281 @@ def load_garbage_patterns():
 
 
 GARBAGE = load_garbage_patterns()
+
+
+# ---------------------------------------------------------------------------
+# drop_decision_fp: the identity of the DROP DECISION, not of the file that holds it.
+#
+# NAMED FOR THE DECISION, NOT FOR 'holdout_fp'. A key literally named holdout_fp already
+# exists in SFT PACKS (datagen/prepare_sft.py, read by sft_math.py and harness's
+# check_sft_pack_holdout), where it means THE HASH SET's identity -- a different fact
+# about a different artifact. Two artifacts sharing a key name is how a step-3 gate joins
+# the wrong pair, so this one says which of the two facts it holds.
+#
+# NEVER refactor the hashed set without changing DROP_DECISION_FP_V. The value's meaning is
+# pinned by a version string, exactly as fp_filters' "p1-" prefix pins its generation: a
+# later set can record a different fact on the same field, and the two are not comparable
+# unless the stamp says which one it holds. Silently widening the set would make every
+# stamp already on disk incomparable to every future one while both read as a plain hash.
+#
+# v2 (2026-09-19): norm and qhash joined the closure. v1 hashed three function bodies plus
+# three constants and OMITTED both, on the false claim that holdout.py's own fp covered
+# them; holdout._fingerprint hashes only the registry EVAL files, not its own source, so
+# editing norm's punctuation set moved nothing. The decision the field describes did not
+# change -- the SET describing it did, which is exactly the case the version marks. v1 was
+# never written to a released stamp (the PR was unmerged); it is bumped anyway because v1
+# values were reported in review, and a reader comparing those against a live v1 that has
+# since changed shape would be comparing two different facts under one name.
+# ---------------------------------------------------------------------------
+DROP_DECISION_FP_V = "v2"
+# hash length, matching fp_filters/fp_dir. ast.dump is far longer than the source, so this
+# bounds the stamp, not a collision budget.
+_DROP_DECISION_FP_HEX = 16
+
+#: The layers whose drop decision this fingerprint covers, the function implementing each,
+#: and THE MODULE THAT FUNCTION'S NAME RESOLVES IN. Named by LAYER, not by function name:
+#: _evaluated_reasons' table says the same layers exist and that they are not
+#: interchangeable, and "which producer's tier-3 ran" is a question about a layer.
+#:
+#: THE THIRD FIELD IS NOT DECORATION. is_holdout, norm and qhash are defined in
+#: datagen/holdout.py and only is_holdout is imported here. A resolver that looked only in
+#: this module's globals would have silently skipped norm and qhash -- which is exactly how
+#: the first version of this fingerprint came to claim they were covered when they were not
+#: (see the note in _drop_decision_fields).
+#: The third field is the module the name resolves in, or None for THIS file. None rather
+#: than a module name because the file is not always called build_corpus: the pre-commit
+#: hook runs a staged copy under another basename, and both `python3 datagen/build_corpus.py`
+#: (__name__ == "__main__") and `import build_corpus` must resolve the SAME object. Deriving
+#: the name from __file__ matched neither the staged copy nor the imported case, so the
+#: lookup fell through to importlib and loaded a SECOND copy -- the fingerprint then
+#: described a copy of the decision while the process ran the original, and the
+#: monkeypatched refuse case below stopped firing, which is how the hook caught it.
+_DROP_LAYERS = (
+    ("worker", "reject_light", None),
+    ("worker", "reject_holdout", None),
+    ("global", "is_holdout", "holdout"),
+    # norm and qhash are the global layer's own dependencies: is_holdout tests membership in
+    # a set of qhash(q) values, and qhash normalises q through norm first. Hashing the body
+    # of is_holdout alone sees neither, so changing norm's punctuation set -- which decides
+    # whether a reformatted copy still matches a held-out question -- moved nothing.
+    # Measured 2026-09-19: holdout.py's OWN _fingerprint hashes only the registry EVAL files
+    # (basename + sha1 each), NOT its own source, so a claim that it covered these two was a
+    # credential for a check that does not exist.
+    ("global", "norm", "holdout"),
+    ("global", "qhash", "holdout"),
+)
+
+#: Module-level constants the layers above READ, hashed by VALUE. A function body
+#: references these by name, so nothing in the AST changes when one is redefined -- and
+#: each one decides whether a document is dropped. Measured 2026-09-19: changing QA_PREFIX
+#: to re.compile(r"XXX") left the three-body hash bit-for-bit identical while flipping
+#: tier 2 for every document. All three are re.Pattern, and all three are asserted to be
+#: one below rather than assumed.
+#:
+#: NOT here: GARBAGE, END_OK, SYMBOL, BOILER, URL, CJK. They belong to reject_reason, the
+#: web filter, which reject_light does not call. GARBAGE is additionally covered by
+#: fp_filters, which hashes the garbage PATTERNS and sits in this same stamp.
+_DROP_CONSTS = ("QA_PREFIX", "ANSWER_TAIL", "BAD")
+
+
+def _layer_source_bodies():
+    """The decision LAYER's source, as (label, normalised AST) pairs.
+
+    WHY THE AST AND NOT THE SOURCE TEXT. A semantics-preserving edit must not move this
+    value; that is the whole point (the same reasoning that moved fp_filters from file
+    bytes to PATTERNS on 2026-09-17). Measured 2026-09-19, source-text vs ast.dump over
+    these three layers:
+      * a deleted tier, a changed threshold (500->800), a tier short-circuited with
+        `if False` -- BOTH formats move, which is what the value is for;
+      * a local rename (`cand`->`cnd`) and a reordered set literal ({ln, X} -> {X, ln})
+        -- BOTH formats move, i.e. BOTH ARE FALSE POSITIVES. That is the known ceiling;
+      * a comment, a blank line, a reformat -- only ast.dump is stable.
+    So ast.dump strictly dominates, and the residual false positives are recorded in the
+    stats' own note field rather than left for a reader to discover from a red.
+
+    WHAT IT CANNOT SEE, and why the set is what it is. A fingerprint over function BODIES is
+    blind to everything those bodies read from outside themselves, and that is not a corner:
+    measured 2026-09-19, changing QA_PREFIX to re.compile(r"XXX") -- which decides tier 2,
+    i.e. whether a document is eval_contaminated -- left the three-body hash bit-for-bit
+    identical. `norm`'s punctuation set and `qhash`'s digest width do the same. Three
+    mechanisms close it:
+      * QA_PREFIX / ANSWER_TAIL / BAD -- module-level constants read by these bodies, so no
+        AST of a body changes when one is redefined. Hashed EXPLICITLY by value below, each
+        asserted to still be a re.Pattern first. (An earlier revision of this docstring
+        claimed QA_PREFIX and ANSWER_TAIL were literals inside reject_holdout's body and so
+        "already covered"; the acceptance mutation for QA_PREFIX came back SAME and the
+        claim was false. The constant list is what makes it true.)
+      * `norm` and `qhash` -- IN the layer table, resolved from datagen/holdout.py. An
+        earlier revision claimed they were covered by that module's own fp; measured
+        2026-09-19, holdout._fingerprint hashes only the registry EVAL files (basename plus
+        sha1 each) and not its own source, so editing norm's punctuation set moved nothing.
+        That claim was a credential for a check that does not exist, which is the exact
+        failure this whole field is for.
+      * GARBAGE / END_OK / SYMBOL / BOILER / URL / CJK -- NOT here, because they are NOT
+        in this closure: they belong to reject_reason, the web filter. This module's
+        reject_light reads only BAD. The garbage PATTERNS are additionally covered by
+        fp_filters, which is in the same stamp.
+    """
+    import ast as _ast
+    import importlib as _importlib
+    import inspect as _inspect
+
+    # THIS MODULE IS RESOLVED AS THE RUNNING ONE, never re-imported. Under
+    # `python3 datagen/build_corpus.py` the file's __name__ is "__main__", so
+    # importlib.import_module("build_corpus") would load a SECOND copy: its own module-level
+    # state, and a different object for every layer defined here. The fingerprint would then
+    # describe a copy of the decision while the process ran the original -- and the
+    # monkeypatched refuse case below stopped firing, which is how this was caught.
+    out = []
+    for layer, name, modname in _DROP_LAYERS:
+        # RESOLVED IN THE MODULE THE NAME BELONGS TO, not in this module's globals. Only
+        # is_holdout of the holdout.py layers is imported here; norm and qhash are not, so a
+        # globals() lookup skipped them in silence -- which is how the first version of this
+        # fingerprint claimed to cover them while hashing neither. Importing by name also
+        # means the body that RUNS is the body that is hashed, not a re-export shim.
+        mod = sys.modules[__name__] if modname is None else _importlib.import_module(modname)
+        fn = getattr(mod, name, None)
+        if not callable(fn):
+            raise SystemExit(
+                f"REFUSE: drop_decision_fp needs {layer} layer {name!r}, which does not resolve "
+                f"to a callable in module {modname!r}. A fingerprint that silently drops a layer "
+                f"describes a decision that is not the one being run."
+            )
+        # getsource on a function returns its def plus decorators; take the def itself so
+        # the enclosing module's layout cannot enter the hash. A callable that is not a
+        # plain def -- a lambda assigned over the name, say -- gives a source fragment that
+        # does not parse on its own. That must REFUSE with a sentence naming the layer, not
+        # propagate an IndentationError from the AST library, which reads as a crash in the
+        # hasher rather than as "this layer cannot be identified".
+        try:
+            tree = _ast.parse(_inspect.getsource(fn))
+        except (OSError, IndentationError, SyntaxError) as e:
+            raise SystemExit(
+                f"REFUSE: drop_decision_fp cannot read a parseable definition for {layer} layer "
+                f"{name!r} ({type(e).__name__}: {e}). A layer whose source cannot be isolated "
+                f"cannot be fingerprinted, and hashing whatever is there would record a "
+                f"decision that is not the one being run."
+            ) from e
+        # getsource on a function returns its def plus decorators; take the def itself so
+        # the enclosing module's layout cannot enter the hash.
+        defs = [n for n in tree.body if isinstance(n, _ast.FunctionDef) and n.name == name]
+        if len(defs) != 1:
+            raise SystemExit(
+                f"REFUSE: drop_decision_fp could not isolate the definition of {name!r} "
+                f"({len(defs)} candidates in its source). Hashing a file where a layer cannot "
+                f"be located is hashing something other than the decision."
+            )
+        node = defs[0]
+        # The docstring is documentation, not decision: dropping it keeps a reworded
+        # comment from reading as a changed drop rule.
+        if (
+            node.body
+            and isinstance(node.body[0], _ast.Expr)
+            and isinstance(node.body[0].value, _ast.Constant)
+            and isinstance(node.body[0].value.value, str)
+        ):
+            node.body = node.body[1:] or [_ast.Pass()]
+        out.append((f"{layer}:{name}", _ast.dump(node, include_attributes=False)))
+    for cname in _DROP_CONSTS:
+        val = globals().get(cname)
+        if not isinstance(val, re.Pattern):
+            raise SystemExit(
+                f"REFUSE: drop_decision_fp hashes {cname} as a module-level decision constant, but it "
+                f"is {type(val).__name__}, not a compiled pattern -- the constant was redefined "
+                f"and hashing its repr would record the wrong fact."
+            )
+        # .pattern, not the compiled object's repr: re.compile caches internally, so repr
+        # can carry an id or a flag rendering that changes without the rule changing.
+        out.append((f"const:{cname}", val.pattern))
+    return out
+
+
+def drop_decision_fp():
+    """sha256 over the decision LAYERS, joined by layer name.
+
+    The name goes INTO the hash (fp_filters does the same for its inputs) so that swapping
+    which function implements a layer cannot produce the same value as reordering the
+    layers: `_evaluated_reasons`' table exists because these three are not interchangeable
+    and a value that mixed them would let one stand in for another.
+    """
+    import hashlib as _hashlib
+
+    parts = [DROP_DECISION_FP_V] + [f"{label}\0{blob}" for label, blob in _layer_source_bodies()]
+    return _hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()[:_DROP_DECISION_FP_HEX]
+
+
+def holdout_set_fp():
+    """Identity of the hash SET is_holdout reads, WITHOUT importing holdout or reading the
+    set file: sha256 of (HASH_PATH, its bytes), else None.
+
+    HASH_PATH, NOT A HARDCODED PATH. An earlier revision of this function hashed the
+    literal "data/eval/holdout_hashes.txt"; a test that then repoints holdout.HASH_PATH at
+    a temp copy -- which is how a mutation changes the set without rewriting the tracked
+    5MB file -- would have left the value SAME, i.e. blind to the very change it was
+    meant to catch.
+
+    None when the file is absent. That is not "unmeasured", it is a THIRD value naming the
+    case: no set means is_holdout RAISES rather than answering, so a build cannot have run.
+    Do not fold it into an empty string, which would read as a set that is present and empty.
+    """
+    import hashlib as _hashlib
+
+    try:
+        with open(HASH_PATH, "rb") as f:
+            return _hashlib.sha256(f.read()).hexdigest()[:_DROP_DECISION_FP_HEX]
+    except OSError:
+        return None
+
+
+def _drop_decision_fields(global_only):
+    """The four provenance fields every build_corpus_stats.json carries (issue #553).
+
+    ONE WRITER, THREE CALLERS. `_write_stats`, `_near_write_stats` and main()'s phase-gap
+    writer all stamp a domain, and a reader comparing two domains must find the same keys
+    on both. Three copies of this dict is the defect CANONICAL_STATS_KEYS exists to
+    prevent, one level up.
+
+    WHAT THE PRECONDITION IS, AND WHY IT IS NOT AN IDENTITY. The global pass runs only the
+    first two of reject_holdout's three tiers; its per-line scan is skipped because its
+    input is not raw text -- it reads w*_*.jsonl, which only the worker phase writes, and
+    the worker phase ran all three tiers on the same bytes. That is a property of the
+    CALLER, and until now nothing recorded it.
+
+    In a same-process build the caller is this process, so `worker_holdout_fp` equals
+    `drop_decision_fp` -- and the stamp still says it, because the value a future cross-version
+    check compares against is the one an external producer WOULD have written, not "this
+    run's own code again". Under `--global-only` the w* shards came from some earlier
+    build, whose decision code this process cannot see: hence provenance
+    "external-unverified" and worker_holdout_fp None. None means "not verifiable from
+    here", a different fact from "verified equal".
+
+    RECORD-ONLY (issue #553 step 3): no consumer refuses on these yet. A gate would fire
+    on its first honest cross-version difference, and the observed value set is not
+    recorded yet.
+    """
+    fp = drop_decision_fp()
+    return {
+        "drop_decision_fp": fp,
+        "drop_decision_fp_v": DROP_DECISION_FP_V,
+        "holdout_set_fp": holdout_set_fp(),
+        # A "same-process" STRING would have made this field two-typed. A hash or null keeps
+        # one meaning for null: cannot be verified from here.
+        "worker_holdout_fp": None if global_only else fp,
+        "worker_shards_provenance": "external-unverified" if global_only else "same-process",
+        "drop_decision_fp_note": (
+            f"{DROP_DECISION_FP_V}: ast.dump of the {len(_DROP_LAYERS)} decision layers "
+            f"(_DROP_LAYERS names them, and names the module each resolves in) plus the "
+            f"pattern of each constant in _DROP_CONSTS, which those bodies read by name. "
+            "The layers cover norm and qhash, so this value moves when the holdout "
+            "NORMALISATION changes -- holdout_set_fp covers the registry SET, which is a "
+            "different fact and neither stands for the other. KNOWN CEILING: a local "
+            "variable rename or a reordered set/list literal moves it without changing the "
+            "drop decision. Also in this stamp: the garbage PATTERNS (filters_fp). Not "
+            "covered here: constants read by reject_reason, the web path, which reject_light "
+            "does not run. Record-only until a second generation exists; never compare two "
+            "stamps whose drop_decision_fp_v differ."
+        ),
+    }
 
 
 # Holdout probes must catch the role marker, multi-line and <15-char questions a
@@ -777,6 +1052,7 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_ke
             if not a.no_near_dedup
             else "skipped by the 2026-08-31 dedup ruling; replaced by the separate calibrated near-dedup post-pass (44), removed fraction lands as a fact"
         ),
+        **_drop_decision_fields(bool(getattr(a, "global_only", False))),
     }
     # Measured tokens, counted the way training counts them. kept_tokens above is
     # a chars/1.5 estimate and stays for continuity; `tokens` is the number a mix
@@ -1063,7 +1339,8 @@ def _near_emit_slice(args):
     return emit
 
 
-def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall, cfg, workers):
+def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall, cfg, workers,
+                      global_only=True):
     """Stamp the post-pass output like _write_stats (fingerprint triad + tokens), but
     carry the near-dedup configuration and result: they are part of the artifact's
     meaning, and the removed-fraction fact reads them off the stamp."""
@@ -1086,6 +1363,7 @@ def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n
         "recall_bound": recall,
         "recall_epsilon": 1.0 - recall,
         "config": cfg,
+        **_drop_decision_fields(global_only),
     }
     tok_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json")
     if os.path.exists(tok_path):
@@ -1261,6 +1539,9 @@ def _near_dedup_postpass(a, normaliser=None, perms=128, bands=64, rows=2, jaccar
         a.out, a.domain, reasons, kept, kept_chars, nshards, removed_n, total_docs, recall,
         {"perms": perms, "bands": bands, "rows": rows, "jaccard": jaccard, "seed": seed},
         a.workers,
+        # The post-pass reads a domain's shards, which an earlier build wrote -- its own
+        # decision code cannot vouch for the tier-3 scan those shards already passed.
+        global_only=True,
     )
     return 0
 
@@ -1877,6 +2158,97 @@ def _selftest_preflight():
                              "so this guard would pass on anything")
     ok += 1
 
+    # (i) drop_decision_fp MUST SEE THE DECISION AND NOT THE FORMATTING (issue #553). The value
+    #     exists to answer "did the tier-3 scan that these w* shards already passed belong
+    #     to this drop rule?" -- so it must move when a rule moves and stay put when a
+    #     comment does.
+    #
+    #     THE CONSTANT CASE IS THE ONE THAT BIT. An earlier revision hashed only the three
+    #     function BODIES, and its docstring claimed QA_PREFIX and ANSWER_TAIL were
+    #     literals inside reject_holdout, hence already covered. They are module-level:
+    #     changing QA_PREFIX to re.compile(r"XXX") flips tier 2 for every document and left
+    #     that hash bit-for-bit identical. The harness that found it (12 mutations x a full
+    #     tree copy) is recorded in the PR; what lives here is the cheap invariant that
+    #     cannot rot -- every constant in the list is at least a real pattern, and each
+    #     layer's body is the one the label claims.
+    _base = drop_decision_fp()
+    assert re.fullmatch(rf"[0-9a-f]{{{_DROP_DECISION_FP_HEX}}}", _base), f"(i) not a hex digest: {_base!r}"
+    _parts = dict(_layer_source_bodies())
+    _want_labels = [f"{ly}:{nm}" for ly, nm, _m in _DROP_LAYERS] + [f"const:{c}" for c in _DROP_CONSTS]
+    assert sorted(_parts) == sorted(_want_labels), (
+        f"(i) the hashed set is {sorted(_parts)}, not {sorted(_want_labels)} -- a layer or a "
+        f"constant was added or removed without the fingerprint being versioned")
+    # THE ORACLE IS THE AST, NOT THE LIST. Removing a name from _DROP_CONSTS cannot be
+    # caught by comparing _DROP_CONSTS against a value built from _DROP_CONSTS -- that
+    # is a list checked against itself, and it stayed green when QA_PREFIX was deleted from
+    # it (measured 2026-09-19). So read the constants the layer bodies ACTUALLY reference,
+    # off their own source, and require the list to cover that set. This is the guard de
+    # asked for in one line: a constant that enters the drop decision cannot silently stay
+    # out of the fingerprint, because a new name in the body turns this red by itself.
+    import ast as _ast_i
+    import inspect as _inspect_i
+
+    import importlib as _importlib_i
+
+    _read = set()
+    for _ly, _nm, _mod in _DROP_LAYERS:
+        _g = vars(sys.modules[__name__]) if _mod is None else vars(_importlib_i.import_module(_mod))
+        _tree = _ast_i.parse(_inspect_i.getsource(_g[_nm]))
+        for _x in _ast_i.walk(_tree):
+            if isinstance(_x, _ast_i.Name) and isinstance(_g.get(_x.id), re.Pattern):
+                _read.add(_x.id)
+    _uncovered = sorted(_read - set(_DROP_CONSTS))
+    assert not _uncovered, (
+        f"(i) the layer bodies read these module-level patterns, which the hashed set does not "
+        f"cover: {_uncovered}. Rewriting any of them changes the drop decision without moving "
+        f"drop_decision_fp -- add them to _DROP_CONSTS, or the fingerprint vouches for a rule it "
+        f"cannot see.")
+    # each layer's blob is that function's body, not some other function's
+    for _name, _marker in (("reject_light", "bad_bytes"), ("reject_holdout", "eval_contaminated"),
+                           ("is_holdout", "_CACHE")):
+        _key = next(k for k in _parts if k.endswith(":" + _name))
+        assert _marker in _parts[_key], (
+            f"(i) {_key}'s hashed blob does not contain {_marker!r} -- the wrong function "
+            f"is being hashed under this label")
+    # A CONSTANT REWRITE MUST MOVE THE VALUE. Real mutation, on the live global.
+    for _c in _DROP_CONSTS:
+        _orig = globals()[_c]
+        globals()[_c] = re.compile(_orig.pattern + "|zzz_sentinel_never_matches")
+        try:
+            assert drop_decision_fp() != _base, (
+                f"(i) rewriting {_c} did not move drop_decision_fp -- it is read by the drop "
+                f"decision, so it must be in the hashed set")
+        finally:
+            globals()[_c] = _orig
+    # A LAYER THAT CANNOT BE LOCATED MUST REFUSE, not hash whatever is there. Replacing a
+    # layer with a lambda is exactly that shape: inspect.getsource succeeds, but the
+    # function's own def is not a FunctionDef of that name.
+    _saved = reject_holdout
+    globals()["reject_holdout"] = lambda t: None
+    try:
+        drop_decision_fp()
+        raise AssertionError("(i) an unlocatable layer did not REFUSE -- the guard is decorative")
+    except SystemExit:
+        pass
+    finally:
+        globals()["reject_holdout"] = _saved
+    # AND THE CROSS-MODULE LAYERS ARE REALLY CROSS-MODULE: a name in the table that resolves
+    # in another module must be found there, or norm/qhash are skipped in silence -- which is
+    # exactly the defect this case was extended to catch when their coverage turned out to be
+    # a credential for a check that did not exist.
+    for _nm in ("norm", "qhash"):
+        assert f"global:{_nm}" in _parts, f"(i) holdout.py's {_nm} is not in the hashed set"
+    assert "norm" in _inspect_i.getsource(_importlib_i.import_module("holdout").qhash), (
+        "(i) qhash's hashed body does not call norm -- the wrong function is under this label")
+    assert drop_decision_fp() == _base, "(i) drop_decision_fp did not return to its value after restore"
+    # the two provenance states are different facts, not one value written twice
+    assert _drop_decision_fields(False)["worker_holdout_fp"] == _base
+    assert _drop_decision_fields(True)["worker_holdout_fp"] is None
+    assert _drop_decision_fields(True)["worker_shards_provenance"] == "external-unverified"
+    assert _drop_decision_fields(False)["worker_shards_provenance"] == "same-process"
+    assert holdout_set_fp() is None or re.fullmatch(r"[0-9a-f]{16}", holdout_set_fp())
+    ok += 1
+
     # (the settle cases 1-4 + foreign-live-pid refuse live with gate (a) above)
     print(f"build_corpus selftest OK: {ok} gates refuse on their failing world (incl. T7-2 settle + holdout-slice gate)")
     return 0
@@ -2068,6 +2440,9 @@ def main():
                 "near_dedup": False,
                 "near_dedup_note": "the phase gap build runs no global near-dedup pass; near_dup rejects are per-doc filter decisions recorded in reasons",
                 "top_hosts": hosts.most_common(50),
+                # This writer's own tier-3 scan ran on the raw text it read, in this
+                # process, so the precondition the global pass relies on holds here too.
+                **_drop_decision_fields(global_only=False),
             }
             tok_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json")
             if os.path.exists(tok_path):
