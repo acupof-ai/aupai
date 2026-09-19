@@ -320,9 +320,10 @@ under 0e's keep rules (#237), plus `code_py_starcoder_dc`, `math_owm_stage2_dc`,
 `filters/decontam_ngram.py` library, not a CLI), the two ultra domains inside 0e's
 aggregate; this is a launch prerequisite, with dropped fractions and packed token counts in
 `facts/contamination.json` (cont.gate_dc_*) and
-`facts/corpus_supply.json#cs.gate_domains_decontaminated_tokenized_0911` — the six
-non-ultra supplies are measured packed `_dc` tokens; the two ultra totals are labelled
-estimates until 0e's aggregate lands. Every domain's token cache must exist in `/data00` in
+`facts/corpus_supply.json#cs.gate_domains_dc_packed_0911` — the six surviving
+`_dc` supplies are measured packed tokens (vocab f1f860970d15d623), including the two
+ultra domains, whose 0e aggregates landed 2026-09-11 (15.34B L2 / 26.70B L3-noexec,
+measured not estimated). Every domain's token cache must exist in `/data00` in
 the gate vocabulary before launch (the prereg checklist names which remain on 0e). The old
 ladder mixes (`mix_scale_*`) and teacher synthesis (textbooks/exercises, stopped by the
 pivot) are the retired data plan.
