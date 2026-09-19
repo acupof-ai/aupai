@@ -22,13 +22,37 @@ from collections import Counter
 from urllib.parse import urlsplit
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# CODE root vs DATA root. A build can run from one checkout with AUPAI_ROOT pointing its
+# data at another tree (digest rebuild, #583): sys.path inserts, filters/*.py, and the
+# holdout code+set stay on ROOT (this tree); the corpus output, raw cache, mixes, and the
+# tokenizer are data, so they resolve under DATA_ROOT. Empty string is "unset"
+# (`or ROOT`, same shape as harness.aupai_root), and a non-empty value is abspath'd
+# (relative to cwd) so the data paths are absolute even with AUPAI_ROOT=data:
+# `os.environ.get(k, ROOT)` would let AUPAI_ROOT= turn every data path cwd-relative.
+# With the var absent or empty DATA_ROOT == ROOT and every path is byte-identical before.
+DATA_ROOT = os.path.abspath(os.environ.get("AUPAI_ROOT") or ROOT)
+
+
+def _under_data_root(p):
+    """Anchor a RELATIVE operator path under DATA_ROOT; absolute paths pass through.
+
+    The runbook invokes the build with relative paths from the repo root
+    (`--out data/corpus/x --source jsonl:data/raw/...`); every consumer concatenates them
+    as given, so with cwd in the CODE tree the shards land in the code tree even when
+    AUPAI_ROOT points the data elsewhere. Resolve ONCE at parse time, not per consumer.
+    Env unset -> DATA_ROOT == ROOT, which is the documented cwd, so paths are unchanged.
+    None passes through: _preflight treats `out is None` as "use the default output dir",
+    so the helper must not crash on the unset arg it may be called with."""
+    if not p:
+        return p
+    return p if os.path.isabs(p) else os.path.join(DATA_ROOT, p)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from holdout import HASH_PATH, is_holdout  # noqa: E402
 from loader import format_example  # noqa: E402
 
-OUT_DIR = os.path.join(ROOT, "data", "corpus")
+OUT_DIR = os.path.join(DATA_ROOT, "data", "corpus")  # corpus OUTPUT: data plane (#583)
 SHARD_BYTES = 100 * 2**20
 CHARS_PER_TOKEN = 1.5
 REJECT_EARLY_AT = 20_000  # fast-fail: >95% single-reason reject by this many docs -> wrong filters
@@ -619,7 +643,6 @@ def _clean_piece(piece):
     return {"kept": kept, "docs": docs, "kept_chars": kept_chars, "reasons": dict(reasons)}
 
 
-_CACHE = os.path.join(ROOT, "data", "raw")
 
 
 def _worker_pieces(a):
@@ -1057,7 +1080,7 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_ke
     # Measured tokens, counted the way training counts them. kept_tokens above is
     # a chars/1.5 estimate and stays for continuity; `tokens` is the number a mix
     # budget is read against. Both are stamped, so which is which is never a guess.
-    tok_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json")
+    tok_path = os.path.join(DATA_ROOT, "data", "tokenizer.json")
     if os.path.exists(tok_path):
         try:
             from tokenizers import Tokenizer
@@ -1365,7 +1388,7 @@ def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n
         "config": cfg,
         **_drop_decision_fields(global_only),
     }
-    tok_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json")
+    tok_path = os.path.join(DATA_ROOT, "data", "tokenizer.json")
     if os.path.exists(tok_path):
         try:
             from tokenizers import Tokenizer  # noqa: I001 -- same nested-import shape as _write_stats:622
@@ -1551,7 +1574,7 @@ def _ladder_frozen_domains():
     fingerprint break (2026-08-31: ten shards into data/corpus/code/); new corpus
     goes to a fresh dir. Read from the live mixes so a rename self-heals."""
     frozen = set()
-    for p in glob.glob(os.path.join(ROOT, "data", "mix_scale_*.json")):
+    for p in glob.glob(os.path.join(DATA_ROOT, "data", "mix_scale_*.json")):
         try:
             with open(p) as f:
                 frozen |= set(json.load(f).get("domains", {}).keys())
@@ -1564,7 +1587,7 @@ def _mix_named_domains():
     """Domains named by any data/mix_*.json. A domain in a mix carries cross-stage
     attribution, so a rebuild of it must freeze its held-out slice (fb 2026-09-01)."""
     names = set()
-    for p in glob.glob(os.path.join(ROOT, "data", "mix_*.json")):
+    for p in glob.glob(os.path.join(DATA_ROOT, "data", "mix_*.json")):
         try:
             with open(p, encoding="utf-8") as _fh:
                 names |= set(json.load(_fh).get("domains", {}).keys())
@@ -1574,7 +1597,7 @@ def _mix_named_domains():
 
 
 def _existing_corpus_dirs():
-    cd = os.path.join(ROOT, "data", "corpus")
+    cd = os.path.join(DATA_ROOT, "data", "corpus")
     if not os.path.isdir(cd):
         return []
     return [d for d in os.listdir(cd) if os.path.isdir(os.path.join(cd, d))]
@@ -1622,6 +1645,10 @@ def _holdout_rule_fp(set_path=None):
             h.update(b"code:" + f.read())
     except OSError:
         return "holdout-missing"
+    # ROOT, NOT DATA_ROOT: this must hash the SAME set is_holdout() reads at build time,
+    # and is_holdout uses holdout.HASH_PATH, holdout.py's own ROOT-based constant. Moving
+    # this site alone would fingerprint a different tree's set than the one filtering used.
+    # Parameterising holdout.py on AUPAI_ROOT is a separate change (#583 scope is build_corpus).
     sp = set_path or os.path.join(ROOT, "data", "eval", "holdout_hashes.txt")
     try:
         with open(sp, "rb") as f:
@@ -1980,7 +2007,7 @@ def _selftest_preflight():
     # H2 (e1): build the suffix world instead of detecting it -- a fresh checkout's
     # data/corpus only holds 'sample', so gating on en_c4 skips silently and the gate
     # count drops without a SKIP line. mkdir the base, probe base+_stage2, clean up.
-    cd = os.path.join(ROOT, "data", "corpus")
+    cd = os.path.join(DATA_ROOT, "data", "corpus")
     os.makedirs(os.path.join(cd, "zz_base"), exist_ok=True)
     try:
         try:
@@ -2249,6 +2276,15 @@ def _selftest_preflight():
     assert holdout_set_fp() is None or re.fullmatch(r"[0-9a-f]{16}", holdout_set_fp())
     ok += 1
 
+    # (j) OPERATOR PATH ANCHORING (#583). None must pass through (it is the supported
+    #     "use the default output dir" value _preflight reads), a relative path lands under
+    #     DATA_ROOT, an absolute path is untouched. The None leg crashed the unset --out
+    #     path before a guard existed; a one-sided test is how that shipped.
+    assert _under_data_root(None) is None
+    assert _under_data_root("data/corpus/x") == os.path.join(DATA_ROOT, "data/corpus/x")
+    assert _under_data_root("/abs/y") == "/abs/y"
+    ok += 1
+
     # (the settle cases 1-4 + foreign-live-pid refuse live with gate (a) above)
     print(f"build_corpus selftest OK: {ok} gates refuse on their failing world (incl. T7-2 settle + holdout-slice gate)")
     return 0
@@ -2297,7 +2333,7 @@ def main():
         help="jsonl glob whose documents are pre-seeded into the dedup set, so a domain "
         "built earlier is not repeated inside this one",
     )
-    ap.add_argument("--cache_dir", default=os.path.join(ROOT, "data", "raw"))
+    ap.add_argument("--cache_dir", default=os.path.join(DATA_ROOT, "data", "raw"))
     ap.add_argument(
         "--rg_mod",
         type=int,
@@ -2320,6 +2356,21 @@ def main():
     if not a.source or not a.domain:
         ap.error("--source and --domain are required (or pass --selftest)")
     a.out = a.out or os.path.join(OUT_DIR, a.domain)
+    # Anchor every operator-supplied RELATIVE path under DATA_ROOT at ONE place, so the
+    # runbook's `--out data/... --source jsonl:data/...` lands in the data tree even when
+    # cwd is the code tree. Absolute paths are honoured; named HF sources are not paths.
+    a.out = _under_data_root(a.out)
+    a.cache_dir = _under_data_root(a.cache_dir)
+
+    def _anchor_spec(sp):
+        for pref in ("jsonl:", "parquet:"):
+            if sp.startswith(pref):
+                tail = sp[len(pref):]
+                return pref + (_under_data_root(tail) if not os.path.isabs(tail) else tail)
+        return sp
+
+    a.source = [_anchor_spec(sp) for sp in a.source]
+    a.exclude = [_under_data_root(p) for p in a.exclude]
     # Pre-flight: refuse a clean that will waste the run before any fetch or
     # worker starts (unique writer, non-frozen existing output dir, filter-family
     # match, 1000-doc sample). Raises SystemExit on the first failure.
@@ -2444,7 +2495,7 @@ def main():
                 # process, so the precondition the global pass relies on holds here too.
                 **_drop_decision_fields(global_only=False),
             }
-            tok_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json")
+            tok_path = os.path.join(DATA_ROOT, "data", "tokenizer.json")
             if os.path.exists(tok_path):
                 try:
                     from tokenizers import Tokenizer  # noqa: I001
