@@ -5,12 +5,8 @@ on:
   # manual trigger for the diag-resume causal stress matrix (A/B/C/D arms); no inputs needed,
   # the arms are the job matrix. Push/PR runs keep the unloaded control only.
   workflow_dispatch:
-  # cross-run single-gate tracker; one real gate per independent run, capped at 40 by the job.
-  schedule:
-    - cron: '*/20 * * * *'
 jobs:
   check:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -124,20 +120,20 @@ jobs:
       # two steps above already cover, and exit 0 -- a green that means nothing. The chain
       # is covered by `E2E_GPU=<idx> python scripts/test_e2e.py` on the pod, and nowhere else.
 
-  # DIAGNOSTIC ONLY, not a fix and never a gate. Investigates the runner-only bimodal red of
+  # DIAGNOSTIC ONLY, not a fix and never a gate. Investigates the runner-only red of
   # gate_resume_equivalent_to_uninterrupted (byte-identical 1.334e-2/506533/first0 on red runs;
-  # clean physical host 14/14 green; an unstressed co-located job was 8/8 green for BOTH the
-  # real gate and the diag -> the trigger is cross-run/scheduler contention selecting one of
-  # two discrete paths, not per-run random noise). The push-time step is one unloaded co-located
-  # control. The CAUSAL arms run ONLY on manual workflow_dispatch (4 arms x 6, small to not burn
-  # resident CI): A unloaded threads=2 control; B +4-core outer-sibling load threads=2; C same load
-  # with oneDNN OFF (threads=2); D same load threads=1 oneDNN default. B-red/C-green => oneDNN
-  # path selection is the lever; B-red/D-green/C-red => plain multithreaded reduction. Burners
-  # are outer siblings with the same env, never in the test process. threads=1 / oneDNN-off are
-  # diagnostic arms only and MUST NOT be merged as the gate fix (green-but-blind). The required
-  # check job above keeps the real gate fail-closed; this job exits 0 by construction.
+  # clean physical host 14/14 green). The thread/oneDNN/load hypotheses were ALL falsified
+  # (2026-09-19): workers are seeded and seeded threads=1/2 are bit-identical across processes
+  # (0/524288); a 4-arm load x threads x oneDNN matrix was 24/24 green with load demonstrably
+  # active. An earlier 99.9%-gradient-difference "reproduction" was an unseeded-model-init
+  # artifact. Working hypothesis is a real control vs save/load-restart asymmetry (name-keyed
+  # optim rebind / exp_avg / exp_avg_sq / step / serialization), pending de's spec. This job is
+  # a passive instrument that compares the REAL gate against the diag as symmetric sibling
+  # children; push runs an unloaded co-located control, manual workflow_dispatch runs the 4-arm
+  # matrix. Burners are outer siblings, never in the test process; threads=1 / oneDNN-off are
+  # diagnostic arms, not a gate fix. The required check job above keeps the real gate
+  # fail-closed; this job exits 0 by construction.
   diag-resume:
-    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     continue-on-error: true
     strategy:
@@ -165,43 +161,3 @@ jobs:
           GATE_OMP: "${{ matrix.gate_omp }}"
           GATE_ONEDNN: "${{ matrix.onednn }}"
         run: python tests/v41f/diag_resume_bimodal.py --diag-colocate 6 --stress "${{ matrix.stress }}"
-
-  # Cross-run single-gate tracker (0e, #549): one REAL gate per independent run. Within-job
-  # repeats are correlated (whole jobs share a color), and in-container load cannot reproduce
-  # the neighbor contention of a 64-96 core host, so the only instrument that sees the real
-  # phenomenon is many independent scheduled runs stratified by runner cpu_model. Cron every
-  # 20 min; a hard cap of 40 scheduled samples (~13h) auto-skips via a run count check. Emits
-  # GATEONCE ENV (cpu_model/mkldnn/threads/affinity/quota) and, on red, the full signature and
-  # an artifact. Non-blocking, never touches the required gate. Sampling branch only; the
-  # cron exists on main once #549 merges, but is harmless (a diagnostic that exits 0).
-  diag-gate-tracker:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
-      - run: pip install numpy
-      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - id: cap
-        name: hard cap 40 scheduled samples
-        run: |
-          # count ALL scheduled runs of this workflow (cap is time-boxed sampling, not per-sha);
-          # paginate 100/page, count the ones older than this run that actually created a job.
-          n=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?event=schedule&per_page=100" \
-                --jq '[.[].workflow_runs[]?] | length')
-          echo "prior scheduled runs: ${n:-0}"
-          if [ "${n:-0}" -ge 40 ]; then echo "stop=1" >> "$GITHUB_OUTPUT"; fi
-        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
-      - name: one real gate sample (env + full red signature)
-        if: steps.cap.outputs.stop != '1'
-        run: mkdir -p tracker_out && python tests/v41f/diag_resume_bimodal.py --gate-once tracker_out
-      - name: upload red signature artifact (only present on a red)
-        if: steps.cap.outputs.stop != '1'
-        uses: actions/upload-artifact@v4
-        with:
-          name: "red-gate-${{ github.run_id }}"
-          path: tracker_out/red_gate_stderr.txt
-          if-no-files-found: ignore
