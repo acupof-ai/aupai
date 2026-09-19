@@ -394,7 +394,15 @@ def compare_iter(cdir, rdir):
     for j in range(len(leaves)):
         first = _cmp(f"LOADK.l{j}", _load(cdir, f"opt_s{K-1}.l{j}"),
                      _load(rdir, f"loadK.l{j}"), first)
-    _compare_instrumentation(cdir, rdir, leaves)
+    # A populated-but-dropped leaf is a DIVERGENCE, not just a printed warning: the gate asserts
+    # on it (named FAIL), so the diag must count it too, otherwise compare_iter returns GREEN
+    # (None) for exactly the state where the real gate reds and coloc reports a phantom
+    # disagreement. Fold it into `first` so _run_pair/coloc classify the pair RED.
+    dropped, key_fail = _compare_instrumentation(cdir, rdir, leaves)
+    if first is None and dropped:
+        first = f"POPULATED-BUT-DROPPED:{','.join(dropped)}"
+    if first is None and key_fail:
+        first = key_fail
     return first
 
 
@@ -410,14 +418,17 @@ def _per_leaf_stats(tag, a, b):
 
 def _compare_instrumentation(cdir, rdir, leaves):
     """Sections 1-5 of the instrumentation spec: per-leaf opt-triple contribution, the
-    populated-but-dropped set, RNG across the boundary, and checkpoint identity. Loud, not a
-    gate (this arm exits 0); the gate's own worker asserts the set relation separately."""
+    populated-but-dropped set, RNG across the boundary, and checkpoint identity. Returns
+    (dropped, key_fail): dropped = populated leaves absent from state_by_name, key_fail = a
+    non-empty strict-load missing/unexpected label. The arm process still exits 0 (this is the
+    non-blocking diagnostic), but compare_iter folds these into its red verdict so the diag
+    classifies the same shapes the gate ASSERTS on, instead of printing and dropping them."""
     try:
         cm = json.load(open(os.path.join(cdir, "manifest.json")))
         rm = json.load(open(os.path.join(rdir, "manifest.json")))
     except FileNotFoundError:
         print("  INSTRUMENT: manifest.json absent (unset dump dir?) -- skipping, not faking")
-        return
+        return [], None
 
     print("  -- per-leaf optimizer-state contribution (control optK vs restart loadK) --")
     for j, n in enumerate(leaves):
@@ -454,11 +465,15 @@ def _compare_instrumentation(cdir, rdir, leaves):
               f"consumes init RNG; train_step consumes none, so no trajectory effect today)")
 
     ck = rm.get("ckpt")
+    key_fail = None
     if ck:
         mk, uk = ck.get("model_missing_keys"), ck.get("model_unexpected_keys")
         print(f"  ckpt sha256={ck['sha256'][:16]} step={ck['step']} "
               f"param_names={len(ck['param_names'])} state_by_name={len(ck['state_by_name_keys'])} "
               f"strict-load missing={mk} unexpected={uk}")
+        if mk or uk:
+            key_fail = f"STRICT-LOAD-KEYS missing={mk} unexpected={uk}"
+    return dropped, key_fail
 
 
 def _run_pair(cdir, rdir, env):
@@ -782,6 +797,40 @@ def selftest():
     assert r is True and ln.startswith("DIAGPAIR NORUN"), f"dead child must be NORUN red: {ln}"
     r, ln = _classify_pair(0, "DIAGPAIR ARM-CRASH\n")
     assert r is True and "ARM" in ln
+
+    # de finding: a populated-but-dropped leaf is a divergence the GATE asserts on, so the diag
+    # compare_iter must return a RED label for it -- not print and then return GREEN. Build a pair
+    # whose tensors are all identical but whose restart manifest lists a stateful control leaf
+    # missing from state_by_name; first divergent stage must name POPULATED-BUT-DROPPED.
+    dd = os.path.join(root, "drop")
+    dc, dr = os.path.join(dd, "c"), os.path.join(dd, "r")
+    _write_arm_dir(dc, env, leaves, full_stages())
+    _write_arm_dir(dr, env, leaves, full_stages())
+    json.dump({"optK_present": leaves}, open(os.path.join(dc, "manifest.json"), "w"))
+    json.dump({"optK_present": leaves,
+               "ckpt": {"sha256": "x", "step": 2, "param_names": leaves,
+                        "state_by_name_keys": [n for n in leaves if n != "a"],
+                        "model_missing_keys": [], "model_unexpected_keys": []}},
+              open(os.path.join(dr, "manifest.json"), "w"))
+    with contextlib.redirect_stdout(io.StringIO()):
+        drop_first = compare_iter(dc, dr)
+    assert isinstance(drop_first, str) and drop_first.startswith("POPULATED-BUT-DROPPED"), \
+        f"populated-but-dropped must be a red verdict, got {drop_first!r}"
+    # same shape but strict-load unexpected key must also red, distinct label
+    du = os.path.join(root, "keys")
+    kc, kr = os.path.join(du, "c"), os.path.join(du, "r")
+    _write_arm_dir(kc, env, leaves, full_stages())
+    _write_arm_dir(kr, env, leaves, full_stages())
+    json.dump({"optK_present": leaves}, open(os.path.join(kc, "manifest.json"), "w"))
+    json.dump({"optK_present": leaves,
+               "ckpt": {"sha256": "x", "step": 2, "param_names": leaves,
+                        "state_by_name_keys": leaves, "model_missing_keys": [],
+                        "model_unexpected_keys": ["layers.0.ffn.gate.bias"]}},
+              open(os.path.join(kr, "manifest.json"), "w"))
+    with contextlib.redirect_stdout(io.StringIO()):
+        key_first = compare_iter(kc, kr)
+    assert isinstance(key_first, str) and key_first.startswith("STRICT-LOAD-KEYS"), \
+        f"unexpected model key must be a red verdict, got {key_first!r}"
 
     print("diag_resume_bimodal selftest OK: green world clean, 1.3% mutant localized to its "
           "exact microstage alone, env/alias fields present and a broken alias is reported.")
