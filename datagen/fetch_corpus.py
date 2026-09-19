@@ -540,11 +540,89 @@ def _rm(p):
         pass
 
 
+def _probe_status(url):
+    """The FINAL status curl resolves for url, or None if the host did not answer.
+
+    `curl -sI` exits 0 whenever the server ANSWERS, so its exit code is not a
+    reachability verdict: a 403, a 404, a 500 and a proxy's `HTTP/1.1 200 Connection
+    established` all exit 0, and the last of those is not even the object's status line.
+    `%{http_code}` after -L is the code curl settled on (redirect- and proxy-aware),
+    which is the same idiom `_ot3_probe_ok` uses. 2026-09-19: the test this replaces read
+    `probe.stdout.startswith(("HTTP/", "HTTP/"))` -- a duplicated tuple that checked the
+    protocol line and never the status, so every one of those cases was "reachable"."""
+    p = subprocess.run(
+        ["curl", "-4", "-sIL", "-o", "/dev/null", "-w", "%{http_code}", "-m", "10", url],
+        capture_output=True, text=True, timeout=12,
+    )
+    if p.returncode != 0:
+        return None
+    code = p.stdout.strip()
+    return int(code) if code.isdigit() else None
+
+
+def _looks_like_html_error(path, n=512):
+    """True if what was downloaded is an HTML/XML error page rather than the object.
+
+    This is the case the cache was meant to make impossible and did not: a host (or a
+    proxy answering for it) returns 200 with an error page, the transfer "succeeds", and
+    the bytes are the page. Measured input: a 44-byte `<!DOCTYPE html>` body from a
+    host that answered 403, renamed into place as the shard.
+
+    A shard's first bytes are jsonl `{`/`[`, or a parquet/gz magic -- none of them can
+    start with `<`. Deliberately format-free: a per-extension table would have to model
+    fourteen manifest builders, three of which carry no extension at all (RedPajama's
+    names files), and the property under test is only "is this the object or a page".
+
+    THE BOM IS STRIPPED AND, FOR UTF-16 ONLY, THE BODY DECODED. Three escapes were measured
+    in review 2026-09-19, all of which this predicate originally accepted:
+
+    1. `bytes.lstrip()` strips ASCII whitespace only, so a page served as
+       `\\xef\\xbb\\xbf<!DOCTYPE html>` passed while the same page without the BOM was
+       refused.
+    2. Stripping the BOM is NOT enough for UTF-16. A `\\xfe\\xff` (BE) page decodes to
+       `\\x00<\\x00!\\x00D...`, and `lstrip()` does not remove NUL, so `startswith(b"<")`
+       was False and the page was ACCEPTED. LE only worked by accident, because its `<`
+       lands in the first byte.
+    3. Refusing on decode failure only when a BOM declared an encoding left the no-BOM
+       case fail-OPEN: undecodable bytes returned False, which is "accepted". Measured:
+       `<!DOCTYPE html><html>caf\\xe9</html>` and `<!DOCTYPE html>\\xff<body>` were both
+       ACCEPTED. The docstring said fail closed and the code did not.
+
+    So '<' is looked for as a BYTE for every encoding whose '<' is the byte 0x3C (ASCII,
+    UTF-8 and their supersets -- which is every format this fetcher handles), and only a
+    UTF-16 BOM changes that, because there '<' is two bytes. Decoding is therefore never
+    needed except for UTF-16, and the no-BOM path cannot fail open because it never
+    decodes. A lone surrogate under a declared UTF-16 BOM raises and is refused: bytes
+    undecodable under their own declared encoding are not a shard either, and the one
+    thing this check must never do is let a page through.
+
+    Content-Type is not consulted and does not need to be: it is a claim by the same
+    server that lied about the body, and the servers in this chain answer `text/html` for
+    a parquet resolve on some paths. The bytes are the evidence."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(n)
+    except OSError:
+        return False
+    if head.startswith(b"\xff\xfe") or head.startswith(b"\xfe\xff"):
+        # CONSUME THE BOM. Decoding it as text leaves U+FEFF, which `lstrip()` does not
+        # remove -- the page then starts with "﻿<" and the check fails open again.
+        # Measured while fixing escape 1.
+        enc = "utf-16-le" if head.startswith(b"\xff\xfe") else "utf-16-be"
+        try:
+            text = head[2:].decode(enc)
+        except UnicodeDecodeError:
+            return True
+        return text.lstrip().lower().startswith("<")
+    return head.lstrip(b"\xef\xbb\xbf").lstrip().lower().startswith(b"<")
+
+
 def _fetch_one(url_chain, part, name, prev_host):
     """Probe + download one shard across the host chain; continue the SAME .part
     on the next host. Returns (subprocess.CompletedProcess|None, serving_host).
-    A host that does not answer a 10 s IPv4 HEAD is abandoned in ~10 s and the
-    next serves; ModelScope (the no-resume LFS) is downloaded whole, no -C -.
+    A host that does not answer a final 2xx/3xx to a 10 s IPv4 HEAD is abandoned in
+    ~10 s and the next serves; ModelScope (the no-resume LFS) is downloaded whole,
+    no -C -.
 
     Each host is tried with an 8-way ranged download FIRST (§259) and falls back to the
     single stream when the server will not serve ranges or the assembly does not verify.
@@ -552,25 +630,34 @@ def _fetch_one(url_chain, part, name, prev_host):
     the same reason `-C -` is already skipped for it below."""
     server = None
     for u in url_chain:
-        probe = subprocess.run(
-            ["curl", "-4", "-sI", "-m", "10", u],
-            capture_output=True, text=True, timeout=12,
-        )
-        if probe.returncode != 0 or not probe.stdout.startswith(("HTTP/", "HTTP/")):
-            print(f"  {name}: host {_host(u)} unreachable (rc {probe.returncode}) -> next", file=sys.stderr, flush=True)
+        code = _probe_status(u)
+        if code is None or not 200 <= code < 400:
+            print(f"  {name}: host {_host(u)} unreachable (status {code}) -> next", file=sys.stderr, flush=True)
             continue
         server = _host(u)
         if "modelscope" not in u and not os.path.exists(part):
             ok, why = _ranged_get(u, part, name)
-            if ok:
+            if ok and not _looks_like_html_error(part):
                 return subprocess.CompletedProcess([], 0), server
-            print(f"  {name}: ranged fetch unavailable ({why}) -> single stream", file=sys.stderr, flush=True)
+            if ok:
+                # A false 200: the status said 200 and the bytes are a page. Refuse it HERE,
+                # inside the host loop, so the chain falls through to the next mirror -- the
+                # size floor in _ranged_get passed because the page was large enough.
+                print(f"  {name}: {_host(u)} served an HTML page as the object -> next",
+                      file=sys.stderr, flush=True)
+            else:
+                print(f"  {name}: ranged fetch unavailable ({why}) -> single stream", file=sys.stderr, flush=True)
         args = ["curl", "-4", "-sL", "-o", part, "--retry", "6", "--retry-delay", "3", u]
         if "modelscope" not in u:
             args[3:3] = ["-C", "-"]  # resume only off ModelScope (its LFS aborts on range)
         r = subprocess.run(args, stdout=subprocess.DEVNULL)
-        if r.returncode == 0:
+        if r.returncode == 0 and not _looks_like_html_error(part):
             return r, server
+        if r.returncode == 0:
+            _rm(part)  # else the next host resumes onto the page and -C - never fixes it
+            print(f"  {name}: {_host(u)} served an HTML page as the object -> next",
+                  file=sys.stderr, flush=True)
+            continue
         print(f"  {name}: {_host(u)} download rc {r.returncode} -> next", file=sys.stderr, flush=True)
     return subprocess.CompletedProcess([], 1), server
 
@@ -596,6 +683,7 @@ def _selftest():
     import threading
 
     payload = b"hello t37 mirror chain\n" * 3
+    HTML_ERR = b"<!DOCTYPE html><html><body>403 Forbidden</body></html>"
     # 80MB, over _ranged_get's 64MB floor. Content varies by offset so a chunk assembled in
     # the wrong order, or a chunk served from the wrong range, does not compare equal.
     big_payload = bytes((i * 7 + (i >> 13)) & 0xFF for i in range(80 * 1024 * 1024))
@@ -616,13 +704,6 @@ def _selftest():
             self.send_header("Connection", "close")
             self.end_headers()
 
-        def _ok(self):
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(len(payload)))
-            self.send_header("Connection", "close")
-            self.end_headers()
-
         def _route(self, body):
             if self.path == "/red":
                 self.send_response(302)
@@ -631,6 +712,34 @@ def _selftest():
                 self.end_headers()
             elif self.path == "/missing":
                 self.send_error(404)
+            elif self.path == "/red403":
+                # A redirect whose TARGET refuses. `-sI` reports the 302 (3xx, so even a
+                # status-bounds check would accept it); only -L reaches the 403. The proxy
+                # path has the same shape: CONNECT 200, then the object's 403.
+                self.send_response(302)
+                self.send_header("Location", "/errbody")
+                self.send_header("Connection", "close")
+                self.end_headers()
+            elif self.path == "/errbody":
+                # A host that ANSWERS (TCP fine) and refuses: the live case, measured
+                # against data.together.xyz 2026-09-19 (`HTTP/2 403`, curl exit 0).
+                self.send_response(403)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(HTML_ERR)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                if body:
+                    self.wfile.write(HTML_ERR)
+            elif self.path == "/html200":
+                # The false 200: a page served AS the object. Reaches the transfer with the
+                # probe satisfied, so only a content check can refuse it.
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(HTML_ERR)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                if body:
+                    self.wfile.write(HTML_ERR)
             elif self.path in ("/big.jsonl", "/short.jsonl", "/norange.jsonl",
                                "/slow.jsonl", "/slowcap.jsonl", "/onebad.jsonl"):
                 self._big(body)
@@ -721,11 +830,123 @@ def _selftest():
     missing = f"http://127.0.0.1:{port}/missing"  # 404: must be judged down
     closed_a = "http://127.0.0.1:9/x.jsonl"  # discard port: refused, fails fast
     closed_b = "http://127.0.0.1:8/y.jsonl"
+    errbody = f"http://127.0.0.1:{port}/errbody"  # ANSWERS 403 -- curl exits 0
+    red403 = f"http://127.0.0.1:{port}/red403"    # 302 -> 403: only -L sees the refusal
+    html200 = f"http://127.0.0.1:{port}/html200"  # 200 whose body is a page
     try:
         # (a1) the OT3-style redirect probe judges the FINAL status, not the 302 first line
         assert _ot3_probe_ok(red) is True, f"302->200 probe must be True, got {_ot3_probe_ok(red)}"
         assert _ot3_probe_ok(missing) is False, "404 probe must be False"
         assert _ot3_probe_ok(closed_a) is False, "closed port probe must be False"
+        # (a2) THE PREDICATE ITSELF, on the case the closed port cannot reach. `curl -sI`
+        # exits 0 for a 403 because the host answered; the old predicate read that exit code
+        # and the `HTTP/` prefix and called it reachable, so the chain stopped on a dead host
+        # and the error page was renamed into place as the shard. Asserted on _probe_status
+        # directly as well as end-to-end below, so a regression names the predicate.
+        assert _probe_status(errbody) == 403, f"403 must read as 403, got {_probe_status(errbody)}"
+        assert _probe_status(closed_a) is None, "a closed port must read as no answer"
+        assert _probe_status(red) == 200, f"a followed redirect must read as 200, got {_probe_status(red)}"
+        # (a2b) A REDIRECT THAT ENDS IN 403. This is the case that separates `-sI` from
+        # `-sIL`: without -L curl reports the 302, which is 3xx and would PASS a bounds check,
+        # so the dead host is accepted and the redirect target's 403 is discovered only as the
+        # body. The proxy path has the same shape (CONNECT 200, then the object's 403).
+        assert _probe_status(red403) == 403, (
+            f"a redirect ending in 403 must read as 403, not as its 302: got {_probe_status(red403)}")
+        # (a3) END TO END, THE CROSS-PRODUCT OF BOTH AXES: what the host answers (refuses
+        # outright, or serves a page as a 200) x what the manifest expects (a known size, or
+        # 0 -- which is falsy, so the per-shard size check is SKIPPED). All four must fail over
+        # to the healthy host; the size check can only catch the top row.
+        for _url, _tag in ((errbody, "403"), (html200, "page200")):
+            _rm(part)
+            r3, server3 = _fetch_one([_url, good], part, f"{_tag}-src", None)
+            assert r3.returncode == 0 and server3 == f"127.0.0.1:{port}", (
+                f"[{_tag}] a bad host must be abandoned for the healthy mirror; "
+                f"got rc {r3.returncode} server {server3}")
+            with open(part, "rb") as fp:
+                assert fp.read() == payload, f"[{_tag}] the healthy mirror's bytes, not the error page"
+            # and with the bad host as the ONLY host, the fetch must fail, not "succeed"
+            _rm(part)
+            r4, _ = _fetch_one([_url], part, f"{_tag}-only", None)
+            assert r4.returncode != 0, f"[{_tag}] a chain whose every host is bad must fail"
+        # (a3b) THE SIZE-0 AXIS, asserted on the real predicate rather than described tautologically.
+        # A manifest whose names come from a shipped file carries size 0 (`_manifest_rp1t_github`,
+        # `_manifest_en_fineweb_edu`, ...), and the loop's check is `if expect and sz != expect`;
+        # 0 is falsy, so for those sources a 44-byte page at any size reaches the rename. Assert
+        # the skip on a real source rather than on a constant, so a future `expect is not None`
+        # (which would make these sources compare against 0 and fail every shard) reds here.
+        assert all(e == 0 for _n, _u, e in _manifest_rp1t_github()), (
+            "the shipped-names manifests must carry size 0 -- the premise of the content gate; "
+            "if this now carries real sizes, the gate's justification and the loop's check differ")
+        # (a4) THE CONTENT GATE ITSELF, in both formats a manifest carries. The negative
+        # controls matter: a gate that refuses everything would reject the corpus it protects.
+        _rm(part)
+        r5, server5 = _fetch_one([html200, good], part, "html200test", None)
+        assert r5.returncode == 0 and server5 == f"127.0.0.1:{port}", (
+            f"a host serving an HTML page must be abandoned for the healthy mirror; "
+            f"got rc {r5.returncode} server {server5}")
+        with open(part, "rb") as fp:
+            assert fp.read() == payload, "the healthy mirror's bytes, not the page"
+        with open(os.path.join(d, "jsonl.part"), "wb") as fp:
+            fp.write(b'{"text": "real shard"}\n')
+        assert not _looks_like_html_error(os.path.join(d, "jsonl.part")), "a jsonl shard is not a page"
+        with open(os.path.join(d, "pq.part"), "wb") as fp:
+            fp.write(b"PAR1" + b"\x00" * 64)
+        assert not _looks_like_html_error(os.path.join(d, "pq.part")), "a parquet shard is not a page"
+        # (a5) THE PREFIX VARIANTS THE BYTE COMPARE MISSES. Two escapes, both measured in
+        # review 2026-09-19, so the fixtures MUST be real encodings: the first version of this
+        # case wrote `bom + b"<!DOCTYPE html>"` -- a BOM followed by bare ASCII -- which is not
+        # a byte sequence any UTF-16 encoder produces, and it passed while the real
+        # `encode("utf-16-be")` page was ACCEPTED (BE decodes to `\x00<\x00!...`, and lstrip
+        # does not remove NUL). A fixture that cannot occur in the world it describes proves
+        # nothing about that world.
+        for _enc, _bom, _nm in (("utf-8", b"\xef\xbb\xbf", "utf8"),
+                                ("utf-16-le", b"\xff\xfe", "utf16le"),
+                                ("utf-16-be", b"\xfe\xff", "utf16be")):
+            _page = b"<!DOCTYPE html><html><body>403</body></html>"
+            with open(os.path.join(d, "bom.part"), "wb") as fp:
+                fp.write(_bom + _page.decode().encode(_enc))
+            assert _looks_like_html_error(os.path.join(d, "bom.part")), (
+                f"[{_nm}] a real {_enc}-encoded error page must be refused")
+            with open(os.path.join(d, "bomreal.part"), "wb") as fp:
+                fp.write(_bom + '{"text": "real shard"}\n'.encode(_enc))
+            assert not _looks_like_html_error(os.path.join(d, "bomreal.part")), (
+                f"[{_nm}] a real {_enc}-encoded shard must still be accepted")
+        # A BOM that declares an encoding the body does not honour: fail closed. The bytes
+        # are not a shard, and the one thing this check must never do is let a page through.
+        # A SURROGATE in UTF-16 is the decode error that is easy to miss: it raises even
+        # though the length is a valid even count, and the length is what the first version
+        # of this fixture varied -- which meant it never reached the decode error at all.
+        with open(os.path.join(d, "bad.part"), "wb") as fp:
+            fp.write(b"\xff\xfe" + b"\x00\xd8")  # U+D800 lone surrogate, UTF-16-LE
+        assert _looks_like_html_error(os.path.join(d, "bad.part")), (
+            "bytes undecodable under their own declared BOM must be refused, not accepted")
+        with open(os.path.join(d, "ws.part"), "wb") as fp:
+            fp.write(b"\n\n   <html><body>403</body></html>")
+        assert _looks_like_html_error(os.path.join(d, "ws.part")), "a whitespace-led page must be refused"
+        with open(os.path.join(d, "xml.part"), "wb") as fp:
+            fp.write(b"<?xml version='1.0'?><Error><Code>403</Code></Error>")
+        assert _looks_like_html_error(os.path.join(d, "xml.part")), "an XML error body must be refused"
+        # (a6) NO BOM AND NOT VALID UTF-8. The branch this case exists for: refusing on decode
+        # failure only when a BOM declared an encoding left the no-BOM path fail-OPEN, so
+        # `<!DOCTYPE html>caf\xe9` and `<!DOCTYPE html>\xff` were ACCEPTED while the same page
+        # in pure ASCII was refused (de, 2026-09-19 -- the docstring said fail closed and the
+        # code did not). Latin-1 error pages are no rarer than BOM-prefixed ones. The real
+        # shard below carries the same `\xe9` byte, so the assertion separates the page from
+        # the corpus rather than from the byte.
+        for _bad, _nm in ((b"<!DOCTYPE html><html>caf\xe9</html>", "latin-1 byte"),
+                          (b"<!DOCTYPE html>\xff<body>", "raw 0xff"),
+                          (b"<!DOCTYPE html>\xed\xa0\x80</html>", "utf-8 surrogate")):
+            with open(os.path.join(d, "nobom.part"), "wb") as fp:
+                fp.write(_bad)
+            assert _looks_like_html_error(os.path.join(d, "nobom.part")), (
+                f"[{_nm}] a no-BOM error page with a non-UTF-8 byte must be refused, not accepted")
+        with open(os.path.join(d, "latin1.part"), "wb") as fp:
+            fp.write(b'{"text": "caf\xe9"}\n')
+        assert not _looks_like_html_error(os.path.join(d, "latin1.part")), (
+            "a real shard whose bytes are not valid UTF-8 must still be accepted")
+        _rm(part)  # leave `part` clean: test (a) below resumes onto it and a stale file makes
+        # curl -C - exit 33 (range not satisfiable), which failed a LATER assertion for a
+        # reason that had nothing to do with what it tests. Measured, this session.
         # (a) failover: closed first host abandoned, server host serves the bytes
         r, server = _fetch_one([closed_a, good], part, "t37selftest", None)
         assert r.returncode == 0, f"failover did not serve: rc {r.returncode}"
@@ -930,6 +1151,21 @@ def fetch(source, target_bytes, stream_n=0, stream_i=0, modelscope_urls=None):
             print(
                 f"  {name}: {sz}B != expected {expect}B -- fetch incomplete, .part kept for resume",
                 file=sys.stderr,
+            )
+            return 3
+        if _looks_like_html_error(part):
+            # THE GATE THE SIZE CHECK CANNOT BE. `expect` is 0 for every manifest whose
+            # names come from a shipped file (rp1t_github, en_fineweb_edu, rp1t_c4,
+            # rp1t_arxiv, ...), and 0 is falsy, so the size check above is skipped for
+            # exactly the sources that go through a proxy -- where a false 200 is the
+            # live failure mode. Refusing on the content catches those, and catches the
+            # separate case of a host that answers a real 200 with a page.
+            _rm(part)
+            print(
+                f"  {name}: {sz}B is an HTML error page, not a shard -- refusing; "
+                f"hosts tried ({_chain_hosts(url_chain)})",
+                file=sys.stderr,
+                flush=True,
             )
             return 3
         os.rename(part, dst)  # atomic: a partial shard never masquerades as complete

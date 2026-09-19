@@ -1108,6 +1108,14 @@ def main():
         # claim over the code that decides a multi-GB corpus's exact bytes. The selftest drives
         # the two ways a divergence appears: a 1-byte shard diff and an extra shard.
         "scripts/compare_built_dirs.py",
+        # Reachability probe for a fetch manifest (3b). Registered because the source this repo
+        # actually built from (`data.together.xyz`) went Cloudflare-403 at the host level on
+        # 2026-09-19 and nothing in the tree would have noticed until a rebuild. The selftest
+        # pins the defect that produced a false green: without `-L`, a 302 redirect line and a
+        # proxy CONNECT line both read as the object's 200, so 8/8 URLs passed on a host that
+        # was serving 403 + HTML. It asserts the last header block is taken, an HTML body under
+        # 200 is rejected, and the magic check is actually compared.
+        "scripts/probe_source_urls.py",
         # The production 13-gram DROP module shared by the five non-Ultra filter runs and 0e's
         # UltraData aggregate (ae-7). Registered because a false negative ships a gate answer
         # into the mix and a false positive silently drops rows: the selftest pins planted
