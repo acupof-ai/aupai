@@ -138,62 +138,139 @@ def _live_claim_files(claim_dir):
     return [f for f in os.listdir(claim_dir) if f.endswith(".json")]
 
 
+def _group_members(pgid):
+    """Live pids in process group `pgid`. NOT pgrep -g: on Linux it means process-group, on
+    macOS it means real-group-id. `ps -o pid,pgid` means the same on both."""
+    out = subprocess.run(["ps", "-eo", "pid=,pgid="], capture_output=True, text=True).stdout
+    pids = []
+    for line in out.splitlines():
+        f = line.split()
+        if len(f) == 2:
+            try:
+                if int(f[1]) == pgid:
+                    pids.append(int(f[0]))
+            except ValueError:
+                pass
+    return pids
+
+
 def _reap(popen):
-    """Kill `popen` and EVERY descendant it started, children before parents, and wait.
+    """Kill the launcher's whole process GROUP and report who survived.
 
-    THE TEST LEAKED ITS OWN STUBS. `proc.kill()` signals the bash launcher only; the torchrun
-    stub is a GRANDCHILD (`bash` execs it), so it survived every path that did not let bash
-    unwind on its own -- and a surviving stub is a live process holding a claim dir that has
-    already been rmtree'd. 3b caught one: ppid=1, cwd pointing at a deleted mkdtemp, idling
-    9.5h. That is the test harness leaking, which is a DIFFERENT thing from the launcher under
-    test leaking, and the whole point of the assertion this file exists to make is to tell
-    those two apart. A harness that orphans its own stub makes "launcher left torchrun
-    running" unfalsifiable.
+    WHY A GROUP, NOT A PARENT-CHILD WALK. The first version snapshotted children with
+    `pgrep -P <parent>` and only while the parent was alive. The real leak is the opposite
+    timing: the launcher (group leader) exits first and its torchrun grandchild is reparented
+    to init with ppid=1 -- exactly what 3b caught (a 9.5h stub in a deleted mkdtemp). After
+    that, `pgrep -P` finds nothing and the poll() gate skips enumeration entirely, so the end
+    assert saw an empty list and passed while the orphan ran. Reparenting changes ppid, NOT
+    the process group: every descendant the launcher starts shares the group created by
+    start_new_session=True, and the group outlives its leader as long as a member holds it.
+    os.killpg therefore still reaches an init-adopted grandchild.
 
-    CHILDREN BEFORE PARENTS. Signalling the parent first reparents the child to init (ppid=1)
-    and loses the pid we were about to kill -- which is exactly the shape 3b observed.
+    The pgid is read at LAUNCH time and stashed on the Popen, because once the leader is a
+    zombie or reaped os.getpgid(its pid) raises ESRCH -- a lookup in the reaper could not
+    recover the very group that owns an orphaned stub.
 
-    Returns the pids that were still alive when it gave up, so the caller can ASSERT on the
-    result instead of trusting this function ran. An empty list is the healthy answer.
+    Returns the members still alive after SIGKILL+wait, so the caller ASSERTs on it instead of
+    trusting the function ran. Empty is the healthy answer; a no-op reaper cannot fake it,
+    because the reparent world leaves a live member in the group at reclamation time.
     """
     if popen is None:
         return []
-    kids = []
-    if popen.poll() is None:
-        # Snapshot descendants BEFORE signalling anything: the parent's exit reparents them.
+    pgid = getattr(popen, "_aupai_pgid", None)
+    if pgid is None:
         try:
-            out = subprocess.run(["pgrep", "-P", str(popen.pid)], capture_output=True,
-                                 text=True).stdout
-            kids = [int(x) for x in out.split() if x.strip().isdigit()]
-        except (OSError, ValueError):
-            kids = []
-        for pid in kids:
-            try:
-                os.kill(pid, signal.SIGKILL)
-            except OSError:
-                pass
+            pgid = os.getpgid(popen.pid)
+        except ProcessLookupError:
+            return []  # no recorded group and the leader is gone: nothing safe to signal
+    members = _group_members(pgid)
+    if members:
         try:
-            popen.kill()
-        except OSError:
-            pass
-        for pid in kids:
-            for _ in range(100):
-                try:
-                    os.kill(pid, 0)
-                except OSError:
-                    break
-                time.sleep(0.02)
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass  # every member exited between snapshot and signal
+    # Wait for the MEMBERS, not just the leader: the leader may already be dead (that is the
+    # reparent shape), so popen.wait alone returns instantly while a SIGKILL'd stub is still
+    # dying. Report a member only after it fails to leave across a grace window.
+    deadline = time.time() + 5
+    while members and time.time() < deadline:
+        members = [pid for pid in members if _alive(pid)]
+        if members:
+            time.sleep(0.02)
     try:
         popen.wait(timeout=10)
     except subprocess.TimeoutExpired:
         pass
-    return [pid for pid in kids if _alive(pid)]
+    return [pid for pid in members if _alive(pid)]
 
 
 def _alive(pid):
     try:
         os.kill(pid, 0)
         return True
+    except OSError:
+        return False
+
+
+def _ppid(pid):
+    """Parent pid via ps (portable; /proc is Linux-only). None when the pid is gone."""
+    try:
+        out = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)],
+                             capture_output=True, text=True).stdout.strip()
+        return int(out) if out else None
+    except (OSError, ValueError):
+        return None
+
+
+def _reparent_world():
+    """THE ACTUAL LEAK SHAPE: group leader dies first; the torchrun stub is adopted by init
+    (ppid=1) but keeps the process group. The reaper must still kill it.
+
+    The first _reap enumerated children only while the parent lived, so on this world it found
+    nobody and the suite passed with the orphan running. SIGKILL the leader directly (not the
+    trap path), wait for the stub's ppid to leave the leader, then reclaim and prove it is gone.
+    """
+    claim_dir = tempfile.mkdtemp(prefix="phisft_rp_")
+    d, ready, die = _build_tree(claim_dir)
+    proc = _run(d, claim_dir)
+    stub = None
+    try:
+        for _ in range(200):
+            if os.path.exists(ready):
+                break
+            time.sleep(0.05)
+        assert os.path.exists(ready), "reparent world: torchrun stub never started"
+        kids = [int(x) for x in subprocess.run(["pgrep", "-P", str(proc.pid)],
+                capture_output=True, text=True).stdout.split()]
+        # the non-shell python torchrun, not a `bash`/`ps` helper
+        stub = next((k for k in kids if not _is_shell(k)), None)
+        assert stub is not None, f"reparent world: no torchrun child among {kids}"
+        assert _alive(stub), "reparent world: stub died before the leader was killed"
+        os.kill(proc.pid, signal.SIGKILL)  # bypass the launcher trap; force adoption
+        proc.wait()
+        for _ in range(100):
+            pp = _ppid(stub)
+            if pp is not None and pp != proc.pid:
+                break
+            time.sleep(0.02)
+        pp = _ppid(stub)
+        assert pp is not None and pp != proc.pid and _alive(stub), (
+            f"reparent world: stub was not adopted alive after leader death (ppid={pp})")
+        survivors = _reap(proc)
+        assert not _alive(stub) and not survivors, (
+            f"reaper left the init-adopted stub: pid={stub} survivors={survivors}")
+        print(f"reparent world: stub {stub} adopted (ppid {pp}) then reaped via its group")
+    finally:
+        _LEAKED.extend(_reap(proc))
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(claim_dir, ignore_errors=True)
+
+
+def _is_shell(pid):
+    try:
+        out = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)],
+                             capture_output=True, text=True).stdout.strip()
+        return os.path.basename(out) in ("bash", "sh", "zsh", "dash")
     except OSError:
         return False
 
@@ -241,8 +318,15 @@ def _run(d, claim_dir, env_extra=None):
                EXP_LOG=os.path.join(d, "exp_calls.log"))
     if env_extra:
         env.update(env_extra)
-    return subprocess.Popen(["bash", os.path.join(d, "runs", "v42_phi_sft.sh")],
-                            cwd=d, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    # start_new_session makes the launcher a group leader; torchrun and every descendant share
+    # the new group, so reclamation can signal the group (see _reap) even after the launcher
+    # exits and a stub is reparented to init. Stash the pgid at launch: getpgid(leader pid)
+    # raises ESRCH once the leader is gone, which is exactly when an orphan must still be found.
+    proc = subprocess.Popen(["bash", os.path.join(d, "runs", "v42_phi_sft.sh")],
+                            cwd=d, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            start_new_session=True)
+    proc._aupai_pgid = os.getpgid(proc.pid)
+    return proc
 
 
 def main():
@@ -386,6 +470,7 @@ def main():
         shutil.rmtree(od, ignore_errors=True)
         shutil.rmtree(oclaim, ignore_errors=True)
 
+    _reparent_world()
     _env_worlds()
     # THE HARNESS MUST NOT LEAK ITS OWN STUBS. Without this the test could pass while orphaning
     # a torchrun of its own -- which is what 3b caught (ppid=1, deleted cwd, 9.5h) -- and then
