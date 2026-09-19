@@ -389,11 +389,18 @@ def gate_resume_equivalent_to_uninterrupted():
     fm, _ = run("fresh")
 
     # DIAGNOSE, do not guess the cause: on a bit-exact failure print the magnitude, the FIRST
-    # offending flat index, and how many elements differ. ~1e-8..1e-3 over a handful of
-    # elements is thread/BLAS bf16 reduction noise (cross-process, order-dependent); an O(1)
-    # delta or a wholesale index shift is a real name-bind / copy / dtype regression. This
-    # gate runs its subprocesses at OMP_NUM_THREADS=2 (set inside the worker), so the outer
-    # CI thread count is not the lever; the measured magnitude is what separates the two.
+    # offending flat index, and how many elements differ. NOTE (2026-09-19, measured): the old
+    # "1e-8..1e-3 sparse = cross-process thread/BLAS reduction noise" guide was WRONG and led
+    # the investigation to a thread hypothesis that does not hold. Both workers are seeded
+    # (manual_seed(123) before build; init is the only global-RNG consumer), and seeded builds
+    # at threads=1 AND threads=2 are bit-identical across separate processes (0/524288). The
+    # ~1.3e-2 / near-total-element CI red is therefore NOT bf16 reduction order: it is a real
+    # asymmetry between the control and save/load-restart trajectories (name-keyed optim
+    # rebind / exp_avg / exp_avg_sq / step / serialization under investigation in #549).
+    # An earlier "reproduced" 99.9%-different gradient was an UNSEEDED-model-init artifact.
+    # Read the fields as: n_nan>0 NaN corruption; near-total elements + ~1e-2 with n_nan=0 =
+    # the save/load asymmetry to localize by microstage, NOT reduction noise; O(1)/index shift
+    # = name-bind/copy/dtype regression.
     def _eq(tag, want, got):
         wf, gf = want.float(), got.float()
         if not torch.equal(wf, gf):
@@ -408,8 +415,8 @@ def gate_resume_equivalent_to_uninterrupted():
             raise AssertionError(
                 f"{tag} differs after save/load resume: max|delta|={d.max().item():.3e} "
                 f"n_diff={n_diff}/{d.numel()} first_flat_idx={first} n_nan={n_nan} "
-                f"(n_nan>0 = NaN corruption; 1e-8..1e-3 sparse = thread/BLAS noise; "
-                f"O(1) or a wholesale shift = real regression)")
+                f"(n_nan>0 = NaN corruption; near-total ~1e-2 n_nan=0 = save/load asymmetry, "
+                f"see #549; O(1) or wholesale shift = real regression)")
 
     _eq("fp32 master", cm, rm)
     _eq("bf16 run weight", cb, rb)
