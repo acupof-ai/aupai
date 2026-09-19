@@ -1864,10 +1864,10 @@
     "code_py_rp1t_dc": 379600071,
     "note": "pre-drop measured_pool_tokens same basis; keep_p1 dropped by user order (labels+raw lost 0916, no fingerprint-preserving source), rp1t dropped with unreachable github source; together freed 0.04 eff weight / 1.2B target; held for rebalance audit, NOT in value/total"
    },
-   "cot_status": "399,994,717 is the 09-11 measured cache; faithful rebuild in progress by 0e (source 1.226GB, target 2e9->1e9), value may move slightly"
+   "cot_status": "399,994,717 = the 09-11 measured packed _dc gate cache and is the basis of this value. 0e's faithful source rebuild was reported complete by the data lead on 2026-09-19 with a corpus FULL_TOKENS of 400,105,114 (+0.028%); that figure is not independently verified here and its basis (raw corpus total vs gate-vocab packed cache with .srcfp) is unconfirmed, so this packed value stays 399,994,717 until a rebuilt packed cache is produced and fingerprint-checked. An interim target_tokens=1e9 note was retracted by fb and is not a basis here"
   },
   "source": "data/mix_v41_gate.json domains[].epochs_pool_source; facts/corpus_supply.json#cs.v41_gate_token_caches_rebuilt_f1f86097_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l2_dc_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l3_noexec_dc_0911",
-  "uncertainty": "starcoder/math/en/cot exact measured, post-dc vs pre-dc drop <=0.19%; ultra L2/L3 exact measured 09-11 aggregates (NOT estimates; supersede stale 59.9B/31.8B once printed in the mix _comment); L2 scheduling vs full-tensor differs by a 1,022-token trailing row; cot_dc pending_rebuild by 0e may shift; recorded pod measurements not downgraded by the 0916 byte loss",
+  "uncertainty": "starcoder/math/en/cot exact measured, post-dc vs pre-dc drop <=0.19%; ultra L2/L3 exact measured 09-11 aggregates (NOT estimates; supersede stale 59.9B/31.8B once printed in the mix _comment); L2 scheduling vs full-tensor differs by a 1,022-token trailing row; cot_dc source rebuild done but no fingerprint-checked rebuilt packed cache yet, so the packed figure stays the 09-11 399,994,717 and the +0.028% corpus-only report is unconfirmed-basis (see config.cot_status); recorded pod measurements not downgraded by the 0916 byte loss",
   "boundary": "supply upper bound for the within-survivor rebalance only; recorded pod measurements, not a re-verification of destroyed bytes"
  }
  ]
