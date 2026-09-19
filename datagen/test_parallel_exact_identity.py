@@ -148,6 +148,23 @@ def main():
         assert slice_rows == stats["reasons"]["holdout"], (
             f"slice rows {slice_rows} != stamp holdout reason {stats['reasons']['holdout']}"
         )
+        # Issue #553: the stamp carries the decision's identity, and the two provenance
+        # states are told apart. Asserted HERE because this is the only test that runs a
+        # real _write_stats and reads the stamp back; the fingerprint's own discriminating
+        # power is asserted in build_corpus's case (i).
+        assert "drop_decision_fp" in stats and stats["drop_decision_fp"], (
+            "the stamp carries no drop_decision_fp -- the precondition that makes the global "
+            "pass's tier-3 skip safe is unrecorded again")
+        assert stats["drop_decision_fp_v"] == B.DROP_DECISION_FP_V
+        assert "holdout_set_fp" in stats
+        # global_only=True here (these w* shards are written by this test, but the pass is
+        # the external-shard path), so the worker's own value is not verifiable from here.
+        assert stats["worker_holdout_fp"] is None, (
+            f"a --global-only stamp claims to know the worker's decision code: "
+            f"{stats['worker_holdout_fp']!r}")
+        assert stats["worker_shards_provenance"] == "external-unverified"
+        assert stats["drop_decision_fp"] == B.drop_decision_fp(), (
+            "the stamped value is not the one holdout_fp() computes now")
         merged = os.path.join(w, "t_000.jsonl")
         with open(merged, "rb") as f:
             got = f.read()  # raw bytes: byte-identity is an exact-file comparison
