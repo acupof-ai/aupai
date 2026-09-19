@@ -156,6 +156,16 @@ _CHECK_TIMEOUTS = {
     # the entries around it use, and still far under a hang.
     "test_integration_tree_guard": 30,
     "eval_sft_template_contamination": 90,
+    # Measured 2026-09-19: 2.2s solo on an M-series laptop (2.20 / 2.26 / 2.19 over three
+    # runs), but the check is a repo-scope AST scan of every .py/.sh -- it grows with the
+    # tree, not with the change under test -- and on a 2-core CI runner it exceeds the 5s
+    # default. That is the deadline-nothing-can-meet case: in the #567 ci-selftests job it
+    # timed out as strike 1 in the explicit `harness check` step and strike 2 inside
+    # scripts/test_check_summary.py's own selftest, so a check that is GREEN (it PASSes in
+    # 2.2s by hand) FAILed by "a second consecutive timeout". The strike mechanism is right;
+    # the deadline was set for a machine the CI runner is not. 30s is ~13x the laptop
+    # measurement, matching the ratio the entries around it use, and still far under a hang.
+    "no_hardcoded_cache_path": 30,
     # Measured on the pod, 2026-09-01: 0.8s to load the 1.5GB pack, 0.2s to flatten
     # 192M tokens, and 0.127s per probe x 76 probes = 9.7s of search. It was never
     # going to fit 5s, so it timed out on nine consecutive runs and FAILed with
@@ -29296,9 +29306,19 @@ def main():
     if cmd in ("all", "stages"):
         print("\nSTAGES  (a stage is done when its falsifying measurement exists)")
         stages(res)
+    # THE SUMMARY PRINTS ON EVERY PATH, INCLUDING FAILURE. It used to sit below a
+    # `if bad: return 1`, so a run with any failing invariant emitted the FAIL list and
+    # returned BEFORE the "did NOT run here" line -- the reader saw which assertions broke
+    # and not that 31 checks were never attempted. Failure is when that line matters MOST,
+    # not least: the checks that skip here are where the pod-only FAILs live, and "0 FAIL"
+    # without a denominator is the reading this line exists to prevent.
+    #
+    # Found 2026-09-19 via scripts/test_check_summary.py, which asserts this line is present
+    # and correct: the test could not run in the one situation it describes, because the
+    # failing invariant suppressed its subject. Ordering only -- the FAIL verdict and the rc
+    # below are unchanged.
     if bad:
         print(f"\n{len(bad)} invariant(s) FAILED: {', '.join(bad)}")
-        return 1
     if timed:
         # Non-blocking on the first strike, but never silent: a check that did not run
         # is not a check that passed, and the next consecutive timeout exits 1.
@@ -29316,7 +29336,7 @@ def main():
     n_pod = sum(1 for v in EVIDENCE.values() if v == "pod")
     print(f"\nauthority: {len(EVIDENCE) - n_pod} repo checks (green here = green on main), "
           f"{n_pod} pod checks (green here = green on the pod only)")
-    return 0
+    return 1 if bad else 0
 
 
 if __name__ == "__main__":
