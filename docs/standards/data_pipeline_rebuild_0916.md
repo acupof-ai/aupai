@@ -310,8 +310,8 @@ trusting it.** Each row that is a fetch-in-flight is marked as such.
 | `code_py_starcoder_dc` | .07 | **no** (fetch in flight) | `wt-3b/data/raw/ms_starcoder_py/` **21G and growing** (4.8G when the audit started, 21G at the end -- 98's fetch in flight) | `--source ms_starcoder_py` | **yes** — ModelScope `.../starcoderdata/repo?FilePath=python/` **200** | (a) re-fetchable |
 | `cot_dc` | .015 | **no** | — | `--source cot_*` (4 manifests) | **yes** — hf-mirror resolve 200 for `OpenThoughts-114k`, `OpenR1-Math-220k`; ModelScope `OpenThoughts3-1.2M` **200** | (a) re-fetchable |
 | `math_owm_stage2_dc` | .08 | **no** | — | none in `fetch_corpus.py` | **gated** — `HuggingFaceFW/open-web-math` returns **401** on hf-mirror **and** on hf.co (both API and resolve/README); the repo exists but needs a token | (a) with auth, else blocked |
-| `code_ultra_l2_dc` | .45 | **no** | — | none (0e's converter) | **yes** — `openbmb/UltraData-Code` README/tree/API **200** on hf-mirror | (a) re-fetchable + (c) convert |
-| `code_ultra_l3_noexec_dc` | .30 | **no** | — | none (0e's converter) | **yes** — same repo, 200 | (a) re-fetchable + (c) convert |
+| `code_ultra_l2_dc` | .45 | **no** | — | none (0e's converter) | **yes** — `openbmb/UltraData-Code` README/tree/API **200** on hf-mirror | (a) re-fetchable; 0e's converter builds the corpus |
+| `code_ultra_l3_noexec_dc` | .30 | **no** | — | none (0e's converter) | **yes** — same repo, 200 | (a) re-fetchable; 0e's converter builds the corpus |
 | `code_keep_p1_dc` | .03 | **no — and no source** | — | `assemble_keep_p1.py` hardlinks `data/p1/keep_set/{code_rp1t_dd09,code_rp1t_b2v2_dd,code_dedup08}` | **no** | **(d) truly lost** |
 | `code_py_rp1t_dc` | .01 | **no** | only `rp1t_github_manifest.txt` (98 names, 5.5K) | `--source rp1t_github` | **no** — manifest names RedPajama github files; no data bytes | **(d) truly lost** |
 
