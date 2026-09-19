@@ -28,6 +28,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 
 import torch
 
@@ -562,7 +563,14 @@ def coloc(runs, out, stress=0):
     diag pair. Process tree is symmetric by construction (both are children of this orch;
     neither runs in the orch's own torch context), so a different red rate isolates the test
     BODY, not spawn structure or outer-process torch init. `stress` adds outer-sibling burner
-    processes for the whole run (contention arm). Continues even on a mismatch."""
+    processes for the whole run (contention arm). Continues even on a mismatch.
+
+    out=None (no --out): use a short-lived mkdtemp and remove the whole root when done. One pair
+    writes ~4.8 GiB of fp32 dumps, so an explicit --out on a volume with enough room is required
+    to retain per-iteration tensors; the default leaves nothing behind."""
+    temp_out = out is None
+    if temp_out:
+        out = tempfile.mkdtemp(prefix="diag_colocate_")
     os.makedirs(out, exist_ok=True)
     env = dict(os.environ)
     env["OMP_NUM_THREADS"] = os.environ.get("GATE_OMP", "2")
@@ -626,6 +634,9 @@ def coloc(runs, out, stress=0):
           f"rates match. exits 0 regardless.")
     for it, sig, line in diverge[:3]:
         print(f"--- disagreement iter {it}: {line}\n{sig}")
+    if temp_out:
+        shutil.rmtree(out, ignore_errors=True)
+        print(f"(temporary dump root {out} removed; pass --out to retain tensors)")
 
 
 def orch(runs, out):
@@ -797,8 +808,8 @@ def main():
     elif a.diag_pair:
         pair_once(a.out or os.path.join("/tmp", "diag_pair_out"))
     elif a.diag_colocate:
-        coloc(a.diag_colocate, a.out or os.path.join("/tmp", "diag_colocate_out"),
-              stress=a.stress)
+        # no --out -> coloc makes a short-lived mkdtemp and deletes it (each pair is ~4.8 GiB)
+        coloc(a.diag_colocate, a.out, stress=a.stress)
     elif a.diag_orch:
         orch(a.diag_orch, a.out or os.path.join("/tmp", "diag_resume_out"))
     else:
