@@ -240,7 +240,7 @@ slots are provably dead on this corpus.
    vocabulary the statistics of the 70-80% of documents about to be discarded. This costs no extra
    time: tokenization already waits for the corpus to be final.
 2. **Measure the tax on held-out text** (44's condition, and **already satisfied**). The repo
-   precedent is `facts/tokenizer.json#11` -- fit on a stratified sample, evaluate on held-out text.
+   precedent is `facts/tokenizer.json#tok.stratified_vs_all` -- fit on a stratified sample, evaluate on held-out text.
    The candidate was fitted on a proxy composition (`en_c4_stage2` + `code_py_starcoder` +
    `code_py_rp1t`, a 62.5M-token sample) while the tax was measured on the three *deduplicated*
    domains plus synthetic textbooks that did not exist when the candidate was fitted; seeds
