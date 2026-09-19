@@ -273,6 +273,108 @@ python3 scripts/filter_gate_domains.py \
 Verify each re-fetched/rebuilt shard against its recorded sha before trusting strata
 downstream.
 
+## 2d. Gate-mix survivor audit (de, 2026-09-19) — read-only, digest machine
+
+`data/mix_v41_gate.json` names eight domains. Before this audit only two had a surviving-raw
+fact written down (`en_c4_stage2`, `code_py_starcoder`) and one a loss audit. The other six had
+no recorded survivor state, so this section states each one from a full-disk search rather than
+from the absence of a mention.
+
+**Method.** All searches are on `digest` (`/usr/bin/ssh digest`, 64-core Linux CPU box), over the
+whole of `/data00`, not just the `wt-3b` worktree:
+
+```
+find /data00 -maxdepth 6 -type d \( -iname "*ultradata*" -o -iname "*open-web-math*" \
+  -o -iname "*owm*" -o -iname "*keep_p1*" -o -iname "*cot*" -o -iname "*rp1t*" \
+  -o -iname "*starcoder*" \) 2>/dev/null
+find /data00/home/chenkailun.c/aupai-cimap -type f \( -name "*.jsonl" -o -name "*.parquet" \) \
+  -size +50M 2>/dev/null | sed "s|.*/aupai-cimap/||" | awk -F/ "{print \$1\"/\"\$2\"/\"\$3}" \
+  | sort | uniq -c | sort -rn
+df -h /data00
+```
+
+The second command is the load-bearing one: **every file over 50 MB under the aupai tree is in
+`wt-3b/data/corpus` (722 files) or `wt-3b/data/raw` (32 files) — nothing else appears.** A domain
+absent from that list has no data on this machine, by shape rather than by name.
+
+### Survivor table
+
+`digest` sizes are `du -sh`; `df -h /data00` read **45G available** at the end of the audit (492G
+total, 91% used) -- it was 65G at the start and fell while the audit ran, because 98 was fetching
+`ms_starcoder_py` into the same filesystem. **This number is a moving target: re-read `df` before
+trusting it.** Each row that is a fetch-in-flight is marked as such.
+
+| gate domain | mix wt | raw survives? | where / bytes | fetcher | re-fetchable upstream? | class |
+|---|---|---|---|---|---|---|
+| `en_c4_stage2_dc` | .045 | **yes** | `wt-3b/data/raw/rp1t_c4/` 34 files, 26G; built corpora `en_c4_stage2` 24G, `_dc` 24G, `_serserial` 24G | `fetch_corpus.py --source rp1t_c4` | **no** — `data.together.xyz` returns **403** | (b) rebuild from survivor |
+| `code_py_starcoder_dc` | .07 | **no** (fetch in flight) | `wt-3b/data/raw/ms_starcoder_py/` **21G and growing** (4.8G when the audit started, 21G at the end -- 98's fetch in flight) | `--source ms_starcoder_py` | **yes** — ModelScope `.../starcoderdata/repo?FilePath=python/` **200** | (a) re-fetchable |
+| `cot_dc` | .015 | **no** | — | `--source cot_*` (4 manifests) | **yes** — hf-mirror resolve 200 for `OpenThoughts-114k`, `OpenR1-Math-220k`; ModelScope `OpenThoughts3-1.2M` **200** | (a) re-fetchable |
+| `math_owm_stage2_dc` | .08 | **no** | — | none in `fetch_corpus.py` | **gated** — `HuggingFaceFW/open-web-math` returns **401** on hf-mirror **and** on hf.co (both API and resolve/README); the repo exists but needs a token | (a) with auth, else blocked |
+| `code_ultra_l2_dc` | .45 | **no** | — | none (0e's converter) | **yes** — `openbmb/UltraData-Code` README/tree/API **200** on hf-mirror | (a) re-fetchable; 0e's converter builds the corpus |
+| `code_ultra_l3_noexec_dc` | .30 | **no** | — | none (0e's converter) | **yes** — same repo, 200 | (a) re-fetchable; 0e's converter builds the corpus |
+| `code_keep_p1_dc` | .03 | **no — and no source** | — | `assemble_keep_p1.py` hardlinks `data/p1/keep_set/{code_rp1t_dd09,code_rp1t_b2v2_dd,code_dedup08}` | **no** | **(d) truly lost** |
+| `code_py_rp1t_dc` | .01 | **no** | only `rp1t_github_manifest.txt` (98 names, 5.5K) | `--source rp1t_github` | **no** — manifest names RedPajama github files; no data bytes | **(d) truly lost** |
+
+### The three classes, stated
+
+**(a) Re-fetchable from a live upstream — 4 domains** (`code_py_starcoder_dc`, `cot_dc`,
+`code_ultra_l2_dc`, `code_ultra_l3_noexec_dc`). Probed `curl -4 -sIL -m 10` through
+`http_proxy=http://sys-proxy-rd-relay.byted.org:8118`, status read **after `-L`** (both mirrors
+302 to a CDN; judging the first line calls a live mirror dead — the `_ot3_probe_ok` note at
+`fetch_corpus.py:251`).
+
+**(b) Rebuildable only from a surviving raw tree — 1 domain** (`en_c4_stage2_dc`). Its raw 26G is
+on digest; its upstream is **403**, so the survivor is the only path. This is the one domain
+where the digest copy is not a convenience.
+
+**(d) No source and no live mirror — 2 domains** (`code_keep_p1_dc`, `code_py_rp1t_dc`). Both
+need a user decision on a replacement; neither has a cheap substitute.
+
+### `code_keep_p1_dc` — the one fb flagged, confirmed lost
+
+The assembled domain is a **hardlink** set, so the question is whether its *source shards*
+survive, not whether the links do. `assemble_keep_p1.py:24` reads
+`data/p1/keep_set/{code_rp1t_dd09, code_rp1t_b2v2_dd, code_dedup08}` (685 shards, `EXPECTED = 685`).
+Measured:
+
+```
+find /data00 -maxdepth 8 -type d -name "keep_set"                      -> no result
+find /data00 -maxdepth 8 -type d \( -name "code_rp1t_dd09" \
+  -o -name "code_rp1t_b2v2_dd" -o -name "code_dedup08" \)              -> no result
+ls /data00/home/chenkailun.c/aupai-cimap/*/data/p1                     -> no result
+```
+
+Also absent from the laptop (`find /Users/bytedance -maxdepth 5 -type d -name keep_set` → nothing)
+and from every `wt-*` worktree's `data/` (they hold only `corpus/sample/` and the rp1t manifest).
+The keep set was produced by `score_corpus.py` over `data/corpus/code_*` with classifier scores at
+the audit cut; regenerating it needs **both** those scored corpora and the classifier, neither of
+which survives as scored output. Its mix weight is 0.03 (900M tokens of 30B) — small, but the
+fact that it is 2.8116B classifier-selected tokens rather than a slice of anything else makes it
+irreplaceable without re-running the classifier over a re-fetched corpus.
+
+### `code_py_rp1t_dc` — manifest only, no bytes
+
+`data/raw/rp1t_github_manifest.txt` (98 names) survives; the filtered `*_sampled.jsonl` bytes do
+not. The names point at RedPajama-1T github, whose host returns **403** like c4. Unlike
+`en_c4_stage2_dc` there is no survivor tree to rebuild from. Mix weight 0.01 (300M tokens).
+
+### Disk budget
+
+**45G free of 492G** (65G when the audit began). The 30B gate mix needs the raw material plus built corpora, not 30B of
+bytes: the two UltraData domains alone produced 15.3B + 26.7B tokens from 61.4G + 106.8G of
+built bytes (`facts/corpus_supply.json#cs.gate_cache_ultra_l2_dc_0911`, `#…l3_noexec_dc_0911`),
+i.e. **~168G of built corpus for the two domains that carry 75% of the mix weight**, before
+decontamination outputs and token caches. 45G does not hold that, and the gap widens as the
+starcoder fetch consumes the same disk. **The 30B mix cannot land on
+this disk as-is**; the audit's number is the constraint, not a projection.
+
+### What this section does not claim
+
+Only `en_c4_stage2_dc`'s survivor is a *measured* rebuild path; for class (a) the probes say the
+upstream answers 200, **not** that the bytes match what the lost build consumed — a mirror can
+serve a different revision. Class (d) is a negative from a whole-disk search on one machine; a
+copy could exist on a host not reachable from here.
+
 ## 3. NL KenLM model (CPU, minutes)
 
 ```bash
