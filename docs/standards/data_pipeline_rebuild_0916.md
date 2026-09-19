@@ -308,7 +308,7 @@ trusting it.** Each row that is a fetch-in-flight is marked as such.
 |---|---|---|---|---|---|---|
 | `en_c4_stage2_dc` | .045 | **yes** | `wt-3b/data/raw/rp1t_c4/` 34 files, 26G; built corpora `en_c4_stage2` 24G, `_dc` 24G, `_serserial` 24G | `fetch_corpus.py --source rp1t_c4` | **no** — `data.together.xyz` returns **403** | (b) rebuild from survivor |
 | `code_py_starcoder_dc` | .07 | **no** (fetch in flight) | `wt-3b/data/raw/ms_starcoder_py/` **21G and growing** (4.8G when the audit started, 21G at the end -- 98's fetch in flight) | `--source ms_starcoder_py` | **yes** — ModelScope `.../starcoderdata/repo?FilePath=python/` **200** | (a) re-fetchable |
-| `cot_dc` | .015 | **no** | — | `--source cot_*` (4 manifests) | **yes** — hf-mirror resolve 200 for `OpenThoughts-114k`, `OpenR1-Math-220k`; ModelScope `OpenThoughts3-1.2M` **200** | (a) re-fetchable |
+| `cot_dc` | .015 | **no** | — | `--source hf_numma` (NuminaMath-CoT) → `numma_to_jsonl.py` → `build_corpus.py --domain cot --filters light` | **yes** — `AI-MO/NuminaMath-CoT` hf-mirror **and** hf.co tree/resolve **200** (probed 2026-09-19, PAR1 content-verified), 5 train parquet = 1.15 GiB | (a) re-fetchable |
 | `math_owm_stage2_dc` | .08 | **no** | — | none in `fetch_corpus.py` | **gated** — `HuggingFaceFW/open-web-math` returns **401** on hf-mirror **and** on hf.co (both API and resolve/README); the repo exists but needs a token | (a) with auth, else blocked |
 | `code_ultra_l2_dc` | .45 | **no** | — | none (0e's converter) | **yes** — `openbmb/UltraData-Code` README/tree/API **200** on hf-mirror | (a) re-fetchable; 0e's converter builds the corpus |
 | `code_ultra_l3_noexec_dc` | .30 | **no** | — | none (0e's converter) | **yes** — same repo, 200 | (a) re-fetchable; 0e's converter builds the corpus |
@@ -329,6 +329,29 @@ where the digest copy is not a convenience.
 
 **(d) No source and no live mirror — 2 domains** (`code_keep_p1_dc`, `code_py_rp1t_dc`). Both
 need a user decision on a replacement; neither has a cheap substitute.
+
+### `cot_dc` source correction (2026-09-19) — NuminaMath-CoT, not the four `cot_*` manifests
+
+An earlier draft of the `cot_dc` row named the four `cot_*` manifests
+(`cot_open_thoughts`, `cot_skywork_or1`, `cot_ot3`, `cot_openr1`) as the re-fetch source. That
+is wrong and the row above is corrected to `hf_numma` (**NuminaMath-CoT**). They are different
+corpora, and rebuilding from the four would change the fingerprint rather than restore the domain:
+
+- **The landed `cot_dc` came from NuminaMath-CoT.** The recorded build is
+  `build_corpus.py --domain cot --source jsonl:data/raw/hf_numma_jsonl --filters light`
+  (`runs/experiments.jsonl`, 2026-08-31; `cs.cot_landed`, `facts/corpus_supply.json`);
+  `datagen/numma_to_jsonl.py` is its parquet→jsonl converter and `fetch_corpus.py` carries the
+  `hf_numma` cell.
+- **A faithful rebuild lands on the old anchor.** Re-fetch + build measured 2026-09-19 on
+  digest: 859,494 raw rows → **851,929 kept docs, full-population 400,105,114 tokens**
+  (`count_shards` over all 13 shards; the 3/13 byte-extrapolated stamp value 399,955,192 reads
+  0.037% low), vs the landed `cot_dc` 399,994,717 packed tokens = **+0.028%**.
+- **The four `cot_*` sources are NOT loadable substitutes.** Their `build_cot.py` output stamps
+  no `filters_fp` (so `filter_gate_domains.py` refuses the `_dc` step), writes no `content`
+  field and uses one-digit shard names, both of which `train.py` rejects at load
+  (`cs.cot_open_thoughts_landed` boundary measured this), and `build_cot.py` runs no holdout
+  check. Switching to them is a new corpus / new fingerprint and needs an explicit user
+  decision; it must not be recorded as a re-fetch of `cot_dc`.
 
 ### `code_keep_p1_dc` — the one fb flagged, confirmed lost
 
