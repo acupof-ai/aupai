@@ -2713,7 +2713,17 @@ def main():
                      # the tolerance this relies on -- a script that IGNORES an unknown
                      # argument needs no entry, and one that PARSES argv strictly needs one
                      # here. file_claim is the first strict parser in the map.
-                     "scripts/file_claim.py": "selftest"}
+                     "scripts/file_claim.py": "selftest",
+                     # --diag-selftest, not --selftest. The THIRD recurrence of one shape: a
+                     # file registered in SELFTEST_FILES whose own flag the hook does not know,
+                     # so the hook passes --selftest and argparse exits 2. A branch's commits
+                     # run MAIN's hook, so the mismatch stays invisible until the merge -- and
+                     # then every commit that stages the file fails, which every merge of main
+                     # into a branch does. eval/code_fewshot.py and scripts/file_claim.py were
+                     # the first two, each fixed by adding a line here and nothing else, which
+                     # is why this one arrived (genB measured it, 2026-09-19). The map line is
+                     # still the fix; check_selftest_flags_accepted is what stops the fourth.
+                     "tests/v41f/diag_resume_bimodal.py": "--diag-selftest"}
     # A TEST ALSO RUNS WHEN ITS SUBJECT IS STAGED, not only when the test file itself is.
     #
     # MEASURED 2026-09-04, by staging a real defect and running this hook: dropping `demo_lang`

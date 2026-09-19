@@ -492,6 +492,11 @@ _RULE_CHECKS = {
     "Never write `refs/heads/main` by hand": "main_advances_by_ancestry",
     "The hook runs `--selftest` on staged files in its `SELFTEST_FILES` map":
         "selftests_are_gated",
+    # The registration rule above says a selftest must be IN the map. This one says the flag
+    # the map leads the hook to pass must be one the file accepts -- a different claim, and the
+    # one three files have failed.
+    "A `SELFTEST_FILES` entry whose selftest flag is not `--selftest`":
+        "selftest_flags_accepted",
     # pinned_ids + tokenizer_roundtrip catch a REBUILD after the fact (moved specials,
     # a dropped byte). Neither can see the unfreeze decision itself.
     "Tokenizer rebuilt 2026-09-10 under unfreeze condition 2": "pinned_ids",
@@ -2376,6 +2381,105 @@ def check_selftests_are_gated(root):
                   f"overrides) (ast)")
 
 
+def check_selftest_flags_accepted(root):
+    """Every flag the hook will pass to a SELFTEST_FILES entry is one that entry accepts.
+
+    THE THIRD TIME. eval/code_fewshot.py (--selfcheck), scripts/file_claim.py (a positional
+    `selftest` subcommand), and tests/v41f/diag_resume_bimodal.py (--diag-selftest) all
+    landed in the map under a flag the hook did not know, and each one was fixed by adding a
+    SELFTEST_FLAG line and nothing else. The shape recurs because a branch's commits run
+    MAIN's hook: the mismatch is invisible on the branch and becomes fatal at the merge, when
+    every commit that stages the file -- which every `merge main into branch` does -- reads
+    argparse's exit 2 as "the selftest FAILED". v41f/diag_resume_bimodal.py blocked the whole
+    tree for every session that way (genB measured it, 2026-09-19).
+
+    check_selftests_are_gated asserts every selftest-carrying file is IN the map;
+    check_ci_selftest_partition asserts every map member is covered in CI. Neither asked
+    whether the flag the hook passes is one the file accepts, which is the gap all three
+    landed in.
+
+    The rule, per file, on the flag the hook would actually pass it
+    (PARTIAL.get(f) or SELFTEST_FLAG.get(f, "--selftest"), pre-commit:3054):
+      - the flag is a declared add_argument (argument or keyword, including the string
+        elements of a choices=[...] list, which is what file_claim's positional subcommand is);
+      - or the file has NO argparse at all, so it cannot reject it (162 of the 304 entries --
+        the pre-__main__ test_*.py scripts and the argv-dispatch ones);
+      - or argparse is present but the flag is dispatched off sys.argv, the
+        `if "--selftest" in sys.argv` form (25 entries).
+    Everything else FAILs: argparse is present, declared its own flags, and this one is not
+    among them, so argparse exits 2.
+
+    NOT a substring test on the source, and the file that prompted this check is why:
+    tests/v41f/diag_resume_bimodal.py CONTAINS the literal "--selftest" -- inside an
+    ap.error() message at :865 listing the flags it accepts. A text search reads that as
+    support and passes the broken file. Only the AST separates a flag the parser accepts from
+    one it merely mentions. (Same class as check_selftests_are_gated's _py_carries_selftest,
+    which is AST-level for the equivalent reason.)
+    """
+    hook = os.path.join(root, "scripts", "hooks", "pre-commit")
+    if not os.path.exists(hook):
+        return SKIP, "no scripts/hooks/pre-commit"
+    src = open(hook, encoding="utf-8").read()
+    inv = _hook_selftest_inventory(src)
+    if inv is None:
+        return FAIL, ("scripts/hooks/pre-commit has no parseable SELFTEST_FILES/SELFTEST_FLAG "
+                      "literals, so no entry's flag can be checked")
+    selftest_paths, needs, flags = inv
+    partial = {f: v[1] for f, v in needs.items() if isinstance(v, tuple)}
+    rejected, unreadable, checked, no_argparse = [], [], 0, 0
+    for f in sorted(selftest_paths):
+        if not f.endswith(".py"):
+            # A .sh entry's interpreter is bash (pre-commit:3067), so the flag is that script's
+            # to accept; seven .sh files are registered and none is a python argparse.
+            continue
+        path = os.path.join(root, f)
+        if not os.path.exists(path):
+            continue  # a missing file is check_selftests_are_gated's finding, not this one's
+        flag = partial.get(f) or flags.get(f, "--selftest")
+        try:
+            tree = ast.parse(open(path, encoding="utf-8").read())
+        except (SyntaxError, UnicodeDecodeError, OSError) as e:
+            unreadable.append(f"{f} ({type(e).__name__})")
+            continue
+        declared, has_argparse = set(), False
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "add_argument"):
+                continue
+            has_argparse = True
+            for a in list(node.args) + [kw.value for kw in node.keywords]:
+                if isinstance(a, ast.Constant) and isinstance(a.value, str):
+                    declared.add(a.value)
+                elif isinstance(a, (ast.List, ast.Tuple, ast.Set)):
+                    for e in a.elts:
+                        if isinstance(e, ast.Constant) and isinstance(e.value, str):
+                            declared.add(e.value)
+        if not has_argparse:
+            no_argparse += 1
+            continue
+        if flag in declared:
+            checked += 1
+            continue
+        text = open(path, encoding="utf-8").read()
+        if f'"{flag}" in sys.argv' in text or f"'{flag}' in sys.argv" in text:
+            checked += 1
+            continue
+        rejected.append((f, flag, sorted(declared)[:6]))
+    if unreadable:
+        return FAIL, (f"{len(unreadable)} SELFTEST_FILES entry(ies) could not be parsed, so "
+                      f"whether the hook's flag is accepted is unknown: {', '.join(unreadable[:3])}")
+    if rejected:
+        detail = "; ".join(f"{f} is passed {flag!r} but its argparse declares "
+                           f"{', '.join(d) or 'no flags'} -- it will exit 2, which the hook "
+                           f"reads as the selftest FAILING" for f, flag, d in rejected[:3])
+        return FAIL, (f"{len(rejected)} SELFTEST_FILES entry(ies) are passed a flag they do not "
+                      f"accept. This blocks every commit that stages the file, and every merge "
+                      f"of main into a branch stages it. Add a SELFTEST_FLAG entry naming the "
+                      f"flag the file does accept: {detail}")
+    return PASS, (f"{checked} flag-checked + {no_argparse} argparse-free = "
+                  f"{checked + no_argparse} SELFTEST_FILES entry(ies), every one accepts the "
+                  f"flag the hook passes it (ast)")
+
+
 # Registered selftests the COMMIT HOOK can run but the bare CI image cannot, with the reason.
 # The hook runs on laptops/pods (which may have data/tokenizer.json, a GPU, root, a network);
 # CI is ubuntu + CPU + torch-cpu, no gitignored data, no privileged sandbox. An entry here is
@@ -2862,6 +2966,39 @@ def _broken_selftests_are_gated():
     open(os.path.join(d, "scripts", "hooks", "pre-commit"), "w", encoding="utf-8").write(
         text.replace('"scripts/eval_artifacts.py", ', "")
             .replace('"scripts/eval_artifacts.py"', '"scripts/harness.py"'))
+    return d
+
+
+def _broken_selftest_flags_accepted():
+    """The REAL hook with the v41f map entry reverted to the flag the file rejects.
+
+    This is the exact artifact state that blocked the whole tree for every session on
+    2026-09-19: tests/v41f/diag_resume_bimodal.py registered in SELFTEST_FILES with no
+    SELFTEST_FLAG entry, so the hook passed it --selftest and its argparse exited 2.
+
+    Reverting the MAP LINE rather than adding a bogus entry keeps the world honest: the
+    mutation is the real historical defect, not a synthetic one. Built on _tmp_repo_shaped,
+    because the check reads every registered file and a bare tree resolves none of them --
+    and scripts/ is a symlink there, so the hook must be copied in or the write lands in the
+    repo itself.
+    """
+    d = _tmp_repo_shaped()
+    link = os.path.join(d, "scripts")
+    if not os.path.islink(link):
+        return None
+    hook_real = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
+    if not os.path.exists(hook_real):
+        return None
+    import shutil
+    os.unlink(link)
+    shutil.copytree(os.path.join(ROOT, "scripts"), link,
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    p = os.path.join(d, "scripts", "hooks", "pre-commit")
+    text = open(p, encoding="utf-8").read()
+    fixed = '"tests/v41f/diag_resume_bimodal.py": "--diag-selftest"'
+    if fixed not in text:
+        return None
+    open(p, "w", encoding="utf-8").write(text.replace(fixed, '"tests/v41f/diag_resume_bimodal.py": "--selftest"'))
     return d
 
 
@@ -19653,6 +19790,19 @@ CHECKS = [
         _broken_selftests_are_gated,
     ),
     (
+        "selftest_flags_accepted",
+        "every flag the hook passes a SELFTEST_FILES entry is one that entry's parser accepts",
+        "three times now a file has been registered in SELFTEST_FILES under a flag the hook "
+        "does not know -- eval/code_fewshot.py (--selfcheck), scripts/file_claim.py (a positional "
+        "selftest subcommand), tests/v41f/diag_resume_bimodal.py (--diag-selftest) -- and each "
+        "was fixed by adding one SELFTEST_FLAG line and no check, so the shape returned; the "
+        "third BLOCKED THE WHOLE TREE, because a branch's commits run main's hook so the "
+        "mismatch only surfaces at the merge, as argparse exit 2 on every commit that stages "
+        "the file",
+        check_selftest_flags_accepted,
+        _broken_selftest_flags_accepted,
+    ),
+    (
         "ci_selftest_partition",
         "every hook-runnable selftest is either run by 'harness ci-selftests' in CI or a reasoned NEEDS/CI-image exemption; no uncovered fourth bucket",
         "a SELFTEST_FILES selftest (datagen/test_parallel_exact_identity.py) sat RED off-pod for days because CI runs an explicit command list, not the hook map, and the file was in neither -- the red could only show on a commit that staged it (#502)",
@@ -20051,6 +20201,9 @@ EVIDENCE = {
     # repo: it reads the committed ledger, not machine state.
     "friction_kinds_cover_ledger": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo", "frozen_args_parse": "repo",
+    # repo: it parses source files (the hook's maps and each registered file's argparse). No
+    # machine state, no pod, no data -- the same inputs CI has.
+    "selftest_flags_accepted": "repo",
 }
 
 
