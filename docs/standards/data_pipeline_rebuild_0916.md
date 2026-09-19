@@ -348,10 +348,14 @@ corpora, and rebuilding from the four would change the fingerprint rather than r
   0.037% low), vs the landed `cot_dc` 399,994,717 packed tokens = **+0.028%**.
 - **The four `cot_*` sources are NOT loadable substitutes.** Their `build_cot.py` output stamps
   no `filters_fp` (so `filter_gate_domains.py` refuses the `_dc` step), writes no `content`
-  field and uses one-digit shard names, both of which `train.py` rejects at load
-  (`cs.cot_open_thoughts_landed` boundary measured this), and `build_cot.py` runs no holdout
-  check. Switching to them is a new corpus / new fingerprint and needs an explicit user
-  decision; it must not be recorded as a re-fetch of `cot_dc`.
+  field and uses one-digit shard names, each of which stops a `train.py` load loud: a
+  non-`_NNN.jsonl` file lands in the `unknown` branch and raises `SystemExit`
+  (`train.py:2246`), and a shard that did load with no `content` key raises `KeyError` in
+  `_jsonl_content` (`train.py:1609`) — this is the measured `cs.cot_open_thoughts_landed`
+  boundary, not a silent skip. `build_cot.py` also runs no holdout check. Per the standing
+  fingerprint rule (recorded, not decided here), switching to them would be a new corpus /
+  new fingerprint and needs an explicit user decision; it must not be recorded as a re-fetch
+  of `cot_dc`.
 
 ### `code_keep_p1_dc` — the one fb flagged, confirmed lost
 
