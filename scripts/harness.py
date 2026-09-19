@@ -2459,8 +2459,7 @@ def check_selftest_flags_accepted(root):
         if flag in declared:
             checked += 1
             continue
-        text = open(path, encoding="utf-8").read()
-        if f'"{flag}" in sys.argv' in text or f"'{flag}' in sys.argv" in text:
+        if _flag_dispatched_off_argv(tree, flag):
             checked += 1
             continue
         rejected.append((f, flag, sorted(declared)[:6]))
@@ -2478,6 +2477,93 @@ def check_selftest_flags_accepted(root):
     return PASS, (f"{checked} flag-checked + {no_argparse} argparse-free = "
                   f"{checked + no_argparse} SELFTEST_FILES entry(ies), every one accepts the "
                   f"flag the hook passes it (ast)")
+
+
+def _flag_dispatched_off_argv(tree, flag):
+    """True when `flag` is the right-hand side of a containment/equality test against argv.
+
+    AST, not a substring search, for the reason check_selftest_flags_accepted's docstring
+    gives -- and this rung was the last one still text-based, which genB and de both caught:
+    with the map line genuinely broken, ONE COMMENT
+
+        # historically dispatched off "--selftest" in sys.argv; now a real flag
+
+    satisfied the text form and the check PASSED over a file whose `--selftest` exits 2
+    (MEASURED 2026-09-19). The check argued three paragraphs earlier that only the AST can
+    separate a flag a parser accepts from one it merely mentions, and then read this rung as
+    text anyway.
+
+    TWO SHAPES, because argv is not always spelled `sys.argv`:
+      - `"--selftest" in sys.argv`         -> Constant In Attribute(attr="argv")
+      - `"--selftest" in _sys.argv`        -> same node shape; the module alias is why the
+                                              text form missed scripts/test_eval_base_prompt_format.py:377
+    The attribute check is on `attr == "argv"`, so an alias does not matter, and a comment
+    cannot produce an ast.Attribute at all.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Compare):
+            continue
+        exprs = [node.left] + list(node.comparators)
+        for e in exprs:
+            if not (isinstance(e, ast.Constant) and e.value == flag):
+                continue
+            for other in exprs:
+                if other is e:
+                    continue
+                if isinstance(other, ast.Attribute) and other.attr == "argv":
+                    return True
+    return False
+
+
+def _selftest_flag_dispatch_is_ast_not_text():
+    """The argv rung must not be satisfiable by a COMMENT.
+
+    genB and de both found this against the first version of check_selftest_flags_accepted,
+    which read the rung as a source substring. MEASURED 2026-09-19 on that version: the map
+    line genuinely broken plus one comment line
+
+        # historically dispatched off "--selftest" in sys.argv; now a real flag
+
+    in the target file, and the check returned PASS while the file's --selftest exited 2.
+
+    The broken-world registry cannot hold this: one broken() per row, and the map-revert world
+    is already spoken for. So it is asserted here, on the predicate directly, in both
+    directions -- the real shapes it must accept, and the comment it must not.
+    """
+    flag = "--selftest"
+    # The trap. This parses to no ast.Compare at all, which is the whole point: the substring
+    # form matched it and the AST form cannot.
+    comment_only = ast.parse(
+        "import sys\n"
+        f'# historically dispatched off "{flag}" in sys.argv; now a real flag\n'
+        "x = 1\n")
+    assert not _flag_dispatched_off_argv(comment_only, flag), (
+        "a comment satisfied the argv rung -- this is the escape genB and de found")
+    # The real shapes, including the alias the substring form missed. Only the `in` form: a
+    # first draft of this test asserted an equality shape (`sys.argv[1:2] == ["--selftest"]`)
+    # that the predicate does not handle -- and then MEASURED that zero registered files use
+    # it, so the assertion demanded generality for a requirement that has not appeared. The
+    # test was wrong, not the predicate. Add the equality arm when a real file needs it.
+    for src, why in (
+        (f'import sys\nif "{flag}" in sys.argv:\n    pass\n', "plain sys.argv"),
+        (f"import sys as _sys\nif '{flag}' in _sys.argv:\n    pass\n", "aliased _sys.argv"),
+    ):
+        assert _flag_dispatched_off_argv(ast.parse(src), flag), f"AST rung missed: {why}"
+    # And a mention in executable code that is NOT a dispatch must not count.
+    mention = ast.parse(f'import sys\nprint("pass {flag} to run it")\n')
+    assert not _flag_dispatched_off_argv(mention, flag), "a print() satisfied the argv rung"
+    # AND THE RUNG MUST REQUIRE THE COMPARISON, not merely find an argv attribute somewhere.
+    # A first draft of this test asserted only the rejections above, and MEASURED that a
+    # predicate widened to "any ast.Attribute(attr='argv') returns True" -- no Compare needed --
+    # passed it (no signal). That widened form is exactly the text rung's blindness restated in
+    # AST clothing: it would accept a file that merely touches sys.argv anywhere.
+    bare = ast.parse("import sys\nprint(sys.argv)\n")
+    assert not _flag_dispatched_off_argv(bare, flag), (
+        "the rung returned True for a bare sys.argv reference with no flag comparison -- it "
+        "must require the Compare, not just an argv attribute")
+    other = ast.parse(f'import sys\nif "{flag}" in other_list:\n    pass\n')
+    assert not _flag_dispatched_off_argv(other, flag), (
+        "the rung accepted a containment test against a non-argv container")
 
 
 # Registered selftests the COMMIT HOOK can run but the bare CI image cannot, with the reason.
@@ -26384,6 +26470,7 @@ def _demo(only=None):
         _selftest_skip_reasons_classified,
         _selftest_fact_refs_scan_provenance,
         _selftest_corpus_filters_fp_gate_mix,
+        _selftest_flag_dispatch_is_ast_not_text,
     ):
         try:
             _fn()
