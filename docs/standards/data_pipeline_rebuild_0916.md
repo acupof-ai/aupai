@@ -17,7 +17,7 @@ re-score, not recovery.
 |---|---|---|
 | `data/tokenizer.json` (32,768 gate BPE) | step 1: copy the surviving local copy, do NOT retrain | sha `c6d5eec97c6a…`, gate 09-10 |
 | `data/corpus/en_c4_stage2_dc/` (83 shards) | step 2: fetch (`rp1t_c4`) → `build_corpus.py` → `filter_gate_domains.py` | source mirror chain; `_dc` content hash in `facts/contamination.json` |
-| `data/corpus/code_py_starcoder_dc/` | step 2: fetch (`ms_starcoder_py`) → `build_corpus.py` → decontaminate | per-source sha in each build stats |
+| `data/corpus/code_py_starcoder_dc/` | step 2: fetch (`ms_starcoder_py`) → **`build_starcoder_py.py`** → decontaminate | per-source sha in each build stats |
 | `runs/l2label/nl_c4_kn.model.json` (~312 MB) | step 3 below, minutes of CPU | order-3 KN counts from the NL sample |
 | `runs/l2label/pool_en_c4.jsonl` (35,000) | step 4, `datagen/l2_label_pool_build.py` | `--seed 20260916` |
 | `runs/l2label/pool_code_py_starcoder.jsonl` (15,000) | step 5, ae `datagen/l2_code_chunk_pool.py` (#399) | fixed seed |
@@ -70,27 +70,172 @@ python3 datagen/fetch_corpus.py --source ms_starcoder_py # -> data/raw/ms_starco
 # add --target_bytes / --stream_n --stream_i to cap size or shard across workers
 ```
 
-**2b. Build raw → `data/corpus/<domain>/`** with `datagen/build_corpus.py` (NOT
-`clean_corpus.py`: its `DOMAIN_SOURCE` maps only web_hq/cci3/en/code_rp1t and does **not**
-cover either rebuild domain — that is expected, build_corpus is the path here). The en cell is
-a domain-suffix rebuild, so `--phase` is REQUIRED to freeze the held-out slice; the recorded
-lost-run shape was:
+**Manifest name files are fetch inputs, not code.** Each `_manifest_*` reads a names file under
+`data/raw/` (`rp1t_c4_manifest.txt`, `ms_starcoder_py_manifest.txt`); these are per-run fetch
+artifacts, **not tracked in git and absent on the laptop** -- they lived on the lost emptyDir.
+At the 2026-09-18 audit the ONLY surviving copies are off-repo on the digest machine, in the
+persistent aupai data tree under `/data00/home/chenkailun.c/aupai-cimap` inside that checkout's
+`data/raw/`: `ms_starcoder_py_manifest.txt` (59 names, verified) alongside the three surviving
+`rp1t_*_manifest.txt` files. Copy them from that digest `data/raw/` before fetching on the new
+node. Cite the digest machine + `data/raw/` directory, never a `wt-*` personal-worktree PATH
+(those are deleted routinely). On a fresh node that cannot reach the digest tree, regenerate the
+name lists from source (the 59 ModelScope python parquet for starcoder; the RedPajama c4
+listing for en_c4), treat the fetched bytes as a new fetch, and record the regeneration in the
+run row.
+
+**SOURCE STATE, checked before relying on the commands above. Probe first, do not discover this
+at fetch time:**
 
 ```bash
+python3 scripts/probe_source_urls.py --manifest data/raw/rp1t_c4_manifest.txt \
+    --base https://data.together.xyz/redpajama-data-1T/v1.0.0/c4/ --n 8
+```
+
+| source | state (2026-09-19) | evidence |
+|---|---|---|
+| `rp1t_c4` (`data.together.xyz`) | **BLOCKED — Cloudflare 403 at the host level** | root and every probed file return 403 with a 4.5 KB "Attention Required!" page; browser UA and direct (no-proxy) both 403 |
+| `ms_starcoder_py` (modelscope) | **reachable** | 8/8 probed return 200 with real content-lengths (~380 MiB each) and a confirmed `PAR1` tail magic |
+
+**The c4 block does NOT affect anything already built** — `en_c4_stage2` (242 shards /
+11.3M docs) and its `_dc` are complete, and the surviving `data/raw/rp1t_c4/` (32 files, 26 GB)
+is intact. It affects a FUTURE node rebuild, which is what this recipe is for: step 2a above
+cannot run as written.
+
+**Do not silently substitute a mirror.** Checked 2026-09-19: HF `togethercomputer/RedPajama-Data-1T`
+and the community mirror carry only `urls/` and loading scripts, no data files (`c4/` is 404);
+`allenai/c4` en IS reachable on HF and hf-mirror (206 range works, all 1000 `.json.gz` present)
+but it is **raw C4** (`gz`, `text`+`timestamp`+`url`+`meta`), whereas the surviving `rp1t_c4` is
+RedPajama's **processed** pure-JSONL form (`text` only, ~846 MB/file). Swapping them is swapping
+corpora — every `corpus_fp` changes and no historical number stays comparable. Choosing between
+re-running RedPajama's processing pipeline and accepting raw C4 is a user decision, not a
+substitution a rebuild may make quietly. See **#570** for the source-loss record and the options.
+
+
+**2b. Build raw → `data/corpus/<domain>/`.** The en cell uses `datagen/build_corpus.py` (NOT
+`clean_corpus.py`: its `DOMAIN_SOURCE` maps only web_hq/cci3/en/code_rp1t and does **not**
+cover either rebuild domain — that is expected, build_corpus is the path here). The en cell is
+a domain-suffix rebuild, so `--phase` is REQUIRED to freeze the held-out slice.
+
+**The starcoder cell is NOT a `build_corpus.py` job** — it has its own builder,
+`datagen/build_starcoder_py.py`, and the two are not interchangeable. See §2b-ii below.
+
+**Two stages, and the output directory is the operator's step.** The build REFUSES to create
+it (`REFUSE: output dir ... does not exist; mkdir is the operator's step`, `_preflight`), so `mkdir`
+first. Then run the worker phase WITHOUT `--global-only`, and the global pass separately:
+
+```bash
+mkdir -p data/corpus/en_c4_stage2 data/corpus/code_py_starcoder
+
+# stage 1 — worker clean (raw -> w*_*.jsonl). NO --global-only here: it is the
+# stage-2 re-run switch and REFUSEs when no w* shards exist yet (`_global_pass`).
 python3 datagen/build_corpus.py --domain en_c4 \
     --out data/corpus/en_c4_stage2 --phase <this-rebuild-phase> \
     --source 'jsonl:data/raw/rp1t_c4/*.jsonl' \
-    --filters light --no_near_dedup --global-only --workers <N>
-python3 datagen/build_corpus.py --domain code_py_starcoder \
-    --out data/corpus/code_py_starcoder --phase <this-rebuild-phase> \
-    --source 'jsonl:data/raw/ms_starcoder_py/*.jsonl' \
-    --filters light --workers <N>
+    --filters light --no_near_dedup --workers <N> --allow_empty_slice
+
+# stage 2 — global exact-dedup + holdout over the w* shards. --global-only AND
+# --no_near_dedup AND workers>1 is what selects the PARALLEL pass (`_parallel_exact_pass`); without
+# --global-only the same work runs serially at ~1 shard/min.
+python3 datagen/build_corpus.py --domain en_c4 \
+    --out data/corpus/en_c4_stage2 --phase <this-rebuild-phase> \
+    --source 'jsonl:data/raw/rp1t_c4/*.jsonl' \
+    --filters light --no_near_dedup --global-only --workers <N> --allow_empty_slice
 ```
+
+**Why the starcoder commands are absent from that block.** An earlier revision of this recipe
+gave starcoder a `--source 'jsonl:data/raw/ms_starcoder_py/*.jsonl'` line in both stages. That
+is wrong twice over, and both are visible statically rather than at run time:
+
+1. **There is no jsonl.** `_manifest_ms_starcoder_py` fetches **59 `.parquet`** files
+   (`python/train-000NN-of-00059.parquet` → flattened to the basename on disk) and
+   `fetch_corpus.py` performs **no parquet→jsonl conversion** — it writes
+   `data/raw/<source>/<name>` verbatim. A `*.jsonl` glob matches **zero** files there.
+2. **The column is not `text`.** `build_corpus.iter_parquet` defaults to `text_col="text"`,
+   while these parquet carry **`content`**. Even re-specifying the source as `parquet:` would
+   yield empty strings, silently.
+
+
+**2b-ii. The starcoder cell — `datagen/build_starcoder_py.py`.** This is the canonical builder
+for `code_py_starcoder` (file docstring: the parallel `mp.Pool` version is provenance-of-record,
+fingerprint `e1a14839`, 6,180,174 rows). It is not a thin wrapper over `build_corpus.py`; it
+carries three things that path does not, each of which matters here:
+
+- **Reads `train-*.parquet` directly** and adapts the column: `for c in ("content", "text",
+  "code")`, first present wins. These parquet carry `content`.
+- **`ast.parse` syntax filter** — keeps only rows that parse, so the corpus is labelled Python
+  by construction (~a few % lost to syntax) rather than by language ID.
+- **`is_holdout` filter + resumable publish** — `.built_shards` tracks per-shard completion, so
+  an interrupt loses at most the current raw-parquet shard; `STAGE` is cleared at start so a
+  killed run's orphan jsonl cannot double-enter `DST`.
+
+```bash
+python3 datagen/build_starcoder_py.py          # reads RAW, writes DST, appends per shard
+```
+
+**GAP — the paths are hardcoded and there is no override.** `RAW`, `DST` and `STAGE` are
+module constants pinned to `/work/aupai/...` (the pod tree), and the script has **no argv, no
+`argparse` and no environment read** at all — verified by grep, not assumed. On any node whose
+tree is not `/work/aupai` (the digest machine, a rebuilt node with a different mount) the script
+must be **edited** before it can run, which is exactly the shape this repo forbids: a hand-edited
+file leaves no record of what ran.
+
+The established pattern in this tree is an env override with a default —
+`datagen/excerpt_sufficiency.py:35` uses `os.environ.get("AUPAI_ROOT", "/work/aupai")`.
+`build_starcoder_py.py` should take the same form. **That is a code change and a separate task,
+not something this recipe may paper over**; until it lands, the operator must parameterise it
+deliberately and record the edit in the run row. Tracked as **#575** rather than fixed here.
+
+**Holdout state for this cell — ready, checked 2026-09-19.** `build_starcoder_py.py` calls
+`_emit_holdout_slice(..., allow_empty=True)` internally, so unlike the en cell there is no flag to
+pass; the question is whether the holdout sets it consults are present and correct. They are:
+
+| registry entry | file | sha1 vs `holdout.py` anchor | qhash |
+|---|---|---|---|
+| `code_holdout_500` | `data/eval/code_holdout_500.jsonl` | `a43dde77…` — **matches** | **500/500** resolve |
+| `code_holdout_v2_500` | `data/eval/code_holdout_v2_500.jsonl` | `c9fd62cd…` — **matches** | **500/500** resolve |
+
+Both key on `question_field = ["instruction"]`. The 500/500 figure is the property a count
+cannot fake: every row's question hashes into the tracked registry body. So a real hit here is
+judged rather than silently missed — which is why the en cell's `--allow_empty_slice` reasoning
+must NOT be copied to this cell (its slice may legitimately be non-empty).
+
+The decontamination chain after the build is unchanged: the output domain still goes through
+`scripts/filter_gate_domains.py` for 13-gram containment against HumanEval/MBPP (§2c).
+
+**`--allow_empty_slice` on `en_c4` only, and why.** A build carrying `--phase` freezes this
+phase's held-out slice, and an EMPTY slice is refused by default (`_emit_holdout_slice`). `en_c4` is English
+web prose and has **zero** whole-document hash matches against the 16 eval-question sets:
+measured 2026-09-18, 0 hits over 280,862 sampled docs and 0 across all 11.3M. Empty is the
+truth there, and the flag still freezes the slice with its `rule_fp` so a cross-stage reader
+can confirm nothing was held out. **Do NOT copy the flag to `code_py_starcoder`**: the code
+holdout sets (`code_holdout_500`, `code_holdout_v2_500`, keyed on `instruction`) can genuinely
+hit code, and a nonzero hit is the normal outcome. Note the 13-gram decontamination in 2c is a
+DIFFERENT mechanism (n-gram containment, not whole-question hash equality); en_c4's historical
+7 dropped rows belong to that layer, not this one.
+
+**`--no_near_dedup` is what the two-stage shape needs for `en_c4`, and it is an operator
+decision for `code_py_starcoder`.** The flag skips the MinHash near-dedup (~30ms/doc, pure
+python) "for already-deduped sources" — measured 2026-09-18, `en_c4` has 0 exact duplicates
+in a 374k-document sample, consistent with upstream c4 already being deduplicated. It is also
+one of the three conditions that select the PARALLEL global pass (`_parallel_exact_pass`), so a stage 2 without
+it runs serially at ~1 shard/min. **The starcoder commands above do not carry it**, matching
+the recipe as originally recorded; if starcoder's source is NOT already near-deduped, decide
+deliberately which you want — the MinHash pass, or the faster serial global pass — rather
+than adding the flag to make the commands look symmetric. The near-dedup removed-fraction is
+a separately reported fact either way.
 
 `<this-rebuild-phase>` and `--workers`/`--target_tokens` are operator-decided per the new
 hardware; pin them in the run's experiment row. `--filters` has only two tiers (`web`, the
 default, and `light`); `web`'s `not_zh` (>=60% CJK) would delete a code corpus and build_corpus
 REFUSEs `code_py_starcoder+web`, so `--filters light` is required (confirm with `--dry` first).
+
+**No historical baseline exists for this rebuild's rates.** The 2026-09-16 pod loss took every
+`build_corpus_stats.json`; nothing on disk holds one (checked 2026-09-18). So the exact-dup,
+reject and holdout rates measured here are the NEW baseline, not a regression comparison
+against the lost run. What the lost run left is a total (`facts/corpus_supply.json#cs.en_c4_stage2_landed`,
+83 shards / 3,887,759 docs / 2.4011B tokens, post-dedup) — and a total is not comparable across
+a different fetch, since this rebuild's input was 32 of 1024 raw shards while the lost run's
+fetch size is not recorded anywhere.
 
 **2c. Restore the 13-gram holdout bases, then decontaminate.**
 `scripts/filter_gate_domains.py` exits immediately unless these are present (it does NOT
@@ -101,10 +246,20 @@ because the 13-gram decontam identity depends on them.
 
 - `data/eval/humaneval/humaneval_164.jsonl` — canonical 164-task HumanEval set (the same
   file `eval/humaneval_gen.py` reads as DATA_PATH). Controlled source, byte-verify.
-- `data/eval/mbpp/mbpp_holdouts.jsonl` — the r3 clean 338/427 subset. It is DERIVED, not a
-  single download: take external `data/eval/sanitized-mbpp.json` (non-git) and filter to the
-  tracked id list `runs/contam_r3_mbpp_union.json` (`r3_mbpp_clean`, 338 ids) per
-  `eval/mbpp_gen.py:47-51`. The union list IS on `main`; the sanitized MBPP source is not.
+- `data/eval/mbpp_holdouts.jsonl` — the **974-row MBPP-train set, key `text`, ids 1..974**,
+  from external `google-research/mbpp.jsonl`. This is the file `filter_gate_domains.py` reads
+  (`MBPP_REL`); with `ensure_ascii=True` its bytes are identical to upstream, sha256
+  `ccf64cea…`. **An earlier revision of this bullet named
+  `data/eval/mbpp/mbpp_holdouts.jsonl` and called it "the r3 clean 338/427 subset" — the path
+  and the identity are both wrong.** The path is flat (there is no `mbpp/` directory), and the
+  338/427 subset is a different file for a different consumer: `eval/mbpp_gen.py` derives it
+  at run time from `data/eval/sanitized-mbpp.json` (`DATA_PATH`) filtered to the tracked id
+  list `runs/contam_r3_mbpp_union.json` (`r3_mbpp_clean`, `CLEAN_PATH`), keyed on `prompt`.
+  `datagen/holdout.py` carries both as registry entries (`mbpp_holdouts_974` keyed `text`,
+  `mbpp_sanitized_427` keyed `prompt`); they share zero task_ids, so restoring the wrong one
+  gives the right shape and the wrong questions and passes every count check. To tell them
+  apart, hash each row's question with `datagen.holdout.qhash` and require it to resolve
+  against the registry body — the one property neither file can fake.
 
 Then decontaminate `en_c4_stage2` → `en_c4_stage2_dc` and `code_py_starcoder` →
 `code_py_starcoder_dc`:

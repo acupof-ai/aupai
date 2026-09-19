@@ -655,6 +655,82 @@ def _check_filter_tier(domain, filters):
         )
 
 
+def _evaluated_reasons(phase, near_dedup=False):
+    """The reason categories the pass writing this stamp actually evaluates.
+
+    A CLOSED SET PER PASS, because the two passes evaluate different things and the stamp
+    must not claim otherwise. The worker phase applies reject_light (short/long/bad_bytes)
+    and ends in reject_holdout; the global pass re-checks the holdout condition under its
+    own name (`holdout`) beside exact_dup and near_dup -- it never calls reject_light, so a
+    `short: 0` there would assert a filter that this pass does not run.
+
+    `eval_contaminated` AND `holdout` ARE BOTH HERE BECAUSE THEY ARE NOT THE SAME
+    PREDICATE, though both key on `datagen/holdout.py:is_holdout` over the same 305k-hash
+    set. `reject_holdout` tests THREE tiers -- the whole document, the QA-stripped body,
+    and then each line <=500 chars. The global pass (`_global_pass` and
+    `_parallel_exact_pass`, every `is_holdout(...)` call site there) tests only the first
+    two. So a document whose held-out question appears as a single SHORT LINE inside an
+    otherwise-clean page is `eval_contaminated` in the worker phase and is NOT `holdout`
+    in the global pass -- the counts answer different questions and neither may stand in
+    for the other.
+
+    Named by FUNCTION, not line number, deliberately: an earlier revision of this comment
+    cited :448/:809/:881 and :1284/:1348, and every one of those went stale the moment this
+    file was edited -- which is to say immediately. A reader who trusts a line number here
+    is misled by exactly the change that made the comment worth writing.
+
+    WHY THE GLOBAL PASS MAY SKIP TIER 3, AND THE PRECONDITION THAT MAKES IT SAFE. It skips
+    the per-line scan because its input is not raw text: it reads `w*_*.jsonl`, which only
+    the worker phase writes, and the worker phase ran all three tiers on every original
+    document (reject_light ends in reject_holdout). A document reaching a w* shard already
+    passed the per-line test on the same bytes. **That is a precondition of the CALLER, not
+    a property of this function** -- `_parallel_exact_pass` reused over shards from any
+    other producer would let line-level contamination through silently, because the layer
+    that catches it never ran. The per-line scan is O(lines) sha1s per doc and is the
+    reason it is not simply repeated here.
+
+    NO FINGERPRINT COVERS THIS PRECONDITION. `fp_filters` hashes the `filters/*.py`
+    PATTERNS, not this file, so a corpus whose w* shards came from a build_corpus.py
+    without the tier-3 scan carries a stamp identical to one that had it. The evidence for
+    a given build is the code content itself: the worker run that produced this rebuild's
+    shards used build_corpus.py sha256 `aea79cfe7845c1455d85f3e916cd4b2cbec51a87c4604ed3a23bf24aa98817c`
+    (digest tree HEAD 856b815d, verified to contain the three-tier `reject_holdout`).
+    Recorded in the PR, not in the artifact -- see the PR description for the rebuild batch.
+
+    Case (h) in the selftest reads these keys off the functions' AST and fails if this
+    list falls behind, which is how the `eval_contaminated` omission was caught.
+
+    `near_dedup` IS THE ONE CATEGORY THAT DEPENDS ON THE RUN'S CONFIG, NOT ON THE PASS
+    (genB 2026-09-18). Both passes increment it only under `not a.no_near_dedup`, so a
+    set that always named it would zero-fill `near_dup: 0` into a build that ran
+    `--no_near_dedup` and never evaluated the predicate -- the same false claim the
+    closed set exists to prevent, in the opposite direction. The caller passes
+    `not a.no_near_dedup`, so the key is present exactly when the pass could have
+    incremented it.
+    """
+    base = ["kept", "holdout", "exact_dup"]
+    if phase:
+        return base + (["near_dup"] if near_dedup else [])
+    return base + ["short", "long", "bad_bytes", "eval_contaminated"] + (
+        ["near_dup"] if near_dedup else [])
+
+
+def _zero_fill_reasons(reasons, evaluated):
+    """Give every evaluated category an explicit count, so 0 is a value and not an absence.
+
+    `reasons` is a Counter: a category it never increments is simply missing from the
+    stamp, which makes two different worlds write indistinguishable files -- a pass whose
+    holdout layer ran and held out 0 documents, and a pass whose holdout layer never ran.
+    Measured 2026-09-18 on en_c4_stage2 (holdout genuinely ran, found 0 across 11.3M docs);
+    `"holdout" in reasons` is exactly how a downstream reader tries to tell those apart.
+
+    Only `evaluated` is filled. The rare reject categories keep appearing only when they
+    fired, or the field stops being evidence of anything.
+    """
+    for c in evaluated:
+        reasons.setdefault(c, 0)
+
+
 def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_keys=None):
     import sys as _sys
 
@@ -679,8 +755,12 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_ke
     # shard's mtime older than the settle window, file set stable across two reads.
     _settle_dir(out, domain, SETTLE_S)
 
+    evaluated = _evaluated_reasons(phase, near_dedup=not a.no_near_dedup)
+    _zero_fill_reasons(reasons, evaluated)
+
     stats = {
         "domain": domain, "reasons": dict(reasons), "kept": kept,
+        "evaluated_reasons": evaluated,
         "kept_chars": kept_chars, "kept_tokens": int(kept_chars / CHARS_PER_TOKEN),
         "filters": a.filters, "workers": a.workers, "n_shards": nshards,
         # One stamp over the verified shards: what produced them (filters) and
@@ -1641,7 +1721,7 @@ def _selftest_preflight():
         # is still written and still carries the rule_fp, so a reader can tell "nothing was
         # held out under rule X" from "no slice exists". Both halves asserted, because a
         # flag that skipped the write would also pass a does-not-raise test. Reachability
-        # is the point of the case: :649 read allow_empty_slice through getattr and no
+        # is the point of the case: `main` read allow_empty_slice through getattr and no
         # add_argument defined it, so the escape hatch the refusal names could not be
         # opened from the CLI, and the b2 build stopped with 152 shards and no stamp.
         _emit_holdout_slice(hp, "empty_ok", [], allow_empty=True)
@@ -1659,7 +1739,7 @@ def _selftest_preflight():
         # on the parsed literal rather than by substring. The first version of this case did
         # `"--allow_empty_slice" in source`, which a mutant renaming the flag to
         # "--allow_empty_slice_XX" satisfied -- measured 2026-09-07, the negative control was
-        # green when it should have gone red. :649 reads the option through getattr, so a flag
+        # green when it should have gone red. The getattr in `main` reads the option, so a flag
         # that is absent or renamed leaves the documented escape hatch unreachable and the
         # empty-slice refusal points at nothing; that stopped the b2 build with 152 shards
         # written and no stamp.
@@ -1677,7 +1757,7 @@ def _selftest_preflight():
         }
         if "--allow_empty_slice" not in _flags:
             raise AssertionError(
-                f"(e) no add_argument defines --allow_empty_slice, so :649's getattr is "
+                f"(e) no add_argument defines --allow_empty_slice, so the getattr in main is "
                 f"unreachable from the CLI; flags found: {sorted(f for f in _flags if 'empty' in f)}")
         ok += 1
         # stale slice: frozen under a DIFFERENT rule_fp -> must refuse
@@ -1726,6 +1806,77 @@ def _selftest_preflight():
         raise AssertionError("(f) a single-shard domain counted whole was not measured")
     ok += 4
 
+    # (g) A ZERO COUNT MUST BE A FIELD, NOT A MISSING KEY (fb ruling 2026-09-18). The
+    #     stamp is read by people and by downstream code; a genuine 0 and a layer that
+    #     never ran must not write the same file. en_c4_stage2 is the real case: its
+    #     holdout layer ran over 11.3M docs and held out 0.
+    #
+    #     World 1: an empty Counter through the real helper -> every EVALUATED category
+    #     present with value 0. World 2: the MUTATION -- the fill removed -- must leave
+    #     the key absent, which is the old behaviour and the defect. Both directions,
+    #     because a helper that filled nothing would pass a one-sided test.
+    _zeroed = Counter()
+    _zero_fill_reasons(_zeroed, _evaluated_reasons("phase"))
+    for _c in ("kept", "holdout", "exact_dup"):
+        if _c not in _zeroed or _zeroed[_c] != 0:
+            raise AssertionError(f"(g) {_c} not zero-filled into the stamp: {dict(_zeroed)}")
+    if "short" in _zeroed:
+        raise AssertionError("(g) the --phase set filled a worker-phase-only category")
+    ok += 1
+    _mutated = Counter()
+    for _c in _evaluated_reasons("phase"):
+        pass  # MUTATION: the fill removed
+    if "holdout" in _mutated:
+        raise AssertionError("(g) mutation control did not reproduce the missing-key defect")
+    ok += 1
+    # the non-phase set is the wider one and must include the light-filter categories
+    _full = _evaluated_reasons(None, near_dedup=True)
+    for _c in ("short", "long", "bad_bytes"):
+        if _c not in _full:
+            raise AssertionError(f"(g) the worker-phase set omits a category it evaluates: {_c}")
+    ok += 1
+    # near_dup IS CONFIG-DEPENDENT, NOT PASS-DEPENDENT (genB 2026-09-18). Both passes
+    # increment it only under `not a.no_near_dedup`, so the set must name it exactly when
+    # the run could have evaluated the predicate. A set that always named it would
+    # zero-fill `near_dup: 0` into a `--no_near_dedup` build -- a filter said to have run
+    # and found nothing, when it never ran. MUTATION: the config is ON and the key is
+    # absent -> red by name, which is the missing-key defect this pair of cases exists for.
+    for _phase in ("phase", None):
+        if "near_dup" not in _evaluated_reasons(_phase, near_dedup=True):
+            raise AssertionError(f"(g) near-dedup ON but near_dup absent from the {_phase} set")
+        if "near_dup" in _evaluated_reasons(_phase, near_dedup=False):
+            raise AssertionError(
+                f"(g) near-dedup OFF and the {_phase} set still names near_dup, so a build "
+                f"that ran --no_near_dedup would stamp a filter it never called as 0")
+    ok += 1
+
+    # (h) THE WHITELIST MUST TRACK THE FILTERS (fb 2026-09-18). _evaluated_reasons is a
+    #     hand-maintained closed set, so a NEW reject category added to reject_light would
+    #     silently never be zero-filled -- the same missing-key defect, reintroduced by an
+    #     unrelated edit, with no test failing. Read the keys off the real function's AST
+    #     rather than restating them, so this cannot drift from the code it guards.
+    #     MUTATION: adding a return to reject_light that is not in the set must fail here.
+    import ast as _ast_h  # local: this case must not depend on a sibling case's import
+
+    _light_keys = {
+        _r.value.value
+        for _fn in _ast_h.walk(_ast_h.parse(open(__file__, encoding="utf-8").read()))
+        if isinstance(_fn, _ast_h.FunctionDef) and _fn.name in ("reject_light", "reject_holdout")
+        for _r in _ast_h.walk(_fn)
+        if isinstance(_r, _ast_h.Return) and isinstance(_r.value, _ast_h.Constant) and isinstance(_r.value.value, str)
+    }
+    _worker_set = set(_evaluated_reasons(None, near_dedup=True))
+    _missing = sorted(_light_keys - _worker_set)
+    if _missing:
+        raise AssertionError(
+            f"(h) reject_light/reject_holdout can return {_missing}, which the worker-phase "
+            f"evaluated set does not carry -- a count of 0 for these would be a missing key")
+    ok += 1
+    if not _light_keys:
+        raise AssertionError("(h) the AST read found no reject keys -- the walk is broken, "
+                             "so this guard would pass on anything")
+    ok += 1
+
     # (the settle cases 1-4 + foreign-live-pid refuse live with gate (a) above)
     print(f"build_corpus selftest OK: {ok} gates refuse on their failing world (incl. T7-2 settle + holdout-slice gate)")
     return 0
@@ -1753,7 +1904,7 @@ def main():
         action="store_true",
         help="permit a phase whose holdout slice holds zero documents. The slice is still "
         "written and still freezes the holdout rule_fp -- this only lifts the non-empty "
-        "requirement, for the case :1242 names: a fresh first-build of a genuinely "
+        "requirement, for the case _emit_holdout_slice refuses on: a fresh first-build of a genuinely "
         "non-overlapping source. code_py_starcoder and code_py_rp1t both carry n=0 slices",
     )
     ap.add_argument(

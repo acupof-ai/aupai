@@ -1089,6 +1089,33 @@ def main():
         # version guarded on len(gram_set) < N and missed a 15-token doc that does span a
         # 13-gram. The selftest pins planted solution+prompt grams as hits.
         "scripts/audit_gate_contamination.py",
+        # Rebuilds the two decontam benchmark bases from upstream (3b). Registered because a
+        # wrong-population file passed every schema check: data/eval/mbpp_holdouts.jsonl is the
+        # 974-row MBPP-train set (key `text`), NOT the sanitized-427 set (key `prompt`), and the
+        # selftest refuses a 427-row file and a non-contiguous id set at that path.
+        "scripts/rebuild_eval_bases.py",
+        # Post-fetch verification where the manifest's expected_bytes is hardcoded 0. Registered
+        # because the first version PRINTED `.part` leftovers and then exited 0 on the same run.
+        # The selftest asserts the exit code for a .part leftover, a torn tail and a
+        # content-length mismatch.
+        "scripts/verify_fetch.py",
+        # Enumerates the driver red list and reconciles it against the issue->PR map (3b).
+        # Registered because the parser reported "0 red(s)" against a driver that had failed 7:
+        # it matched a lowercase marker and treated TIMEOUT, which is not a FAIL line, as green.
+        "scripts/ci_redlist_reconcile.py",
+        # Shard-by-shard comparator for the parallel-vs-serial exact pass (3b). Registered
+        # because `_parallel_exact_pass`'s "byte-identical to the serial pass" is a docstring
+        # claim over the code that decides a multi-GB corpus's exact bytes. The selftest drives
+        # the two ways a divergence appears: a 1-byte shard diff and an extra shard.
+        "scripts/compare_built_dirs.py",
+        # Reachability probe for a fetch manifest (3b). Registered because the source this repo
+        # actually built from (`data.together.xyz`) went Cloudflare-403 at the host level on
+        # 2026-09-19 and nothing in the tree would have noticed until a rebuild. The selftest
+        # pins the defect that produced a false green: without `-L`, a 302 redirect line and a
+        # proxy CONNECT line both read as the object's 200, so 8/8 URLs passed on a host that
+        # was serving 403 + HTML. It asserts the last header block is taken, an HTML body under
+        # 200 is rejected, and the magic check is actually compared.
+        "scripts/probe_source_urls.py",
         # The production 13-gram DROP module shared by the five non-Ultra filter runs and 0e's
         # UltraData aggregate (ae-7). Registered because a false negative ships a gate answer
         # into the mix and a false positive silently drops rows: the selftest pins planted
@@ -1748,6 +1775,12 @@ def main():
         "scripts/test_rep_stop_flag.py",
         "scripts/test_resume_accumulates.py",
         "scripts/test_score_matrix_failpath.py",
+        # Both directions of sft_math.py's unstamped-pack refusal, by RUNNING the real
+        # script against a real (minimal) checkpoint. CPU-only: sft_math.py guards its
+        # liger import, so the gate is reachable without the CUDA kernel. Registered
+        # 2026-09-19 -- until then this file asserted a checkpoint-error TEXT present in
+        # both orderings, so it stayed green while the ordering it named was backwards.
+        "scripts/test_sft_holdout_gate.py",
         "scripts/test_sft_lr_provenance.py",
         "scripts/test_split_bitwise.py",
         # A mid-run SFT checkpoint must carry optimizer state. It writes a checkpoint from a
@@ -1887,6 +1920,13 @@ def main():
         # AST and synthetic-outcome checks over the cell table and the verdict, no GPU. The real
         # run needs a card; the test does not.
         "probes/kda_shape_fault.py",
+        # Step-D long-horizon numeric hygiene (98). --selftest runs off+ste at 40 steps in
+        # separate processes (~4 min CPU, 180M model + fp32 master + AdamW each), asserts
+        # frozen 8/4, SIX off=0/ste>0, finite m/v, bounded bf16 gap, real descent, and the
+        # off/ste backbone bit-identity; six in-process mutants each must go red. Registered
+        # so a probe that printed a JSON nobody read could not pass -- the assertions are the
+        # gate. The 160-step evidence JSONs live in runs/longrun/; CI runs the 40-step form.
+        "probes/v41f_stepd_longrun.py",
         "scripts/stale_claims.py",
         "scripts/merge_score_row.py",
         "scripts/trace_classes.py",
