@@ -31,6 +31,7 @@ exactly as the guard documents):
 """
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -58,7 +59,7 @@ CARDS=$(IFS=,; echo "${_DEVS[*]}")
 CUDA_VISIBLE_DEVICES= python3 sft_math.py --check_pack
 python3 scripts/exp.py start --name v42_phi_sft --cmd x --hypothesis "$HYPOTHESIS" >/dev/null
 python3 scripts/card_claim.py acquire --name v42_phi_sft --cards "$CARDS" \\
-  --note old --wait 0 --wait-for-device 300 || {
+  --note old --wait 0 --wait-for-device 2 || {
   echo "REFUSING to launch: card_claim acquire refused on $CARDS"
   python3 scripts/exp.py done --name v42_phi_sft --status fail --result "card claim refused"
   exit 1
@@ -102,6 +103,14 @@ def _build_tree(claim_dir):
     # torchrun = a NON-SHELL python process (a bash stub is refused as a shell holder). It
     # records argv, then either blocks until a die file appears (happy path) or exits
     # immediately non-zero (early-death world), per TORCHRUN_BEHAVIOR.
+    #
+    # It also HOLDS an fd whose path names nvidia, standing in for the /dev/nvidia* fds a real
+    # torchrun holds once it is on a card. The launcher's claim is --require-device, and
+    # card_claim.nvidia_fds counts an fd by `"nvidia" in os.readlink(...)`: a stub holding none
+    # is refused on Linux, where /proc is readable, while macOS abstains (None, never refuses)
+    # and the test passed for the wrong reason. Holding one makes the stub the same OBSERVABLE
+    # shape as the process the assertion is about, without weakening the predicate.
+    dev_fd_path = os.path.join(d, "nvidia0")
     ready = os.path.join(d, "torchrun_ready")
     die = os.path.join(d, "torchrun_die")
     tr = os.path.join(d, "bin", "torchrun")
@@ -109,6 +118,7 @@ def _build_tree(claim_dir):
         f.write(
             "#!" + sys.executable + "\n"
             "import os, sys, time\n"
+            f"_devfd = os.open({dev_fd_path!r}, os.O_CREAT | os.O_RDONLY)\n"
             f"open({ready!r}, 'w').close()\n"
             "with open(os.path.join(os.path.dirname(__file__), '..', 'torchrun_argv'), 'w') as a:\n"
             "    a.write(' '.join(sys.argv[1:]))\n"
@@ -121,8 +131,104 @@ def _build_tree(claim_dir):
     return d, ready, die
 
 
+_LEAKED = []  # pids any world failed to reap; asserted in main() so it cannot mask an error
+
+
 def _live_claim_files(claim_dir):
     return [f for f in os.listdir(claim_dir) if f.endswith(".json")]
+
+
+def _reap(popen):
+    """Kill `popen` and EVERY descendant it started, children before parents, and wait.
+
+    THE TEST LEAKED ITS OWN STUBS. `proc.kill()` signals the bash launcher only; the torchrun
+    stub is a GRANDCHILD (`bash` execs it), so it survived every path that did not let bash
+    unwind on its own -- and a surviving stub is a live process holding a claim dir that has
+    already been rmtree'd. 3b caught one: ppid=1, cwd pointing at a deleted mkdtemp, idling
+    9.5h. That is the test harness leaking, which is a DIFFERENT thing from the launcher under
+    test leaking, and the whole point of the assertion this file exists to make is to tell
+    those two apart. A harness that orphans its own stub makes "launcher left torchrun
+    running" unfalsifiable.
+
+    CHILDREN BEFORE PARENTS. Signalling the parent first reparents the child to init (ppid=1)
+    and loses the pid we were about to kill -- which is exactly the shape 3b observed.
+
+    Returns the pids that were still alive when it gave up, so the caller can ASSERT on the
+    result instead of trusting this function ran. An empty list is the healthy answer.
+    """
+    if popen is None:
+        return []
+    kids = []
+    if popen.poll() is None:
+        # Snapshot descendants BEFORE signalling anything: the parent's exit reparents them.
+        try:
+            out = subprocess.run(["pgrep", "-P", str(popen.pid)], capture_output=True,
+                                 text=True).stdout
+            kids = [int(x) for x in out.split() if x.strip().isdigit()]
+        except (OSError, ValueError):
+            kids = []
+        for pid in kids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        try:
+            popen.kill()
+        except OSError:
+            pass
+        for pid in kids:
+            for _ in range(100):
+                try:
+                    os.kill(pid, 0)
+                except OSError:
+                    break
+                time.sleep(0.02)
+    try:
+        popen.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+    return [pid for pid in kids if _alive(pid)]
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _env_worlds():
+    """The two host shapes this file has to tell apart, driven through the seam card_claim's own
+    selftest uses -- so both are exercised on every host, laptop included.
+
+    A GREEN RUN MUST NAME THE SHAPE IT RAN IN. macOS has no /proc: the predicate abstains (None)
+    and every device assertion is vacuous there. Linux has /proc: a stub holding nothing reads 0
+    and is refused. Only the second outcome is the one the launcher is gated on, and letting it
+    go unexercised on the laptop is exactly how the world1 failure reached CI green. So both are
+    built here out of real directories and real symlinks.
+    """
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import card_claim
+    saved = card_claim.PROC_ROOT
+    proot = tempfile.mkdtemp(prefix="phisft_env_")
+    try:
+        card_claim.PROC_ROOT = proot
+        # (a) NO /proc entry for this pid: unreadable -> None -> the predicate has no opinion.
+        assert card_claim.nvidia_fds(os.getpid()) is None, (
+            "a pid absent from /proc must read None (abstain), not 0 (refuse): conflating the "
+            "two refuses every claim on a host that simply cannot answer")
+        # (b) /proc entry present, no nvidia fd: readable, zero device fds -> 0 -> refusal bites.
+        fd = os.path.join(proot, "4242", "fd")
+        os.makedirs(fd, exist_ok=True)
+        os.symlink("/dev/null", os.path.join(fd, "3"))
+        assert card_claim.nvidia_fds(4242) == 0, (
+            "a readable pid holding no device must read 0, not None: the refusal is what the "
+            "launcher's --require-device depends on")
+        print("env worlds: no-/proc -> None (abstain); /proc-without-nvidia -> 0 (refuse)")
+    finally:
+        card_claim.PROC_ROOT = saved
+        shutil.rmtree(proot, ignore_errors=True)
 
 
 def _run(d, claim_dir, env_extra=None):
@@ -161,6 +267,15 @@ def main():
                 bound = files[0]
                 break
             time.sleep(0.05)
+        # WHERE THE PREDICATE ABSTAINS, SAY SO. On macOS there is no /proc, so nvidia_fds
+        # returns None and --require-device cannot refuse; the claim lands whatever the stub
+        # holds. The assert below therefore cannot fail here for the reason it fails on Linux,
+        # and a green line would otherwise read as "the acceptance path was exercised". It is
+        # not: that path is pinned by card_claim's own w1_dev world on every machine, and by
+        # ubuntu CI here. Printed, never silent.
+        if not os.path.isdir("/proc"):
+            print("SKIP require-device acceptance path linux-only on this host "
+                  "(no /proc): covered by card_claim w1_dev + CI ubuntu")
         assert bound, "launcher left torchrun running with NO live card claim"
         import json
         claim = json.load(open(os.path.join(claim_dir, bound)))
@@ -181,9 +296,7 @@ def main():
         assert not _live_claim_files(claim_dir), (
             "torchrun exit + trap left a stale claim:\n" + out.decode()[-800:])
     finally:
-        if proc.poll() is None:
-            open(die, "w").close()
-            proc.kill()
+        _LEAKED.extend(_reap(proc))
         shutil.rmtree(d, ignore_errors=True)
 
     # EARLY-DEATH world (fb condition 2): torchrun exits non-zero before any claim binds.
@@ -203,9 +316,7 @@ def main():
         assert "done" in exp_log and "--status" in exp_log and "fail" in exp_log, (
             "early death was not recorded as exp fail:\n" + exp_log)
     finally:
-        if proc2.poll() is None:
-            open(die2, "w").close()
-            proc2.kill()
+        _LEAKED.extend(_reap(proc2))
         shutil.rmtree(d2, ignore_errors=True)
         shutil.rmtree(claim_dir2, ignore_errors=True)
 
@@ -215,6 +326,7 @@ def main():
         "the frozen old-launcher fixture lost its buggy shape"
     od = tempfile.mkdtemp(prefix="phisft_old_")
     oclaim = tempfile.mkdtemp(prefix="phisft_oldclaims_")
+    proc4 = None
     try:
         for sub in ("runs", "scripts", "eval", "bin", "data/sft"):
             os.makedirs(os.path.join(od, sub), exist_ok=True)
@@ -236,18 +348,51 @@ def main():
                    os.path.join(od, "data/sft/sft_phi_codeexercises_v42_65m_0914.pt"))
         open(os.path.join(od, "ckpt_v41_r3_0914.pt"), "w").close()
         tr = os.path.join(od, "bin", "torchrun")
-        open(tr, "w").write("#!" + sys.executable + "\nimport sys;open(sys.argv[-1],'w').close()\n")
+        # The stub WRITES A MARKER when reached, so the assertion below can prove torchrun was
+        # never entered rather than inferring it from the absence of output.
+        open(tr, "w").write("#!" + sys.executable + "\nimport sys, os\n"
+                            f"open({os.path.join(od, 'torchrun_reached')!r}, 'w').close()\n")
         os.chmod(tr, 0o755)
         env = dict(os.environ, PATH=os.path.join(od, "bin") + os.pathsep + os.environ["PATH"],
                    AUPAI_CLAIM_DIR=oclaim, HYPOTHESIS="neg",
                    CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7")
-        r = subprocess.run(["bash", os.path.join(od, "runs", "v42_phi_sft.sh")],
-                           cwd=od, env=env, capture_output=True, text=True, timeout=90)
-        assert r.returncode != 0 and "acquire refused" in r.stdout.lower(), (
-            "old launcher did not refuse at the pre-launch claim:\n" + r.stdout[-800:])
+        # THE DEVICE-WAIT SEGMENT IS WHERE THE TWO HOSTS DIVERGE, so name it instead of letting
+        # a fast run imply the path was exercised. The fixture's `--wait-for-device 2` resolves
+        # the shell to a device-holding descendant; without /proc the resolver cannot follow at
+        # all and refuses from its no-opinion branch, and with /proc it polls and refuses from
+        # its TIMEOUT branch. Either way the REFUSAL runs and is asserted below -- what is
+        # skipped (on macOS only) is the poll.
+        if not os.path.isdir("/proc"):
+            print("SKIP device-wait segment of the negative control (no /proc): the resolver "
+                  "cannot follow a shell here, so it refuses on its no-opinion branch; the "
+                  "refusal itself is still asserted (Linux exercises the poll: CI ubuntu)")
+        proc4 = subprocess.Popen(["bash", os.path.join(od, "runs", "v42_phi_sft.sh")],
+                                 cwd=od, env=env, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT)
+        out4, _ = proc4.communicate(timeout=90)
+        # ASSERT THE SHAPE, NOT A MESSAGE THAT ACCOMPANIES IT: the old launcher must exit
+        # non-zero AND say it refused. A fixture that stopped refusing reds here, which is what
+        # keeps this control falsifiable under the SKIP above.
+        assert proc4.returncode != 0 and "acquire refused" in out4.decode().lower(), (
+            "old launcher did not refuse at the pre-launch claim:\n" + out4.decode()[-800:])
+        # NOTHING RAN. The whole point of the frozen shape is that the pre-launch acquire
+        # refuses, so torchrun is never reached. A marker written by the stub would prove the
+        # opposite, so its absence is asserted rather than assumed.
+        assert not os.path.exists(os.path.join(od, "torchrun_reached")), (
+            "old launcher REACHED torchrun despite being supposed to refuse pre-launch")
     finally:
+        if proc4 is not None:
+            _LEAKED.extend(_reap(proc4))
         shutil.rmtree(od, ignore_errors=True)
         shutil.rmtree(oclaim, ignore_errors=True)
+
+    _env_worlds()
+    # THE HARNESS MUST NOT LEAK ITS OWN STUBS. Without this the test could pass while orphaning
+    # a torchrun of its own -- which is what 3b caught (ppid=1, deleted cwd, 9.5h) -- and then
+    # "launcher left torchrun running" would be asserting about a process this file started.
+    assert not _LEAKED, (
+        f"test harness leaked subprocess(es) {_LEAKED}: a survivor here makes every "
+        "'launcher left torchrun running' assertion unfalsifiable")
 
     print("phi SFT launcher OK: binds an 8-card live claim to the live torchrun pid after "
           "device open, releases on exit; old pre-launch-acquire launcher refuses")
