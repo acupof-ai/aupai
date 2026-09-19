@@ -338,10 +338,19 @@ def _apply_diag_thread_env():
 
 
 def _one_run(kind):
-    """Subprocess worker: run one trajectory, write probe master/run tensor bytes to stdout."""
+    """Subprocess worker: run one trajectory, write probe master/run tensor bytes to stdout.
+
+    When the parent set GATE_DUMP_DIR, also write the resume-asymmetry instrumentation there
+    (spec docs/standards/resume_gate_divergence_instrumentation.md): a manifest with the leaf
+    names, the AdamW triple at K (control) / as-restored (restart), the checkpoint sha and key
+    sets, RNG across the boundary, and a NAMED FAIL on a populated leaf whose state is absent
+    from state_by_name. Unset -> no dump, so local/laptop runs of the gate stay cheap."""
     from v41f.train import train_step
 
     _apply_diag_thread_env()
+    dump = os.environ.get("GATE_DUMP_DIR")
+    diag = None
+    leaves = []
     batches = [_ids(_cfg("off"), s, seq=16) for s in range(4)]
     k = 2
     torch.manual_seed(123)
@@ -349,14 +358,52 @@ def _one_run(kind):
     m = _build(cfg)
     st = TrainState(m, lr=1e-2)
     f = os.path.join(_scratch(prefix="td_eq_"), "c.pt")
+
+    if dump:
+        import json as _json
+        dk = os.path.join(dump, kind)
+        os.makedirs(dk, exist_ok=True)
+        # lazy import keeps the non-dump gate free of the diagnostic's engine-env module effects
+        sys.path.insert(0, str(_HERE))
+        import diag_resume_bimodal as diag
+        leaves = diag._pick_leaves(st)
+        _json.dump(leaves, open(os.path.join(dk, "leaves.json"), "w"))
+
+    ctrl_present = []
     for i, ids in enumerate(batches):
+        if dump and i == k:
+            # control records its state AT K too (no save/load), so the restart's optK/loadK have
+            # a same-point reference. Recorded before the step at index k (i.e. after k steps).
+            dk = os.path.join(dump, kind)
+            ctrl_present = diag._opt_present(st, leaves)
+            diag._dump_opt_triple(dk, "optK", st, leaves)
+            torch.save(torch.get_rng_state(), os.path.join(dk, "rng_atK.pt"))
         if kind in ("restart", "fresh") and i == k:
+            if dump and kind == "restart":
+                dk = os.path.join(dump, kind)
+                ctrl_present = diag._opt_present(st, leaves)
+                torch.save(torch.get_rng_state(), os.path.join(dk, "rng_preSave.pt"))
             save_train_checkpoint(f, model=m, cfg=cfg, state=st, tokenizer=synthetic_tokenizer(), step=i)
             del m, st
             gc.collect()
             m, st, _, _ = load_train_checkpoint(f, tokenizer=synthetic_tokenizer(), max_batch_size=2)
             if kind == "fresh":
                 st.optimizer = torch.optim.AdamW([st.master[n] for n in st.in_group_names], lr=1e-2)
+            if dump and kind == "restart":
+                dk = os.path.join(dump, kind)
+                import json as _json
+                diag._dump_opt_triple(dk, "loadK", st, leaves)
+                torch.save(torch.get_rng_state(), os.path.join(dk, "rng_postLoad.pt"))
+                ident = diag._ckpt_identity(f, live_model_keys=set(m.state_dict().keys()))
+                dropped = diag.missing_populated_states(ctrl_present, ident["state_by_name_keys"])
+                ident["populated_but_dropped"] = dropped
+                with open(os.path.join(dk, "ckpt_identity.json"), "w") as fh:
+                    _json.dump(ident, fh, indent=2)
+                # ASSERT, do not merely record: a leaf populated at K that the blob omitted is a
+                # silent fresh-optimizer resume (the master.py `if not st: continue` branch).
+                assert not dropped, (
+                    f"{len(dropped)} leaf/leaves had optimizer state at step {k} but are absent "
+                    f"from state_by_name (silently resumed with a fresh optimizer): {dropped}")
         train_step(m, ids, None, state=st)
     st.refresh_bf16()
     named = dict(m.named_parameters())
@@ -374,10 +421,18 @@ def gate_resume_equivalent_to_uninterrupted():
     # default "2" keeps the required gate byte-identical; GATE_OMP lets the #549 diagnostic
     # arms vary the worker thread count, and GATE_* passes through dict(os.environ).
     env = dict(os.environ, OMP_NUM_THREADS=os.environ.get("GATE_OMP", "2"))
+    # GATE_DUMP_DIR (set by the CI upload step / a debugger) points the workers at one root and
+    # switches on the save/load instrumentation; unset leaves the gate unchanged and cheap.
+    dump_root = os.environ.get("GATE_DUMP_DIR")
+    dump_root_env = {}
+    if dump_root:
+        os.makedirs(dump_root, exist_ok=True)
+        dump_root_env = {"GATE_DUMP_DIR": dump_root}
 
     def run(kind):
         r = subprocess.run(
-            [sys.executable, __file__, "--run", kind], capture_output=True, env=env, check=True
+            [sys.executable, __file__, "--run", kind], capture_output=True,
+            env={**env, **dump_root_env}, check=True
         )
         a, b = r.stdout.split(b"\x00SEP\x00")
         return torch.frombuffer(bytearray(a), dtype=torch.float32).clone(), torch.frombuffer(
@@ -421,7 +476,48 @@ def gate_resume_equivalent_to_uninterrupted():
     _eq("fp32 master", cm, rm)
     _eq("bf16 run weight", cb, rb)
     assert not torch.equal(cm, fm), "a fresh optimizer must diverge (anti-tautology failed)"
+    if dump_root:
+        _report_gate_dumps(dump_root)
     print("  resume: save/load mid-run bit-identical to control; fresh optim diverges")
+
+
+def _report_gate_dumps(root):
+    """Green-run confirmation that every sampled leaf restored its AdamW triple bit-exactly and
+    the dump set is complete (the red-run evidence is written by the workers regardless). On a
+    red this is never reached, but the worker dumps + ckpt_identity are already on disk for the
+    upload-artifact step."""
+    import json
+    sys.path.insert(0, str(_HERE))
+    import diag_resume_bimodal as diag
+
+    cdir, rdir = os.path.join(root, "control"), os.path.join(root, "restart")
+    leaves = json.load(open(os.path.join(rdir, "leaves.json")))
+    ident = json.load(open(os.path.join(rdir, "ckpt_identity.json")))
+    assert not ident["populated_but_dropped"], ident["populated_but_dropped"]
+    assert ident["model_missing_keys"] == [] and ident["model_unexpected_keys"] == []
+    n_checked = 0
+    for j, n in enumerate(leaves):
+        for part in ("exp_avg", "exp_avg_sq", "step"):
+            a = diag._load(cdir, f"optK.l{j}.{part}")
+            b = diag._load(rdir, f"loadK.l{j}.{part}")
+            if a is None and b is None:
+                continue
+            assert a is not None and b is not None, f"{n}.{part} present on only one side"
+            assert torch.equal(a, b), f"{n}.{part} restored triple differs from control"
+            n_checked += 1
+    rng_c = diag._load(cdir, "rng_atK")
+    rng_pre = diag._load(rdir, "rng_preSave")
+    rng_post = diag._load(rdir, "rng_postLoad")
+    # Saving must not move RNG (control-atK == restart-preSave). postLoad can differ: rebuilding
+    # the model on load consumes init RNG the checkpoint does not persist; train_step consumes no
+    # RNG, so this is recorded, not failed (a future rand/dropout would make it load-bearing).
+    assert rng_c is not None and rng_pre is not None and torch.equal(rng_c, rng_pre), \
+        "RNG changed during save (control-atK != restart-preSave)"
+    assert rng_post is not None
+    rng_note = "postLoad identical" if torch.equal(rng_c, rng_post) else \
+        "postLoad differs (model-rebuild init RNG; train_step consumes none)"
+    print(f"  resume instrumentation: {n_checked} leaf-triple comparisons bit-exact, "
+          f"sha256={ident['sha256'][:12]}, dropped=[], keys complete, RNG {rng_note}")
 
 
 # Prod census (structural, no optimizer allocation -- the 0.9B build OOMs a laptop; the full
