@@ -21,6 +21,7 @@ Modes:
 """
 import argparse
 import gc
+import hashlib
 import json
 import os
 import platform
@@ -155,7 +156,10 @@ def _save(d, name, t):
 def _pick_leaves(st):
     names = sorted(st.in_group_names)
     picks = [names[0], names[len(names) // 2], names[-1]]
-    for want in ("head.weight", "layers.0.attn.qproj.wq_b.weight"):
+    # embed.weight is EXPLICIT, not the accidental sorted names[0]. The known-answer anomaly (de,
+    # 2026-09-19): embed carries real optimizer state but dropping it shows zero divergence in
+    # the probed leaf. A rename/reorder that moves names[0] must not silently drop that leaf.
+    for want in ("head.weight", "embed.weight", "layers.0.attn.qproj.wq_b.weight"):
         if want in names:
             picks.append(want)
     seen, out = set(), []
@@ -164,6 +168,94 @@ def _pick_leaves(st):
             seen.add(n)
             out.append(n)
     return out
+
+
+# ------------------------------------------------------------------ save/load instrumentation
+# Spec docs/standards/resume_gate_divergence_instrumentation.md. The AdamW triple is dumped only
+# at the two decision points -- control state at K and the state AS RESTORED (loadK) -- because
+# the "never-persisted state" vs "name re-bind" questions are both answered there; divergence ONSET
+# (candidate 1 vs 4) is already answered by the per-step MASTER dumps. head/embed are each
+# 12800x1024 fp32 (50 MiB), so per-step opt triples would add ~1.7 GiB for no added information.
+
+
+def _opt_entry(state, name):
+    """The AdamW triple for a master name off the LIVE optimizer, or None when it has no state
+    yet (never stepped). Keyed by the Parameter object the name resolves to."""
+    st = state.optimizer.state.get(state.master[name])
+    if not st:
+        return None
+    return st["step"].detach().cpu(), st["exp_avg"].detach().cpu(), st["exp_avg_sq"].detach().cpu()
+
+
+def _opt_present(state, names):
+    """Names that carry non-empty live optimizer state RIGHT NOW. This is the control side of the
+    save/load set relation: a name here that is absent from a restart's state_by_name is a DROPPED
+    populated param (a fresh optimizer silently resumed), never 'never stepped'."""
+    return [n for n in names if _opt_entry(state, n) is not None]
+
+
+def _dump_opt_triple(out, tag, state, leaves):
+    """Save exp_avg/exp_avg_sq/step per leaf at tag ('optK' control-at-checkpoint, 'loadK'
+    as-restored). Files exist iff the leaf had live state; presence is also listed in the
+    manifest so absence is a recorded fact, not a missing file the reader has to guess at."""
+    present = []
+    os.makedirs(out, exist_ok=True)
+    for j, n in enumerate(leaves):
+        e = _opt_entry(state, n)
+        if e is None:
+            continue
+        step, m, v = e
+        torch.save(m, os.path.join(out, f"{tag}.l{j}.exp_avg.pt"))
+        torch.save(v, os.path.join(out, f"{tag}.l{j}.exp_avg_sq.pt"))
+        torch.save(step, os.path.join(out, f"{tag}.l{j}.step.pt"))
+        present.append(n)
+    return present
+
+
+def missing_populated_states(control_present, saved_keys):
+    """THE LOUD SET-RELATION PREDICATE. control_present = leaves with non-empty state at K on the
+    control trajectory; saved_keys = the blob's optim_named.state_by_name key set. Anything in the
+    first but not the second was populated, dropped by `if not st: continue`, and silently resumed
+    with a fresh optimizer. Returns the dropped names (empty is healthy). Pure so a mutant that
+    drops a populated param can red a test without forging a checkpoint."""
+    return sorted(set(control_present) - set(saved_keys))
+
+
+def _sha256(path, buf=1 << 20):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(buf), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _ckpt_identity(ckpt_path, live_model_keys=None):
+    """The checkpoint's own identity and the optim/state key sets, read from the blob -- the
+    sha under test, param_names, the state_by_name key set/meta, and the model strict-load
+    missing/unexpected. With the loaded model's keys supplied, missing/unexpected are the same
+    name diff strict=True rejects; absent that, both are recorded as None rather than faked."""
+    ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    optim = ckpt["optim_named"]
+    sbn = optim["state_by_name"]
+    blob_model_keys = set(ckpt["model"].keys())
+    if live_model_keys is None:
+        missing = unexpected = None
+    else:
+        lk = set(live_model_keys)
+        missing = sorted(lk - blob_model_keys)
+        unexpected = sorted(blob_model_keys - lk)
+    return {
+        "sha256": _sha256(ckpt_path),
+        "step": int(ckpt["step"]),
+        "param_names": list(optim["param_names"]),
+        "state_by_name_keys": sorted(sbn.keys()),
+        "state_by_name_meta": {
+            n: {"shape": list(rec["shape"]), "dtype": rec["dtype"]} for n, rec in sbn.items()
+        },
+        "model_missing_keys": missing,
+        "model_unexpected_keys": unexpected,
+    }
+
 
 
 def arm(kind, out):
@@ -208,12 +300,28 @@ def arm(kind, out):
                 _save(out, f"opt_s{i}.l{j}", st.master[n])
 
     tok = synthetic_tokenizer()
+    manifest = {"leaves": leaves, "kind": kind, "k": K, "n": N}
+
+    def dump_rng(tag):
+        torch.save(torch.get_rng_state().clone(), os.path.join(out, f"rng_{tag}.pt"))
+
     if kind == "control":
         for i in range(N):
             step(i)
+            if i == K - 1:
+                # control state AT the checkpoint boundary: the reference the restart is matched
+                # against (both the per-step-master onset question and the opt triple).
+                manifest["optK_present"] = _dump_opt_triple(out, "optK", st, leaves)
+                dump_rng("atK")
+        with open(os.path.join(out, "manifest.json"), "w") as f:
+            json.dump(manifest, f)
     else:
         for i in range(K):
             step(i)
+        # boundary on the restart arm, immediately before save: same K-state the checkpoint must
+        # capture, plus the RNG crossing the boundary.
+        manifest["optK_present"] = _dump_opt_triple(out, "optK", st, leaves)
+        dump_rng("preSave")
         ck = os.path.join(out, "c.pt")
         save_train_checkpoint(ck, model=m, cfg=cfg, state=st, tokenizer=tok, step=K)
         del m, st
@@ -225,6 +333,13 @@ def arm(kind, out):
         for j, n in enumerate(leaves):
             if n in st.master:
                 _save(out, f"loadK.l{j}", st.master[n])
+        # state AS RESTORED: candidate 2 (name re-bind) is visible only against the control's
+        # optK; ckpt identity records the blob's own sha/key sets.
+        manifest["loadK_present"] = _dump_opt_triple(out, "loadK", st, leaves)
+        manifest["ckpt"] = _ckpt_identity(ck, live_model_keys=set(m.state_dict().keys()))
+        dump_rng("postLoad")
+        with open(os.path.join(out, "manifest.json"), "w") as f:
+            json.dump(manifest, f)
         for i in range(K, N):
             step(i)
     print(f"{kind} arm done -> {out}")
@@ -277,7 +392,71 @@ def compare_iter(cdir, rdir):
     for j in range(len(leaves)):
         first = _cmp(f"LOADK.l{j}", _load(cdir, f"opt_s{K-1}.l{j}"),
                      _load(rdir, f"loadK.l{j}"), first)
+    _compare_instrumentation(cdir, rdir, leaves)
     return first
+
+
+def _per_leaf_stats(tag, a, b):
+    """The per-leaf CONTRIBUTION: each leaf's own (max|delta|, n_diff), not the probed tensor's
+    aggregate. Dropping different leaves produces different pairs (de's known-answer table), so a
+    real red can point at WHICH state diverged. Returns (max, n_diff) for one named tensor."""
+    if a is None or b is None:
+        return None
+    d = (a.float() - b.float()).abs()
+    return (float(d.max().item()), int((~torch.eq(a.float(), b.float())).sum()), a.numel())
+
+
+def _compare_instrumentation(cdir, rdir, leaves):
+    """Sections 1-5 of the instrumentation spec: per-leaf opt-triple contribution, the
+    populated-but-dropped set, RNG across the boundary, and checkpoint identity. Loud, not a
+    gate (this arm exits 0); the gate's own worker asserts the set relation separately."""
+    try:
+        cm = json.load(open(os.path.join(cdir, "manifest.json")))
+        rm = json.load(open(os.path.join(rdir, "manifest.json")))
+    except FileNotFoundError:
+        print("  INSTRUMENT: manifest.json absent (unset dump dir?) -- skipping, not faking")
+        return
+
+    print("  -- per-leaf optimizer-state contribution (control optK vs restart loadK) --")
+    for j, n in enumerate(leaves):
+        for part in ("exp_avg", "exp_avg_sq", "step"):
+            a = _load(cdir, f"optK.l{j}.{part}")
+            b = _load(rdir, f"loadK.l{j}.{part}")
+            st = _per_leaf_stats(f"{n}.{part}", a, b)
+            if st is None:
+                print(f"    {n:40s} {part:11s} absent on one side (c={'y' if a is not None else 'n'}"
+                      f" r={'y' if b is not None else 'n'})")
+                continue
+            mx, nd, tot = st
+            flag = "" if (nd == 0 and a is not None) else "  <-- DIFF"
+            print(f"    {n:40s} {part:11s} max|d|={mx:.4e} n_diff={nd}/{tot}{flag}")
+
+    dropped = missing_populated_states(cm.get("optK_present", []),
+                                       rm.get("ckpt", {}).get("state_by_name_keys", []))
+    if dropped:
+        print(f"  POPULATED-BUT-DROPPED (fresh optimizer silently resumed): {dropped}")
+    else:
+        print("  populated-but-dropped: none (every control-stateful leaf is in state_by_name)")
+
+    r0, r1, r2 = _load(cdir, "rng_atK"), _load(rdir, "rng_preSave"), _load(rdir, "rng_postLoad")
+    if r0 is not None and r2 is not None:
+        # MEASURED, not inferred from "the train path has no rand": preSave==control-atK (saving
+        # does not touch RNG), but postLoad DIFFERS because load_train_checkpoint rebuilds the
+        # model and parameter init consumes the global RNG the checkpoint does not persist.
+        # train_step itself consumes no RNG, so today this has no trajectory consequence; the
+        # line exists to catch a future rand/dropout step that would make it load-bearing.
+        save_eq = r1 is not None and torch.equal(r0, r1)
+        load_eq = torch.equal(r0, r2)
+        print(f"  RNG: control-atK == restart-preSave: {save_eq}; "
+              f"control-atK == restart-postLoad: {load_eq} (postLoad differs when model rebuild "
+              f"consumes init RNG; train_step consumes none, so no trajectory effect today)")
+
+    ck = rm.get("ckpt")
+    if ck:
+        mk, uk = ck.get("model_missing_keys"), ck.get("model_unexpected_keys")
+        print(f"  ckpt sha256={ck['sha256'][:16]} step={ck['step']} "
+              f"param_names={len(ck['param_names'])} state_by_name={len(ck['state_by_name_keys'])} "
+              f"strict-load missing={mk} unexpected={uk}")
 
 
 def _run_pair(cdir, rdir, env):
@@ -523,6 +702,30 @@ def selftest():
     with contextlib.redirect_stdout(buf):
         compare_iter(c2, r2)
     assert "post-load broken=['head.weight']" in buf.getvalue(), "broken alias not reported"
+
+    # instrumentation primitives (spec acceptance 3-5). The save/load set-relation predicate is
+    # PURE so a mutant that drops a populated param reds here without forging a checkpoint: it
+    # must name exactly the leaf present in control but absent from state_by_name.
+    present = ["a.weight", "b.weight", "embed.weight"]
+    assert missing_populated_states(present, ["a.weight", "b.weight"]) == ["embed.weight"]
+    assert missing_populated_states(present, present) == []
+    assert missing_populated_states([], ["a.weight"]) == []
+
+    # per-leaf stats are the leaf's OWN signature; de's known-answer table says different leaves
+    # give different (max,n_diff), so a flat aggregate would erase exactly this. Two leaves here
+    # must report distinct n_diff.
+    xa = torch.arange(8, dtype=torch.float32)
+    xb = xa.clone(); xb[0] += 1.0
+    xc = xa.clone(); xc[[0, 1, 3]] += 1.0
+    assert _per_leaf_stats("x", xa, xb)[1] == 1
+    assert _per_leaf_stats("x", xa, xc)[1] == 3
+    assert _per_leaf_stats("x", xa, None) is None
+
+    # embed.weight is an EXPLICIT wanted leaf, not sorted-names[0] coincidence.
+    import inspect as _ins
+    assert '"embed.weight"' in _ins.getsource(_pick_leaves), \
+        "embed.weight must be an explicit _pick_leaves entry (the open-question leaf)"
+
     print("diag_resume_bimodal selftest OK: green world clean, 1.3% mutant localized to its "
           "exact microstage alone, env/alias fields present and a broken alias is reported.")
     return 0
