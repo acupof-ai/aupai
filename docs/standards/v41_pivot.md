@@ -111,9 +111,9 @@ close before the gate run; each needs a one-line ruling in this table, not a new
   en_c4_stage2_dc, cot_dc, code_py_rp1t_dc. The six non-ultra decontaminate via
   scripts/filter_gate_domains.py (facts/contamination.json cont.gate_dc_*; packed _dc
   supplies measured in
-  facts/corpus_supply.json#cs.gate_domains_decontaminated_tokenized_0911); the two ultra
-  domains decontaminate inside 0e's aggregate and their exact totals remain estimates
-  until that lands.
+  facts/corpus_supply.json#cs.gate_domains_dc_packed_0911); the two ultra
+  domains decontaminate inside 0e's aggregate, whose exact totals landed 2026-09-11
+  (15.34B L2 / 26.70B L3-noexec, measured not estimated).
   **Tokeniser: rebuilt 2026-09-10 to 32,768 slots under unfreeze condition 2** — the
   measured freeze tax on UltraData was ~8.5% (PR #233,
   facts/tokenizer.json#tok.ultra_freeze_tax_0910); the 32,773-slot vocab is preserved on
