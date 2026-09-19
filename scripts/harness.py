@@ -11093,6 +11093,68 @@ def check_lessons_frontmatter(root):
     return PASS, f"{n} research docs carry question/status/source"
 
 
+def _fact_ref_sources(root):
+    """The tracked .md files fact citations are scanned from, as (sources, excluded).
+
+    Population is EVERY TRACKED .md (`git ls-files -s`) minus a small excluded set, not a
+    hand-kept directory list: adding docs/standards/ and the root AGENTS.md by hand would
+    leave the NEXT new prose location silently unguarded -- the population defect this
+    replaced (3b, 2026-09-19; docs/standards citations were never scanned).
+
+    excluded buckets, each applied for a reason the PASS line prints:
+      - runs/: archived run notes; some cite a fact PREFIX (`facts/corpus_supply.json#cs`)
+        meaning "the cs.* family", which a per-id resolver cannot accept, and a frozen audit
+        must not start failing when a fact file grows.
+      - EXPERIMENTS.md: rendered from the ledger; a hand-edit is undone on the next render.
+      - symlink (git mode 120000): CLAUDE.md is a symlink to AGENTS.md; scanning both would
+        count the same citation twice. Mode comes from `git ls-files -s`, not islink probes.
+    Everything else is scanned -- docs/lessons, docs/audits, docs/standards, root AGENTS.md,
+    data/PROVENANCE.md and any other tracked prose.
+
+    No-git fallback (pod, temp worlds): walk the tree with os.walk applying the same
+    excludes by path/os.path.islink; only the enumerator changes."""
+    excluded = {"runs/": [], "derived EXPERIMENTS.md": [], "symlink": []}
+    sources = []
+
+    def admit(rel, is_symlink=False):
+        if rel.startswith("runs/"):
+            excluded["runs/"].append(rel)
+        elif rel == "EXPERIMENTS.md":
+            excluded["derived EXPERIMENTS.md"].append(rel)
+        elif is_symlink or os.path.islink(os.path.join(root, rel)):
+            excluded["symlink"].append(rel)
+        else:
+            sources.append((rel, os.path.join(root, rel)))
+
+    r = subprocess.run(["git", "ls-files", "-s", "*.md"], cwd=root,
+                       capture_output=True, text=True)
+    if r.returncode == 0:
+        for line in r.stdout.splitlines():
+            meta, rel = line.split("\t", 1)
+            admit(rel, is_symlink=(meta.split()[0] == "120000"))
+    else:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d != ".git"]
+            for f in filenames:
+                if f.endswith(".md"):
+                    admit(os.path.relpath(os.path.join(dirpath, f), root))
+    sources.sort()
+    # The old hand-kept population, so the PASS line shows both halves of what is scanned:
+    # files the check already covered (docs/lessons+audits, data/PROVENANCE.md) and the NEW
+    # coverage the tracked enumeration added (docs/standards, root AGENTS.md, scripts/ ...).
+    labels = {l for l, _ in sources}
+    # The OLD check's actual scanned population: DOCS_SUBDIRS (docs/lessons + docs/audits)
+    # plus the explicit data/PROVENANCE.md special case appended after that loop. The
+    # dividing line is whether the OLD CODE SCANNED the file, not whether it went through
+    # the directory enumerator: PROVENANCE was covered, just by a hand-written append, so
+    # it counts as prior set even though the new enumerator covers it generically.
+    old_labels = {l for l in labels
+                  if l.startswith("docs/lessons/") or l.startswith("docs/audits/")
+                  or l == "data/PROVENANCE.md"}
+    return (sources, {k: sorted(v) for k, v in excluded.items()},
+            len(sources) - len(old_labels), len(old_labels))
+
+
 def check_fact_refs(root):
     facts_dir = os.path.join(root, "facts")
     if not os.path.isdir(facts_dir):
@@ -11105,24 +11167,11 @@ def check_fact_refs(root):
         except Exception as e:
             return FAIL, f"cannot parse {f}: {e}"
     bad, retracted, n = [], [], 0
-    # ONLY TRACKED FILES ARE SCANNED. (source-label, path) for every tracked doc that may cite
-    # a fact. docs/lessons and docs/audits are the population; data/PROVENANCE.md is tracked
-    # prose outside docs/ that cites facts too (de-81) and was silently skipped. data/eval/
-    # PROVENANCE.md is tracked but has 0 facts/...#id citations, so it is deliberately not a
-    # source. PR/issue bodies and other GitHub text are non-tracked and out of scope: they are
-    # not part of the checkout the gate ships, so a missing fact id there cannot rot the repo.
-    # A missing fact id in a tracked source is the same rot as in a lesson.
-    sources = []
-    for sub in DOCS_SUBDIRS:
-        d = os.path.join(root, "docs", sub)
-        if not os.path.isdir(d):
-            continue
-        for f in sorted(os.listdir(d)):
-            if f.endswith(".md"):
-                sources.append((f"docs/{sub}/{f}", os.path.join(d, f)))
-    provenance = os.path.join(root, "data", "PROVENANCE.md")
-    if os.path.isfile(provenance):
-        sources.append(("data/PROVENANCE.md", provenance))
+    # ONLY TRACKED FILES ARE SCANNED -- see _fact_ref_sources for the population and its
+    # printed exclusions. PR/issue bodies and other GitHub text are non-tracked and out of
+    # scope: they are not part of the checkout the gate ships, so a missing fact id there
+    # cannot rot the repo.
+    sources, excluded, n_new, n_prior = _fact_ref_sources(root)
     for label, path in sources:
         for m in FACT_REF_RE.finditer(open(path, encoding="utf-8").read()):
             n += 1
@@ -11135,11 +11184,18 @@ def check_fact_refs(root):
                 bad.append(f"{label}: {fid} not in facts/{fname}")
             elif index[fname][fid].get("status") == "retracted":
                 retracted.append(f"{label} cites retracted {fname}#{fid}")
+    excl_parts = [f"{len(v)} {k}" for k, v in excluded.items() if v]
+    # The excluded counts and the prior/new split are printed deliberately: an exclusion
+    # or a coverage EXPANSION a reader cannot see is the silent-list defect this check
+    # exists to prevent (the 97 prior-set files are the largest bucket, not runs/).
+    cover_note = f"{n_new} newly covered, {n_prior} prior set"
+    excl_note = ("; excluded " + ", ".join(excl_parts)) if excl_parts else ""
+    scope = f"across {len(sources)} file(s) ({cover_note})"
     if bad:
         return FAIL, "; ".join(bad[:5])
     if retracted:
-        return WARN, f"{n} citation(s); " + "; ".join(retracted[:4])
-    return PASS, f"{n} fact citation(s) all resolve"
+        return WARN, (f"{n} citation(s) {scope}{excl_note}; " + "; ".join(retracted[:4]))
+    return PASS, f"{n} fact citation(s) {scope} all resolve{excl_note}"
 
 
 PREREG_ANCHORED_RE = re.compile(r"runs/prereg\.jsonl#([A-Za-z0-9_]+)(?:@amended_(\d+))?")
@@ -11435,34 +11491,28 @@ def _broken_lessons_fm():
     return d
 
 
+def _fact_ref_min_world(docs=()):
+    """A minimal temp tree: one fact file holding tok.x, plus (relpath, text) doc files.
+
+    Synthetic rather than a copy of the real docs/: a real-docs world inherits every
+    dangling id currently on main, so its unmutated state could never be a positive
+    control. No .git is initialised, so this also exercises the os.walk fallback."""
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "facts"), exist_ok=True)
+    json.dump({"facts": [{"id": "tok.x", "status": "recorded"}]},
+              open(os.path.join(d, "facts", "tokenizer.json"), "w"))
+    for rel, text in docs:
+        p = os.path.join(d, rel)
+        os.makedirs(os.path.dirname(p) or d, exist_ok=True)
+        open(p, "w", encoding="utf-8").write(text)
+    return d
+
+
 def _broken_fact_ref():
-    """The REAL lessons and facts trees, with one citation to a nonexistent fact appended
-    to a real lesson."""
-    import shutil
-
-    d = _tmp_repo()
-    shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
-    shutil.copytree(os.path.join(ROOT, "facts"), os.path.join(d, "facts"))
-    with open(os.path.join(d, "docs", "lessons", "kept_methods.md"), "a", encoding="utf-8") as f:
-        f.write("\n\nSee facts/tokenizer.json#tok.does_not_exist.\n")
-    return d
-
-
-def _fact_ref_world(provenance_extra=""):
-    """Real docs + facts, plus the tracked data/PROVENANCE.md, optionally with a citation
-    appended. The real PROVENANCE cites one fact that resolves, so the unmutated world
-    passes; the appended string is the only bad citation in the mutated world."""
-    import shutil
-
-    d = _tmp_repo()
-    shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
-    shutil.copytree(os.path.join(ROOT, "facts"), os.path.join(d, "facts"))
-    src = os.path.join(ROOT, "data", "PROVENANCE.md")
-    os.makedirs(os.path.join(d, "data"), exist_ok=True)
-    text = open(src, encoding="utf-8").read() if os.path.exists(src) else ""
-    open(os.path.join(d, "data", "PROVENANCE.md"), "w", encoding="utf-8").write(
-        text + provenance_extra)
-    return d
+    """A lesson citing a nonexistent fact."""
+    return _fact_ref_min_world([
+        ("docs/lessons/kept_methods.md", "\n\nSee facts/tokenizer.json#tok.does_not_exist.\n"),
+    ])
 
 
 def _selftest_fact_refs_scan_provenance():
@@ -11470,18 +11520,56 @@ def _selftest_fact_refs_scan_provenance():
 
     A tracked data/PROVENANCE.md citing a nonexistent fact must FAIL and NAME that file;
     dropping the PROVENANCE scan from check_fact_refs makes the broken world pass, which is
-    the green-on-a-bad-citation hole. The unmutated world (real PROVENANCE, whose one fact
-    citation resolves) must PASS -- the positive control that the new scan does not fire on
-    the real file."""
-    clean = _fact_ref_world()
+    the green-on-a-bad-citation hole. The unmutated world (a PROVENANCE whose one citation
+    resolves) must PASS -- the positive control that the new scan does not fire on a clean
+    file."""
+    good = "See facts/tokenizer.json#tok.x."
+    clean = _fact_ref_min_world([("data/PROVENANCE.md", good + "\n")])
     state, evidence = check_fact_refs(clean)
-    assert state != FAIL, f"real data/PROVENANCE.md must not fail the fact-ref check: {evidence}"
+    assert state != FAIL, f"a resolving data/PROVENANCE.md must not fail: {evidence}"
 
-    bad = _fact_ref_world("\n\nSee facts/tokenizer.json#tok.provenance_does_not_exist.\n")
+    bad = _fact_ref_min_world([
+        ("data/PROVENANCE.md", good + "\n\nSee facts/tokenizer.json#tok.provenance_does_not_exist.\n"),
+    ])
     state, evidence = check_fact_refs(bad)
     assert state == FAIL, ("a bogus fact id in data/PROVENANCE.md must FAIL", state, evidence)
     assert "data/PROVENANCE.md" in evidence, ("the FAIL must name data/PROVENANCE.md", evidence)
     assert "provenance_does_not_exist" in evidence, evidence
+
+
+def _selftest_fact_refs_scan_root_and_standards():
+    """Root AGENTS.md and docs/standards/*.md are part of the fact-citation population.
+
+    Before the tracked-file enumeration both were silently unguarded (3b, 2026-09-19):
+    AGENTS.md:323 and docs/standards/v41_pivot.md:114 cited a nonexistent corpus_supply id
+    while the check stayed green. A broken citation in EITHER location must FAIL and NAME
+    the file. Worlds come from _fact_ref_min_world (no .git, so the os.walk fallback runs).
+    A bad citation under runs/ must NOT fail -- it is excluded with a visible count."""
+    good = "See facts/tokenizer.json#tok.x."
+    bad_id = "facts/tokenizer.json#tok.does_not_exist"
+
+    state, evidence = check_fact_refs(_fact_ref_min_world([("AGENTS.md", good + "\n")]))
+    assert state == PASS, ("clean root AGENTS.md must PASS", state, evidence)
+    state, evidence = check_fact_refs(
+        _fact_ref_min_world([("AGENTS.md", good + "\nBroken: " + bad_id + ".\n")]))
+    assert state == FAIL, ("a bogus fact id in root AGENTS.md must FAIL", state, evidence)
+    assert "AGENTS.md" in evidence and "tok.does_not_exist" in evidence, evidence
+
+    state, evidence = check_fact_refs(
+        _fact_ref_min_world([("docs/standards/s.md", good + "\n")]))
+    assert state == PASS, ("clean docs/standards doc must PASS", state, evidence)
+    state, evidence = check_fact_refs(
+        _fact_ref_min_world([("docs/standards/s.md", good + "\nBroken: " + bad_id + ".\n")]))
+    assert state == FAIL, ("a bogus fact id in docs/standards must FAIL", state, evidence)
+    assert "docs/standards/s.md" in evidence, evidence
+
+    state, evidence = check_fact_refs(_fact_ref_min_world([
+        ("AGENTS.md", good + "\n"),
+        ("runs/note.md", "Bad in archive: " + bad_id + ".\n"),
+    ]))
+    assert state == PASS, ("a bad citation under runs/ is excluded, not FAIL", state, evidence)
+    assert "excluded" in evidence and "runs/" in evidence, ("the exclusion must be visible "
+                                                            "in the PASS line", evidence)
 
 
 DATA_PATH_RE = re.compile(r"data/[A-Za-z0-9_][A-Za-z0-9_./-]*")
@@ -26230,6 +26318,7 @@ def _demo(only=None):
         _selftest_inline_citations_are_scanned,
         _selftest_skip_reasons_classified,
         _selftest_fact_refs_scan_provenance,
+        _selftest_fact_refs_scan_root_and_standards,
         _selftest_corpus_filters_fp_gate_mix,
     ):
         try:
