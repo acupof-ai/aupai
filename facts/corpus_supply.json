@@ -1834,6 +1834,41 @@
    "tokens_status": "measured",
    "guard_phrases": [],
    "retracted_value": []
-  }
+    },
+ {
+  "id": "cs.gate_domains_dc_packed_0911",
+  "value": {
+   "code_ultra_l2_dc": 15340876449,
+   "code_ultra_l3_noexec_dc": 26697332099,
+   "code_py_starcoder_dc": 7948925654,
+   "math_owm_stage2_dc": 5857969755,
+   "en_c4_stage2_dc": 1985211248,
+   "cot_dc": 399994717,
+   "total_packed_tokens": 58230309922
+  },
+  "measured": "2026-09-11",
+  "status": "measured",
+  "unit": "packed tokens (seq 4096 rows) of the 13-gram-decontaminated _dc gate caches, vocab f1f860970d15d623, epochs-scheduling row-aligned basis",
+  "config": {
+   "vocab_id": "f1f860970d15d623",
+   "basis": "measured_pool_tokens from data/mix_v41_gate.json domains[].epochs_pool_source: each a full-load torch load of tokens_<domain>.pt on the pod 2026-09-11 with .srcfp == build_corpus_stats fingerprint; row-aligned count is build_mix cap=len(pool)*epochs basis, post-decontamination",
+   "domain_set": "six gate domains surviving the 2026-09-16 pod loss; code_keep_p1_dc and code_py_rp1t_dc EXCLUDED (user ruling 2026-09-19: drop code_keep_p1_dc, rebalance within survivors; rp1t github source unreachable)",
+   "per_domain_fp": {
+    "code_ultra_l2_dc": "adf2ff20698dae8a",
+    "code_ultra_l3_noexec_dc": "63a3b0e64b97e589"
+   },
+   "ultra_full_tensor_basis": "cs.gate_cache_ultra_l2_dc_0911 full-tensor 15,340,877,471 = 1,022-token trailing partial row above the 15,340,876,449 scheduling basis used here; L3 full tensor equals scheduling value. Same data, two bases.",
+   "dropped_domains_history": {
+    "ruling_date": "2026-09-19",
+    "code_keep_p1_dc": 2626977570,
+    "code_py_rp1t_dc": 379600071,
+    "note": "pre-drop measured_pool_tokens same basis; keep_p1 dropped by user order (labels+raw lost 0916, no fingerprint-preserving source), rp1t dropped with unreachable github source; together freed 0.04 eff weight / 1.2B target; held for rebalance audit, NOT in value/total"
+   },
+   "cot_status": "399,994,717 = the 09-11 measured packed _dc gate cache and is the basis of this value. 0e's faithful source rebuild was reported complete by the data lead on 2026-09-19 with a corpus FULL_TOKENS of 400,105,114 (+0.028%); that figure is not independently verified here and its basis (raw corpus total vs gate-vocab packed cache with .srcfp) is unconfirmed, so this packed value stays 399,994,717 until a rebuilt packed cache is produced and fingerprint-checked. An interim target_tokens=1e9 note was retracted by fb and is not a basis here"
+  },
+  "source": "data/mix_v41_gate.json domains[].epochs_pool_source; facts/corpus_supply.json#cs.v41_gate_token_caches_rebuilt_f1f86097_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l2_dc_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l3_noexec_dc_0911",
+  "uncertainty": "starcoder/math/en/cot exact measured, post-dc vs pre-dc drop <=0.19%; ultra L2/L3 exact measured 09-11 aggregates (NOT estimates; supersede stale 59.9B/31.8B once printed in the mix _comment); L2 scheduling vs full-tensor differs by a 1,022-token trailing row; cot_dc source rebuild done but no fingerprint-checked rebuilt packed cache yet, so the packed figure stays the 09-11 399,994,717 and the +0.028% corpus-only report is unconfirmed-basis (see config.cot_status); recorded pod measurements not downgraded by the 0916 byte loss",
+  "boundary": "supply upper bound for the within-survivor rebalance only; recorded pod measurements, not a re-verification of destroyed bytes"
+ }
  ]
 }
