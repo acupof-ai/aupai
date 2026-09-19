@@ -1225,6 +1225,10 @@ def main():
         # a case that only read the `case` pattern would pass for a version whose exemption never
         # reached the branch.
         "scripts/merge_main.sh",
+        # Shell selftests the hook invokes via bash <file> --selftest: 30b launch G0 contract
+        # and pod_sync_check's three-refusal suite. Both are CPU, no pod/data.
+        "scripts/launch_30b.sh",
+        "scripts/pod_sync_check.sh",
         # The single-impl local-main fast-forward helper merge_main.sh and the python hook both
         # call; its --selftest builds the ff / checked-out / diverged worlds. Registered here so an
         # edit to either caller (merge_main.sh, this hook) selects it.
@@ -1490,6 +1494,10 @@ def main():
         # missed the flag on 2026-09-09 and the registration was briefly removed; restored
         # once PR #136 mapped the flag.
         "eval/code_fewshot.py", "eval/code_l0prime.py",
+        # fone.py's digit-BPE selftest is sandbox-free and CPU, so it runs at commit time.
+        # (eval/code_zh.py's --selfcheck executes solutions in a root sandbox; registered in
+        # NEEDS_DATA below, not here.)
+        "fone.py",
         # e1-42's equal-token gap. 0.1s, CPU, NO POD ACCESS in --selftest: its five fixtures are
         # the real val curves, so the known answers run anywhere. Registered because the mistake it
         # exists to prevent already happened once -- the five gaps were handed to me as the MoE-vs-
@@ -1583,6 +1591,39 @@ def main():
         # tools in a deletion bucket -- a wrong answer that looked like a finding -- and its
         # negative controls are what caught that. Its inputs are all files people edit.
         "runs/audit_0904/eval_acquire_unit.py",
+        # The rest of the 2026-09-04 audit suite. Each --selftest is <3s, CPU-only, builds its
+        # own known-answer worlds, and was measured green before registration. The bidirectional
+        # filesystem reconciliation in harness.ci_selftest_partition surfaced them: os.walk's
+        # runs/ skip had hidden them from every prior coverage scan, so they ran nowhere.
+        "runs/audit_0904/audit_fact_sources.py",
+        "runs/audit_0904/audit_fact_values.py",
+        "runs/audit_0904/confounded_worlds.py",
+        "runs/audit_0904/enum_checks.py",
+        "runs/audit_0904/ledger_diff.py",
+        "runs/audit_0904/populations.py",
+        "runs/audit_0904/scan_broken_worlds.py",
+        "runs/audit_0904/selftest_population.py",
+        "runs/audit_0904/tasks_vs_reality.py",
+        "runs/audit_0904/walk_tracked_population.py",
+        # The unmutated-world confound audit. ~85s (119 checks against bare+shaped worlds), so it
+        # runs only when this audit file itself is staged, never via a subject; under the CI
+        # driver's 120s per-file timeout.
+        "runs/audit_0904/unmutated_fail.py",
+        # The repo's own generated-eval self-check. 0.1s, recomputes 3600 problems across 18
+        # families. Flag predates the convention and is --self-check (mapped in SELFTEST_FLAG).
+        "mathbank/eval_hard_v2_gen.py",
+        # The two extensionless git hooks. Both carry a python --selftest (commit-msg: 4 ledger +
+        # 9 arch-message worlds; post-commit: its own run) and run via sys.executable since they
+        # have no .sh suffix. Editing a hook without running its selftest is exactly the gap the
+        # map closes.
+        "scripts/hooks/commit-msg",
+        "scripts/hooks/post-commit",
+        # Already run by a dedicated ci.yml step (bare, no flag); registered so the map accounts
+        # for the carrier and the partition buckets it explicit rather than unregistered.
+        "scripts/test_attest_cases.py",
+        # The ci-selftests driver's own contract: a hang is a loud nonzero TIMEOUT with the
+        # pre-kill output retained (§298), failures continue-all and name the file. Instant.
+        "scripts/test_ci_selftests_driver.py",
         # pod_sh_offset: the byte-offset gate behind POD_PUSH_ALLOW_RUNNING_SH. Its selftest
         # is pure arithmetic over fixture bytes and fixture ps/fdinfo text -- no pod, no card
         # -- so it runs here. Gated because the file's job is deciding whether overwriting a
@@ -1800,7 +1841,6 @@ def main():
         "scripts/test_eval_load_only.py",
         "scripts/test_pod_drift_root.py",
         "scripts/launch_tests.py",
-        "scripts/corpus_snapshot.py",
         "datagen/count_code_dirs.py",
         # N4 eval-gold contamination scanner: no card, no model, no data -- its selftest builds
         # its own fixture shard and a shuffled-gold control, and the gold extractor is loose by
@@ -2445,6 +2485,12 @@ def main():
         # model-free/cheap (tier constants); the real ~180M x3-process run is an explicit CI
         # step. Distinct from de's single-step test_p1_train_smoke (no save/load there).
         "tests/v41f/test_p1_train_resume_smoke.py",
+        # Non-blocking bimodal-resume CI diagnostic (0e). Its --diag-selftest is model-free and
+        # proves the comparator is non-empty (green world, a planted 1.3% mutant localized,
+        # loss-function identity, alias-audit break); the heavy runner capture is an explicit
+        # continue-on-error CI job, never a production gate. Registered so a selftest-bearing
+        # file cannot sit outside the hook map and silently never run.
+        "tests/v41f/diag_resume_bimodal.py",
         # Engram ON config gate (de, 2026-09-18). Registered because its checks are `test_*`
         # but the defect it guards is a CONFIG-shape one: a bare V41FConfig() has engram ON
         # (engram_layer_ids=(1,)) while both derived fields sit at ()/0, and nothing in the
@@ -2496,6 +2542,13 @@ def main():
         "datagen/sandbox_exec.py": "17 known answers, all needing root + unshare for the "
                                    "chroot and namespaces; pod only, run by hand",
         "eval/code_l0prime.py": "sandbox_exec needs root (chroot + namespaces); pod only",
+        "eval/code_zh.py": "--selfcheck executes reference solutions in sandbox_exec, which "
+                          "needs root (chroot + namespaces); pod only, run by hand",
+        # Runs the REAL sft_math.py to test its unstamped-pack holdout refusal, and sft_math.py
+        # imports liger_kernel at module scope. The test deliberately REFUSES (SystemExit) on a
+        # missing liger rather than stub it, because an absent-string assertion would pass on a
+        # script that never started. liger is pod-only, so it runs nowhere without it.
+        "scripts/test_sft_holdout_gate.py": "runs the real sft_math.py, which imports liger_kernel at module scope (pod-only); the test REFUSES rather than stub that import",
         "scripts/count_tokens.py": "reads corpus shards, which are gitignored",
         # Two more de-5 candidates that PASS and assert live properties, but only where the
         # corpus and tokenizer are (fb's ruling: run it before judging it). Both measured on
@@ -2648,6 +2701,8 @@ def main():
                      # argparse rejects the other spelling, which the hook would read as the
                      # selftest failing rather than as a wrong flag.
                      "datagen/corpus_fingerprint.py": "--self-check",
+                     # --self-check, same pre-convention spelling as corpus_fingerprint.
+                     "mathbank/eval_hard_v2_gen.py": "--self-check",
                      # POSITIONAL, not a flag. file_claim.py (3d65ec86) takes an argparse
                      # SUBCOMMAND -- {acquire,release,release-all,status,selftest} with
                      # required=True -- so `--selftest` makes argparse exit 2 on a missing
@@ -2658,7 +2713,17 @@ def main():
                      # the tolerance this relies on -- a script that IGNORES an unknown
                      # argument needs no entry, and one that PARSES argv strictly needs one
                      # here. file_claim is the first strict parser in the map.
-                     "scripts/file_claim.py": "selftest"}
+                     "scripts/file_claim.py": "selftest",
+                     # --diag-selftest, not --selftest. The THIRD recurrence of one shape: a
+                     # file registered in SELFTEST_FILES whose own flag the hook does not know,
+                     # so the hook passes --selftest and argparse exits 2. A branch's commits
+                     # run MAIN's hook, so the mismatch stays invisible until the merge -- and
+                     # then every commit that stages the file fails, which every merge of main
+                     # into a branch does. eval/code_fewshot.py and scripts/file_claim.py were
+                     # the first two, each fixed by adding a line here and nothing else, which
+                     # is why this one arrived (genB measured it, 2026-09-19). The map line is
+                     # still the fix; check_selftest_flags_accepted is what stops the fourth.
+                     "tests/v41f/diag_resume_bimodal.py": "--diag-selftest"}
     # A TEST ALSO RUNS WHEN ITS SUBJECT IS STAGED, not only when the test file itself is.
     #
     # MEASURED 2026-09-04, by staging a real defect and running this hook: dropping `demo_lang`

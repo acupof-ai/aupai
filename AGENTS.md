@@ -320,9 +320,10 @@ under 0e's keep rules (#237), plus `code_py_starcoder_dc`, `math_owm_stage2_dc`,
 `filters/decontam_ngram.py` library, not a CLI), the two ultra domains inside 0e's
 aggregate; this is a launch prerequisite, with dropped fractions and packed token counts in
 `facts/contamination.json` (cont.gate_dc_*) and
-`facts/corpus_supply.json#cs.gate_domains_decontaminated_tokenized_0911` — the six
-non-ultra supplies are measured packed `_dc` tokens; the two ultra totals are labelled
-estimates until 0e's aggregate lands. Every domain's token cache must exist in `/data00` in
+`facts/corpus_supply.json#cs.gate_domains_dc_packed_0911` — the six surviving
+`_dc` supplies are measured packed tokens (vocab f1f860970d15d623), including the two
+ultra domains, whose 0e aggregates landed 2026-09-11 (15.34B L2 / 26.70B L3-noexec,
+measured not estimated). Every domain's token cache must exist in `/data00` in
 the gate vocabulary before launch (the prereg checklist names which remain on 0e). The old
 ladder mixes (`mix_scale_*`) and teacher synthesis (textbooks/exercises, stopped by the
 pivot) are the retired data plan.
@@ -630,6 +631,7 @@ Three rules from the day one session's `git checkout` erased another session's u
 - Stage by path, never `git add -A` / `git add .` / `git commit -a` in a shared tree. 2026-08-31: a `git add -A` under the message "pod manifest: refresh" swept 26 files and 533K insertions — including 234MB under `data/_corpus_unsanitized/` and five other sessions' uncommitted work — into one commit (d535674). The pre-commit hook (`scripts/hooks/pre-commit`, installed by `harness install-hooks`) refuses staged files >5MB and new `data/` paths not in the allow-list, so the blob never enters history.
 - **A hook edit made in a branch worktree does not run until it is merged.** `.git/hooks/pre-commit` is a symlink to `../../scripts/hooks/pre-commit` resolved against **main's** worktree, so every worktree executes main's copy. The consequence, not the mechanism, is what bites: edit a hook in your worktree, commit, watch it not fire, and conclude your change is broken — it was never loaded. **This covers the `SELFTEST_FILES` registration, not just hook logic**: adding your file to that set in your own worktree gates nothing, and the hook still prints a `selftests` timing line, so a small number reads as "ran, fast" when it means "ran zero of them". Two incidents: 2026-09-01, a readout commit landed with its own selftest red under five green hook lines, and the fix for that ran the old hook too; e1 2026-09-02, `build_agentic_sft.py` was registered on the e1 branch, every commit printed `selftests 0.03s`, and the selftest had never run at a single commit. Verify a hook change by running its logic directly against a deliberately-broken input, and verify a registration with `readlink -f "$(git rev-parse --git-common-dir)/hooks/pre-commit"` then grep that file for your own filename; a timing line cannot tell you whether the run was empty.
 - The hook runs `--selftest` on staged files in its `SELFTEST_FILES` map. A file carrying a selftest that is not in the map is unguarded: the hook checks what it happens to check, not what the commit changed. Add the path when you add a selftest.
+- A `SELFTEST_FILES` entry whose selftest flag is not `--selftest` needs a `SELFTEST_FLAG` line naming the flag it does accept. Get this wrong and the hook passes the file a flag its argparse rejects, reads exit 2 as the selftest failing, and refuses every commit that stages the file — which every `merge main` into a branch does. `selftest_flags_accepted` enforces the pairing; three files have landed this way, the last one (`--diag-selftest`, 2026-09-19) blocking the whole tree.
 - A commit that touches a file in the manifest's scope (`python3 scripts/pod_drift.py --list-scoped`) is pushed to the pod by its committer in the same step (`scripts/pod_push.sh <file>`, which generates the manifest and ships it after the files). The pod runs the pushed copy, not HEAD; 2026-08-31 the drift gate stopped the A/B launch twice on files another session had committed and not pushed.
 - Mix-named corpus directories are frozen: a domain carries its build stamp and every run
 that reads it must see the same bytes — this applied to the retired ladder mixes
