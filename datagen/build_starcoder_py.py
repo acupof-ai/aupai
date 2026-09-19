@@ -28,8 +28,14 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
 import build_corpus as B  # noqa: E402
 
-RAW = "/work/aupai/data/raw/ms_starcoder_py"
-DST = "/work/aupai/data/corpus/code_py_starcoder"
+# Tree root is overridable so this can run off the pod (digest machine, a rebuilt node with a
+# different mount). Same pattern as datagen/excerpt_sufficiency.py:35 -- env with the pod path
+# as the default, so with AUPAI_ROOT unset every resolved path is byte-identical to before.
+# Issue #575: this used to hardcode /work/aupai in three places (RAW, DST, tokenizer).
+ROOT = os.environ.get("AUPAI_ROOT", "/work/aupai")
+RAW = os.path.join(ROOT, "data/raw/ms_starcoder_py")
+DST = os.path.join(ROOT, "data/corpus/code_py_starcoder")
+TOKENIZER = os.path.join(ROOT, "data/tokenizer.json")
 PHASE = "code_py_starcoder"
 DONE = os.path.join(DST, ".built_shards")
 STAGE = os.path.join(DST, ".stage")  # cleared each run; publish renumbers-append, no delete
@@ -43,7 +49,7 @@ def _process_shard(args):
     import pyarrow.parquet as pq
     from tokenizers import Tokenizer
 
-    tk = Tokenizer.from_file("/work/aupai/data/tokenizer.json")
+    tk = Tokenizer.from_file(TOKENIZER)
     out = []
     col = None
     try:
