@@ -31,6 +31,7 @@ exactly as the guard documents):
 """
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -58,7 +59,7 @@ CARDS=$(IFS=,; echo "${_DEVS[*]}")
 CUDA_VISIBLE_DEVICES= python3 sft_math.py --check_pack
 python3 scripts/exp.py start --name v42_phi_sft --cmd x --hypothesis "$HYPOTHESIS" >/dev/null
 python3 scripts/card_claim.py acquire --name v42_phi_sft --cards "$CARDS" \\
-  --note old --wait 0 --wait-for-device 300 || {
+  --note old --wait 0 --wait-for-device 2 || {
   echo "REFUSING to launch: card_claim acquire refused on $CARDS"
   python3 scripts/exp.py done --name v42_phi_sft --status fail --result "card claim refused"
   exit 1
@@ -102,6 +103,14 @@ def _build_tree(claim_dir):
     # torchrun = a NON-SHELL python process (a bash stub is refused as a shell holder). It
     # records argv, then either blocks until a die file appears (happy path) or exits
     # immediately non-zero (early-death world), per TORCHRUN_BEHAVIOR.
+    #
+    # It also HOLDS an fd whose path names nvidia, standing in for the /dev/nvidia* fds a real
+    # torchrun holds once it is on a card. The launcher's claim is --require-device, and
+    # card_claim.nvidia_fds counts an fd by `"nvidia" in os.readlink(...)`: a stub holding none
+    # is refused on Linux, where /proc is readable, while macOS abstains (None, never refuses)
+    # and the test passed for the wrong reason. Holding one makes the stub the same OBSERVABLE
+    # shape as the process the assertion is about, without weakening the predicate.
+    dev_fd_path = os.path.join(d, "nvidia0")
     ready = os.path.join(d, "torchrun_ready")
     die = os.path.join(d, "torchrun_die")
     tr = os.path.join(d, "bin", "torchrun")
@@ -109,9 +118,12 @@ def _build_tree(claim_dir):
         f.write(
             "#!" + sys.executable + "\n"
             "import os, sys, time\n"
-            f"open({ready!r}, 'w').close()\n"
+            f"_devfd = os.open({dev_fd_path!r}, os.O_CREAT | os.O_RDONLY)\n"
+            # argv BEFORE ready: readiness must imply the argv file exists, otherwise a fast
+            # consumer reads ready and opens torchrun_argv before it is written (a flaky FAIL).
             "with open(os.path.join(os.path.dirname(__file__), '..', 'torchrun_argv'), 'w') as a:\n"
             "    a.write(' '.join(sys.argv[1:]))\n"
+            f"open({ready!r}, 'w').close()\n"
             "if os.environ.get('TORCHRUN_BEHAVIOR') == 'die':\n"
             "    sys.exit(7)\n"
             f"while not os.path.exists({die!r}):\n"
@@ -121,8 +133,260 @@ def _build_tree(claim_dir):
     return d, ready, die
 
 
+_LEAKED = []  # pids any world failed to reap; asserted in main() so it cannot mask an error
+
+
 def _live_claim_files(claim_dir):
     return [f for f in os.listdir(claim_dir) if f.endswith(".json")]
+
+
+def _group_members(pgid):
+    """Live pids in process group `pgid`. NOT pgrep -g: on Linux it means process-group, on
+    macOS it means real-group-id. `ps -o pid,pgid` means the same on both."""
+    out = subprocess.run(["ps", "-eo", "pid=,pgid="], capture_output=True, text=True).stdout
+    pids = []
+    for line in out.splitlines():
+        f = line.split()
+        if len(f) == 2:
+            try:
+                if int(f[1]) == pgid:
+                    pids.append(int(f[0]))
+            except ValueError:
+                pass
+    return pids
+
+
+def _reap(popen):
+    """Kill the launcher's whole process GROUP and report who survived.
+
+    WHY A GROUP, NOT A PARENT-CHILD WALK. The first version snapshotted children with
+    `pgrep -P <parent>` and only while the parent was alive. The real leak is the opposite
+    timing: the launcher (group leader) exits first and its torchrun grandchild is reparented
+    to init with ppid=1 -- exactly what 3b caught (a 9.5h stub in a deleted mkdtemp). After
+    that, `pgrep -P` finds nothing and the poll() gate skips enumeration entirely, so the end
+    assert saw an empty list and passed while the orphan ran. Reparenting changes ppid, NOT
+    the process group: every descendant the launcher starts shares the group created by
+    start_new_session=True, and the group outlives its leader as long as a member holds it.
+    os.killpg therefore still reaches an init-adopted grandchild.
+
+    The pgid is read at LAUNCH time and stashed on the Popen, because once the leader is a
+    zombie or reaped os.getpgid(its pid) raises ESRCH -- a lookup in the reaper could not
+    recover the very group that owns an orphaned stub.
+
+    Returns the members still alive after SIGKILL+wait, so the caller ASSERTs on it instead of
+    trusting the function ran. Empty is the healthy answer; a no-op reaper cannot fake it,
+    because the reparent world leaves a live member in the group at reclamation time.
+    """
+    if popen is None:
+        return []
+    pgid = getattr(popen, "_aupai_pgid", None)
+    if pgid is None:
+        # NO IMPLICIT FALLBACK TO os.getpgid(popen.pid). When the launcher is still alive and
+        # was spawned WITHOUT start_new_session (the proc4 bug), it shares the CALLER's group,
+        # so that lookup returns the pytest/hook group and killpg below SIGKILLs ourselves with
+        # rc=-9 and no output. A Popen we did not put in its own group is not safe to killpg:
+        # refuse loudly and signal nothing rather than guessing a group that may be ours.
+        print(f"_reap: refusing to kill -- process {popen.pid} has no stashed process group "
+              f"(it was not started with start_new_session); killing its group could kill the "
+              f"test runner itself", file=sys.stderr)
+        return [popen.pid] if popen.poll() is None else []
+    if pgid == os.getpgid(0):
+        # SELF-GROUP GUARD, last line of defense: never signal the group the caller runs in,
+        # whatever spawned the Popen. Kill that and the whole test/hook dies with rc=-9 before
+        # any assertion can speak.
+        raise RuntimeError(f"_reap: target pgid {pgid} is this process's own group; refusing "
+                           "to killpg ourselves (a launcher must be started start_new_session)")
+    members = _group_members(pgid)
+    if members:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass  # every member exited between snapshot and signal
+    # Wait for the MEMBERS, not just the leader: the leader may already be dead (that is the
+    # reparent shape), so popen.wait alone returns instantly while a SIGKILL'd stub is still
+    # dying. Report a member only after it fails to leave across a grace window.
+    deadline = time.time() + 5
+    while members and time.time() < deadline:
+        members = [pid for pid in members if _alive(pid)]
+        if members:
+            time.sleep(0.02)
+    try:
+        popen.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        pass
+    return [pid for pid in members if _alive(pid)]
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _ppid(pid):
+    """Parent pid via ps (portable; /proc is Linux-only). None when the pid is gone."""
+    try:
+        out = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)],
+                             capture_output=True, text=True).stdout.strip()
+        return int(out) if out else None
+    except (OSError, ValueError):
+        return None
+
+
+def _reparent_world():
+    """THE ACTUAL LEAK SHAPE: group leader dies first; the torchrun stub is adopted by init
+    (ppid=1) but keeps the process group. The reaper must still kill it.
+
+    The first _reap enumerated children only while the parent lived, so on this world it found
+    nobody and the suite passed with the orphan running. SIGKILL the leader directly (not the
+    trap path), wait for the stub's ppid to leave the leader, then reclaim and prove it is gone.
+    """
+    claim_dir = tempfile.mkdtemp(prefix="phisft_rp_")
+    d, ready, die = _build_tree(claim_dir)
+    proc = _run(d, claim_dir)
+    stub = None
+    try:
+        for _ in range(200):
+            if os.path.exists(ready):
+                break
+            time.sleep(0.05)
+        assert os.path.exists(ready), "reparent world: torchrun stub never started"
+        kids = [int(x) for x in subprocess.run(["pgrep", "-P", str(proc.pid)],
+                capture_output=True, text=True).stdout.split()]
+        # the non-shell python torchrun, not a `bash`/`ps` helper
+        stub = next((k for k in kids if not _is_shell(k)), None)
+        assert stub is not None, f"reparent world: no torchrun child among {kids}"
+        assert _alive(stub), "reparent world: stub died before the leader was killed"
+        os.kill(proc.pid, signal.SIGKILL)  # bypass the launcher trap; force adoption
+        proc.wait()
+        for _ in range(100):
+            pp = _ppid(stub)
+            if pp is not None and pp != proc.pid:
+                break
+            time.sleep(0.02)
+        pp = _ppid(stub)
+        assert pp is not None and pp != proc.pid and _alive(stub), (
+            f"reparent world: stub was not adopted alive after leader death (ppid={pp})")
+        survivors = _reap(proc)
+        assert not _alive(stub) and not survivors, (
+            f"reaper left the init-adopted stub: pid={stub} survivors={survivors}")
+        print(f"reparent world: stub {stub} adopted (ppid {pp}) then reaped via its group")
+    finally:
+        _LEAKED.extend(_reap(proc))
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(claim_dir, ignore_errors=True)
+
+
+def _live_reap_world():
+    """The proc4 TimeoutExpired shape: the launcher is STILL ALIVE (leader + blocking stub)
+    when finally reaps it. start_new_session means the group is the launcher's own, so _reap
+    must clear both without touching the caller's group. This is green under load (a runner
+    that starves the 90s communicate)."""
+    claim_dir = tempfile.mkdtemp(prefix="phisft_live_")
+    d, ready, die = _build_tree(claim_dir)
+    proc = _run(d, claim_dir)
+    try:
+        for _ in range(200):
+            if os.path.exists(ready):
+                break
+            time.sleep(0.05)
+        assert os.path.exists(ready), "live-reap world: stub never started"
+        assert proc.poll() is None, "live-reap world: launcher already exited"
+        survivors = _reap(proc)  # reclaimed while the whole group is still running
+        assert proc.poll() is not None and not survivors, (
+            f"live reaper left the launcher or its stub: poll={proc.poll()} survivors={survivors}")
+        print("live-reap world: running launcher group reaped cleanly (no self-kill)")
+    finally:
+        _LEAKED.extend(_reap(proc))
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(claim_dir, ignore_errors=True)
+
+
+# Runs in an ISOLATED CHILD because exercising the self-group guard means invoking _reap with a
+# target equal to the caller's own group: if the guard is missing the child SIGKILLs itself, and
+# the parent turns that -9 into an explicit assertion instead of the test vanishing with no output.
+_GUARD_PROBE = '''
+import os, sys, time, subprocess
+sys.path.insert(0, %r)
+import test_phisft_launcher as T
+p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"],
+                     start_new_session=False)
+time.sleep(0.2)
+p._aupai_pgid = os.getpgid(0)  # buggy spawn: recorded the CALLER's own group
+try:
+    T._reap(p)
+except RuntimeError:
+    p.kill(); p.wait(); print("GUARD_OK own-group refused"); sys.exit(0)
+p.kill(); sys.exit(3)  # _reap returned without raising: guard is gone
+'''
+
+
+def _self_group_guard_world():
+    pd = tempfile.mkdtemp(prefix="phisft_guard_")
+    probe = os.path.join(pd, "probe.py")
+    with open(probe, "w") as fh:
+        fh.write(_GUARD_PROBE % os.path.join(ROOT, "scripts"))
+    try:
+        # Isolated session: if the guard were removed, the probe's killpg reaches only this
+        # probe's own group, not the whole suite -- so a missing guard reds here as rc=-9 rather
+        # than killing the test runner.
+        r = subprocess.run([sys.executable, probe],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           stdin=subprocess.DEVNULL, start_new_session=True)
+        out = r.stdout.decode()
+        assert r.returncode != -9, (
+            "_reap SIGKILLed the probe's own group (self-group guard removed):\n" + out[-500:])
+        assert r.returncode == 0 and "GUARD_OK" in out, (
+            f"self-group guard did not refuse a target equal to the caller group "
+            f"(rc={r.returncode}):\n{out[-500:]}")
+        print("self-group guard: a same-group target raises instead of killpg (probed in an "
+              "isolated child; without the guard it would SIGKILL and FAIL here, not vanish)")
+    finally:
+        shutil.rmtree(pd, ignore_errors=True)
+
+
+def _is_shell(pid):
+    try:
+        out = subprocess.run(["ps", "-o", "comm=", "-p", str(pid)],
+                             capture_output=True, text=True).stdout.strip()
+        return os.path.basename(out) in ("bash", "sh", "zsh", "dash")
+    except OSError:
+        return False
+
+
+def _env_worlds():
+    """The two host shapes this file has to tell apart, driven through the seam card_claim's own
+    selftest uses -- so both are exercised on every host, laptop included.
+
+    A GREEN RUN MUST NAME THE SHAPE IT RAN IN. macOS has no /proc: the predicate abstains (None)
+    and every device assertion is vacuous there. Linux has /proc: a stub holding nothing reads 0
+    and is refused. Only the second outcome is the one the launcher is gated on, and letting it
+    go unexercised on the laptop is exactly how the world1 failure reached CI green. So both are
+    built here out of real directories and real symlinks.
+    """
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import card_claim
+    saved = card_claim.PROC_ROOT
+    proot = tempfile.mkdtemp(prefix="phisft_env_")
+    try:
+        card_claim.PROC_ROOT = proot
+        # (a) NO /proc entry for this pid: unreadable -> None -> the predicate has no opinion.
+        assert card_claim.nvidia_fds(os.getpid()) is None, (
+            "a pid absent from /proc must read None (abstain), not 0 (refuse): conflating the "
+            "two refuses every claim on a host that simply cannot answer")
+        # (b) /proc entry present, no nvidia fd: readable, zero device fds -> 0 -> refusal bites.
+        fd = os.path.join(proot, "4242", "fd")
+        os.makedirs(fd, exist_ok=True)
+        os.symlink("/dev/null", os.path.join(fd, "3"))
+        assert card_claim.nvidia_fds(4242) == 0, (
+            "a readable pid holding no device must read 0, not None: the refusal is what the "
+            "launcher's --require-device depends on")
+        print("env worlds: no-/proc -> None (abstain); /proc-without-nvidia -> 0 (refuse)")
+    finally:
+        card_claim.PROC_ROOT = saved
+        shutil.rmtree(proot, ignore_errors=True)
 
 
 def _run(d, claim_dir, env_extra=None):
@@ -135,8 +399,15 @@ def _run(d, claim_dir, env_extra=None):
                EXP_LOG=os.path.join(d, "exp_calls.log"))
     if env_extra:
         env.update(env_extra)
-    return subprocess.Popen(["bash", os.path.join(d, "runs", "v42_phi_sft.sh")],
-                            cwd=d, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    # start_new_session makes the launcher a group leader; torchrun and every descendant share
+    # the new group, so reclamation can signal the group (see _reap) even after the launcher
+    # exits and a stub is reparented to init. Stash the pgid at launch: getpgid(leader pid)
+    # raises ESRCH once the leader is gone, which is exactly when an orphan must still be found.
+    proc = subprocess.Popen(["bash", os.path.join(d, "runs", "v42_phi_sft.sh")],
+                            cwd=d, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            start_new_session=True)
+    proc._aupai_pgid = os.getpgid(proc.pid)
+    return proc
 
 
 def main():
@@ -161,6 +432,15 @@ def main():
                 bound = files[0]
                 break
             time.sleep(0.05)
+        # WHERE THE PREDICATE ABSTAINS, SAY SO. On macOS there is no /proc, so nvidia_fds
+        # returns None and --require-device cannot refuse; the claim lands whatever the stub
+        # holds. The assert below therefore cannot fail here for the reason it fails on Linux,
+        # and a green line would otherwise read as "the acceptance path was exercised". It is
+        # not: that path is pinned by card_claim's own w1_dev world on every machine, and by
+        # ubuntu CI here. Printed, never silent.
+        if not os.path.isdir("/proc"):
+            print("SKIP require-device acceptance path linux-only on this host "
+                  "(no /proc): covered by card_claim w1_dev + CI ubuntu")
         assert bound, "launcher left torchrun running with NO live card claim"
         import json
         claim = json.load(open(os.path.join(claim_dir, bound)))
@@ -181,9 +461,7 @@ def main():
         assert not _live_claim_files(claim_dir), (
             "torchrun exit + trap left a stale claim:\n" + out.decode()[-800:])
     finally:
-        if proc.poll() is None:
-            open(die, "w").close()
-            proc.kill()
+        _LEAKED.extend(_reap(proc))
         shutil.rmtree(d, ignore_errors=True)
 
     # EARLY-DEATH world (fb condition 2): torchrun exits non-zero before any claim binds.
@@ -203,9 +481,7 @@ def main():
         assert "done" in exp_log and "--status" in exp_log and "fail" in exp_log, (
             "early death was not recorded as exp fail:\n" + exp_log)
     finally:
-        if proc2.poll() is None:
-            open(die2, "w").close()
-            proc2.kill()
+        _LEAKED.extend(_reap(proc2))
         shutil.rmtree(d2, ignore_errors=True)
         shutil.rmtree(claim_dir2, ignore_errors=True)
 
@@ -215,6 +491,7 @@ def main():
         "the frozen old-launcher fixture lost its buggy shape"
     od = tempfile.mkdtemp(prefix="phisft_old_")
     oclaim = tempfile.mkdtemp(prefix="phisft_oldclaims_")
+    proc4 = None
     try:
         for sub in ("runs", "scripts", "eval", "bin", "data/sft"):
             os.makedirs(os.path.join(od, sub), exist_ok=True)
@@ -236,18 +513,55 @@ def main():
                    os.path.join(od, "data/sft/sft_phi_codeexercises_v42_65m_0914.pt"))
         open(os.path.join(od, "ckpt_v41_r3_0914.pt"), "w").close()
         tr = os.path.join(od, "bin", "torchrun")
-        open(tr, "w").write("#!" + sys.executable + "\nimport sys;open(sys.argv[-1],'w').close()\n")
+        # The stub WRITES A MARKER when reached, so the assertion below can prove torchrun was
+        # never entered rather than inferring it from the absence of output.
+        open(tr, "w").write("#!" + sys.executable + "\nimport sys, os\n"
+                            f"open({os.path.join(od, 'torchrun_reached')!r}, 'w').close()\n")
         os.chmod(tr, 0o755)
         env = dict(os.environ, PATH=os.path.join(od, "bin") + os.pathsep + os.environ["PATH"],
                    AUPAI_CLAIM_DIR=oclaim, HYPOTHESIS="neg",
                    CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7")
-        r = subprocess.run(["bash", os.path.join(od, "runs", "v42_phi_sft.sh")],
-                           cwd=od, env=env, capture_output=True, text=True, timeout=90)
-        assert r.returncode != 0 and "acquire refused" in r.stdout.lower(), (
-            "old launcher did not refuse at the pre-launch claim:\n" + r.stdout[-800:])
+        # THE DEVICE-WAIT SEGMENT IS WHERE THE TWO HOSTS DIVERGE, so name it instead of letting
+        # a fast run imply the path was exercised. The fixture's `--wait-for-device 2` resolves
+        # the shell to a device-holding descendant; without /proc the resolver cannot follow at
+        # all and refuses from its no-opinion branch, and with /proc it polls and refuses from
+        # its TIMEOUT branch. Either way the REFUSAL runs and is asserted below -- what is
+        # skipped (on macOS only) is the poll.
+        if not os.path.isdir("/proc"):
+            print("SKIP device-wait segment of the negative control (no /proc): the resolver "
+                  "cannot follow a shell here, so it refuses on its no-opinion branch; the "
+                  "refusal itself is still asserted (Linux exercises the poll: CI ubuntu)")
+        proc4 = subprocess.Popen(["bash", os.path.join(od, "runs", "v42_phi_sft.sh")],
+                                 cwd=od, env=env, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, start_new_session=True)
+        proc4._aupai_pgid = os.getpgid(proc4.pid)  # same shape as _run: own group, stashed now
+        out4, _ = proc4.communicate(timeout=90)
+        # ASSERT THE SHAPE, NOT A MESSAGE THAT ACCOMPANIES IT: the old launcher must exit
+        # non-zero AND say it refused. A fixture that stopped refusing reds here, which is what
+        # keeps this control falsifiable under the SKIP above.
+        assert proc4.returncode != 0 and "acquire refused" in out4.decode().lower(), (
+            "old launcher did not refuse at the pre-launch claim:\n" + out4.decode()[-800:])
+        # NOTHING RAN. The whole point of the frozen shape is that the pre-launch acquire
+        # refuses, so torchrun is never reached. A marker written by the stub would prove the
+        # opposite, so its absence is asserted rather than assumed.
+        assert not os.path.exists(os.path.join(od, "torchrun_reached")), (
+            "old launcher REACHED torchrun despite being supposed to refuse pre-launch")
     finally:
+        if proc4 is not None:
+            _LEAKED.extend(_reap(proc4))
         shutil.rmtree(od, ignore_errors=True)
         shutil.rmtree(oclaim, ignore_errors=True)
+
+    _reparent_world()
+    _live_reap_world()
+    _self_group_guard_world()
+    _env_worlds()
+    # THE HARNESS MUST NOT LEAK ITS OWN STUBS. Without this the test could pass while orphaning
+    # a torchrun of its own -- which is what 3b caught (ppid=1, deleted cwd, 9.5h) -- and then
+    # "launcher left torchrun running" would be asserting about a process this file started.
+    assert not _LEAKED, (
+        f"test harness leaked subprocess(es) {_LEAKED}: a survivor here makes every "
+        "'launcher left torchrun running' assertion unfalsifiable")
 
     print("phi SFT launcher OK: binds an 8-card live claim to the live torchrun pid after "
           "device open, releases on exit; old pre-launch-acquire launcher refuses")

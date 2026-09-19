@@ -8,7 +8,7 @@ jobs:
         with: { fetch-depth: 0 }
       - uses: actions/setup-python@v5
         with: { python-version: "3.11" }
-      - run: pip install ruff tokenizers numpy pytest
+      - run: pip install ruff tokenizers numpy pytest scipy detect-secrets transformers
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: ruff check --select E9,F train.py sft.py sft_math.py eval scripts datagen algorithms filters
       - run: python -m py_compile train.py sft.py sft_math.py serve.py chat.py infer.py datagen/prepare_sft_math.py eval/*.py scripts/*.py mathbank/*.py datagen/*.py algorithms/*.py filters/*.py
@@ -98,6 +98,13 @@ jobs:
       - run: python scripts/tokenizer_eval.py --selftest
       - run: python scripts/harness.py --selftest
       - run: python scripts/harness.py check
+      # Every registered, CI-runnable selftest, enumerated from the hook's SELFTEST_FILES/PARTIAL
+      # map at runtime rather than re-listed here. Closes the gap where a map selftest sat red for
+      # days because nothing in this explicit list ran it (#502). NEEDS_DATA exemptions and the
+      # small reasoned CI_SELFTEST_EXCLUDE set (GPU/gitignored-data/root) are partitioned out by
+      # the ci_selftest_partition check; a newly registered portable selftest is covered without
+      # anyone editing this file.
+      - run: python scripts/harness.py ci-selftests --timeout 300
       # scripts/test_e2e.py is deliberately NOT here. It needs a GPU (KDA is fla/Triton
       # only), so on a runner it could only re-check the mix and the vocabulary that the
       # two steps above already cover, and exit 0 -- a green that means nothing. The chain
