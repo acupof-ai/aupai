@@ -598,26 +598,79 @@ def _selftest():
         # cwd is outside /work/aupai and which matches NO class is still unclassified. Asserted
         # through the real reader on THIS process, whose cwd is the repo.
         own = _cwd(os.getpid())
-        # THE PREMISE CASE NEEDS A READABLE CWD, and this box has no /proc, so `own` is None here
-        # and BOTH cases below were skipped in silence -- a 14-ok run that had quietly stopped
-        # asserting two of its properties. Same shape as the pipe case ten lines down, which
-        # already prints its skip. The unclassified case does NOT need the real cwd, only a pid
-        # whose cwd is unreadable, which is every pid on this platform: run it either way and say
-        # which arm was taken.
-        _self = [{"pid": os.getpid(), "args": "python3 scripts/sweep.py --selftest",
-                  "age": MIN_AGE_S + 1, "etime": "1:00", "stat": "S", "ppid": 0}]
-        _sv = {p["pid"]: (cls, why) for p, cls, why in classify(_self, 0, root=d,
-                                                               gpu_pids=set())}
-        case(_sv[os.getpid()][0] == UNCLASSIFIED,
-             f"a process matching no class is unclassified without the cwd gate: "
-             f"{_sv[os.getpid()][0]} -- {_sv[os.getpid()][1][:70]}")
+        # BOTH WORLDS RUN IN A CHILD, THROUGH THE PRODUCT CALL SHAPE, NEVER A HAND-BUILT ROW.
+        # The ci-selftests driver captures this selftest's stdout through a pipe. The old world
+        # classified os.getpid() from a one-element list [{'pid': self, 'ppid': 0}]: the parent
+        # was absent from a faked live table, so for a pipe fd1 _pipe_holders subtracted self and
+        # found nobody -> the scanner's own rule fired on the scanner -> class A -> red only under
+        # the driver (a tty/file stdout locally hid it). The fix is not a special case in
+        # classify (class A means killable; an ancestor/sibling exemption would be an asymmetric
+        # false-kill risk, and production data already parses correctly): it is to observe the
+        # real table. The child calls processes() (parent included), overrides only its own age
+        # (the entry condition a 1s-old process cannot meet), and writes its verdict to a file.
+        #   world A: child fd1 -> a real temp FILE -> no class (incl. the pipe rule) can fire.
+        #   world B: child fd1 -> a pipe THIS PARENT HOLDS -> "read by <ppid>" -> UNCLASSIFIED.
+        # World B is the production shape 3b measured (723 live rows): a pipe whose reader is the
+        # parent. The old scanner-self case covered only self-held pipes, not parent-held ones.
+        probe_py = os.path.join(d, "probe.py")
+        with open(probe_py, "w") as fh:
+            fh.write(
+                "import json, os, sys\n"
+                "sys.path.insert(0, %r)\n"
+                "import sweep as S\n"
+                "_mode, res, repo = sys.argv[1:4]\n"
+                "procs, z = S.processes()\n"
+                "me = next((p for p in procs if p['pid'] == os.getpid()), None)\n"
+                "if me is None or not os.path.isdir('/proc/%%d/fd' %% os.getpid()):\n"
+                "    open(res, 'w').write(json.dumps({'skip': 'processes() dropped this pid or "
+                "/proc absent (macOS ps has no etimes); pipe worlds are Linux-only'}))\n"
+                "    sys.exit(0)\n"
+                "me['age'] = S.MIN_AGE_S + 1\n"
+                "verdicts = {p['pid']: (c, w) for p, c, w in "
+                "S.classify(procs, z, root=repo, gpu_pids=set())}\n"
+                "cls, why = verdicts[os.getpid()]\n"
+                "open(res, 'w').write(json.dumps({'cls': cls, 'why': why, "
+                "'ppid': os.getppid(), 'linux': True}))\n" % HERE)
+
+        def _run_probe(mode, stdout_fd):
+            res = os.path.join(d, f"self_cls_{mode}.json")
+            r = subprocess.run([sys.executable, probe_py, mode, res, ROOT], cwd=HERE,
+                               stdout=stdout_fd, stderr=subprocess.STDOUT,
+                               stdin=subprocess.DEVNULL)
+            if r.returncode != 0 or not os.path.exists(res):
+                return None, f"probe child ({mode}) rc={r.returncode}"
+            return json.load(open(res)), None
+
+        fd_file = os.open(os.path.join(d, "child_stdout"), os.O_CREAT | os.O_RDWR)
+        pr, pw = os.pipe()
+        try:
+            wa, err_a = _run_probe("A", fd_file)
+            wb, err_b = _run_probe("B", pw)
+        finally:
+            os.close(fd_file)
+            os.close(pr)
+            os.close(pw)
+        if wa and wa.get("skip"):
+            case(True, f"A/B: skipped -- {wa['skip']}")
+        else:
+            case(err_a is None and wa["cls"] == UNCLASSIFIED,
+                 f"A: child on the real processes() table with fd1=file is unclassified: "
+                 f"{wa and wa['cls']} -- {wa and str(wa['why'])[:70] or err_a}")
+            if err_b is not None:
+                case(False, f"B: {err_b}")
+            else:
+                parent_reads = "read by" in wb["why"] and str(wb["ppid"]) in wb["why"]
+                case(wb["cls"] == UNCLASSIFIED and parent_reads,
+                     f"B: child stdout pipe held by parent {wb['ppid']} is unclassified "
+                     f"{'(read by parent)' if parent_reads else '(parent NOT shown as reader)'}: "
+                     f"{wb['cls']} -- {str(wb['why'])[:80]}")
         if own is not None:
             case(not own.startswith(IN_SCOPE_PREFIXES),
                  f"this checkout's cwd {own} is outside /work/aupai")
         else:
             case(True, "no /proc/<pid>/cwd here (not Linux) -- the outside-scope premise is "
-                       "unreadable, so it is skipped rather than faked; the case above holds "
-                       "without it")
+                       "unreadable, so it is skipped rather than faked; the unclassified case "
+                       "above runs in a file-fd child and holds on every host")
 
         # THE SCANNER MUST NOT COUNT ITS OWN FD. b0's first two runs reported "1 shared" for a
         # genuinely lonely pipe because of this, and the pid differed between runs.

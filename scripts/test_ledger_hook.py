@@ -44,6 +44,19 @@ def blob(rev, path):
     return None if r.returncode else r.stdout
 
 
+def main_ref():
+    """local main, else origin/main (CI fetch-depth:0 PR checkout has the latter, no local
+    branch). Never HEAD: the point is data on the integrated branch, not the current checkout.
+    Loud FAIL if neither exists (a silent skip would let BUG 5 check nothing)."""
+    for ref in ("main", "origin/main"):
+        r = subprocess.run(["git", "rev-parse", "--verify", "--quiet", ref],
+                           cwd=ROOT, capture_output=True, text=True)
+        if r.returncode == 0:
+            return ref
+    raise SystemExit("need local 'main' or 'origin/main' to read runs/score_matrix.jsonl "
+                     "(CI needs fetch-depth:0); refusing to fall back to HEAD")
+
+
 def world(files, head_files=None):
     """A repo whose HEAD holds head_files (default: files) and whose index holds files.
 
@@ -135,7 +148,7 @@ def _selftest():
         fails.append("4: skipped, reading 3 dropped no marker")
 
     # 5. A duplicate key ADDED to score_matrix refuses; a pre-existing one does not.
-    sm = blob("main", SM)
+    sm = blob(main_ref(), SM)
     if sm:
         rows = [ln for ln in sm.splitlines() if ln.strip()]
         d = world({SM: "\n".join(rows + [rows[0]]) + "\n"}, head_files={SM: "\n".join(rows) + "\n"})

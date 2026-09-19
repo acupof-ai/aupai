@@ -2060,20 +2060,14 @@ def check_launcher_states_anneal_frac(root):
                   f"flag or reads the key at its entry point ({len(declaring)} mix(es) declare it)")
 
 
-def _hook_selftest_maps(src):
-    """The hook's SELFTEST_FILES set and NEEDS_DATA dict, read from the literal with `ast`.
+def _hook_selftest_inventory(src):
+    """The hook's four selftest structures, read from their literals with `ast`.
 
-    Returns (selftest_paths:set[str], needs:dict[str,str]) or None if either literal is
-    absent/non-literal/non-homogeneous. This mirrors the hook's own
-    `_registered_selftest_paths` (scripts/hooks/pre-commit): ast.literal_eval on the
-    assignment node, never a regex over text.
-
-    Three regex parsers of these literals were wrong. The first two are recorded in the
-    hook; this check's was the third: `SELFTEST_FILES = {([^}]*)}` truncates at the FIRST
-    `}`, and an entry comment containing a brace (de's `{requires_grad=True}`,
-    `{AdamW state}`) closed the match early and silently dropped every registered path
-    below it -- a false "ungated selftest" FAIL. Comments are part of the python source
-    but not of the literal; only the parser knows that.
+    Returns (selftest:set[str], needs:dict[str,str|tuple], flag:dict[str,str]) or None.
+    `needs` preserves the raw value -- a plain str is a never-run-here exemption, a
+    tuple[str,...] is a PARTIAL entry (reason + flag override the hook DOES run). `flag`
+    is SELFTEST_FLAG (per-file flag that is not --selftest). Mirrors the hook's own
+    `_registered_selftest_paths`; a dict comprehension (PARTIAL) is derived, not parsed.
     """
     try:
         tree = ast.parse(src)
@@ -2083,27 +2077,208 @@ def _hook_selftest_maps(src):
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for t in node.targets:
-                if isinstance(t, ast.Name) and t.id in ("SELFTEST_FILES", "NEEDS_DATA"):
+                if isinstance(t, ast.Name) and t.id in ("SELFTEST_FILES", "NEEDS_DATA",
+                                                        "SELFTEST_FLAG"):
                     literals[t.id] = ast.literal_eval(node.value)
     if "SELFTEST_FILES" not in literals:
         return None
-    sf, nd = literals["SELFTEST_FILES"], literals.get("NEEDS_DATA", {})
+    sf = literals["SELFTEST_FILES"]
+    nd = literals.get("NEEDS_DATA", {})
+    fl = literals.get("SELFTEST_FLAG", {})
     if not isinstance(sf, (set, list, tuple)) or not isinstance(nd, dict):
         return None
-    if not all(isinstance(x, str) for x in sf):
+    if not isinstance(fl, dict) or not all(isinstance(x, str) for x in sf):
         return None
-    # NEEDS_DATA maps a selftest path -> reason. The reason is a str, or a tuple of str when
-    # it also carries a flag override; only the keys gate, and tuple members are still prose.
+    if not all(isinstance(k, str) and (
+            isinstance(v, str) or
+            (isinstance(v, tuple) and all(isinstance(x, str) for x in v)))
+            for k, v in nd.items()):
+        return None
+    if not all(isinstance(k, str) and isinstance(v, str) for k, v in fl.items()):
+        return None
+    return set(sf), dict(nd), dict(fl)
+
+
+def _hook_selftest_maps(src):
+    """The hook's SELFTEST_FILES set and NEEDS_DATA reasons, read from the literal with `ast`.
+
+    Returns (selftest_paths:set[str], reasons:dict[str,str]) or None if the literals are
+    absent/non-literal/non-homogeneous. Tuple NEEDS values (PARTIAL flag overrides) are
+    flattened into their reason prose. Mirrors the hook's own `_registered_selftest_paths`
+    (scripts/hooks/pre-commit): ast.literal_eval on the assignment node, never regex.
+
+    Three regex parsers of these literals were wrong. The first two are recorded in the
+    hook; this check's was the third: `SELFTEST_FILES = {([^}]*)}` truncates at the FIRST
+    `}`, and an entry comment containing a brace (de's `{requires_grad=True}`,
+    `{AdamW state}`) closed the match early and silently dropped every registered path
+    below it -- a false "ungated selftest" FAIL. Comments are part of the python source
+    but not of the literal; only the parser knows that.
+    """
+    inv = _hook_selftest_inventory(src)
+    if inv is None:
+        return None
+    sf, nd, _fl = inv
+
     def _reason_str(v):
-        if isinstance(v, str):
-            return v
-        if isinstance(v, tuple) and all(isinstance(x, str) for x in v):
-            return " ".join(v)
-        return None
-    reasons = {k: r for k, v in nd.items() if isinstance(k, str) and (r := _reason_str(v))}
-    if len(reasons) != len(nd):
-        return None
-    return set(sf), reasons
+        return v if isinstance(v, str) else " ".join(v)
+
+    reasons = {k: _reason_str(v) for k, v in nd.items()}
+    return sf, reasons
+
+
+_SELFTEST_FLAGS = ("--selftest", "--selfcheck", "--self-check")
+_SELFTEST_RESULT = re.compile(r"selftest[^a-zA-Z]{0,4}(OK|PASS)")
+
+
+def _py_carries_selftest(src, rel):
+    """AST-level test that a python file actually DISPATCHES a selftest, not merely mentions one.
+
+    String/substring matching is the bug: strip_docstrings leaves inline comments and help
+    strings, so `help="...run with --selftest"` or a comment `# same as foo's --selftest`
+    marked 59 files that have no selftest entry at all, and a coverage set padded by prose
+    silently drops real registrations. A file is a carrier only when it has executable evidence:
+      - add_argument(<flag>) registers one, or
+      - a <flag> constant is compared against argv (the `if "--selftest" in sys.argv` form), or
+      - it defines selftest()/_selftest(), or
+      - it prints the repo's selftest result contract from a real call, or
+      - it is a test_*.py that runs assertions at module scope and exits at column 0
+        (the pre-__main__ direct-run test scripts).
+    """
+    import ast
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return False
+
+    def _is_argv(n):
+        return any(isinstance(x, ast.Attribute) and x.attr == "argv"
+                   or isinstance(x, ast.Name) and x.id == "argv"
+                   for x in ast.walk(n))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "add_argument":
+                if any(isinstance(a, ast.Constant) and a.value in _SELFTEST_FLAGS
+                       for a in node.args):
+                    return True
+            # a real print/write whose literal text is the selftest result contract, including an
+            # f-string whose constant segments carry the contract.
+            if isinstance(node.func, ast.Name) and node.func.id in ("print", "write"):
+                for a in node.args:
+                    consts = []
+                    if isinstance(a, ast.Constant):
+                        consts = [a.value]
+                    elif isinstance(a, ast.JoinedStr):
+                        consts = [v.value for v in a.values
+                                  if isinstance(v, ast.Constant)]
+                    if any(isinstance(c, str) and _SELFTEST_RESULT.search(c) for c in consts):
+                        return True
+        if isinstance(node, ast.Compare):
+            # `flag in sys.argv`, `sys.argv[1:] in (["--selftest"], ...)`, etc. The flag constant
+            # can sit inside a list/tuple comparator and argv inside a subscript, so walk both.
+            text_const = {n.value for n in ast.walk(node)
+                          if isinstance(n, ast.Constant) and n.value in _SELFTEST_FLAGS}
+            if text_const and _is_argv(node):
+                return True
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) \
+                and node.name in ("selftest", "_selftest"):
+            return True
+    # A runnable test file with the standard `if __name__ == "__main__": ...` entry whose block
+    # actually invokes something (a bare `pass` guard is not a selftest), or module-scope
+    # assertions ending in a column-0 sys.exit (the older direct-run test scripts).
+    if re.search(r"(^|/)test_[\w-]+\.py$|_selftest\.py$", rel):
+        guarded = any(
+            isinstance(n, ast.If)
+            and any(isinstance(x, ast.Constant) and x.value == "__main__"
+                    for x in ast.walk(n.test))
+            and any(isinstance(x, ast.Call) for x in ast.walk(n))
+            for n in tree.body)
+        if guarded:
+            return True
+        has_exit = any(isinstance(n, ast.Expr) and isinstance(n.value, ast.Call)
+                       and isinstance(n.value.func, ast.Attribute)
+                       and n.value.func.attr == "exit"
+                       and isinstance(n.value.func.value, ast.Name)
+                       and n.value.func.value.id == "sys"
+                       and getattr(n, "col_offset", 1) == 0
+                       for n in tree.body)
+        has_assert = any(isinstance(n, ast.Assert) or
+                         (isinstance(n, ast.Expr) and isinstance(n.value, ast.Call))
+                         for n in tree.body)
+        if has_exit and has_assert:
+            return True
+    return False
+
+
+def _sh_carries_selftest(src):
+    """A shell file dispatches selftest: a `--selftest` token or `selftest)` case after the
+    shebang, with comment lines stripped so documented usage does not count."""
+    code = "\n".join(ln for ln in src.splitlines()
+                     if ln.strip() and not ln.lstrip().startswith("#"))
+    return ("--selftest" in code) or bool(re.search(r"\bselftest\)", code))
+
+
+def _git_tracked_text_paths(root):
+    """Every tracked candidate path that can carry a selftest, from `git ls-files`.
+
+    Independent of os.walk: walk_tracked's _SKIP_DIRS drops `runs/` (where the registered
+    runs/audit_0904 selftests live) and its suffix filter drops the extensionless python hook
+    scripts/hooks/pre-commit. The tracked set is the real population, so read that; accept
+    .py/.sh and any extensionless file with a python/sh shebang.
+    """
+    try:
+        # --cached (committed) PLUS --others --exclude-standard (present but not yet committed).
+        # The second is needed because the harness selftest's broken worlds copy the real
+        # scripts/ tree into a freshly `git init`'d temp repo without committing: a cached-only
+        # listing is empty there, so a selftest file the world deliberately un-gates would be
+        # invisible and the mutation would pass green. --exclude-standard keeps gitignored data
+        # artifacts out in both shapes.
+        out = subprocess.run(
+            ["git", "-C", root, "ls-files", "-z", "--cached", "--others",
+             "--exclude-standard"],
+            capture_output=True, check=True).stdout.decode("utf-8", "replace")
+    except Exception:
+        return []
+    paths = []
+    for rel in out.split("\0"):
+        if not rel:
+            continue
+        if rel.endswith((".py", ".sh")):
+            paths.append(rel)
+            continue
+        p = os.path.join(root, rel)
+        try:
+            with open(p, "rb") as f:
+                first = f.readline()
+        except OSError:
+            continue
+        if first.startswith(b"#!") and (b"python" in first or b"/sh" in first or b"bash" in first):
+            paths.append(rel)
+    return paths
+
+
+def _filesystem_selftest_paths(root):
+    """Tracked files that carry a runnable selftest, enumerated FROM THE FILESYSTEM.
+
+    Independent of the hook's SELFTEST_FILES/NEEDS_DATA map -- the second source the partition
+    reconciles against, so a selftest missing from the map (or a dead map entry) is visible.
+    Detection is structural (AST for python, comment-stripped scan for shell), so prose that
+    mentions the flag never counts as coverage.
+    """
+    have = set()
+    for rel in _git_tracked_text_paths(root):
+        p = os.path.join(root, rel)
+        try:
+            body = open(p, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        if rel.endswith(".sh"):
+            if _sh_carries_selftest(body):
+                have.add(rel)
+            continue
+        if _py_carries_selftest(body, rel):
+            have.add(rel)
+    return have
 
 
 def check_selftests_are_gated(root):
@@ -2164,62 +2339,7 @@ def check_selftests_are_gated(root):
                          f"file is there. Write it, or drop the entry until you do: "
                          f"{', '.join(never[:4])}")
         return FAIL, f"{len(stale)} hook map entry(ies) name a missing file. " + "; ".join(parts)
-    have = set()
-    # walk_tracked, not an os.listdir over four hand-named directories. The list was
-    # ("eval", "scripts", "datagen", "probes"), so mathbank/ was outside what the check
-    # looked at entirely and "42 files, all gated" was true of that subset and silent
-    # about the rest -- the same shape as the predicate bug recorded below, one level up:
-    # a gate that cannot see a file cannot report it missing. mathbank/dist_check.py
-    # carries a selftest and was invisible here (de, 2026-09-02, MEASURED at 42 vs 43).
-    for p, body in walk_tracked(root, (".py",)):
-        rel = os.path.relpath(p, root)
-        # `--selftest` anywhere in the CODE, not `"--selftest"` next to `add_argument`.
-        # The narrow predicate assumed every selftest is wired through argparse; nine
-        # files dispatch on sys.argv instead (scripts/eval_artifacts.py:
-        # `sys.exit(_selftest() if "--selftest" in sys.argv else 0)`), and the
-        # gate reported "27 files, all gated" while those nine ran nowhere. A gate
-        # that cannot see a file cannot report it missing, so its PASS counted only
-        # the files it already understood -- the check encoding an assumption about
-        # where the interesting case lives, which is this repo's named class, in
-        # the check written to catch that class (de, 2026-09-01, on 62's gate).
-        #
-        # Docstrings blanked, because the widening reached one file too far: prose
-        # SAYING a file carries no `--selftest` matched as if it carried one. MEASURED
-        # 2026-09-02 at 44 raw vs 42 stripped -- scripts/test_resume_accumulates.py,
-        # whose docstring explains why it deliberately has no selftest flag, and
-        # scripts/test_serve_history.py, whose usage line quotes the flag its body never
-        # reads. Only the first was ever reported, because the second happens to be in
-        # the map: a false positive hides wherever the answer is right by accident.
-        if "--selftest" in strip_docstrings(body):
-            have.add(rel)
-        # A RUNNABLE test_*.py IS A SELFTEST WHETHER OR NOT IT CARRIES THE FLAG (de,
-        # 2026-09-04, measured: 63 test_*.py tracked, 53 runnable by `if __name__`, 19 of
-        # those in neither map). The population above is "files containing the string --selftest", so a
-        # test_*.py with a main() and no flag was outside this check by construction --
-        # the third time this check's population has been narrower than its property, after
-        # the four-directory listdir blind to mathbank/ and the argparse-only predicate
-        # blind to nine sys.argv dispatchers. Both earlier widenings are recorded above as
-        # the same lesson, and both times the PASS counted only the files the check already
-        # understood.
-        #
-        # The case that made it concrete: scripts/test_score_exit.py, 13 cases over
-        # run_ddp.sh's exit codes and row close, never run at any commit -- and the commit
-        # that CHANGED run_ddp.sh printed `selftests 0.03s`, which reads as "ran, fast" and
-        # means "ran zero". scripts/test_resume_accumulates.py is the demonstration that the
-        # old population was not merely incomplete but blind on purpose: its docstring
-        # explains that it deliberately carries no flag, so stripping docstrings correctly
-        # excluded it, and it is a runnable test nobody ran.
-        #
-        # `if __name__` and not `def main(`: algorithms/test_rlvr_reward_suite.py asserts at
-        # module scope with no main() at all, so a main()-shaped predicate would have missed
-        # it -- the same defect one more level down. (I first wrote that three files were in
-        # that shape; measured, the other two are already gated. One is enough to decide the
-        # predicate.) The invoker passes --selftest to every entry, so a file here must
-        # tolerate an unknown argument or get a SELFTEST_FLAG override; that is a property of
-        # the file, checked by running it, not something this check can assert.
-        elif (re.search(r"(^|/)test_[\w-]+\.py$", rel)
-                and re.search(r"^if __name__", strip_docstrings(body), re.M)):
-            have.add(rel)
+    have = _filesystem_selftest_paths(root)
     missing = sorted(have - gated)
     if missing:
         return FAIL, (f"{len(missing)} file(s) carry a selftest but are not in the hook's "
@@ -2244,9 +2364,337 @@ def check_selftests_are_gated(root):
                           f"already runs the selftest, which is a coverage claim nothing "
                           f"recomputes: {', '.join(covered)} -- state why it cannot run "
                           f"here (cost, data, root), not what supposedly covers it")
+    # Print the UNION and the overlap, not just the two raw literal sizes. A path may sit in both
+    # maps (a PARTIAL tuple in NEEDS_DATA that is also in SELFTEST_FILES), so the two literal
+    # sizes double-count it; a reader comparing them to the partition's disjoint-bucket total
+    # would otherwise see a gap that is not there (de, #514).
+    sf_set, nd_set = set(gated_paths), set(needs_data)
+    both = sf_set & nd_set
     return PASS, (f"{len(have)} selftest-carrying file(s), all gated by the hook; "
-                  f"map literal {len(gated_paths)} SELFTEST_FILES + {len(needs_data)} "
-                  f"NEEDS_DATA entries (ast)")
+                  f"map literal {len(sf_set)} SELFTEST_FILES + {len(nd_set)} NEEDS_DATA, "
+                  f"{len(sf_set | nd_set)} unique ({len(both)} in both maps, NEEDS/PARTIAL "
+                  f"overrides) (ast)")
+
+
+# Registered selftests the COMMIT HOOK can run but the bare CI image cannot, with the reason.
+# The hook runs on laptops/pods (which may have data/tokenizer.json, a GPU, root, a network);
+# CI is ubuntu + CPU + torch-cpu, no gitignored data, no privileged sandbox. An entry here is
+# an ENVIRONMENT exemption, not a quality one -- a genuinely-broken portable selftest stays in
+# the driver and fails CI red. Every key must be a live map member; a stale key FAILs the
+# partition check. Keep this set minimal: prefer making a selftest CI-runnable to excluding it.
+CI_SELFTEST_EXCLUDE = {
+    # gitignored data/tokenizer.json or data/corpus shards, absent from a fresh CI checkout.
+    "datagen/build_dd09_full.py": "needs data/tokenizer.json (gitignored) to build the dd09 mix",
+    "datagen/count_code_dirs.py": "needs data/tokenizer.json (gitignored)",
+    "datagen/count_corpus_dir.py": "needs data/corpus shards (gitignored)",
+    "eval/code_fewshot.py": "its --selfcheck reads data/tokenizer.json (gitignored pod artifact, not pip-installable); the selftest prints an explicit skip in that case",
+    "scripts/count_dir.py": "its --selftest reads data/tokenizer.json (gitignored pod artifact, not pip-installable); the selftest prints an explicit skip in that case",
+    # by design refuse outside a specific real tree -- not portable assertions.
+    "scripts/test_merge_main_ancestor.py": "refuses unless run from the worktree holding the merged branch",
+    "scripts/test_pod_sync_stamp.py": "deliberate ALLOW_DIRECT_RUN guard; row/claim/watchdog created by hand",
+    "scripts/test_reachability_fresh.py": "compares against the committed runs/reachability.txt derived artifact, not reproducible mid-CI",
+    # optional third-party kernel not installed in the CPU image.
+    "scripts/test_sft_moe_cfg.py": "imports liger_kernel, which is not installed in the CPU CI image",
+    # process isolation. isolate.py's selftest runs the full detector on the HOST's sandbox
+    # (bwrap/nsjail/firejail, root+unshare, or macOS sandbox-exec); a bare non-root Linux CI
+    # runner offers none, so isolate REFUSES by its own safety contract. The exclusion means
+    # 'this environment cannot run it safely'; it must never become an ALLOW_UNISOLATED bypass
+    # that relaxes the isolation contract. The sandbox-free detector cases stay covered via
+    # algorithms/code_reward.py's PARTIAL --selftest-detector, which does run in CI.
+    "algorithms/isolate.py": "needs a process-isolation sandbox (bwrap/nsjail/firejail/root-unshare/sandbox-exec); bare non-root CI runner offers none and isolate correctly REFUSES",
+    # mmap residency behaves by host: the same 0.92 GiB fixture maps at RSS 875 MiB on the azure
+    # CI runner (46x the file's digest-box RSS of 113 MiB / 6x) while mincore reports ~100%
+    # resident on both, so the ratio assertion cannot separate mmap cost from the runner's
+    # reclaim/THP policy (THP state not verified). Excluded from bare CI only; the hook still
+    # runs it on laptops/pods, which is where the measurement is meaningful and cheap.
+    "scripts/test_cache_mmap.py": "mmap RSS is host-reclaim/THP dependent: azure runner 875 MiB vs digest box 113 MiB for the same fixture while mincore is ~100% resident on both; ratio assertion is only meaningful off the shared runner",
+}
+
+
+def _ci_explicit_paths(ci_src):
+    """Repo-relative selftest paths invoked by an explicit `- run:` line in ci.yml.
+
+    These are COVERED in CI by their dedicated step (often heavier: v41f suites,
+    harness --selftest). The enumerating driver must not re-run them (double run + timeout);
+    they are a subset of covered, never an uncovered fourth bucket.
+    """
+    explicit = set()
+    for m in re.finditer(r"-\s*run:\s*(.+)$", ci_src, re.M):
+        for cand in re.findall(r"[\w./-]+\.(?:py|sh)", m.group(1)):
+            cand = cand.lstrip("./")
+            if "/" in cand and cand.endswith((".py", ".sh")):
+                explicit.add(cand)
+    return explicit
+
+
+def _hook_ci_partition(src, ci_src=None):
+    """Partition the hook's runnable selftest population for the CI image.
+
+    Returns dict(path -> bucket) with bucket in {"driver", "explicit", "needs", "exclude"}
+    or None when the hook literals do not parse:
+      - driver:  `harness ci-selftests` enumerates and runs it;
+      - explicit: a dedicated ci.yml `- run:` step already runs it (covered; the enumerating
+        driver skips it so it is not double-run or timed out);
+      - needs:  NEEDS_DATA plain-str exemption -- the hook itself never runs it;
+      - exclude: a hook-runnable file the bare CI image cannot run or cannot afford
+        (CI_SELFTEST_EXCLUDE, each with a reason; slow ones still run at commit time).
+    PARTIAL entries (tuple NEEDS value with a flag override) are hook-runnable, so they land
+    in driver/explicit/exclude, never needs. Every non-needs bucket is covered in CI.
+    """
+    inv = _hook_selftest_inventory(src)
+    if inv is None:
+        return None
+    sf, nd, _fl = inv
+    explicit = _ci_explicit_paths(ci_src) if ci_src else set()
+
+    def _bucket(p):
+        if p in CI_SELFTEST_EXCLUDE:
+            return "exclude"
+        if p in explicit:
+            return "explicit"
+        return "driver"
+
+    buckets = {p: _bucket(p) for p in sf}
+    for p, v in nd.items():
+        if isinstance(v, tuple):  # PARTIAL: hook runs it with the override flag
+            buckets.setdefault(p, _bucket(p))
+        else:                      # plain-str exemption: the hook does not run it either
+            buckets[p] = "needs"
+    return buckets
+
+
+def ci_selftest_flags(src):
+    """Per-file flag the hook would invoke each registered selftest with (PARTIAL first)."""
+    inv = _hook_selftest_inventory(src)
+    if inv is None:
+        return None
+    _sf, nd, fl = inv
+    partial = {k: v[1] for k, v in nd.items() if isinstance(v, tuple)}
+    flags = dict(fl)
+    flags.update(partial)
+    return flags
+
+
+_SELFTEST_TAIL = 200
+
+
+def _run_one_selftest(root, rel, flag, timeout, env):
+    """Run one registered selftest, STREAMING output and killing the whole group on timeout.
+
+    Returns (status, {"rc", "lines"}); status in {"pass","fail","timeout"}; lines is the live
+    output tail. Two failure shapes this prevents (3b, §298):
+      - output is not held fully buffered until exit: PYTHONUNBUFFERED plus a reader thread
+        prints each line as it arrives, so a killed child leaves the lines before the hang;
+      - a timeout is LOUD: the caller prints a machine-readable
+        "CI-SELFTESTS: TIMEOUT after Ns running <rel>" line and exits nonzero. A silent quit at
+        ~115s (the old communicate()-only path) is indistinguishable from success.
+    The child starts its own session and is killed as a GROUP: subprocess's timeout kills only
+    the direct child, and a grandchild holding the stdout pipe keeps communicate() hanging.
+    """
+    import signal
+    import threading
+
+    interp = ["bash"] if rel.endswith(".sh") else [sys.executable]
+    args = interp + [os.path.join(root, rel)] + ([flag] if flag else [])
+    run_env = dict(env)
+    run_env.setdefault("PYTHONUNBUFFERED", "1")
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, bufsize=1, env=run_env, cwd=root, start_new_session=True)
+    lines = []
+
+    def _reader():
+        for line in proc.stdout:
+            lines.append(line.rstrip("\n"))
+            if len(lines) > _SELFTEST_TAIL:
+                del lines[:len(lines) - _SELFTEST_TAIL]
+            print(f"    [{rel}] {line.rstrip()}", flush=True)
+
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+    try:
+        proc.wait(timeout=timeout)
+        timed_out = False
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+            proc.wait(timeout=5)
+        except Exception:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+    t.join(timeout=5)
+    detail = {"rc": proc.returncode, "lines": list(lines)}
+    if timed_out:
+        return "timeout", detail
+    return ("pass" if proc.returncode == 0 else "fail"), detail
+
+
+def _run_ci_targets(targets, flags, timeout, fail_fast, env, root):
+    """Drive repo-relative selftest paths; return the process exit code.
+
+    Factored out of cmd_ci_selftests so the harness selftest can drive a guaranteed-hang target
+    and prove the timeout is loud and nonzero, rather than only that the parser lists targets.
+    """
+    failed = []
+    for i, rel in enumerate(targets, 1):
+        if not os.path.exists(os.path.join(root, rel)):
+            print(f"CI-SELFTESTS: FAIL {rel}: registered but missing on disk", flush=True)
+            return 1
+        flag = flags.get(rel, "--selftest")
+        shown = f" {flag}" if flag else ""
+        print(f"CI-SELFTESTS: [{i}/{len(targets)}] RUN {rel}{shown}", flush=True)
+        status, detail = _run_one_selftest(root, rel, flag, timeout, env)
+        if status == "timeout":
+            print(f"CI-SELFTESTS: TIMEOUT after {timeout:.0f}s running {rel} -- its process "
+                  f"group was killed (mark it slow/excluded, or fix the hang). Last output "
+                  f"before the kill:", flush=True)
+            for ln in detail["lines"][-12:]:
+                print("    " + ln, flush=True)
+            failed.append(rel)
+            if fail_fast:
+                return 1
+            continue
+        if status == "fail":
+            print(f"CI-SELFTESTS: FAIL {rel}{shown} (exit {detail['rc']})", flush=True)
+            for ln in detail["lines"][-12:]:
+                print("    " + ln, flush=True)
+            failed.append(rel)
+            if fail_fast:
+                return 1
+    if failed:
+        print(f"CI-SELFTESTS: {len(failed)} of {len(targets)} target(s) failed: "
+              f"{', '.join(failed)}", flush=True)
+        return 1
+    print(f"CI-SELFTESTS: {len(targets)} target(s) passed", flush=True)
+    return 0
+
+
+def cmd_ci_selftests(argv):
+    """Run every driver-bucket registered selftest, bounded; report EVERY failure, nonzero exit.
+
+    This is the single CI entry that closes the hook-map vs explicit-CI-list gap (#502): it
+    enumerates SELFTEST_FILES/PARTIAL from the hook at runtime, so a newly registered
+    selftest is covered by construction instead of waiting for someone to edit ci.yml.
+    """
+    ap = argparse.ArgumentParser(prog="harness ci-selftests")
+    ap.add_argument("--timeout", type=float, default=120.0)
+    ap.add_argument("--fail-fast", action="store_true",
+                    help="stop at the first failing selftest (default: run all, report all)")
+    a = ap.parse_args(argv)
+    hook = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
+    ci = os.path.join(ROOT, ".github", "workflows", "ci.yml")
+    src = open(hook, encoding="utf-8").read()
+    ci_src = open(ci, encoding="utf-8").read()
+    buckets = _hook_ci_partition(src, ci_src)
+    flags = ci_selftest_flags(src)
+    if buckets is None:
+        print("ci-selftests: cannot parse the hook selftest maps", file=sys.stderr)
+        return 2
+    targets = sorted(p for p, b in buckets.items() if b == "driver")
+    env = dict(os.environ)
+    env["CUDA_VISIBLE_DEVICES"] = ""  # CPU image: never let a selftest silently claim a card
+    return _run_ci_targets(targets, flags or {}, a.timeout, a.fail_fast, env, ROOT)
+
+
+def check_ci_selftest_partition(root):
+    """Every hook-runnable selftest is covered in CI; no uncovered bucket.
+
+    #502: a SELFTEST_FILES selftest sat red off-pod for days because CI runs an explicit
+    command list, not the map, and the file was in neither. The buckets are:
+      driver   -> `harness ci-selftests` (enumerated at runtime) invoked in ci.yml;
+      explicit -> a dedicated ci.yml `- run:` step already runs it (a subset of covered);
+      needs    -> NEEDS_DATA plain-str exemption (the hook never runs it either);
+      exclude  -> CI_SELFTEST_EXCLUDE with a reason (CI image cannot run it, or it is slow
+                  there while the commit hook genuinely still runs it on a developer machine).
+    driver+explicit+exclude are all COVERED in CI; a registered file covered by silence FAILs.
+    A stale exclude key FAILs.
+    """
+    hook = os.path.join(root, "scripts", "hooks", "pre-commit")
+    ci = os.path.join(root, ".github", "workflows", "ci.yml")
+    if not os.path.exists(hook) or not os.path.exists(ci):
+        return SKIP, "no hook or CI workflow"
+    src = open(hook, encoding="utf-8").read()
+    ci_src = open(ci, encoding="utf-8").read()
+    buckets = _hook_ci_partition(src, ci_src)
+    if buckets is None:
+        return FAIL, "the hook selftest maps do not parse; cannot prove CI coverage"
+    driver_invoked = "ci-selftests" in ci_src
+    counts = {"driver": 0, "explicit": 0, "needs": 0, "exclude": 0}
+    for b in buckets.values():
+        counts[b] += 1
+    if not driver_invoked:
+        uncovered = sorted(p for p, b in buckets.items() if b == "driver")
+        return FAIL, (f"ci.yml does not invoke 'harness ci-selftests', leaving "
+                      f"{len(uncovered)} hook-runnable selftest(s) with no CI run: "
+                      f"{', '.join(uncovered[:4])}")
+    # SUBSET DIRECTION THAT MATTERS: every hook selftest assigned to "explicit" is genuinely
+    # named by a ci.yml step (internal consistency of the parse). The reverse -- every ci.yml
+    # path is in the map -- is deliberately NOT asserted: ci.yml also runs non-selftest checks
+    # (eqcheck, holdout, a py_compile glob) that are intentionally not hook-gated. The
+    # no-uncovered-bucket guarantee below is the property that counts.
+    explicit_named = _ci_explicit_paths(ci_src)
+    if not {p for p, b in buckets.items() if b == "explicit"} <= explicit_named:
+        return FAIL, "internal: explicit bucket drifted from the parsed ci.yml explicit set"
+    # Every exclude key must be a live map member with a nonempty reason; a stale key (file
+    # deleted/moved, or it became a plain NEEDS exemption) is a silent over-exclude.
+    stale = sorted(k for k in CI_SELFTEST_EXCLUDE if buckets.get(k) not in ("exclude", "explicit"))
+    if stale:
+        return FAIL, (f"{len(stale)} CI_SELFTEST_EXCLUDE key(s) are no longer runnable map "
+                      f"members (stale or now a NEEDS exemption): {', '.join(stale[:4])}")
+    noreason = sorted(k for k, r in CI_SELFTEST_EXCLUDE.items() if not str(r).strip())
+    if noreason:
+        return FAIL, f"CI_SELFTEST_EXCLUDE entries without a reason: {', '.join(noreason[:4])}"
+    missing = sorted(k for k in CI_SELFTEST_EXCLUDE
+                     if not os.path.exists(os.path.join(root, k)))
+    if missing:
+        return FAIL, f"CI_SELFTEST_EXCLUDE names a missing file: {', '.join(missing[:4])}"
+
+    # BIDIRECTIONAL RECONCILIATION AGAINST THE FILESYSTEM (de blocker). The map-derived buckets
+    # are one source; the filesystem is the independent second source. Enumerate selftest
+    # carriers from the tree WITHOUT reading SELFTEST_FILES. Then:
+    #   - a selftest carrier in NO bucket (not even needs) is unregistered -> it runs nowhere;
+    #   - a runnable map member (driver/explicit/exclude) that is NOT a filesystem carrier is a
+    #     DEAD registration (the entry was dropped/renamed but stays in a map) -> fail.
+    # Two identities must both hold:
+    #   fs carriers ⊆ all buckets   (every carrier is accounted for: runs somewhere or is a
+    #                               named needs exemption) -> unregistered must be empty;
+    #   runnable buckets ⊆ fs       (every driver/explicit/exclude entry is a real carrier, not a
+    #                               dead registration) -> dead must be empty.
+    # The totals need not be equal: a NEEDS entry may name a file that is not a portable carrier
+    # at all (datagen/sandbox_exec.py uses _self_check and needs root), which is map-only by
+    # design, not a miss.
+    fs = _filesystem_selftest_paths(root)
+    runnable = {p for p, b in buckets.items() if b != "needs"}
+    needs_only = sorted(set(buckets) - fs)  # NEEDS files that are intentionally not carriers
+    unregistered = sorted(fs - set(buckets))
+    dead = sorted(p for p in runnable - fs if os.path.exists(os.path.join(root, p)))
+    if unregistered:
+        return FAIL, (f"{len(unregistered)} filesystem selftest carrier(s) are in NO hook bucket "
+                      f"(run nowhere at commit time and uncovered in CI): "
+                      f"{', '.join(unregistered[:4])}")
+    if dead:
+        return FAIL, (f"{len(dead)} runnable map entr(ies) are not filesystem selftest carriers "
+                      f"(dead registration: entry kept after the file stopped carrying a "
+                      f"selftest): {', '.join(dead[:4])}")
+    # COVERAGE COUNT (fb, #514 motivation): on the pre-#514 base 248/277 SELFTEST_FILES members
+    # appeared nowhere in ci.yml, so a selftest registered only in the hook map had no CI run.
+    # After this change a hook-runnable selftest is either EXECUTED in CI (driver enumeration or
+    # an explicit step) or in CI_SELFTEST_EXCLUDE with a reason the bare image cannot satisfy;
+    # the silent set -- registered, runnable here, with neither a CI run nor a reason -- is the
+    # gap class and must read 0. The number is derived from the buckets, never hardcoded.
+    executed_ci = counts["driver"] + counts["explicit"]
+    reasoned_excluded = counts["exclude"]
+    silent_uncovered = sum(1 for b in buckets.values()
+                           if b not in ("driver", "explicit", "exclude", "needs"))
+    return PASS, (f"map {len(buckets)} vs filesystem {len(fs)} (reconciled, "
+                  f"{len(needs_only)} needs-only non-carrier by design): "
+                  f"{executed_ci} executed in CI ({counts['driver']} driver + "
+                  f"{counts['explicit']} explicit), {reasoned_excluded} reasoned CI-excluded, "
+                  f"{counts['needs']} NEEDS exemption(s); registered-but-uncovered {silent_uncovered} "
+                  f"(must be 0); no unregistered/dead entry")
 
 
 def check_probe_numbers_unique(root):
@@ -2415,6 +2863,29 @@ def _broken_selftests_are_gated():
         text.replace('"scripts/eval_artifacts.py", ', "")
             .replace('"scripts/eval_artifacts.py"', '"scripts/harness.py"'))
     return d
+
+
+def _broken_ci_selftest_partition():
+    """A world where a runnable selftest has NO CI coverage: ci.yml does not invoke the
+    driver. The REAL ci.yml with the one driver step removed; the hook is unchanged, so every
+    map member is real. Without the driver invocation the whole driver bucket is uncovered,
+    which must FAIL (#502's exact shape).
+    """
+    d = _tmp_repo_shaped()
+    ci_real = os.path.join(ROOT, ".github", "workflows", "ci.yml")
+    ci_dst = os.path.join(d, ".github", "workflows", "ci.yml")
+    if not os.path.exists(ci_real):
+        return None
+    import shutil
+    os.makedirs(os.path.dirname(ci_dst), exist_ok=True)
+    ci = open(ci_real, encoding="utf-8").read()
+    if "ci-selftests" not in ci:
+        return None  # the broken-world premise (a present driver step) does not hold
+    shutil.copyfile(ci_real, ci_dst)
+    stripped = "\n".join(l for l in ci.splitlines() if "ci-selftests" not in l)
+    open(ci_dst, "w", encoding="utf-8").write(stripped)
+    return d
+
 
 
 def _broken_no_duplicate_defs():
@@ -19182,6 +19653,13 @@ CHECKS = [
         _broken_selftests_are_gated,
     ),
     (
+        "ci_selftest_partition",
+        "every hook-runnable selftest is either run by 'harness ci-selftests' in CI or a reasoned NEEDS/CI-image exemption; no uncovered fourth bucket",
+        "a SELFTEST_FILES selftest (datagen/test_parallel_exact_identity.py) sat RED off-pod for days because CI runs an explicit command list, not the hook map, and the file was in neither -- the red could only show on a commit that staged it (#502)",
+        check_ci_selftest_partition,
+        _broken_ci_selftest_partition,
+    ),
+    (
         "selftest_worlds_reachable",
         "no registered selftest file has a statement that cannot execute",
         "e1 added two worlds to eval/equal_token_gap.py and put a `return 0` above the existing "
@@ -19514,7 +19992,9 @@ EVIDENCE = {
     # `git show HEAD:runs/score_matrix.jsonl`, and it SKIPs on the pod naming that tree's
     # missing .git. A "pod" declaration would ask it to answer where it cannot run.
     "score_matrix_rewrites_traced": "repo",
-    "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
+    "cited_artifacts_attested": "repo", "selftests_are_gated": "repo",
+    "ci_selftest_partition": "repo",
+    "probe_numbers_unique": "repo",
     "launcher_states_anneal_frac": "repo",
     # NOT "repo": the evidence is THIS CHECKOUT's .git/hooks symlink and the integration
     # tree's working file, neither of which is repo content. Green here says nothing about
@@ -29183,6 +29663,8 @@ def main():
         return cmd_ledger_append(sys.argv[3:])
     if len(sys.argv) > 1 and sys.argv[1] == "sync":
         return cmd_sync(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "ci-selftests":
+        return cmd_ci_selftests(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "install-hooks":
         return cmd_install_hooks(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "launch":
