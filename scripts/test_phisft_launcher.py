@@ -119,9 +119,11 @@ def _build_tree(claim_dir):
             "#!" + sys.executable + "\n"
             "import os, sys, time\n"
             f"_devfd = os.open({dev_fd_path!r}, os.O_CREAT | os.O_RDONLY)\n"
-            f"open({ready!r}, 'w').close()\n"
+            # argv BEFORE ready: readiness must imply the argv file exists, otherwise a fast
+            # consumer reads ready and opens torchrun_argv before it is written (a flaky FAIL).
             "with open(os.path.join(os.path.dirname(__file__), '..', 'torchrun_argv'), 'w') as a:\n"
             "    a.write(' '.join(sys.argv[1:]))\n"
+            f"open({ready!r}, 'w').close()\n"
             "if os.environ.get('TORCHRUN_BEHAVIOR') == 'die':\n"
             "    sys.exit(7)\n"
             f"while not os.path.exists({die!r}):\n"
@@ -179,10 +181,21 @@ def _reap(popen):
         return []
     pgid = getattr(popen, "_aupai_pgid", None)
     if pgid is None:
-        try:
-            pgid = os.getpgid(popen.pid)
-        except ProcessLookupError:
-            return []  # no recorded group and the leader is gone: nothing safe to signal
+        # NO IMPLICIT FALLBACK TO os.getpgid(popen.pid). When the launcher is still alive and
+        # was spawned WITHOUT start_new_session (the proc4 bug), it shares the CALLER's group,
+        # so that lookup returns the pytest/hook group and killpg below SIGKILLs ourselves with
+        # rc=-9 and no output. A Popen we did not put in its own group is not safe to killpg:
+        # refuse loudly and signal nothing rather than guessing a group that may be ours.
+        print(f"_reap: refusing to kill -- process {popen.pid} has no stashed process group "
+              f"(it was not started with start_new_session); killing its group could kill the "
+              f"test runner itself", file=sys.stderr)
+        return [popen.pid] if popen.poll() is None else []
+    if pgid == os.getpgid(0):
+        # SELF-GROUP GUARD, last line of defense: never signal the group the caller runs in,
+        # whatever spawned the Popen. Kill that and the whole test/hook dies with rc=-9 before
+        # any assertion can speak.
+        raise RuntimeError(f"_reap: target pgid {pgid} is this process's own group; refusing "
+                           "to killpg ourselves (a launcher must be started start_new_session)")
     members = _group_members(pgid)
     if members:
         try:
@@ -264,6 +277,74 @@ def _reparent_world():
         _LEAKED.extend(_reap(proc))
         shutil.rmtree(d, ignore_errors=True)
         shutil.rmtree(claim_dir, ignore_errors=True)
+
+
+def _live_reap_world():
+    """The proc4 TimeoutExpired shape: the launcher is STILL ALIVE (leader + blocking stub)
+    when finally reaps it. start_new_session means the group is the launcher's own, so _reap
+    must clear both without touching the caller's group. This is green under load (a runner
+    that starves the 90s communicate)."""
+    claim_dir = tempfile.mkdtemp(prefix="phisft_live_")
+    d, ready, die = _build_tree(claim_dir)
+    proc = _run(d, claim_dir)
+    try:
+        for _ in range(200):
+            if os.path.exists(ready):
+                break
+            time.sleep(0.05)
+        assert os.path.exists(ready), "live-reap world: stub never started"
+        assert proc.poll() is None, "live-reap world: launcher already exited"
+        survivors = _reap(proc)  # reclaimed while the whole group is still running
+        assert proc.poll() is not None and not survivors, (
+            f"live reaper left the launcher or its stub: poll={proc.poll()} survivors={survivors}")
+        print("live-reap world: running launcher group reaped cleanly (no self-kill)")
+    finally:
+        _LEAKED.extend(_reap(proc))
+        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(claim_dir, ignore_errors=True)
+
+
+# Runs in an ISOLATED CHILD because exercising the self-group guard means invoking _reap with a
+# target equal to the caller's own group: if the guard is missing the child SIGKILLs itself, and
+# the parent turns that -9 into an explicit assertion instead of the test vanishing with no output.
+_GUARD_PROBE = '''
+import os, sys, time, subprocess
+sys.path.insert(0, %r)
+import test_phisft_launcher as T
+p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(5)"],
+                     start_new_session=False)
+time.sleep(0.2)
+p._aupai_pgid = os.getpgid(0)  # buggy spawn: recorded the CALLER's own group
+try:
+    T._reap(p)
+except RuntimeError:
+    p.kill(); p.wait(); print("GUARD_OK own-group refused"); sys.exit(0)
+p.kill(); sys.exit(3)  # _reap returned without raising: guard is gone
+'''
+
+
+def _self_group_guard_world():
+    pd = tempfile.mkdtemp(prefix="phisft_guard_")
+    probe = os.path.join(pd, "probe.py")
+    with open(probe, "w") as fh:
+        fh.write(_GUARD_PROBE % os.path.join(ROOT, "scripts"))
+    try:
+        # Isolated session: if the guard were removed, the probe's killpg reaches only this
+        # probe's own group, not the whole suite -- so a missing guard reds here as rc=-9 rather
+        # than killing the test runner.
+        r = subprocess.run([sys.executable, probe],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           stdin=subprocess.DEVNULL, start_new_session=True)
+        out = r.stdout.decode()
+        assert r.returncode != -9, (
+            "_reap SIGKILLed the probe's own group (self-group guard removed):\n" + out[-500:])
+        assert r.returncode == 0 and "GUARD_OK" in out, (
+            f"self-group guard did not refuse a target equal to the caller group "
+            f"(rc={r.returncode}):\n{out[-500:]}")
+        print("self-group guard: a same-group target raises instead of killpg (probed in an "
+              "isolated child; without the guard it would SIGKILL and FAIL here, not vanish)")
+    finally:
+        shutil.rmtree(pd, ignore_errors=True)
 
 
 def _is_shell(pid):
@@ -452,7 +533,8 @@ def main():
                   "refusal itself is still asserted (Linux exercises the poll: CI ubuntu)")
         proc4 = subprocess.Popen(["bash", os.path.join(od, "runs", "v42_phi_sft.sh")],
                                  cwd=od, env=env, stdout=subprocess.PIPE,
-                                 stderr=subprocess.STDOUT)
+                                 stderr=subprocess.STDOUT, start_new_session=True)
+        proc4._aupai_pgid = os.getpgid(proc4.pid)  # same shape as _run: own group, stashed now
         out4, _ = proc4.communicate(timeout=90)
         # ASSERT THE SHAPE, NOT A MESSAGE THAT ACCOMPANIES IT: the old launcher must exit
         # non-zero AND say it refused. A fixture that stopped refusing reds here, which is what
@@ -471,6 +553,8 @@ def main():
         shutil.rmtree(oclaim, ignore_errors=True)
 
     _reparent_world()
+    _live_reap_world()
+    _self_group_guard_world()
     _env_worlds()
     # THE HARNESS MUST NOT LEAK ITS OWN STUBS. Without this the test could pass while orphaning
     # a torchrun of its own -- which is what 3b caught (ppid=1, deleted cwd, 9.5h) -- and then
