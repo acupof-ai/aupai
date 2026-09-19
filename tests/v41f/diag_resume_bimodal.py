@@ -541,9 +541,11 @@ def _start_burn(n, seconds):
 
 
 def _classify_pair(returncode, stdout):
-    """Three-state verdict for a --diag-pair child: (is_red, line). GREEN is positive (rc0 AND a
-    DIAGPAIR GREEN line). A crash that printed ARM-CRASH is red; an EARLY DEATH with no line
-    (ENOSPC/OOM/SIGKILL) is a distinct DIAGPAIR NORUN, also red -- never silently green."""
+    """Three-state verdict for a --diag-pair child: (is_red, line). GREEN/RED/ARM are decided by
+    the DIAGPAIR line the child prints -- pair_once already established its own returncode before
+    printing, so a present GREEN line is authoritative (rc is not re-checked there). returncode is
+    used only when NO line is present: a child killed before its verdict (ENOSPC/OOM/SIGKILL) is
+    then a distinct DIAGPAIR NORUN, counted red -- never a green inferred from empty stdout."""
     line = next((l for l in stdout.splitlines() if l.startswith("DIAGPAIR")), None)
     if line is not None and (line.startswith("DIAGPAIR RED") or line.startswith("DIAGPAIR ARM")):
         return True, line
@@ -601,8 +603,6 @@ def coloc(runs, out, stress=0):
             d = subprocess.run([sys.executable, __file__, "--diag-pair",
                                 os.path.join(idir, "d")],
                                capture_output=True, text=True, env=env)
-            line = next((l for l in d.stdout.splitlines() if l.startswith("DIAGPAIR")),
-                        None)
             # See _classify_pair: a child killed before its verdict (ENOSPC/OOM) must be a red
             # NORUN, not a green inferred from empty stdout (the fail-open de caught).
             d_is_red, line = _classify_pair(d.returncode, d.stdout)
