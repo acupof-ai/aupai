@@ -31,17 +31,20 @@ gate printed GO while the PR was DIRTY. So `gh pr view --json mergeable,mergeSta
 read too, and its verdict is composed in decide() (also pure, so the selftest can inject the
 gh response at the boundary instead of manufacturing a real conflict).
 
-  CONFLICTING / DIRTY -> NO-GO, regardless of checks
+  CONFLICTING / DIRTY / DRAFT -> NO-GO, regardless of checks (a draft is refused by GitHub
+      independently of branch protection)
   MERGEABLE + CLEAN|HAS_HOOKS|UNSTABLE -> checks decide (UNSTABLE means non-required checks
       are failing, and this gate already adjudicates the check set itself)
   MERGEABLE + BEHIND -> NO-GO ONLY if the repo requires up-to-date branches. MEASURED
       2026-09-19: `branches/main/protection` is 404 "Branch not protected", `rulesets` and
       `rules/branches/main` are both []. Nothing enforces up-to-date here, so BEHIND passes
-      and the fact is printed rather than assumed.
-  UNKNOWN / UNKNOWN -> fail open with a WARN. GitHub computes this field lazily and it goes
-      stale, so a block on it would be a block on a caching artifact rather than on a real
-      conflict; git-cannot-answer fails open elsewhere in this tree
-      (scripts/integration_tree.py).
+      and the fact is printed rather than assumed. BLOCKED is left to the review rules for the
+      same reason: it means a required review is absent, which is a human decision.
+  UNKNOWN / a HALF-read pair / gh error -> fail open with a WARN. GitHub computes this field
+      lazily and it goes stale, so a block on it would be a block on a caching artifact rather
+      than on a real conflict; git-cannot-answer fails open elsewhere in this tree
+      (scripts/integration_tree.py). The WARN is not decoration: falling through silently would
+      make the fail-open invisible in the log.
   gh error / field absent -> same fail-open WARN branch. An auth or network failure must never
       become either a GO-on-dirty or a block the checks did not earn.
 """
@@ -165,11 +168,24 @@ def decide(checks, mergeable, merge_state):
         return 1, (f"NO-GO: GitHub reports the PR cannot merge "
                    f"(mergeable={mergeable}, mergeStateStatus={merge_state})"), rows + [
             "  BLOCK    mergeStateStatus=DIRTY -- GitHub cannot merge this PR"]
-    if m == "UNKNOWN" or s == "UNKNOWN" or not m:
+    if m == "UNKNOWN" or s == "UNKNOWN" or not m or not s:
+        # `not s` matters as much as `not m`: a HALF-read pair (gh gave mergeable but no
+        # mergeStateStatus) is not a mergeable PR, and routing it here is what keeps the
+        # both-or-nothing promise fetch_mergeability() makes. Falling through instead would
+        # return a silent GO with no WARN row -- a fail-open nobody can see in the log.
         rows.append(f"  WARN     mergeability not computed yet "
                     f"(mergeable={mergeable}, mergeStateStatus={merge_state}) -- failing open "
                     f"on checks; GitHub computes this lazily and it is often stale")
         return code, verdict, rows
+    if s == "DRAFT":
+        # GitHub refuses to merge a draft regardless of branch protection, so this is a real
+        # block and not a policy question -- unlike BEHIND. BLOCKED is deliberately NOT handled:
+        # it is the state of a PR awaiting a required review, and a review is a human decision
+        # this gate does not model. main carries no protection (404, rulesets []) so BLOCKED
+        # does not occur here.
+        return 1, (f"NO-GO: GitHub reports the PR is a draft "
+                   f"(mergeable={mergeable}, mergeStateStatus={merge_state})"), rows + [
+            "  BLOCK    mergeStateStatus=DRAFT -- GitHub will not merge a draft PR"]
     if s == "BEHIND":
         # MEASURED 2026-09-19: no branch protection and no rulesets on main, so nothing here
         # requires an up-to-date branch. Printed, not assumed -- re-read before changing.
@@ -248,6 +264,22 @@ def _selftest():
     code, verdict, rows = decide(green, None, None)
     assert code == 0, ("gh error must fail open", code, verdict)
     assert any("WARN" in r and "gh error" in r for r in rows), ("no WARN for gh error", rows)
+
+    # A HALF-read pair: gh answered with mergeable but no mergeStateStatus. This must take the
+    # fail-open WARN path, NOT fall through to a silent GO -- the assertion is on the WARN row,
+    # so dropping `not s` from the condition turns this red rather than merely changing an rc.
+    for half in (("MERGEABLE", None), ("MERGEABLE", "")):
+        code, verdict, rows = decide(green, *half)
+        assert code == 0, ("half-read pair must not block", half, code, verdict)
+        assert any("WARN" in r and "not computed" in r for r in rows), \
+            ("half-read pair must fail open LOUDLY, not silently", half, rows)
+
+    # a draft is refused by GitHub regardless of branch protection, so it blocks
+    code, verdict, rows = decide(green, "MERGEABLE", "DRAFT")
+    assert code == 1, ("DRAFT must NO-GO", code, verdict)
+    assert any(r.strip().startswith("BLOCK") for r in rows), ("no BLOCK row for DRAFT", rows)
+    # DRAFT blocks even when the checks are red for their own reason: it is not a renumbering
+    assert decide([ch("fail", "FAILURE")], "MERGEABLE", "DRAFT")[0] == 1, "DRAFT + red"
 
     # BEHIND passes ONLY because main enforces no up-to-date requirement (measured; see the
     # docstring). The row carries the reason so a reader can re-check the premise.
