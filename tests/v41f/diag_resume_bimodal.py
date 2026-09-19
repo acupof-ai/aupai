@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 
@@ -539,6 +540,20 @@ def _start_burn(n, seconds):
             for _ in range(n)] if n else []
 
 
+def _classify_pair(returncode, stdout):
+    """Three-state verdict for a --diag-pair child: (is_red, line). GREEN is positive (rc0 AND a
+    DIAGPAIR GREEN line). A crash that printed ARM-CRASH is red; an EARLY DEATH with no line
+    (ENOSPC/OOM/SIGKILL) is a distinct DIAGPAIR NORUN, also red -- never silently green."""
+    line = next((l for l in stdout.splitlines() if l.startswith("DIAGPAIR")), None)
+    if line is not None and (line.startswith("DIAGPAIR RED") or line.startswith("DIAGPAIR ARM")):
+        return True, line
+    if line == "DIAGPAIR GREEN":
+        return False, line
+    why = "nonzero exit before any DIAGPAIR line" if returncode != 0 else \
+        "no DIAGPAIR line despite rc0"
+    return True, f"DIAGPAIR NORUN ({why}; rc={returncode})"
+
+
 def coloc(runs, out, stress=0):
     """Co-located discriminator: each iteration spawns TWO sibling children with one shared
     env injection path -- the REAL gate (test_p1_train_ckpt.py --gate gate_resume_...) and one
@@ -556,6 +571,21 @@ def coloc(runs, out, stress=0):
           "and [sibling: diag pair] each iteration; the diag pair then spawns control/restart, "
           "exactly as the real gate's --gate spawns its own control/restart workers.")
     # burners live for the whole sweep; each gate/diag pair takes ~25s, give headroom.
+    # DISK BUDGET. One control/restart pair dumps ~4.8 GiB of fp32 logits/master tensors (the
+    # full microstage record). Eight pairs (~38 GiB) overflow a standard runner's ~14 GiB /tmp,
+    # and an ENOSPC in a child used to be mis-scored as green (the NORUN fix above now reports
+    # it, but the job should not manufacture that death). Pre-check enough headroom for one pair,
+    # and after each pair remove its tensors: the red/green decision and the red's stderr tail
+    # are already captured in memory (diverge[]), so on-disk tensors are not needed past the
+    # iteration. Point --out at a larger volume to retain per-iter dumps for manual inspection.
+    os.makedirs(out, exist_ok=True)
+    free_bytes = shutil.disk_usage(out).free
+    need_bytes = 6 * 1024 ** 3  # measured ~4.8 GiB/pair; 6 GiB margin
+    if free_bytes < need_bytes:
+        print(f"COLOCATE ABORT: {free_bytes/1024**3:.1f} GiB free under {out}, need "
+              f"~{need_bytes/1024**3:.0f} GiB for one pair (use --out on a larger volume). "
+              f"Refusing to start an instrumented run that would ENOSPC and report a false green.")
+        return 0
     burn = _start_burn(stress, runs * 60 + 120)
     gate_red = diag_red = 0
     diverge = []
@@ -572,16 +602,22 @@ def coloc(runs, out, stress=0):
                                 os.path.join(idir, "d")],
                                capture_output=True, text=True, env=env)
             line = next((l for l in d.stdout.splitlines() if l.startswith("DIAGPAIR")),
-                        "DIAGPAIR ?")
-            d_is_red = line.startswith("DIAGPAIR RED") or line.startswith("DIAGPAIR ARM")
+                        None)
+            # See _classify_pair: a child killed before its verdict (ENOSPC/OOM) must be a red
+            # NORUN, not a green inferred from empty stdout (the fail-open de caught).
+            d_is_red, line = _classify_pair(d.returncode, d.stdout)
             gate_red += g_is_red
             diag_red += d_is_red
             tag = "" if g_is_red == d_is_red else "  <-- GATE/DIAG DISAGREE"
             if tag:
-                sig = (g.stderr or g.stdout)[-600:]
+                sig = ((g.stderr or g.stdout)[-300:] + " | diag: "
+                       + ((d.stderr or d.stdout)[-300:]))
                 diverge.append((it, sig, line))
             gsig = "RED" if g_is_red else "green"
             print(f"iter {it}: gate={gsig} {line}{tag}")
+            # free this pair's multi-GiB tensors; the verdict and any red's stderr are retained
+            # in diverge[]/counts. Keeps N pairs at one-pair disk regardless of run count.
+            shutil.rmtree(idir, ignore_errors=True)
     finally:
         for p in burn:
             p.terminate()
@@ -725,6 +761,16 @@ def selftest():
     import inspect as _ins
     assert '"embed.weight"' in _ins.getsource(_pick_leaves), \
         "embed.weight must be an explicit _pick_leaves entry (the open-question leaf)"
+
+    # coloc pair classification is three-state: a child that dies before its DIAGPAIR line
+    # (ENOSPC/OOM/SIGKILL) must be a red NORUN, never a green inferred from empty stdout.
+    assert _classify_pair(0, "noise\nDIAGPAIR GREEN\n") == (False, "DIAGPAIR GREEN")
+    r, ln = _classify_pair(1, "DIAGPAIR RED LOADK.l1\n")
+    assert r and ln.startswith("DIAGPAIR RED")
+    r, ln = _classify_pair(3, "")  # killed before any line, empty stdout
+    assert r is True and ln.startswith("DIAGPAIR NORUN"), f"dead child must be NORUN red: {ln}"
+    r, ln = _classify_pair(0, "DIAGPAIR ARM-CRASH\n")
+    assert r is True and "ARM" in ln
 
     print("diag_resume_bimodal selftest OK: green world clean, 1.3% mutant localized to its "
           "exact microstage alone, env/alias fields present and a broken alias is reported.")
