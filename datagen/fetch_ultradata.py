@@ -39,6 +39,31 @@ DEFAULT_MAX_TIME = 3600
 #: The flags every transfer shares. ONE LINE, <= 88 chars, on purpose -- see _transfer_args.
 _CURL_BASE = ("curl", "-4", "-fSL", "-C", "-", "--retry", "3", "--connect-timeout", "15")
 
+#: The repo's standing egress relay, the same value scripts/probe_source_urls.py:35 carries.
+#: Measured 2026-09-20 on digest: huggingface.co answers 000 without it and 200 through it,
+#: while hf-mirror and modelscope answer 200 either way -- so the proxy adds exactly ONE arm,
+#: and an unset variable that silently disabled it would remove that arm invisibly.
+DEFAULT_PROXY = "http://sys-proxy-rd-relay.byted.org:8118"
+
+#: The last probe result per host label, filled by resolve_hosts so a caller prints what was
+#: OBSERVED without probing a second time. The pre-fix FAIL detail re-called final_status per
+#: host (:148), which cost three extra real curls for every failed shard AND went around the
+#: `probe=` seam, so the one line this module exists for could not be exercised offline.
+_PROBED = {}
+
+
+def _proxy_args():
+    """["--proxy", url], or [] when AUPAI_FETCH_PROXY is set to the EMPTY string.
+
+    Both spellings are needed and they are not the same setting: unset means "use the repo
+    default", `""` means "go direct". curl errors on `--proxy ""`, so the direct case must
+    DROP the flag. `_selftest` asserts both, because the two produce one reading otherwise --
+    "the proxy is always on" and "hf-mirror served without it" are different measurements.
+    """
+    p = os.environ.get("AUPAI_FETCH_PROXY", DEFAULT_PROXY)
+    return ["--proxy", p] if p else []
+
+
 # (label, base template). {dataset} and {path} are filled per shard. modelscope's FilePath
 # takes the FULL repo-relative path including the "data/" prefix -- a request without it
 # 404s, which reads exactly like "this mirror does not have the dataset" (fb, 2026-09-20).
@@ -53,7 +78,13 @@ HOSTS = (
 
 
 def final_status(url, timeout=10):
-    """The status of the LAST response in the redirect chain, or None if curl could not run.
+    """(final status, curl rc) for one probe, the status None when curl could not run.
+
+    THE rc IS RETURNED, NOT COLLAPSED INTO THE STATUS. Reporting only the status loses the
+    discrimination this probe exists for: measured with a subprocess stub, 302/rc=28 (a
+    followed redirect whose CDN then timed out) and 000/rc=7 (a connect refusal) both
+    render as `None`, so a FAIL line built from statuses alone says the same thing for "the
+    source is gone" and "this box cannot get out". Callers print both fields.
 
     -L matters: hf-mirror and modelscope both 302 to a CDN, so probing the first response
     line calls a serving mirror down. Measured 2026-09-04 in fetch_corpus._ot3_probe_ok:
@@ -63,35 +94,55 @@ def final_status(url, timeout=10):
     -4 because the pod's IPv6 egress is broken: curl tries IPv6 first and the failure
     surfaces as Errno 99, which reads as "the host is unreachable" and is the local
     address family being unusable.
+
+    A HEAD PROBE CANNOT RETURN 206. 206 is a Range-GET-only status, so the success test is
+    `== 200` and must not be widened to {200, 206} here; the ranged-GET gate is a different
+    instrument. There is no fail-open either way: a non-zero rc is never accepted, so
+    302/rc=28 cannot be mistaken for a serving host.
     """
+    argv = ["curl", "-4", "-sIL", "-o", "/dev/null", "-w", "%{http_code}", "-m", str(timeout)]
+    argv += _proxy_args()
     try:
-        p = subprocess.run(
-            ["curl", "-4", "-sIL", "-o", "/dev/null", "-w", "%{http_code}", "-m", str(timeout), url],
-            capture_output=True,
-            text=True,
-            timeout=timeout + 5,
-        )
+        p = subprocess.run(argv + [url], capture_output=True, text=True, timeout=timeout + 5)
     except (OSError, subprocess.SubprocessError):
-        return None
-    if p.returncode != 0:
-        return None
+        return None, None
     out = p.stdout.strip()
-    return int(out) if out.isdigit() else None
+    code = int(out) if out.isdigit() else None
+    return code, p.returncode
 
 
 def resolve_hosts(dataset, path, probe=final_status):
-    """(url, label) for every host that answers a final 200, in HOSTS order.
+    """[(url, label, code, rc)] for every host that answers a final 200, in HOSTS order.
+
+    THE PROBE RUNS ONCE PER HOST AND ITS RESULT IS RETURNED. The detail line a caller
+    prints on failure used to re-probe by calling final_status again (:148, pre-fix), which
+    cost three extra real curls per failed shard AND went around the `probe=` seam, so the
+    exact line this module exists for could not be unit-tested without a network.
 
     `probe` is injectable so the selftest can drive the ordering and the failure modes
     without a network. An empty list means no host answered -- the caller decides whether
-    that is fatal (a shard) or skippable (a listing).
+    that is fatal (a shard) or skippable (a listing). Either way the caller gets every
+    host's (code, rc) to print, including the hosts that did not answer 200.
     """
     out = []
     for label, tmpl in HOSTS:
         url = tmpl.format(dataset=dataset, path=path)
-        if probe(url) == 200:
-            out.append((url, label))
+        code, rc = probe(url)
+        entry = (url, label, code, rc)
+        if code == 200:
+            out.append(entry)
+        _PROBED[label] = entry
     return out
+
+
+def _probe_detail():
+    """Every host's (status, rc) as one line, from the probes resolve_hosts already ran.
+
+    A function rather than an inline join because this string IS the failure report -- the
+    pre-fix version built it by probing a second time (:148) and it is the one path the
+    `probe=` seam could not reach, so it shipped untested.
+    """
+    return ", ".join(f"{lbl}: {_PROBED[lbl][2]}/rc={_PROBED[lbl][3]}" for lbl, _ in HOSTS)
 
 
 def footer_ok(path):
@@ -120,8 +171,12 @@ def _transfer_args(url, out, max_time):
     collection one token per line, which separates them and turns the check red naming a
     curl call that does pass -4 (measured 2026-09-20). Kept to 76 chars so ruff leaves it
     on one line. Do not wrap it.
+
+    THE TRANSFER CARRIES THE SAME EGRESS SETTING AS THE PROBE. A probe that resolves a host
+    through the proxy and a transfer that then goes direct measures two different networks:
+    the host list would be built for an egress the shard never uses.
     """
-    return [*_CURL_BASE, "--max-time", str(max_time), "-o", out, url]
+    return [*_CURL_BASE, *_proxy_args(), "--max-time", str(max_time), "-o", out, url]
 
 
 def fetch(level, first, last, dest, max_time=DEFAULT_MAX_TIME):
@@ -144,17 +199,23 @@ def fetch(level, first, last, dest, max_time=DEFAULT_MAX_TIME):
             # huggingface.co is 000 without the proxy and 200 with it, while hf-mirror and
             # modelscope answer 200 either way -- so a missing proxy silently removes exactly one
             # arm, which is invisible until it is the arm that would have served.
-            detail = ", ".join(
-                f"{label}={final_status(tmpl.format(dataset='openbmb/UltraData-Code', path=rel))}"
-                for label, tmpl in HOSTS
+            #
+            # THE DETAIL IS BUILT FROM THE PROBE THAT ALREADY RAN (`_PROBED`), not by probing
+            # again: the pre-fix line re-called final_status here, three extra real curls per
+            # failed shard through the one code path the `probe=` seam cannot reach. Both fields
+            # are printed -- status alone renders a followed-redirect timeout (302/rc=28) and a
+            # connect refusal (000/rc=7) identically.
+            detail = _probe_detail()
+            print(
+                f"FAIL {name}: no host answered a final 200 [{detail}]"
+                f" proxy={os.environ.get('AUPAI_FETCH_PROXY', DEFAULT_PROXY) or '<direct>'}",
+                flush=True,
             )
-            proxy = os.environ.get("https_proxy") or os.environ.get("http_proxy") or "<unset>"
-            print(f"FAIL {name}: no host answered a final 200 [{detail}] proxy={proxy}", flush=True)
             failed += 1
             continue
         t0 = time.time()
         host = None
-        for url, label in candidates:
+        for url, label, _code, _rc in candidates:
             r = subprocess.run(_transfer_args(url, out, max_time))
             if r.returncode == 0 and footer_ok(out):
                 host = label
@@ -196,33 +257,100 @@ def _selftest():
     seen = []
 
     def probe(statuses):
+        """A stand-in for final_status: {(host, (code, rc))} -> the tuple, (None, None) if absent.
+
+        It returns the SAME SHAPE the real probe does, so every caller line under test here --
+        including the FAIL detail -- runs exactly as it does against a network. A stub that
+        returned a bare status would let the returned-rc path go untested.
+        """
+
         def _p(url):
             seen.append(url)
             for host, st in statuses.items():
                 if host in url:
                     return st
-            return None
+            return None, None
 
         return _p
 
     p = "data/UltraData-Code-L2/py/x.parquet"
     # the normal case: the first host is up, and it is used
-    got = resolve_hosts("openbmb/UltraData-Code", p, probe({"hf-mirror.com": 200, "www.modelscope.cn": 200}))
+    got = resolve_hosts(
+        "openbmb/UltraData-Code", p, probe({"hf-mirror.com": (200, 0), "www.modelscope.cn": (200, 0)})
+    )
     assert got and got[0][1] == "hf-mirror.com", got
+    assert got[0][2:] == (200, 0), "the probe's (code, rc) must reach the caller"
 
     # THE FAILOVER: hf-mirror down (rc=28 on 2026-08-31), modelscope serves
-    got = resolve_hosts("openbmb/UltraData-Code", p, probe({"hf-mirror.com": None, "www.modelscope.cn": 200}))
-    assert [l for _, l in got] == ["www.modelscope.cn"], got
+    got = resolve_hosts(
+        "openbmb/UltraData-Code", p, probe({"hf-mirror.com": (302, 28), "www.modelscope.cn": (200, 0)})
+    )
+    assert [e[1] for e in got] == ["www.modelscope.cn"], got
+
+    # THE DETAIL LINE'S DISCRIMINATION, which is why rc is returned at all: a followed
+    # redirect whose CDN then timed out and a connect refusal are the SAME status and
+    # DIFFERENT rc. Both hosts are dropped (neither is a 200), and the two entries the
+    # caller prints must stay distinguishable.
+    resolve_hosts(
+        "openbmb/UltraData-Code", p, probe({"hf-mirror.com": (302, 28), "huggingface.co": (None, 7)})
+    )
+    assert _PROBED["hf-mirror.com"][2:] == (302, 28), _PROBED
+    assert _PROBED["huggingface.co"][2:] == (None, 7), _PROBED
+    assert _PROBED["hf-mirror.com"][2:] != _PROBED["huggingface.co"][2:], (
+        "collapsing rc into the status is the defect this pair exists to catch"
+    )
+    # every host is recorded, including the ones that answered nothing: the FAIL detail
+    # reads this dict and a missing key would raise inside the failure path itself
+    assert set(_PROBED) == {lbl for lbl, _ in HOSTS}, _PROBED
+    # THE DETAIL MAKES NO NETWORK CALL. This is the whole rework: the pre-fix line called
+    # final_status here, so every failed shard cost three real curls and the report could not
+    # be rendered offline. subprocess is disabled outright and this runs FIRST, so the
+    # mutation that reintroduces the re-probe fails naming this property rather than
+    # whatever the live hosts happened to answer.
+    real_run = subprocess.run
+    subprocess.run = lambda *a, **k: (_ for _ in ()).throw(AssertionError(f"re-probed: {a}"))
+    try:
+        line = _probe_detail()
+    finally:
+        subprocess.run = real_run
+    # the exact line the caller prints: rc survives into it, so the two
+    # indistinguishable-status cases stay distinguishable in the output a reader sees
+    assert "hf-mirror.com: 302/rc=28" in line and "huggingface.co: None/rc=7" in line, line
+    assert len(line.split(", ")) == len(HOSTS), line
+    # ...and resolve_hosts does not probe a second time anywhere: three hosts, three calls
+    before = len(seen)
+    resolve_hosts("openbmb/UltraData-Code", p, probe({"hf-mirror.com": (200, 0)}))
+    assert len(seen) - before == len(HOSTS), f"{len(seen) - before} probes for {len(HOSTS)} hosts"
 
     # a 302 IS NOT DOWN: the CDN redirect is the working path, and a probe that reads the
     # first status line would drop this host
-    assert resolve_hosts("openbmb/UltraData-Code", p, probe({"hf-mirror.com": 302})) == [], (
+    assert resolve_hosts("openbmb/UltraData-Code", p, probe({"hf-mirror.com": (302, 0)})) == [], (
         "302 must not count as 200"
     )
 
     # nothing answers: an empty list, not an exception -- callers distinguish fatal from
     # skippable
     assert resolve_hosts("openbmb/UltraData-Code", p, probe({})) == []
+
+    # THE EGRESS SETTING IS TWO DISTINCT STATES, and the direct one must DROP the flag
+    # (curl errors on `--proxy ""`). Measured 2026-09-20: huggingface.co serves 200 through the
+    # relay and nothing without it, so "unset" and "empty" decide which arms exist -- a single
+    # reading here would merge "the proxy is always on" with "hf-mirror served without it".
+    prior = os.environ.get("AUPAI_FETCH_PROXY")
+    try:
+        os.environ.pop("AUPAI_FETCH_PROXY", None)
+        assert _proxy_args() == ["--proxy", DEFAULT_PROXY], _proxy_args()
+        assert "--proxy" in _transfer_args("http://x/y", "/tmp/y.part", 60), "the transfer must use it too"
+        os.environ["AUPAI_FETCH_PROXY"] = ""
+        assert _proxy_args() == [], "an empty setting means DIRECT: curl rejects --proxy ''"
+        assert "--proxy" not in _transfer_args("http://x/y", "/tmp/y.part", 60)
+        os.environ["AUPAI_FETCH_PROXY"] = "http://relay.local:3128"
+        assert _proxy_args() == ["--proxy", "http://relay.local:3128"], _proxy_args()
+    finally:
+        if prior is None:
+            os.environ.pop("AUPAI_FETCH_PROXY", None)
+        else:
+            os.environ["AUPAI_FETCH_PROXY"] = prior
 
     # the modelscope entry carries the FULL path including data/: the URL built for it must
     # contain FilePath=data/... , because a request without the prefix 404s and reads as
