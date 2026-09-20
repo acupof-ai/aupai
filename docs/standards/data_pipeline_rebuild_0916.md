@@ -458,18 +458,32 @@ The fetch scripts read the variable; **nothing tracked sets it for them.**
 **The proxy. Three independent samples of the same host, same machine, same window, disagreeing —
 which is the finding. Always set it.**
 
-| reading | `hf-mirror.com` without proxy | with proxy |
-|---|---|---|
-| 12 samples, `-m 10` | **2/12** (9 × `000` timeout, 1 × `302`) | **12/12** |
-| 8 samples, three connect-timeouts | **6/8** (failures at the CDN hop: `cas-bridge.xethub.hf.co` 8 s timeout; once 120 s / 0 bytes) | 3/3, 1.0–1.8 s |
-| 3 samples | 3/3 | — |
-| 4 samples | 0/4 | — |
+| reading | probe | `hf-mirror.com` without proxy | with proxy |
+|---|---|---|---|
+| 12 samples, `-m 10` | HEAD (`-sIL`) | **2/12** (9 × `000` timeout, 1 × `302`) | **12/12** |
+| 8 samples, three connect-timeouts | HEAD (`-sIL`) | **6/8** (failures at the CDN hop: `cas-bridge.xethub.hf.co` 8 s timeout; once 120 s / 0 bytes) | 3/3, 1.0–1.8 s |
+| 8 samples, interleaved with the row above | HEAD / GET+Range | HEAD **2/8** → `200`; GET+Range **1/8** → `206`; the failures coincide rep for rep | HEAD 4/4 → `200`; GET+Range 4/4 → `206` |
+| 3 samples | HEAD | 3/3 | — |
+| 4 samples | GET + Range | 0/4 | — |
 
 The last two rows are the readings that contested each other before anyone sampled. **Both are
 real**: they are draws from one intermittent population, and the rate moved from 2/12 to 6/8 with
 nothing changed but the moment. So no single probe answers "does this host need the proxy", in
 either direction — and this is exactly what `_ot3_probe_ok`'s failover rests on. **A probe proves
 the host answered *this* time, not that it will hold for a multi-minute fetch.**
+
+**The probe's shape is part of the reading, and HEAD and GET+Range are not the same instrument.**
+HEAD asks the server for headers at the final hop; `-sL -r 0-7` asks it for bytes. They agree on
+availability — the failures coincide rep for rep in the interleaved row — but **they do not return
+the same success code**: HEAD answers **`200`**, GET+Range answers **`206`**. A predicate that
+accepts only one of them reports a healthy arm as `0/N` and writes a working mirror down as
+unreachable. **The success set is `{200, 206}`; `302` is not in it** (it means the redirect was
+not followed). Every row above therefore carries its probe, and any rate compared across rows
+must be compared between probes of the same shape.
+
+That matters beyond this table: `_ot3_probe_ok`'s own comment records the first-status-line
+version of the same mistake, and a gate built on `== 200` alone would false-red a mirror that is
+answering 206.
 
 | host | without proxy | with proxy |
 |---|---|---|
@@ -502,8 +516,9 @@ With the proxy, these hosts answer 200 or 206 reliably — so if the *with-proxy
 fails, the instrument is broken, not the host. That turns an instrument fault into its own alarm
 instead of a data point, which is worth more than any single rate in the table above.
 
-The right gate, if one is written, is **"all three hosts non-200 AND the proxy unset"** — not
-"the proxy is unset". The latter reds a tree whose fetches currently work.
+The right gate, if one is written, is **"no host answered in `{200, 206}` AND the proxy unset"** —
+not "the proxy is unset", which reds a tree whose fetches currently work, and not "no host returned
+`200`", which reds a healthy HEAD-probed mirror that answers **206**.
 
 **The token-cache directory.** `_token_cache_dir()` (`train.py:2123`) resolves
 `AUPAI_TOKEN_CACHE_DIR` → `cache_guard.NVME_CACHE_DIR` if that is a directory → `dirname(TOKEN_CACHE)`.
