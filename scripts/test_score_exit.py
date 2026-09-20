@@ -202,10 +202,21 @@ def main():
         if len(done_f) != 1:
             print(f"  FAIL {label}: the row must still close ({len(done_f)} closes)\n{notes_f}")
             return 1
-        if "--status error" not in done_f[0]:
-            print(f"  FAIL {label}: an unscored run must close status=error, not ok: {done_f[0]}")
+        # score-blocked, NOT error. Both paths here are reached only after `rc -eq 0 && ckpt
+        # exists`, i.e. training SUCCEEDED and only the scoring did not happen. `error` was
+        # also what a killed-at-2-minutes run wrote, so the two were indistinguishable in the
+        # status column -- 10 rows in experiments.jsonl, 9 of them healthy. See exp.py's
+        # _display_status for how the historical ones are annotated instead of rewritten.
+        if "--status score-blocked" not in done_f[0]:
+            print(f"  FAIL {label}: an unscored run must close status=score-blocked, not ok "
+                  f"and not the ambiguous error: {done_f[0]}")
             return 1
-        print(f"  ok   {label}: row closed status=error")
+        # AND IT MUST NOT BE `error`: that word is retired from the writers. Asserted
+        # separately from the line above so a future edit back to `error` names this reason.
+        if "--status error " in done_f[0] or done_f[0].endswith("--status error"):
+            print(f"  FAIL {label}: wrote the retired ambiguous status=error: {done_f[0]}")
+            return 1
+        print(f"  ok   {label}: row closed status=score-blocked (training had succeeded)")
 
     # A close that cannot write must not fail the run, for the same reason a note cannot:
     # bookkeeping with nowhere to go is not a training failure. Distinct from the note case
