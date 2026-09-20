@@ -166,6 +166,22 @@ _CHECK_TIMEOUTS = {
     # the deadline was set for a machine the CI runner is not. 30s is ~13x the laptop
     # measurement, matching the ratio the entries around it use, and still far under a hang.
     "no_hardcoded_cache_path": 30,
+    # MEASURED INSIDE THE SUITE, 2026-09-20: `import train` reaches model.py and then fla
+    # and costs 6.10s of this check's 6.1-6.9s total, against a 5s default. Instrumented at
+    # entry and after the import (`train=False` -> `train=True`); the tokenizer load and the
+    # fingerprint itself are 0.02s and 0.01s, and a WARM call is 0.03s, so the cost is
+    # entirely the first import and it is paid inside the deadline.
+    #
+    # WHAT THAT PRODUCED, and it is why the number is written down rather than guessed: the
+    # check landed on BOTH sides of its own deadline run to run. Three fresh processes under
+    # a real signal.alarm(5): TimeoutError propagated / PASS 6.86s / PASS 5.89s. The early
+    # version also caught that TimeoutError in its own `except Exception`, so the runtime
+    # decided between a PASS and a FAIL whose message blamed "cannot import train" -- with
+    # the strike counter never moving, since the exception never reached run_checks. Both
+    # halves are fixed (the handlers re-raise TimeoutError); this budget removes the
+    # remaining coin-flip. 30s is above the import's spread on a cold machine and far under
+    # a hang.
+    "vocab_fingerprint_matches": 30,
     # Measured on the pod, 2026-09-01: 0.8s to load the 1.5GB pack, 0.2s to flatten
     # 192M tokens, and 0.127s per probe x 76 probes = 9.7s of search. It was never
     # going to fit 5s, so it timed out on nine consecutive runs and FAILed with
@@ -1105,6 +1121,175 @@ def check_cited_artifacts_attested(root):
           if unattestable else "")
     return PASS, (f"{cited} artifact citation(s) since {contract_from}, every hash attested "
                   f"by its writer ({legacy} legacy citations exempt){ua}")
+
+
+def check_declared_artifact_hash_matches_bytes(root):
+    """A declared artifact_sha256 whose artifact IS in the checkout must match its bytes.
+
+    cited_artifacts_attested compares the FACT against the attestation LEDGER and never
+    opens the file -- deliberately, because preds are regenerated every run and a
+    current-state check would false-alarm on a legitimate rerun. That reasoning holds for
+    pod-only artifacts and it is the reason this is a SECOND check rather than a widening
+    of that one.
+
+    What it left uncovered: an artifact that is TRACKED and therefore present in every
+    checkout. For those the bytes and the declaration are both here, the comparison needs
+    no pod, and a rerun that changes the file is exactly what the hash is asserting did
+    not happen. Measured 2026-09-20: 12 of the 39 declared dict-form legs are invisible to
+    cited_artifacts_attested because its regex only reaches `data/eval/*.jsonl`, while
+    facts also declare `preds_*.jsonl` (8), `ckpt_*.pt` (2) and `runs/*.json` (2).
+
+    THE THREE CLASSES ARE NOT THE SAME, and this check only claims the third:
+      - preds_*.jsonl, ckpt_*.pt: pod-only, gitignored, absent on CI and on a laptop.
+        Unverifiable here, COUNTED and named rather than silently skipped.
+      - runs/*.json: tracked, present in the checkout, hashable now. That is the class
+        this check gates.
+
+    A leg whose file is present but whose hash differs is the defect: the fact asserts
+    bytes that the tree does not contain. Reported per leg with both hashes, because
+    "the file changed" and "the hash is wrong" are only distinguishable by seeing them.
+    """
+    import hashlib
+    # One `git ls-files` for the whole check: membership answers "is this artifact part of
+    # the checkout", which is what makes a byte comparison meaningful. No git (pod, temp
+    # world) -> empty set -> every leg counts as untracked and the check reports that it
+    # verified nothing rather than passing on an empty population.
+    try:
+        _ls = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True)
+        tracked = set(_ls.stdout.split("\n")) if _ls.returncode == 0 else set()
+    except (OSError, subprocess.SubprocessError):
+        tracked = set()
+    legs, mismatch, unresolved, untracked = 0, [], [], 0
+    for fp in sorted(glob.glob(os.path.join(root, "facts", "*.json"))):
+        try:
+            obj = json.load(open(fp, encoding="utf-8"))
+        except TimeoutError:
+            raise
+        except Exception:
+            continue
+        for e in obj.get("facts", []):
+            decl = e.get("artifact_sha256")
+            if not isinstance(decl, dict):
+                continue
+            for rel, want in decl.items():
+                legs += 1
+                # The key is a repo-relative path when the fact spells one, a bare
+                # basename when it does not; try the literal path first, then the two
+                # homes data/eval artifacts actually have.
+                cands = [rel]
+                if "/" not in rel:
+                    cands += [os.path.join("data", "eval", rel),
+                              os.path.join("data", "eval", "humaneval", rel)]
+                path = next((os.path.join(root, c) for c in cands
+                             if os.path.isfile(os.path.join(root, c))), None)
+                if path is None:
+                    unresolved.append(f"{e.get('id')}:{rel}")
+                    continue
+                # TRACKED ONLY. A pod-only artifact (preds, ckpt) may be legitimately
+                # regenerated by the next run, so comparing its current bytes would
+                # false-alarm on the pod -- the same reasoning cited_artifacts_attested
+                # uses for never opening a file. A tracked artifact cannot be silently
+                # regenerated: changing it is a commit, which is what makes the
+                # comparison meaningful rather than noisy.
+                if os.path.relpath(path, root) not in tracked:
+                    untracked += 1
+                    continue
+                got = hashlib.sha256(open(path, "rb").read()).hexdigest()
+                if got != want:
+                    mismatch.append(f"{e.get('id')} declares {rel} sha {want[:12]}, "
+                                    f"but the file in this tree hashes {got[:12]}")
+    if mismatch:
+        return FAIL, (f"{len(mismatch)} of {legs} declared artifact hash(es) do not match "
+                      f"the bytes in this tree: " + "; ".join(mismatch[:3]))
+    if not legs:
+        return SKIP, "no fact declares an artifact_sha256"
+    return PASS, (f"{legs - len(unresolved)} of {legs} declared artifact hash(es) match the "
+                  f"bytes in this tree; {len(unresolved)} leg(s) not present here "
+                  f"(pod-only, counted not skipped)"
+                  + (f": {', '.join(sorted(unresolved)[:3])}" if unresolved else ""))
+
+
+def _broken_declared_artifact_hash():
+    """The REAL tracked artifact, with its declared hash replaced by a wrong one.
+
+    Mutates a real product rather than a synthetic file: the point of the check is that a
+    hash in the fact can stop describing the bytes in the tree, and only a real declared
+    leg exercises the resolution (which path the key names) as well as the comparison.
+    """
+    import shutil
+    d = _tmp_repo()
+    for f in glob.glob(os.path.join(ROOT, "facts", "*.json")):
+        obj = json.load(open(f, encoding="utf-8"))
+        for e in obj.get("facts", []):
+            decl = e.get("artifact_sha256")
+            if not isinstance(decl, dict):
+                continue
+            for rel in decl:
+                if os.path.isfile(os.path.join(ROOT, rel)):
+                    os.makedirs(os.path.join(d, "facts"), exist_ok=True)
+                    shutil.copy(f, os.path.join(d, "facts", os.path.basename(f)))
+                    tgt = os.path.join(d, rel)
+                    os.makedirs(os.path.dirname(tgt), exist_ok=True)
+                    shutil.copy(os.path.join(ROOT, rel), tgt)
+                    for e2 in obj["facts"]:
+                        if e2 is e:
+                            e2["artifact_sha256"][rel] = "deadbeef" * 8
+                    json.dump(obj, open(os.path.join(d, "facts", os.path.basename(f)), "w"),
+                              ensure_ascii=False)
+                    # THE CHECK ASKS GIT WHETHER THE ARTIFACT IS TRACKED, so a git-less
+                    # world classifies every leg as untracked and the mutation goes
+                    # unobserved -- measured: without this the broken world PASSed with
+                    # "1 of 13 ... match", the good leg, and the mutated one counted as
+                    # absent. _tmp_repo does not init a repo by design, so the world does.
+                    for cmd in (["git", "init", "-q"], ["git", "add", "-A"],
+                                ["git", "-c", "user.email=w@w", "-c", "user.name=w",
+                                 "commit", "-qm", "world"]):
+                        subprocess.run(cmd, cwd=d, capture_output=True)
+                    return d
+    return None
+
+
+def _selftest_declared_artifact_hash_matches_bytes():
+    """Both directions on a REAL declared leg: good must PASS, mutated must FAIL.
+
+    A one-sided test here is how a check that cannot fail ships; the good world is the
+    real fact against the real tracked file, so it also pins that the resolver finds the
+    artifact the key names.
+    """
+    import shutil
+    state, evidence = check_declared_artifact_hash_matches_bytes(ROOT)
+    assert state in (PASS, SKIP), f"the real tree must not FAIL this check: {evidence}"
+    assert state == PASS, f"expected a tracked leg on the real tree: {evidence}"
+
+    d = _broken_declared_artifact_hash()
+    if d is None:
+        raise SelftestSkip("no declared artifact is tracked, so no real leg to mutate",
+                           reason="empty_population")
+    state, evidence = check_declared_artifact_hash_matches_bytes(d)
+    assert state == FAIL, ("a declared hash that does not match the tracked bytes must "
+                           "FAIL", state, evidence)
+    assert "deadbeef" in evidence or "do not match" in evidence, evidence
+
+    # THE OTHER DIRECTION, and it is the direction that holds the TRACKED restriction in
+    # place. An UNTRACKED artifact whose bytes differ must NOT FAIL: a pod-only preds or
+    # ckpt is legitimately regenerated by the next run, and comparing it is exactly the
+    # false alarm the restriction exists to prevent. Measured: without this case, removing
+    # the restriction leaves the selftest GREEN, so the restriction was unheld.
+    d2 = _tmp_repo()
+    os.makedirs(os.path.join(d2, "facts"), exist_ok=True)
+    os.makedirs(os.path.join(d2, "runs"), exist_ok=True)
+    with open(os.path.join(d2, "runs", "untracked.json"), "w") as fh:
+        fh.write("the bytes on disk\n")
+    json.dump({"facts": [{"id": "w.untracked", "measured": "2099-01-01",
+                          "artifact_sha256": {"runs/untracked.json": "ab" * 32}}]},
+              open(os.path.join(d2, "facts", "w.json"), "w"))
+    subprocess.run(["git", "init", "-q"], cwd=d2, capture_output=True)
+    state, evidence = check_declared_artifact_hash_matches_bytes(d2)
+    assert state == PASS, ("an UNTRACKED artifact whose bytes differ must not FAIL -- it is "
+                           "regenerated, not asserted", state, evidence)
+    assert "not present here" in evidence, (
+        "the untracked leg must be counted as unresolved, not silently dropped", evidence)
+    shutil.rmtree(d2, ignore_errors=True)
 
 
 def _broken_cited_artifacts_attested():
@@ -6799,6 +6984,306 @@ def check_pinned_ids(root):
 
 
 MAX_TRACKED_MB = 5
+
+
+# The vocabulary of record, rebuilt 2026-09-10 under unfreeze condition 2 (PR #233).
+# Recorded in AGENTS.md:324 and docs/standards/v41_pivot.md:58; checkpoints and packs carry
+# it as `vocab_id`, and a cache at an older vocab refuses.
+#
+# HOW TO RECOMPUTE IT, so this is a value that can be re-derived rather than trusted
+# (bc, 2026-09-20: a constant with no rebuild path is a fact that lives only in memory):
+#
+#     python3 -c "import sys; sys.path.insert(0,'.'); sys.path.insert(0,'scripts'); \
+#       from tokenizers import Tokenizer; import train; \
+#       print(train.vocab_fingerprint(Tokenizer.from_file('data/tokenizer.json')))"
+#
+# RUN IT IN A TREE THAT HAS THE FILE. `data/tokenizer.json` is gitignored, so on CI and on
+# any clean checkout that command dies with `No such file or directory` -- the constant is
+# re-derivable only where a copy survives (de, 2026-09-20; the same "gitignored but
+# depended-on" class as data/raw/).
+#
+# THE BYTES IT WAS COMPUTED FROM. Four surviving copies, all sha256
+# c6d5eec97c6af1ba2f8d... / 2,287,069 B, hashed 2026-09-20:
+#
+#     2026-09-11 03:28  ~/code/aupai-3b/data/tokenizer.json             (laptop)
+#     2026-09-14 12:53  ~/code/aupai-de/data/tokenizer.json             (laptop)
+#     2026-09-18 17:08  /data00/.../aupai-cimap/wt-3b/data/tokenizer.json     (digest)
+#     2026-09-19 21:11  /data00/.../aupai-cimap/wt-0e-cot/data/tokenizer.json (digest)
+#
+# FOUR, NOT ONE. What the bytes prove: all four are the same file, so the value is
+# reproducible from any of them and is not a single machine's artifact.
+#
+# WHAT THE MTIMES PROVE, and it is one thing only: both laptop copies PREDATE both digest
+# copies by 4-7 days, so THE DIGEST COPIES CANNOT BE THE LAPTOP COPIES' SOURCE. That
+# direction is determined by the dates.
+#
+# WHAT THEY DO NOT PROVE: that the two laptop copies are independent of each other. A plain
+# `cp` sets the destination's mtime to the copy time, while `cp -p`/`rsync -a` preserve the
+# source's -- so seeing 09-11 and 09-14 is consistent both with two separate writes AND with
+# one 09-11 file plainly copied on 09-14. The two readings are the same shape. Asserting
+# mutual independence would need the provenance of how each copy arrived, and that record
+# does not exist. `stat` cannot substitute for it; do not read these dates as more than they
+# say.
+#
+# Re-running the command above against any of the four returns f1f860970d15d623.
+VOCAB_FP_OF_RECORD = "f1f860970d15d623"
+
+
+def check_vocab_fingerprint_matches(root):
+    """`data/tokenizer.json` is the vocabulary of record, by IDENTITY not by positions.
+
+    pinned_ids verifies TWO POSITIONS (`<eos>` and `[NUM]`); it says nothing about the other
+    32,765 ids. Measured 2026-09-20: swapping the ids of two ordinary tokens (`and`, `the`)
+    while leaving both specials untouched produces a file whose fingerprint is
+    `e0c2048e86454393` instead of `f1f860970d15d623`, and `check_pinned_ids` returns
+    `PASS: <eos>=1 [NUM]=32767` on it. A vocabulary rebuilt with the same specials and a
+    different merge order therefore trains every id wrong, in range, at the same size --
+    the k5 SFT shape (trained at 4.77 where 1.28 was expected, 2026-08-28) with nothing
+    raised.
+
+    WHY A CONSTANT AND NOT A CONFIG READ: pinned_ids takes its expectation from
+    `cfg_default("num_id")`, which exists in the config. There is no config key for the
+    vocabulary identity -- the fingerprint is the record of a decision (the 2026-09-10
+    rebuild), so it is carried here beside the check that enforces it. Same value as the
+    `vocab_id` stamped into checkpoints and packs, so the check and the artifact agree by
+    construction rather than by a second source.
+
+    KEPT SEPARATE FROM pinned_ids DELIBERATELY: they catch different things -- position vs
+    identity -- and a merged check would report one sentence for two failures.
+    """
+    p = os.path.join(root, "data", "tokenizer.json")
+    if not os.path.exists(p):
+        return SKIP, "data/tokenizer.json not present"
+    try:
+        from tokenizers import Tokenizer
+    except TimeoutError:
+        raise
+    except Exception as e:
+        return FAIL, f"cannot import tokenizers: {e}"
+    try:
+        tok = Tokenizer.from_file(p)
+    except TimeoutError:
+        raise
+    except Exception as e:
+        return FAIL, f"cannot read {p}: {e}"
+    # train.vocab_fingerprint takes the TOKENIZER OBJECT, not a path -- passing the path
+    # fails with `'str' object has no attribute 'get_vocab'`. Imported here rather than at
+    # module scope because `import train` reaches model.py and fla (~5s); the check SKIPs
+    # above on every machine without the tokenizer, so the cost is paid only where the
+    # check can actually answer.
+    sys.path.insert(0, root)
+    try:
+        import train
+    except TimeoutError:
+        # THE DEADLINE IS NOT AN IMPORT FAILURE. run_checks arms signal.alarm and turns
+        # SIGALRM into TimeoutError so a slow check reports TIMEOUT and banks a strike;
+        # catching it here CONVERTS that into a FAIL whose message blames the import, and
+        # -- measured 2026-09-20, three fresh processes -- the timing decides which of the
+        # two you get: a run that finishes inside the deadline returns PASS, one that
+        # crosses it returns "cannot import train: check deadline", and the strike
+        # counter never moves. `import train` reaches model.py and fla, so this check is
+        # close enough to the 5s default to land on both sides of it.
+        raise
+    except Exception as e:
+        return FAIL, f"cannot import train to fingerprint the vocabulary: {e}"
+    got = train.vocab_fingerprint(tok)
+    if got != VOCAB_FP_OF_RECORD:
+        return FAIL, (f"data/tokenizer.json has fingerprint {got}, not the vocabulary of "
+                      f"record {VOCAB_FP_OF_RECORD}. Its specials may match while its "
+                      f"id->token map does not: every id trains wrong, in range, at the "
+                      f"same size. Rebuild the tokenizer, or if this rebuild is intended, "
+                      f"re-stamp the caches and update VOCAB_FP_OF_RECORD with the ruling.")
+    return PASS, f"vocab fingerprint {got} is the vocabulary of record"
+
+
+def _broken_vocab_fingerprint():
+    """The REAL tokenizer with two ordinary tokens' ids swapped -- specials untouched.
+
+    Mutates the real product rather than a synthetic mini-vocab: the defect this guards is
+    "specials right, map wrong", and a hand-built vocabulary would also differ in sizes and
+    merges, so it would not isolate that. Raises SelftestSkip where the tokenizer is absent
+    (it is gitignored), which is the same deal check_pinned_ids makes.
+    """
+    src_p = os.path.join(ROOT, "data", "tokenizer.json")
+    if not os.path.isfile(src_p):
+        raise SelftestSkip("no data/tokenizer.json -- check SKIPs without it",
+                           reason="environment")
+    obj = json.load(open(src_p, encoding="utf-8"))
+    vocab = obj.get("model", {}).get("vocab")
+    if not isinstance(vocab, dict) or len(vocab) < 2:
+        raise SelftestSkip("tokenizer.json has no model.vocab to mutate",
+                           reason="environment")
+    # Two ordinary tokens, chosen by NAME so the world is stable across rebuilds, and both
+    # non-special (the specials are added_tokens and live outside model.vocab).
+    a, b = "and", "the"
+    if a not in vocab or b not in vocab:
+        raise SelftestSkip(f"tokenizer.json has no {a!r}/{b!r} token to swap",
+                           reason="environment")
+    vocab[a], vocab[b] = vocab[b], vocab[a]
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    json.dump(obj, open(os.path.join(d, "data", "tokenizer.json"), "w"), ensure_ascii=False)
+    return d
+
+
+def _selftest_no_check_swallows_the_deadline():
+    """No check may convert the harness's deadline into a verdict.
+
+    run_checks arms `signal.alarm` and `_check_deadline` raises `TimeoutError`, which
+    run_checks catches to report TIMEOUT and bank a strike. `TimeoutError` is an
+    `Exception` subclass, so ANY bare `except Exception` inside a check swallows it: the
+    deadline becomes a FAIL whose message blames whatever the try body was doing, and the
+    strike counter never moves because the exception never arrives. A check that can never
+    reach its second strike is a check nobody has (the TIMEOUT constant's own reasoning).
+
+    MEASURED 2026-09-20 (genB, de, bc). The class is real and the count is large: 35
+    handlers across 28 `check_*` functions on origin/main can swallow it, 21 of them with a
+    slow-looking call (`import`/`open`/`json.load`/`from_file`) in the try body. The check
+    that prompted this, `vocab_fingerprint_matches`, was found by hand after it flipped
+    between PASS (6.86s) and a mislabelled FAIL (5.00s) run to run.
+
+    THE OTHER HALF OF THE MEASUREMENT, and it is why this is an assertion rather than a
+    repair list: every one of the 21 was timed individually, and the SLOWEST is
+    `check_pod_ledger_rows_home` at 3.31s (this laptop; de measured 2.56s on his tree).
+    NOTHING CROSSES THE 5s DEFAULT TODAY, so nothing is currently misreporting -- what
+    exists is the SHAPE, one slow call away from the defect. An earlier pass at this
+    extrapolated one check's cost onto others that shared its `except Exception` shape
+    (pinned_ids: predicted on the 5s line, measured 0.08s, because it imports `tokenizer`
+    while the expensive one imports `train`). Timing has to be per check.
+
+    Asserted on the AST, not by raising a real alarm: a clock race decides on machine load,
+    and the guard is a source property. The scan is repo-wide so a NEW check with a bare
+    handler reds here rather than waiting for its own bad night.
+    """
+    # READ __file__, NOT HERE/harness.py. The hook runs a STAGED copy of this file
+    # (`.hookstaged_harness.py`) while the on-disk harness.py may be a different revision,
+    # so HERE/harness.py answers "what is on disk" when the question is "what is being
+    # committed". Measured 2026-09-20: with a defect on disk and a clean staged copy, the
+    # staged run RED'd -- it judged the disk, not itself. `__file__` is the file actually
+    # executing in both cases (the real path under `harness check`, the staged copy under
+    # the hook), which is the same reasoning scripts/hooks/pre-commit uses when it copies
+    # the staged blob out and runs that.
+    src = open(__file__, encoding="utf-8").read()
+    try:
+        tree = ast.parse(src)
+    except SyntaxError as e:
+        raise AssertionError(f"cannot parse harness.py to scan for deadline-swallowing "
+                            f"handlers: {e}") from e
+    offenders = []
+    for fn in [n for n in ast.walk(tree)
+               if isinstance(n, ast.FunctionDef) and n.name.startswith("check_")]:
+        for t in [n for n in ast.walk(fn) if isinstance(n, ast.Try)]:
+            guarded = False
+            for h in t.handlers:
+                nm = h.type.id if isinstance(h.type, ast.Name) else None
+                if nm == "TimeoutError" and any(isinstance(b, ast.Raise) and b.exc is None
+                                                for b in h.body):
+                    guarded = True
+                elif nm == "Exception" and not guarded:
+                    offenders.append((fn.name, h.lineno))
+    # A SHRINK-ONLY BASELINE, not an assertion that reds on the existing 35 -- that would
+    # be a check nobody can have, which is the defect this whole scan is about. The
+    # registered set is the measured pre-existing debt (origin/main, 2026-09-20); a NEW
+    # offender reds, and removing one without updating this set also reds, so the list can
+    # only shrink and the constant cannot silently drift from the tree.
+    registered = {
+        "check_card_held_without_claim",
+        "check_cited_artifacts_attested",
+        "check_corpus_fp",
+        "check_entrypoints_ran",
+        "check_env_fp_present",
+        "check_fact_refs",
+        "check_facts_well_formed",
+        "check_ladder_cfg_consistent",
+        "check_ladder_config",
+        "check_memory_diag_fresh",
+        "check_mix_30b_contract",
+        "check_mix_supply",
+        "check_monitor_alive",
+        "check_no_ghost_close",
+        "check_no_ghost_running",
+        "check_no_stale_running",
+        "check_opt_state_present",
+        "check_peer_stalled",
+        "check_pinned_ids",
+        "check_pod_ledger_rows_home",
+        "check_prereg_amendments_dated",
+        "check_prereg_citations_current",
+        "check_score_matrix",
+        "check_sft_pack_holdout",
+        "check_shard_contract",
+        "check_spawned_scripts_exist",
+        "check_tokenizer_roundtrip",
+        "check_tokens_status_honest",
+    }
+    new_offenders = sorted((n, l) for n, l in offenders if n not in registered)
+    gone = sorted(registered - {n for n, _ in offenders})
+    assert not new_offenders, (
+        f"{len(new_offenders)} check(s) newly swallow the harness's deadline "
+        f"(`except Exception` with no preceding `except TimeoutError: raise`). run_checks "
+        f"raises TimeoutError on SIGALRM and catches it to report TIMEOUT and bank a "
+        f"strike; a check that swallows it returns a FAIL blaming the try body and NEVER "
+        f"reaches its second strike. Add `except TimeoutError: raise` above the handler: "
+        + "; ".join(f"{n}:{l}" for n, l in new_offenders[:5]))
+    assert not gone, (
+        f"{len(gone)} registered name(s) no longer swallow the deadline: {gone}. Good -- "
+        f"delete them from `registered` so the baseline keeps shrinking and cannot silently "
+        f"drift from the tree.")
+
+
+def _selftest_vocab_fingerprint_matches():
+    """Both directions, and the discrimination that keeps this from being a duplicate.
+
+    BAD: the real tokenizer with two ordinary ids swapped must FAIL.
+    GOOD: the real data/tokenizer.json must PASS.
+    DISCRIMINATION: check_pinned_ids must PASS on that SAME world -- otherwise this check
+    would be re-reporting what pinned_ids already catches, and the two-position check is
+    exactly what was measured blind to it.
+
+    ALL THREE RUN ONLY WHERE data/tokenizer.json EXISTS (see the note below); on a dev box
+    this selftest reports SKIP, and that is the honest statement about what was checked.
+    """
+    import shutil
+    # THIS SELFTEST SKIPS WHOLE WHERE THE TOKENIZER IS ABSENT, and that is the whole of its
+    # behaviour on a dev box: `_broken_vocab_fingerprint()` mutates the REAL product, so it
+    # raises SelftestSkip before any assertion below runs. data/tokenizer.json is gitignored
+    # (`.gitignore:5`). Its teeth therefore exist only where the tokenizer does -- the pod --
+    # which is the same deal check_pinned_ids makes, and the reason EVIDENCE marks this check
+    # "pod". Measured 2026-09-20 on a fresh worktree: the selftest SKIPs, and a mutant planted
+    # in the BAD assertion below is NOT caught here.
+    d = _broken_vocab_fingerprint()
+    state, evidence = check_vocab_fingerprint_matches(d)
+    assert state == FAIL, ("a vocabulary whose specials match but whose id map differs must "
+                           "FAIL", state, evidence)
+    assert VOCAB_FP_OF_RECORD in evidence, ("the FAIL must name the vocabulary of record",
+                                            evidence)
+
+    # THE DEADLINE MUST NOT BE CONVERTED INTO A VERDICT -- covered by
+    # `_selftest_no_check_swallows_the_deadline`, which walks every `check_*` in this file from
+    # `__file__` and reds on a bare `except Exception` with no preceding `except TimeoutError:
+    # raise`. A per-check copy of that assertion lived here and was deleted 2026-09-20: it was
+    # subsumed by the repo-wide scanner AND unreachable on any machine without the tokenizer,
+    # since the world above skips first. The finding it recorded, kept because the deleted
+    # assertion cannot carry it: run_checks arms signal.alarm and turns SIGALRM into
+    # TimeoutError so a slow check reports TIMEOUT and banks a strike; the bare handler in
+    # `check_vocab_fingerprint_matches` swallowed it and returned FAIL with the message
+    # "cannot import train to fingerprint the vocabulary: check deadline", naming the wrong
+    # cause and freezing the strike counter. Measured 2026-09-20: three fresh processes under
+    # a real alarm gave TimeoutError / PASS 6.86s / PASS 5.89s -- the runtime decided between
+    # a pass and a mislabelled failure.
+
+    # THE GRID THAT JUSTIFIES THIS CHECK'S EXISTENCE.
+    pin_state, pin_ev = check_pinned_ids(d)
+    assert pin_state == PASS, ("check_pinned_ids must PASS on this world -- if it reds, the "
+                               "world is broken in a way pinned_ids catches and this case "
+                               "proves nothing about the identity gap", pin_state, pin_ev)
+    shutil.rmtree(d, ignore_errors=True)
+
+    # The real-tree leg. Reached only where a vocabulary of record exists, since the world
+    # above already skipped otherwise; kept last so the cases that make this selftest worth
+    # running are not gated behind the one that depends on this machine's data.
+    state, evidence = check_vocab_fingerprint_matches(ROOT)
+    assert state != FAIL, f"the real tree must not FAIL this check: {evidence}"
 
 
 def check_vocab_id_on_load_path(root):
@@ -19557,6 +20042,13 @@ CHECKS = [
         lambda: _broken_tokenizer(eos_id=5),
     ),
     (
+        "vocab_fingerprint_matches",
+        "data/tokenizer.json is the vocabulary of record by fingerprint, not only by its two specials",
+        "pinned_ids verifies <eos> and [NUM]; swapping the ids of two ordinary tokens leaves both correct and the file reads PASS, so a rebuilt vocabulary trains every id wrong, in range, at the same size (the k5 4.77-vs-1.28 shape)",
+        check_vocab_fingerprint_matches,
+        _broken_vocab_fingerprint,
+    ),
+    (
         "vocab_id_on_load_path",
         "every trainer that loads an SFT pack compares the pack's vocab_id to the checkpoint's",
         "a pack from another vocabulary trains silently at ~4x the loss -- every id is wrong, in range, and the sizes match; 7aacbac fixed sft_math.py's guard, which had read a key the packer never writes, and sft.py loads a pack and compares nothing",
@@ -19922,6 +20414,13 @@ CHECKS = [
         _broken_snapshot_logs_say_so_at_the_tail,
     ),
     (
+        "declared_artifact_hash_matches_bytes",
+        "a declared artifact_sha256 whose artifact is TRACKED matches the bytes in the tree",
+        "cited_artifacts_attested compares fact against the attestation ledger and never opens the file, by design for pod-only preds; for a tracked artifact both the bytes and the declaration are in the checkout, so a rerun that changed the file is exactly what the hash asserts did not happen. Measured 2026-09-20: 12 of 39 declared dict-form legs are invisible to that check's data/eval-only regex",
+        check_declared_artifact_hash_matches_bytes,
+        _broken_declared_artifact_hash,
+    ),
+    (
         "cited_artifacts_attested",
         "a fact citing a gitignored eval artifact carries a sha256 its writer attested",
         "preds_*.jsonl is gitignored so fact_refs_resolve skips it; an unlogged rerun overwrote preds_l1_d3.jsonl and five facts pointed at another run's rows for hours",
@@ -20253,7 +20752,8 @@ CHECKS = [
 EVIDENCE = {
     # pod: evidence exists only on the training box
     "env_importable": "pod", "mix_shards_present": "pod", "tokenizer_roundtrip": "pod",
-    "pinned_ids": "pod", "no_ghost_running": "pod", "monitor_alive": "pod", "corpus_filters_fp": "pod",
+    "pinned_ids": "pod", "vocab_fingerprint_matches": "pod",
+    "no_ghost_running": "pod", "monitor_alive": "pod", "corpus_filters_fp": "pod",
     "score_input_fresh": "pod", "sft_pack_holdout": "pod", "sft_pack_uncontaminated": "pod",
     # pod: it reads the first line of every shard, and data/corpus/* is gitignored -- a laptop
     # sees only data/corpus/sample, so the 148 files here are the sample and the pod's ~3,459
@@ -20316,7 +20816,14 @@ EVIDENCE = {
     # `git show HEAD:runs/score_matrix.jsonl`, and it SKIPs on the pod naming that tree's
     # missing .git. A "pod" declaration would ask it to answer where it cannot run.
     "score_matrix_rewrites_traced": "repo",
-    "cited_artifacts_attested": "repo", "selftests_are_gated": "repo",
+    "cited_artifacts_attested": "repo",
+    # repo, and the check's own docstring says why: it compares only artifacts `git
+    # ls-files` reports, because a pod-only preds or ckpt may be legitimately regenerated
+    # by the next run and comparing its current bytes would false-alarm. The population is
+    # therefore git's, not the machine's -- the same reasoning cited_artifacts_attested
+    # gives for never opening a file.
+    "declared_artifact_hash_matches_bytes": "repo",
+    "selftests_are_gated": "repo",
     "ci_selftest_partition": "repo",
     "probe_numbers_unique": "repo",
     "launcher_states_anneal_frac": "repo",
@@ -26557,6 +27064,9 @@ def _demo(only=None):
         _selftest_inline_citations_are_scanned,
         _selftest_skip_reasons_classified,
         _selftest_fact_refs_scan_provenance,
+        _selftest_vocab_fingerprint_matches,
+        _selftest_no_check_swallows_the_deadline,
+        _selftest_declared_artifact_hash_matches_bytes,
         _selftest_fact_refs_scan_root_and_standards,
         _selftest_corpus_filters_fp_gate_mix,
         _selftest_flag_dispatch_is_ast_not_text,
