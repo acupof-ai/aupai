@@ -23,7 +23,28 @@ LOG=/tmp/bootstrap.log
 mkdir -p data
 say() { echo "[$(date +%H:%M:%S)] $*" | tee -a "$LOG"; }
 die() { say "BOOTSTRAP FAILED at $1"; exit 1; }
-want() { [ "$STAGE" = "all" ] || [ "$STAGE" = "$1" ]; }
+
+# Validate the stage BEFORE running anything. want() used to be a bare predicate with
+# no else arm, so an unknown (or deleted) stage name -- e.g. the old `vocab` -- matched
+# no block and the script still fell through to "complete", rc=0, having run zero
+# stages. Zero work and success must not print the same line (3b, 2026-09-21).
+STAGES="image deps cuda caches"
+if [ "$STAGE" != "all" ]; then
+  case " $STAGES " in
+    *" $STAGE "*) ;;
+    *)
+      echo "BOOTSTRAP FAILED: unknown stage '$STAGE'." >&2
+      echo "  valid stages: all $STAGES" >&2
+      echo "  the pre-V4.1 data stages verify/fetch/build/vocab/check are GONE; data rebuild" >&2
+      echo "  lives in docs/standards/data_pipeline_rebuild_0916.md, not in this script." >&2
+      exit 2
+      ;;
+  esac
+fi
+RAN=""
+# want X is true for `all` or an exact match; when true it RECORDS X so the final line
+# states which stages actually ran rather than assuming a matched name did work.
+want() { if [ "$STAGE" = "all" ] || [ "$STAGE" = "$1" ]; then RAN="$RAN $1"; return 0; fi; return 1; }
 
 # --- image: the kernel pip can never install, checked FIRST ------------------
 # HARD PRECONDITION -- the base image must already carry flash-attn 4
@@ -125,5 +146,15 @@ if want caches; then
   fi
 fi
 
-say "BOOTSTRAP: $STAGE complete -- container ready. Data/corpus and the launch are"
-say "separate: see docs/standards/data_pipeline_rebuild_0916.md and infra_persistent_rebuild_0916.md."
+# Distinguish "did work" from "matched nothing". RAN is the stages want() actually
+# selected (set above). A known stage always lands in RAN, so a non-empty STAGE that
+# reaches here empty means no block matched -- which must not read as success.
+RAN=$(echo "$RAN" | xargs)
+if [ -z "$RAN" ]; then
+  say "BOOTSTRAP FAILED: no stage matched '$STAGE' -- ran nothing."
+  say "  valid stages: all $STAGES"
+  exit 1
+fi
+say "BOOTSTRAP complete -- stages ran:$RAN"
+say "container ready. Data/corpus and the launch are separate: see"
+say "docs/standards/data_pipeline_rebuild_0916.md and docs/standards/infra_persistent_rebuild_0916.md."
