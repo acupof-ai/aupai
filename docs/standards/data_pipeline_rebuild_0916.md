@@ -491,6 +491,17 @@ proxy lines are all commented, and the shell variables were confirmed unset. FQD
 `sys-proxy-rd-relay.byted.org:8118` and the short name `sys-proxy-rd-relay:8118` both resolve; do
 not "fix" one into the other.
 
+**Any probe of these hosts must follow redirects, and should carry a control that fails loudly
+when it does not.** `curl -sI` without `-L` reports the **302 itself**, so a predicate written
+`== 200` is false for a mirror that is working perfectly — verified with the proxy on:
+`-sI` → `302`, `-sIL` → `200`, on both mirrors. That single omission corrupted three separate
+readings in one night (a failover guard, a manifest name, and one round of these very samples).
+
+The remedy is cheap: **run the same probe once with the proxy forced on, and print both columns.**
+With the proxy, these hosts answer 200 or 206 reliably — so if the *with-proxy* column also
+fails, the instrument is broken, not the host. That turns an instrument fault into its own alarm
+instead of a data point, which is worth more than any single rate in the table above.
+
 The right gate, if one is written, is **"all three hosts non-200 AND the proxy unset"** — not
 "the proxy is unset". The latter reds a tree whose fetches currently work.
 
