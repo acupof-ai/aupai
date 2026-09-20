@@ -309,7 +309,7 @@ trusting it.** Each row that is a fetch-in-flight is marked as such.
 | `en_c4_stage2_dc` | .045 | **yes** | `wt-3b/data/raw/rp1t_c4/` 34 files, 26G; built corpora `en_c4_stage2` 24G, `_dc` 24G, `_serserial` 24G | `fetch_corpus.py --source rp1t_c4` | **no** — `data.together.xyz` returns **403** | (b) rebuild from survivor |
 | `code_py_starcoder_dc` | .07 | **no** (fetch in flight) | `wt-3b/data/raw/ms_starcoder_py/` **21G and growing** (4.8G when the audit started, 21G at the end -- 98's fetch in flight) | `--source ms_starcoder_py` | **yes** — ModelScope `.../starcoderdata/repo?FilePath=python/` **200** | (a) re-fetchable |
 | `cot_dc` | .015 | **no** | — | `--source hf_numma` (NuminaMath-CoT) → `numma_to_jsonl.py` → `build_corpus.py --domain cot --filters light` | **yes** — `AI-MO/NuminaMath-CoT` hf-mirror **and** hf.co tree/resolve **200** (probed 2026-09-19, PAR1 content-verified), 5 train parquet = 1.15 GiB | (a) re-fetchable |
-| `math_owm_stage2_dc` | .08 | **no** | — | none in `fetch_corpus.py` | **gated** — `HuggingFaceFW/open-web-math` returns **401** on hf-mirror **and** on hf.co (both API and resolve/README); the repo exists but needs a token | (a) with auth, else blocked |
+| `math_owm_stage2_dc` | .08 | **no** | — | `--source hf_finemath_4plus` → `build_corpus.py --domain math_owm --filters light` (see the source correction below) | **yes** — `HuggingFaceTB/finemath` `refs/convert/parquet/finemath-4plus/train`, 64 parquet, **17.10 GiB**, no token (tree 200 / first shard 206 + `PAR1`, measured 2026-09-20) | (a) re-fetchable; **name list rebuilt, see below** |
 | `code_ultra_l2_dc` | .45 | **no** | — | none (0e's converter) | **yes** — `openbmb/UltraData-Code` README/tree/API **200** on hf-mirror | (a) re-fetchable; 0e's converter builds the corpus |
 | `code_ultra_l3_noexec_dc` | .30 | **no** | — | none (0e's converter) | **yes** — same repo, 200 | (a) re-fetchable; 0e's converter builds the corpus |
 | `code_keep_p1_dc` | .03 | **no — and no source** | — | `assemble_keep_p1.py` hardlinks `data/p1/keep_set/{code_rp1t_dd09,code_rp1t_b2v2_dd,code_dedup08}` | **no** | **(d) truly lost** |
@@ -321,7 +321,8 @@ trusting it.** Each row that is a fetch-in-flight is marked as such.
 `code_ultra_l2_dc`, `code_ultra_l3_noexec_dc`). Probed `curl -4 -sIL -m 10` through
 `http_proxy=http://sys-proxy-rd-relay.byted.org:8118`, status read **after `-L`** (both mirrors
 302 to a CDN; judging the first line calls a live mirror dead — the `_ot3_probe_ok` note at
-`fetch_corpus.py:251`).
+`fetch_corpus.py:251`). `math_owm_stage2_dc` belongs here too — see the source correction below,
+which also explains why the first version of this table put it in a fourth class.
 
 **(b) Rebuildable only from a surviving raw tree — 1 domain** (`en_c4_stage2_dc`). Its raw 26G is
 on digest; its upstream is **403**, so the survivor is the only path. This is the one domain
@@ -329,6 +330,51 @@ where the digest copy is not a convenience.
 
 **(d) No source and no live mirror — 2 domains** (`code_keep_p1_dc`, `code_py_rp1t_dc`). Both
 need a user decision on a replacement; neither has a cheap substitute.
+
+### `math_owm_stage2_dc` source correction (2026-09-20) — finemath-4plus, not open-web-math
+
+Two errors in the first version of the row above, and they are independent.
+
+**Wrong id.** It named `HuggingFaceFW/open-web-math`, which does return **401** on both mirrors
+(`www-authenticate: Bearer`, measured 2026-09-20) — so that reading was correct about the object
+it named. The object was the wrong one: `HuggingFaceFW/open-web-math` is a distinct dataset id
+that requires credentials, while the public `open-web-math/open-web-math` answers **206 with a
+`PAR1` body**. Same measurement, two ids, opposite answers. A 401 is a statement about one id,
+never about "the source".
+
+**Wrong source.** The domain is not built from open-web-math at all. `math_owm_stage2` comes from
+`HuggingFaceTB/finemath`'s **`finemath-4plus`** subset; the `owm` in the domain name is a
+historical misnomer.
+
+| side | value |
+|---|---|
+| build command (`runs/experiments.jsonl:110`) | `--domain math_owm --source parquet:data/raw/hf_finemath_4plus/*.parquet --filters light` — **that row's `status` is `fail`** |
+| the cell and its registry entry | `datagen/fetch_corpus.py:191-194` (`_manifest_hf_finemath_4plus`) and `:301` (`SOURCES["hf_finemath_4plus"]`) both survive |
+| source now | `refs/convert/parquet/finemath-4plus/train`, **64 parquet, 17.10 GiB**, public, no token |
+| magnitude | 64 shards / 17.1 GiB against the landed `4,135,793` docs / 21.55 GB of text; open-web-math is ~15M docs, an order of magnitude off |
+
+**What was actually missing.** Not the cell — the **name list**. `_manifest_hf_finemath_4plus`
+reads `data/raw/hf_finemath_4plus_manifest.txt`, which is untracked and died with the pod's
+emptyDir, so a registered cell pointed at a source it could not name. Rebuilt in this round: 64
+bare basenames from the tree API, force-added the way `data/raw/rp1t_github_manifest.txt` is. A
+manifest entry carrying the `finemath-4plus/train/` prefix is **wrong** — the base constant
+already contains it, and a prefixed name builds a doubled path that 404s.
+
+**Boundary — this is three-way corroboration, not byte-level proof.** The successful landing ran
+on a relaunch that was never fully recorded, on a pod that no longer exists, so no `srcfp`
+survives to compare against. The evidence is the build command, the surviving cell, and the
+magnitude agreement. Do not upgrade it to proof on the strength of the two matching numbers
+alone.
+
+**And a fingerprint reading that must not be over-read:** `fp != 4b1469bfe4667706` does **not**
+mean the source was wrong. `fp_dir` (`datagen/corpus_fingerprint.py`) is
+`(shard name, size, sha256 of first+last 64KB)` per shard — a fingerprint of the **final
+directory bytes**, with convert, global dedup and 13-gram decontamination in between the parquet
+and the `_dc` output. A mismatch means the whole pipeline's output differs, which a shard rename
+or an ordering change produces just as well as a wrong source; and a match means the final bytes
+look the same, sampled head and tail, so a same-size mid-file change is invisible. Compare
+**artifact against its own declaration**, never "what I just fetched" against "what was there"
+as though the latter were the source's ground truth.
 
 ### `cot_dc` source correction (2026-09-19) — NuminaMath-CoT, not the four `cot_*` manifests
 
@@ -401,6 +447,55 @@ Only `en_c4_stage2_dc`'s survivor is a *measured* rebuild path; for class (a) th
 upstream answers 200, **not** that the bytes match what the lost build consumed — a mirror can
 serve a different revision. Class (d) is a negative from a whole-disk search on one machine; a
 copy could exist on a host not reachable from here.
+
+### Environment prerequisites the fetch layer depends on (2026-09-20)
+
+Two environment facts decide whether a fetch works, and neither is discoverable from the tree:
+`grep -rn "sys-proxy-rd-relay|http_proxy|https_proxy"` over `*.py *.sh *.json *.md` outside
+`runs/` finds only `scripts/probe_source_urls.py:35` (a `DEFAULT_PROXY` constant) and this file.
+The fetch scripts read the variable; **nothing tracked sets it for them.**
+
+**The proxy. Measured on digest 2026-09-20, `curl -4 -sIL -w '%{http_code}'`:**
+
+| host | without proxy | with `http_proxy`/`https_proxy` |
+|---|---|---|
+| `hf-mirror.com` | **200** | 200 |
+| `www.modelscope.cn` | **200** | 200 |
+| `huggingface.co` | **000** | 200 |
+
+So the proxy is **required for one entry out of three, not for the fetch layer as a whole** — a
+missing proxy removes exactly one arm, silently. That is what makes it dangerous: the symptom is
+not "the fetch broke" but "one candidate host was never tried". A direct CDN hit without the
+proxy is possible on a given machine at a given moment; treat it as a shortcut, never as the rule,
+because the proxy path is the stable one. FQDN `sys-proxy-rd-relay.byted.org:8118` and the short
+name `sys-proxy-rd-relay:8118` both resolve; do not "fix" one into the other.
+
+The right gate, if one is written, is **"all three hosts non-200 AND the proxy unset"** — not
+"the proxy is unset". The latter reds a tree whose fetches currently work.
+
+**The token-cache directory.** `_token_cache_dir()` (`train.py:2123`) resolves
+`AUPAI_TOKEN_CACHE_DIR` → `cache_guard.NVME_CACHE_DIR` if that is a directory → `dirname(TOKEN_CACHE)`.
+On digest the second and third steps both fail: `/mnt` is **not a mount point** there
+(`findmnt /mnt` exits 1, and `/mnt/data02` does not exist at all), so the NVMe premise is a
+pod-era one; and `dirname(TOKEN_CACHE)` is `/data00` itself, owned `tiger:tiger 755` while the
+digest user is `chenkailun.c`, so the first `torch.save` raises `Permission denied`.
+digest must therefore set `AUPAI_TOKEN_CACHE_DIR` explicitly
+(`/data00/home/chenkailun.c/aupai-cimap/token_cache`).
+
+**The cost of setting it: reads must pass the same variable.** `train.py:2309` refuses when the
+directory is configured and a domain's cache leaf is absent, because a configured directory is a
+claim that the caches are in it. **A builder is exempt by parameter, not by marker**:
+`_domain_seqs(..., allow_build=True)` is how `scripts/pretokenize_domains.py` and
+`datagen/pretokenize.py` declare "I am constructing this domain", and they are the only callers
+that pass it. Writing a zero-byte file at the cache path instead **defeats the guard** — a leaf
+`os.path.exists` cannot distinguish from a real cache opens the training path too, which is the
+dropped-mount rebuild the refusal exists to stop (measured 2026-09-20).
+
+**The refusal's own advice points at a lever that does not exist.** It tells the reader to
+"unset `AUPAI_TOKEN_CACHE_DIR` and set `TOKEN_CACHE`", but `train.py:93`
+`TOKEN_CACHE = "/data00/pretrain_1b_tokens.pt"` is a hardcoded literal and **no `environ` read of
+it exists anywhere in the tree**. Following that advice on digest lands on the unwritable
+`/data00` and fails a second time. The message needs the lever it actually has.
 
 ## 3. NL KenLM model (CPU, minutes)
 
