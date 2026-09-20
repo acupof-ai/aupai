@@ -1869,6 +1869,31 @@
   "source": "data/mix_v41_gate.json domains[].epochs_pool_source; facts/corpus_supply.json#cs.v41_gate_token_caches_rebuilt_f1f86097_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l2_dc_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l3_noexec_dc_0911",
   "uncertainty": "starcoder/math/en/cot exact measured, post-dc vs pre-dc drop <=0.19%; ultra L2/L3 exact measured 09-11 aggregates (NOT estimates; supersede stale 59.9B/31.8B once printed in the mix _comment); L2 scheduling vs full-tensor differs by a 1,022-token trailing row; cot_dc source rebuild done but no fingerprint-checked rebuilt packed cache yet, so the packed figure stays the 09-11 399,994,717 and the +0.028% corpus-only report is unconfirmed-basis (see config.cot_status); recorded pod measurements not downgraded by the 0916 byte loss",
   "boundary": "supply upper bound for the within-survivor rebalance only; recorded pod measurements, not a re-verification of destroyed bytes"
- }
+ },
+{
+ "id": "cs.hf_finemath_4plus_pod_fetch_0920",
+ "value": "pod fetch_corpus --source hf_finemath_4plus completed 64/64 parquet, 18,365,184,633 bytes, 0 residual .part, FETCH_RC=0; per-shard bytes+sha256 identical to the digest A-phase copy (deleted after verification)",
+ "measured": "2026-09-20",
+ "status": "measured",
+ "unit": "raw parquet bytes / fetch-reachability facts for HuggingFaceTB/finemath finemath-4plus on the pod (hf-mirror, no proxy, single-stream)",
+ "config": {
+  "repo": "https://hf-mirror.com/datasets/HuggingFaceTB/finemath/resolve/refs%2Fconvert%2Fparquet/finemath-4plus/train/ (64 files 0000..0063.parquet)",
+  "source_fp": "fb963b20be6b7a267b85c96b708f65d709cad8ed (manifest fp; data/raw/hf_finemath_4plus_manifest.txt PR #592, sha256 81cf2e15719063c04d5162b72a534d13320f0b3bd7545b7c31bda39f9f73aad6)",
+  "total_bytes": 18365184633,
+  "n_shards": 64,
+  "identical_copy_verified_by": [
+   "3b: per-shard sha256sum -c over all 64 = 64 OK / 0 FAILED",
+   "0e: aggregate hf_finemath_4plus.sha256.manifest (sorted name+sha256 lines) sha256 b780f16cf3938ff950b02dff1836736728e08ee875403c01d7e43fc47d8e24 identical byte-for-byte between pod and digest copies (one hash over all 64 names and contents)"
+  ],
+  "sustained_rate_single_stream": "18.37 GB / 101.6 min = 3.01 MB/s end-to-end (one shard once hit 18.5 MB/s; single-shard sample, not sustained)",
+  "retry": "4/64 shards (6.3%) transient: 0014/0048/0057 1 outer attempt each, 0050 two (5 attempt events). All 4 succeeded on the SAME hf-mirror host via -C - .part resume after backoff; 0 shards by host failover; fetch_stats serving hosts 64/64 hf-mirror.com. POD run, do not pool with the separate digest run (3.1%, some shards served by huggingface.co)",
+  "single_host": "huggingface.co unreachable from pod (curl exit 1); sys-proxy-rd-relay.byted.org does not resolve in pod DNS (proxy is not a pod option); hf.co no-proxy walled (curl 28). The hf-mirror->huggingface.co mirror chain is decorative on the pod: effectively one host",
+  "ranged_disabled": "_ranged_get size probe is curl -sI WITHOUT -L; hf-mirror 302->xet CDN (cas-bridge.xethub.hf.co) redirect body content-length ~1020 is misread as object size and judged below the 64MB floor, so 64/64 fall back to single-stream (8-way never engages). 1020 is the redirect body, not an error page/parquet; -L follows to PAR1. Fix -sI->-sIL (HEAD + chunk GET) assigned to genA (1a41b8ca); until landed all large fetches are single-stream",
+  "pod_artifacts_not_in_git": "ran on the pod (not a git repo): fetch log, fetch_stats.json, and the .sha256.manifest live only on the pod hostPath under /work/aupai (runs/ and data/raw/hf_finemath_4plus/); the fact gate cannot open them so they are described here, not cited as source paths. The code and manifest that produced the bytes ARE in the tree and cited in source."
+ },
+ "source": "datagen/fetch_corpus.py (hf_finemath_4plus cell; file blob sha256 8aeac4eaf5b729a4746b3fa9d1e86d193a533fe5c7eb670b44980c7db837f88f at fetch time); data/raw/hf_finemath_4plus_manifest.txt (PR #592, 64 names); facts/corpus_supply.json#cs.gate_domains_dc_packed_0911 (the gate domain this source rebuilds). Owner 0e, dispatch bc, 2026-09-20.",
+ "uncertainty": "64 shards exact and two-way sha-verified, fetch result not in doubt. The 3.01 MB/s rate is in doubt as a forecast: the run tail slowed monotonically (last shards ~0.17 MB/s), so the all-run mean is optimistic. retry-resume (4 shards same host) vs host-failover (0) separated for 287G time-cost.",
+ "boundary": "MUST NOT be used as a capacity estimate for L2/L3 287 GB without relabelling: 287 GB / 3.01 MB/s ~= 26 h (~1003 shards at 286 MB/shard) is PURE EXTRAPOLATION, NOT VERIFIED, an optimistic lower bound given the monotonic tail slowdown. Valid only as a single-stream estimate until the -sIL/-sSL ranged fix lands and is re-weighed; replace with a ranged run after."
+}
  ]
 }
