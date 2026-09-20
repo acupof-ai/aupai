@@ -21868,8 +21868,9 @@ def cmd_monitor(argv):
               f"armed on the wrong run writes that run's end row.", file=sys.stderr)
         return 2
     mine = [r for r in rows if str(r.get("started") or "") == a.started]
-    if any(r.get("status") in ("ok", "fail", "retracted") for r in mine):
-        st = next(r.get("status") for r in mine if r.get("status") in ("ok", "fail", "retracted"))
+    if any(r.get("status") in ("ok", "fail", "retracted", "score-blocked") for r in mine):
+        st = next(r.get("status") for r in mine
+                  if r.get("status") in ("ok", "fail", "retracted", "score-blocked"))
         print(f"REFUSING: {a.attach} started {a.started} already has a terminal row ({st}), so a "
               f"monitor would settle and exit on its first pass.", file=sys.stderr)
         return 2
@@ -28347,7 +28348,7 @@ def settled():
                 r = json.loads(line)
                 if r.get("name") != name:
                     continue
-                if r.get("status") not in ("ok", "fail", "retracted"):
+                if r.get("status") not in ("ok", "fail", "retracted", "score-blocked"):
                     continue
                 # (name, started), NOT name alone. Names repeat: a relaunch under the same
                 # name is normal, and on 2026-09-05 the relaunched b0_mem_m1's monitor read
