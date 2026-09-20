@@ -52,6 +52,15 @@ DEFAULT_PROXY = "http://sys-proxy-rd-relay.byted.org:8118"
 _PROBED = {}
 
 
+#: The probe's own prefix, SEPARATE from _CURL_BASE: the probe is a followed HEAD that writes
+#: the status to stdout, while a transfer is a resuming ranged GET writing to a file. They
+#: share only `-4`. Named for the same reason _CURL_BASE is -- check_curl_ipv4 reads this file
+#: LINE BY LINE, so the line holding `curl` must also hold `-4`, and ruff would split a
+#: multi-line collection one token per line (measured 2026-09-20: a line asserting
+#: `argv[0] == "curl"` was refused by the pre-commit hook as "1 curl call(s) without -4").
+_PROBE_HEAD = ("curl", "-4", "-sIL", "-o", "/dev/null", "-w", "%{http_code}")
+
+
 def _proxy_args():
     """["--proxy", url], or [] when AUPAI_FETCH_PROXY is set to the EMPTY string.
 
@@ -100,7 +109,7 @@ def final_status(url, timeout=10):
     instrument. There is no fail-open either way: a non-zero rc is never accepted, so
     302/rc=28 cannot be mistaken for a serving host.
     """
-    argv = ["curl", "-4", "-sIL", "-o", "/dev/null", "-w", "%{http_code}", "-m", str(timeout)]
+    argv = [*_PROBE_HEAD, "-m", str(timeout)]
     argv += _proxy_args()
     try:
         p = subprocess.run(argv + [url], capture_output=True, text=True, timeout=timeout + 5)
@@ -331,6 +340,85 @@ def _selftest():
     # nothing answers: an empty list, not an exception -- callers distinguish fatal from
     # skippable
     assert resolve_hosts("openbmb/UltraData-Code", p, probe({})) == []
+
+    # final_status ITSELF, called directly. EVERY other leg above drives resolve_hosts through
+    # the INJECTED probe=, so none of them touches this function: measured 2026-09-20, folding
+    # its `return code, p.returncode` back to `return code, None` -- and injecting the proxy
+    # twice into its argv -- both left this selftest GREEN. The production code was right and
+    # the regression was invisible, which is the same "instrument nothing can exercise offline"
+    # shape this module's first rework was about. subprocess is stubbed, so no network.
+    class _FakeProc:
+        def __init__(self, out, rc):
+            self.stdout, self.returncode = out, rc
+
+    real_run = subprocess.run
+    captured = []
+
+    def _stub(out, rc, raises=None):
+        def _run(argv, *a, **k):
+            captured.append(argv)
+            if raises:
+                raise raises
+            return _FakeProc(out, rc)
+
+        return _run
+
+    try:
+        # (1) rc 28 with a 302 stdout: the pair must come back WHOLE, not collapsed
+        subprocess.run = _stub("302\n", 28)
+        assert final_status("https://x/y") == (302, 28), (
+            "final_status must return (code, rc); folding rc into the status is the defect"
+        )
+        argv = captured[-1]
+        # (2) the argv it actually builds, asserted against LITERALS, not against _PROBE_HEAD.
+        # Comparing to the constant would be a tautology: mutating the constant moves both
+        # sides and the assertion stays green (measured 2026-09-20 -- dropping -4 or the -L
+        # from _PROBE_HEAD each left the selftest passing). The literals below are the fixed
+        # contract: -4 for the broken IPv6 egress, -sIL so a 302 is FOLLOWED (a status-line
+        # probe calls a serving mirror down), stdlib headless output, and the proxy once.
+        # Written so each line carrying a curl invocation token also carries -4: the repo's
+        # check_curl_ipv4 is a textual, per-line scan and refuses the word curl without it.
+        assert argv[0] == "curl" and "-4" in argv, argv
+        # The short flags are BUNDLED as one token, so assert the token, not the letters.
+        # `"-s" in argv` is False against the real argv (measured 2026-09-20) -- curl accepts
+        # -sIL as a group, and asserting the individual letters tests a spelling the code does
+        # not use. -L is the load-bearing half: without it a 302 is read as the final status.
+        assert "-sIL" in argv, f"the probe must follow a redirect: {argv}"
+        assert argv.count("--proxy") == 1, f"proxy injected {argv.count('--proxy')} times: {argv}"
+        assert argv[argv.index("--proxy") + 1] == DEFAULT_PROXY, argv
+        # The url is last and the timeout is present with its value. NOT `argv[-2] == "-m"`:
+        # the proxy flags are appended AFTER -m, so -m is not second-to-last (measured
+        # 2026-09-20 -- that assertion failed on the correct argv, which made every mutant in
+        # the sweep read RED for this reason alone and proved nothing).
+        assert argv[-1] == "https://x/y", argv
+        assert argv[argv.index("-m") + 1] == "10", f"the timeout must take its bound: {argv}"
+        # (3) a non-numeric stdout is None, NOT a crash and NOT 0 (a 0 would read as success)
+        subprocess.run = _stub("", 7)
+        assert final_status("https://x/y") == (None, 7), "empty stdout -> None code, rc kept"
+        subprocess.run = _stub("garbage\n", 0)
+        assert final_status("https://x/y") == (None, 0), "non-digit stdout must not parse"
+        # (4) curl cannot run at all: (None, None), and no exception escapes
+        subprocess.run = _stub("", 0, raises=OSError("no curl"))
+        assert final_status("https://x/y") == (None, None), "a missing curl is (None, None)"
+        subprocess.run = _stub("", 0, raises=subprocess.SubprocessError("boom"))
+        assert final_status("https://x/y") == (None, None), "a subprocess error is (None, None)"
+        # (5) the direct arm drops the flag HERE TOO -- the probe and the transfer must agree.
+        # The env change is scoped to its own try/finally: setting it here and leaving it would
+        # hand the egress leg below a world it did not set up, so that leg would pass for the
+        # wrong reason (its own `prior` would already read "").
+        _prior_probe = os.environ.get("AUPAI_FETCH_PROXY")
+        try:
+            os.environ["AUPAI_FETCH_PROXY"] = ""
+            subprocess.run = _stub("200\n", 0)
+            assert final_status("https://x/y") == (200, 0)
+            assert "--proxy" not in captured[-1], f"direct probe kept the flag: {captured[-1]}"
+        finally:
+            if _prior_probe is None:
+                os.environ.pop("AUPAI_FETCH_PROXY", None)
+            else:
+                os.environ["AUPAI_FETCH_PROXY"] = _prior_probe
+    finally:
+        subprocess.run = real_run
 
     # THE EGRESS SETTING IS TWO DISTINCT STATES, and the direct one must DROP the flag
     # (curl errors on `--proxy ""`). Measured 2026-09-20: huggingface.co serves 200 through the
