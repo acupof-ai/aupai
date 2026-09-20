@@ -463,6 +463,9 @@ which is the finding. Always set it.**
 | 12 samples, `-m 10` | HEAD (`-sIL`) | **2/12** (9 × `000` timeout, 1 × `302`) | **12/12** |
 | 8 samples, three connect-timeouts | HEAD (`-sIL`) | **6/8** (failures at the CDN hop: `cas-bridge.xethub.hf.co` 8 s timeout; once 120 s / 0 bytes) | 3/3, 1.0–1.8 s |
 | 8 samples, interleaved with the row above | HEAD / GET+Range | HEAD **2/8** → `200`; GET+Range **1/8** → `206`; the failures coincide rep for rep | HEAD 4/4 → `200`; GET+Range 4/4 → `206` |
+| 10 samples, `code\|redirects\|rc` | HEAD | **7/10** → `200`, `nredirects=1`, `rc=0`; the 3 failures split `000`/`rc=28` and one `302`/`nredirects=1`/`rc=28` | — |
+| 12 samples | HEAD | **11/12** | — |
+| 12 samples | HEAD | **5/12** once the three `rc=28` were read as failures (`8/12` counts them as passes) | — |
 | 3 samples | HEAD | 3/3 | — |
 | 4 samples | GET + Range | 0/4 | — |
 
@@ -477,9 +480,27 @@ HEAD asks the server for headers at the final hop; `-sL -r 0-7` asks it for byte
 availability — the failures coincide rep for rep in the interleaved row — but **they do not return
 the same success code**: HEAD answers **`200`**, GET+Range answers **`206`**. A predicate that
 accepts only one of them reports a healthy arm as `0/N` and writes a working mirror down as
-unreachable. **The success set is `{200, 206}`; `302` is not in it** (it means the redirect was
-not followed). Every row above therefore carries its probe, and any rate compared across rows
-must be compared between probes of the same shape.
+unreachable.
+
+**And the success criterion is not only a set of codes: `curl`'s own exit status must be in it.**
+A follow that times out at the CDN reports **`302`** — the last code curl saw — which is exactly
+what an *unfollowed* `302` looks like if you print only `%{http_code}`. The two are told apart by
+`rc` and `%{num_redirects}`, measured in one window:
+
+| shape | `http_code` | `num_redirects` | `curl rc` | meaning |
+|---|---|---|---|---|
+| followed, then CDN timeout | `302` | 1 | **28** | **failure** |
+| never followed (no `-L`) | `302` | 0 | **0** | not a statement about the host |
+| success | `200` | 1 | **0** | served |
+
+**So success is `code ∈ {200, 206}` AND `rc = 0`; `302` and `000` are never successes.** A
+predicate carrying only the code scores a timed-out redirect-follow as a pass — **fail-open, the
+worst direction**, because it converts a dead arm into a silent one. Reading the three `rc=28`
+correctly moved one of these rates from `8/12` to `5/12`.
+
+**The rate is also not stable across windows.** `hf-mirror` without a proxy, same host same day:
+**11/12, 5/12, 2/12, 2/8** in four windows. Publish the readings with their windows and their
+probe shape, never a point estimate — the spread is the finding, not the mean.
 
 That matters beyond this table: `_ot3_probe_ok`'s own comment records the first-status-line
 version of the same mistake, and a gate built on `== 200` alone would false-red a mirror that is
@@ -516,9 +537,11 @@ With the proxy, these hosts answer 200 or 206 reliably — so if the *with-proxy
 fails, the instrument is broken, not the host. That turns an instrument fault into its own alarm
 instead of a data point, which is worth more than any single rate in the table above.
 
-The right gate, if one is written, is **"no host answered in `{200, 206}` AND the proxy unset"** —
-not "the proxy is unset", which reds a tree whose fetches currently work, and not "no host returned
-`200`", which reds a healthy HEAD-probed mirror that answers **206**.
+The right gate, if one is written, is **"no host returned `{200, 206}` **with `rc=0`**, and the
+proxy is unset"** — not three other things it is easy to write instead: "the proxy is unset" reds a
+tree whose fetches currently work; "no host returned `200`" reds a healthy HEAD-probed mirror that
+answers `206`; and a predicate carrying only the code, with no `rc`, scores a redirect that timed
+out as a pass.
 
 **The token-cache directory.** `_token_cache_dir()` (`train.py:2123`) resolves
 `AUPAI_TOKEN_CACHE_DIR` → `cache_guard.NVME_CACHE_DIR` if that is a directory → `dirname(TOKEN_CACHE)`.
