@@ -455,20 +455,36 @@ Two environment facts decide whether a fetch works, and neither is discoverable 
 `runs/` finds only `scripts/probe_source_urls.py:35` (a `DEFAULT_PROXY` constant) and this file.
 The fetch scripts read the variable; **nothing tracked sets it for them.**
 
-**The proxy. Measured on digest 2026-09-20, `curl -4 -sIL -w '%{http_code}'`:**
+**The proxy. Measured on digest 2026-09-20, `curl -4 -sIL -w '%{http_code}' -m 10`, 12 samples
+per cell — a single probe is not a measurement here:**
 
 | host | without proxy | with `http_proxy`/`https_proxy` |
 |---|---|---|
-| `hf-mirror.com` | **200** | 200 |
-| `www.modelscope.cn` | **200** | 200 |
-| `huggingface.co` | **000** | 200 |
+| `hf-mirror.com` | **2/12** (9 × `000` timeout at 10 s, 1 × `302`) | **12/12** |
+| `www.modelscope.cn` | **12/12** | 12/12 |
+| `huggingface.co` | **0/12** (`000`) | 12/12 |
 
-So the proxy is **required for one entry out of three, not for the fetch layer as a whole** — a
-missing proxy removes exactly one arm, silently. That is what makes it dangerous: the symptom is
-not "the fetch broke" but "one candidate host was never tried". A direct CDN hit without the
-proxy is possible on a given machine at a given moment; treat it as a shortcut, never as the rule,
-because the proxy path is the stable one. FQDN `sys-proxy-rd-relay.byted.org:8118` and the short
-name `sys-proxy-rd-relay:8118` both resolve; do not "fix" one into the other.
+Two readings of this table existed before it was sampled, and **both were wrong**, which is the
+reason the method is written down here:
+
+- A single 3-sample run read `hf-mirror` as **3/3 without proxy** and nearly fixed "the proxy is
+  required for one host of three" into the doc. At 12 samples it is **2/12** — the three
+  successes were luck, and that sentence would have had a reader set no proxy, watch
+  `hf-mirror` time out, and trust the doc over their terminal.
+- The opposite single reading, **4/4 `000` without proxy**, is equally wrong in the other
+  direction: it would send the next person to set a proxy to fix a host that intermittently
+  works, and to distrust a working ambient setup.
+
+**So: the proxy is required for `huggingface.co` outright, and for `hf-mirror` it converts an
+intermittent host into a reliable one — 2/12 to 12/12 is not a small effect, and an intermittent
+arm is worse than a dead one, because it fails only sometimes.** `modelscope` is reliable either
+way. The per-host rates above are what belongs in a plan; "needs a proxy" / "does not need a
+proxy" as a property of the fetch layer is not a thing this measurement supports.
+
+A direct CDN hit without the proxy is possible on a given machine at a given moment; treat it as
+a shortcut, never as the rule, because the proxy path is the stable one. FQDN
+`sys-proxy-rd-relay.byted.org:8118` and the short name `sys-proxy-rd-relay:8118` both resolve; do
+not "fix" one into the other.
 
 The right gate, if one is written, is **"all three hosts non-200 AND the proxy unset"** — not
 "the proxy is unset". The latter reds a tree whose fetches currently work.
