@@ -455,34 +455,39 @@ Two environment facts decide whether a fetch works, and neither is discoverable 
 `runs/` finds only `scripts/probe_source_urls.py:35` (a `DEFAULT_PROXY` constant) and this file.
 The fetch scripts read the variable; **nothing tracked sets it for them.**
 
-**The proxy. Measured on digest 2026-09-20, `curl -4 -sIL -w '%{http_code}' -m 10`, 12 samples
-per cell — a single probe is not a measurement here:**
+**The proxy. Three independent samples of the same host, same machine, same window, disagreeing —
+which is the finding. Always set it.**
 
-| host | without proxy | with `http_proxy`/`https_proxy` |
+| reading | `hf-mirror.com` without proxy | with proxy |
 |---|---|---|
-| `hf-mirror.com` | **2/12** (9 × `000` timeout at 10 s, 1 × `302`) | **12/12** |
-| `www.modelscope.cn` | **12/12** | 12/12 |
-| `huggingface.co` | **0/12** (`000`) | 12/12 |
+| 12 samples, `-m 10` | **2/12** (9 × `000` timeout, 1 × `302`) | **12/12** |
+| 8 samples, three connect-timeouts | **6/8** (failures at the CDN hop: `cas-bridge.xethub.hf.co` 8 s timeout; once 120 s / 0 bytes) | 3/3, 1.0–1.8 s |
+| 3 samples | 3/3 | — |
+| 4 samples | 0/4 | — |
 
-Two readings of this table existed before it was sampled, and **both were wrong**, which is the
-reason the method is written down here:
+The last two rows are the readings that contested each other before anyone sampled. **Both are
+real**: they are draws from one intermittent population, and the rate moved from 2/12 to 6/8 with
+nothing changed but the moment. So no single probe answers "does this host need the proxy", in
+either direction — and this is exactly what `_ot3_probe_ok`'s failover rests on. **A probe proves
+the host answered *this* time, not that it will hold for a multi-minute fetch.**
 
-- A single 3-sample run read `hf-mirror` as **3/3 without proxy** and nearly fixed "the proxy is
-  required for one host of three" into the doc. At 12 samples it is **2/12** — the three
-  successes were luck, and that sentence would have had a reader set no proxy, watch
-  `hf-mirror` time out, and trust the doc over their terminal.
-- The opposite single reading, **4/4 `000` without proxy**, is equally wrong in the other
-  direction: it would send the next person to set a proxy to fix a host that intermittently
-  works, and to distrust a working ambient setup.
+| host | without proxy | with proxy |
+|---|---|---|
+| `www.modelscope.cn` | 12/12 | 12/12 |
+| `huggingface.co` | 0/12 (`000`) | 12/12 |
 
-**So: the proxy is required for `huggingface.co` outright, and for `hf-mirror` it converts an
-intermittent host into a reliable one — 2/12 to 12/12 is not a small effect, and an intermittent
-arm is worse than a dead one, because it fails only sometimes.** `modelscope` is reliable either
-way. The per-host rates above are what belongs in a plan; "needs a proxy" / "does not need a
-proxy" as a property of the fetch layer is not a thing this measurement supports.
+**Rule: set the proxy, always.** It is required outright for `huggingface.co`, it is faster by an
+order of magnitude on `hf-mirror` (1.0–1.8 s vs a host that sometimes answers), and it is
+harmless for `modelscope`. **An intermittent arm is worse than a dead one**: a dead host gets
+failed over, while an intermittent one passes the probe and then dies mid-transfer — the failure
+lands hours into a fetch, not at its start.
 
-A direct CDN hit without the proxy is possible on a given machine at a given moment; treat it as
-a shortcut, never as the rule, because the proxy path is the stable one. FQDN
+The renderer must keep printing **which host was tried and what it answered** rather than a bare
+"no host available": with rates like these, the per-host status is the only evidence that says
+whether the box could not reach out or the source was gone.
+
+No hidden proxy is doing this work: `~/.curlrc` and `/etc/curlrc` do not exist, `/etc/wgetrc`'s
+proxy lines are all commented, and the shell variables were confirmed unset. FQDN
 `sys-proxy-rd-relay.byted.org:8118` and the short name `sys-proxy-rd-relay:8118` both resolve; do
 not "fix" one into the other.
 
