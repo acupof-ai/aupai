@@ -25769,12 +25769,14 @@ def _selftest_id_allocation_sees_every_ref():
     ], p)
     g("add", "-A"); g("commit", "-q", "-m", "rows whose ids are bare numbers")
     ints = _ids_at_every_ref("own", root=d)
+    # THE MUTATIONS for this leg live in the equality, not below it. Two variants do not
+    # raise and lose a real allocation -- `continue` (ignore) and `str(rid or "")` (the
+    # first proposal, which makes "47" match no `<owner>-(\d+)$`): both produce {7, 8}, so
+    # a criterion of "does not raise" would pass them. Only a set equality separates them
+    # from the fix, which is why the assertion above is `==` and not an absence of
+    # exceptions. (genA, 2026-09-21: the first version of this leg followed that line with
+    # `assert 47 not in {7, 8}` -- a constant, true at parse time, judging nothing.)
     assert ints == {7, 8, 47}, f"an int id of THIS owner must be counted, another's must not: {ints}"
-
-    # THE MUTATION for this leg: the ignore-variant. It does not raise, so a criterion of
-    # "does not raise" would pass it -- and it loses a real allocation. This is why the
-    # assertion above is a set equality, not an absence of exceptions.
-    assert 47 not in {7, 8}, "the ignore-variant would produce this set; the fix must not"
 
     shutil.rmtree(d, ignore_errors=True)
     print("  ids: an unmerged peer allocation at another ref is seen (own-9, not own-8); the "
