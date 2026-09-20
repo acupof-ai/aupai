@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -28,6 +29,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SEEDS = ROOT / "data/topic_seeds/cs_v1/topic_seeds_cs.jsonl"
 OUTDIR = ROOT / "data/corpus/textbooks_v41"
+
+# These rows use the "text" key (raw generation), not the "content" key train.py's
+# _jsonl_content reads. train's SHARD_RE treats any *_<digits>.jsonl under data/corpus/ as
+# a training shard, so a raw dump ending "_NNNN.jsonl" passes the name gate and dies on
+# KeyError at tokenize time (the shard_contract failure on textbooks_claude_v41,
+# 2026-09-20). The "raw" suffix keeps these out of SHARD_RE while staying a .jsonl the
+# resume scan and the textbook builder glob still read.
+TRAIN_SHARD_RE = re.compile(r"_\d{3,}\.jsonl$")
+
+
+def shard_fname(shard, idx):
+    name = f"textbooks_s{shard:02d}_{idx:04d}raw.jsonl"
+    assert not TRAIN_SHARD_RE.search(name), name
+    return name
+
 SEEDS_SHA256 = "76c3552f48998695fede0196b54a71fc6dc1463181681f4fd5986c04adeac26b"
 SEEDS_RECOVERY = (
     "~/aupai-keep/topic_seeds_cs_v1/topic_seeds_cs.jsonl "
@@ -204,6 +220,16 @@ def _selftest():
 
     ran, skipped = [], []
 
+    # Raw textbook rows use the "text" key, so their file names must not match train's
+    # shard pattern (the shard_contract failure on textbooks_claude_v41). The new name
+    # escapes SHARD_RE but stays a .jsonl the resume scan and builder glob still read;
+    # the old name is the mutation that must be rejected.
+    new_name = shard_fname(2, 7)
+    assert new_name.endswith(".jsonl") and new_name.startswith("textbooks_s02_")
+    assert not TRAIN_SHARD_RE.search(new_name), new_name
+    assert TRAIN_SHARD_RE.search("textbooks_s02_0007.jsonl"), "old raw name must match SHARD_RE"
+    ran.append("raw shard name escapes train SHARD_RE but keeps builder/resume globs")
+
     with tempfile.TemporaryDirectory() as td:
         td = Path(td)
 
@@ -344,7 +370,7 @@ def main():
 
     shard_idx = len([f for f in OUTDIR.iterdir()
                      if f.name.endswith(".jsonl") and f.name.startswith(f"textbooks_s{args.shard:02d}_")])
-    fout = (OUTDIR / f"textbooks_s{args.shard:02d}_{shard_idx:04d}.jsonl").open(
+    fout = (OUTDIR / shard_fname(args.shard, shard_idx)).open(
         "a", encoding="utf-8")
     in_shard = 0
     ok = err = 0
@@ -369,7 +395,7 @@ def main():
                     fout.close()
                     shard_idx += 1
                     in_shard = 0
-                    fout = (OUTDIR / f"textbooks_s{args.shard:02d}_{shard_idx:04d}.jsonl").open(
+                    fout = (OUTDIR / shard_fname(args.shard, shard_idx)).open(
                         "a", encoding="utf-8")
             else:
                 err += 1
