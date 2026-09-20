@@ -2209,13 +2209,21 @@ def val_split_n(name, n_rows, mix):
     return min(max(1, int(n_rows * Cfg.val_frac)), Cfg.val_rows_max)
 
 
-def _domain_seqs(domain, tok, is_main, ddp, workers=1):
+def _domain_seqs(domain, tok, is_main, ddp, workers=1, allow_build=False):
     """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, [N, seq+1].
 
     Reused only while newer than every shard, carrying the same vocabulary fingerprint, AND
     carrying the source directory's corpus fingerprint (.srcfp): the 2026-08-30 swap rebuilt
     the cache from a different corpus and reused it with nothing raising, because mtime and
-    vocab both matched. A stale source fingerprint retokenizes, same as a stale vocabulary."""
+    vocab both matched. A stale source fingerprint retokenizes, same as a stale vocabulary.
+
+    allow_build names the caller's intent for the configured-cache-dir refusal below: a
+    BUILDER constructing a domain for the first time is the one caller that legitimately
+    finds the leaf absent. Same shape as _assert_mix_domains(..., allow_drift=False). It is
+    a parameter and not a marker file because a leaf that the guard cannot see is a leaf
+    that also fails to trip the guard on the training path -- measured 2026-09-20: a
+    zero-byte leaf present at the cache path made the refusal NOT fire and the run went
+    straight to tokenizing, which is the dropped-mount rebuild the refusal exists to stop."""
     cache = _domain_cache_path(domain)
     stamp = cache + ".vocab"
     srcfp = cache + ".srcfp"
@@ -2306,7 +2314,7 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
         # (AGENTS.md, "missing identity refuses, never rebuilds"). The refusal is scoped to a
         # CONFIGURED dir -- with the variable unset the default path is this repo's own history and a
         # first-ever tokenize must still work, which is why this is not a blanket refusal.
-        if os.environ.get("AUPAI_TOKEN_CACHE_DIR") and not os.path.exists(cache):
+        if os.environ.get("AUPAI_TOKEN_CACHE_DIR") and not os.path.exists(cache) and not allow_build:
             raise RuntimeError(
                 f"refusing to retokenize {domain}: AUPAI_TOKEN_CACHE_DIR is set to "
                 f"{_token_cache_dir()} and {cache} is ABSENT. A configured cache directory is a "
