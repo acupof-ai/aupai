@@ -497,6 +497,17 @@ dropped-mount rebuild the refusal exists to stop (measured 2026-09-20).
 it exists anywhere in the tree**. Following that advice on digest lands on the unwritable
 `/data00` and fails a second time. The message needs the lever it actually has.
 
+**The name lists are not in the repo either, and that is the same defect class.** Ten
+`<source>_manifest.txt` files are read by `datagen/fetch_corpus.py`'s manifest functions, and
+`data/raw/` is in `.gitignore:43`, so on a fresh machine every one of them is simply absent —
+the fetcher has a registered path to a source it cannot name. Exactly one was tracked before this
+round, `data/raw/rp1t_github_manifest.txt`, and it is tracked because someone force-added it; the
+`hf_finemath_4plus` list rebuilt in this round is the second. Each remaining source needs the
+same `git add -f`, one verification at a time. A name list is authored text, not the fetched
+bytes gitignore is protecting, and the cost of leaving them out is a fetch that cannot start on a
+machine that does not already have them — the same shape as a tree that does not contain its own
+entry points.
+
 ## 3. NL KenLM model (CPU, minutes)
 
 ```bash
