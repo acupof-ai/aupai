@@ -2787,18 +2787,55 @@ CI_SELFTEST_EXCLUDE = {
 
 
 def _ci_explicit_paths(ci_src):
-    """Repo-relative selftest paths invoked by an explicit `- run:` line in ci.yml.
+    """Repo-relative selftest paths invoked by an explicit step in ci.yml.
 
     These are COVERED in CI by their dedicated step (often heavier: v41f suites,
     harness --selftest). The enumerating driver must not re-run them (double run + timeout);
     they are a subset of covered, never an uncovered fourth bucket.
+
+    NOT pyyaml. It parses YAML correctly and is NOT installed in the CI image (ci.yml:16
+    installs ruff tokenizers numpy pytest scipy detect-secrets transformers; no pyyaml), so
+    `import yaml` would pass on a laptop and turn this check into a traceback on the runner.
+    A textual scan is the right tool here anyway: this reads a file, it does not validate one.
+
+    THE MATCH IS PER-STEP, NOT PER-LINE, and that is the fix (de, 2026-09-19). The version
+    before it required `- run:` on ONE line:
+        re.finditer(r"-\\s*run:\\s*(.+)$", ci_src, re.M)
+    A step written in the multi-key form puts `- name:` first and `run:` LAST, on its own
+    line, so the regex never saw it:
+        - name: train checkpoint gates
+          id: train_ckpt
+          env: {GATE_DUMP_DIR: ...}
+          run: python tests/v41f/test_p1_train_ckpt.py
+    Measured: tests/v41f/test_p1_train_ckpt.py was therefore never in the explicit bucket, so
+    `harness ci-selftests` re-ran it inside the driver for another 222s at the end of every
+    check job -- the single most expensive duplicate in the step, and invisible because the
+    file *looks* like it has a dedicated CI step.
+
+    The docstring always said "invoked by an explicit step"; the implementation said "invoked
+    on a `- run:` line". Those differ exactly when a step has a name, an id or an env, which
+    is when the step is doing something worth keeping -- and ci.yml:49-56 keys the
+    resume-equality dump upload on `steps.train_ckpt.outcome`, so the tempting fix (delete
+    the step, let the driver own it) would have silently removed the diagnostic dump taken
+    when that gate goes red. Fix the predicate, not the artifact.
+
+    Steps are found by the `- ` list marker at a consistent indent, then every line of the
+    step body is scanned, so `run:` may sit at any position within the step.
     """
     explicit = set()
-    for m in re.finditer(r"-\s*run:\s*(.+)$", ci_src, re.M):
-        for cand in re.findall(r"[\w./-]+\.(?:py|sh)", m.group(1)):
-            cand = cand.lstrip("./")
-            if "/" in cand and cand.endswith((".py", ".sh")):
-                explicit.add(cand)
+    # Split on the step marker; each chunk is one step's body. `^\s*- ` also matches the
+    # nesting inside `with:`/`strategy:` lists, but those chunks simply hold no `run:`, so
+    # they contribute nothing rather than a false positive.
+    for chunk in re.split(r"^\s*-\s", ci_src, flags=re.M)[1:]:
+        if not re.search(r"^\s*run:", chunk, re.M):
+            continue
+        for line in chunk.splitlines():
+            if not re.match(r"^\s*run:", line):
+                continue
+            for cand in re.findall(r"[\w./-]+\.(?:py|sh)", line):
+                cand = cand.lstrip("./")
+                if "/" in cand and cand.endswith((".py", ".sh")):
+                    explicit.add(cand)
     return explicit
 
 

@@ -1,0 +1,133 @@
+
+*****************************************
+Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+*****************************************
+corpus_fp: {'sample': '18286150490dbe3a'}
+cache read: 5 MiB (0.00 GiB) over 1 cache(s)
+     0.00 GiB  sample
+/usr/local/lib/python3.12/dist-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+[rank0]:[W920 12:10:42.610078417 ProcessGroupNCCL.cpp:5188] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+mix: sample 219 rows = 0.77 epochs
+mix: 219 rows = 0.00B tokens scheduled
+FP8 compute enabled
+params 3209.4M | tokens 109 | seqs 109 | device cuda:0 | world 2 | fa True | fp8 True
+cfg batch 4 accum 4 seq 4096 grad_ckpt False doc_mask True attn_res False/0 softcap 15.0 warmup 20 epochs 1 lr_scale 1.0 mix data/mix_sample.json fone False seed 42 sample_seed 42 (follows seed) warmdown 0.65 anneal_frac 0.0 val_every 500 attn_every 1
+cfg non-default: accum=4, anneal_frac=0.0, attn_every=1, attn_res=False, batch=4, csa=True, csa2=True, csa2_win_flash=True, ffn_hidden=6912, mix='data/mix_sample.json', moe_arm='v41peak', moe_expert_ffn=1728, moe_experts=48, rope_dims=64
+[rank0]:W0920 12:11:07.792000 70820 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank1]:W0920 12:11:07.997000 70821 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 3062, in forward
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2977, in _body
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2549, in forward
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1450, in forward
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 909, in forward
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 995, in _forward_csa2
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 384, in entries_per_doc
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 318, in _doc_blocks
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank0]:W0920 12:11:08.590000 70820 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 3062, in forward
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2977, in _body
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2549, in forward
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1450, in forward
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 909, in forward
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 995, in _forward_csa2
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 384, in entries_per_doc
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 318, in _doc_blocks
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank1]:W0920 12:11:08.776000 70821 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'interface.py:424'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 424, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+    arch = _get_device_arch() if _arch is None else _arch
+
+  torch._dynamo.utils.warn_once(msg)
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2202: UserWarning: Dynamo detected a call to a `functools.lru_cache`-wrapped function at 'interface.py:424'. Dynamo ignores the cache wrapper and directly traces the wrapped function. Silent incorrectness is only a *potential* risk, not something we have observed. Enable TORCH_LOGS=+dynamo for a DEBUG stack trace.
+
+This call originates from:
+  File "/usr/local/lib/python3.12/dist-packages/flash_attn/cute/interface.py", line 424, in torch_dynamo_resume_in__flash_attn_fwd_at_406
+    arch = _get_device_arch() if _arch is None else _arch
+
+  torch._dynamo.utils.warn_once(msg)
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.DLTensorWrapper.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.DLTensorWrapper.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `sys._getframe.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.BF16Type.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.IntegerType.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.OpView.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `sys._getframe.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.BF16Type.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.IntegerType.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `<unknown module>.OpView.__new__.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+ep 1/1 train 0.000 val 4.479 99s
+saved /work/aupai/ckpt_v41_peak_0920.pt
+/work/aupai/runs/v41_peak_0920.log: no curves found
