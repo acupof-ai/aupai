@@ -1565,9 +1565,9 @@ Rule: when a ref or a ledger loses content, establish what was lost by **set mem
 
 Cost: one repo-wide commit freeze for the window between the sideways move and #625 landing, ~120 minutes (`runs/friction.jsonl`, `d8ef1711`). Three review rows absent from `main` for that window, during which #624 read as unreviewed. A fourth ref write escaped the guard entirely.
 
-Step timings from the run that carried the fix are bimodal, and **a whole-set central measure here has no subject**. A median of a bimodal set measures the gap between its modes, and so does any other centre: over all branches the mean is 459.9 s, and over `main` only, one entry per run, it is 313.8 s -- **both land inside the void 56..728 s where no observation exists in any window queried**. (Those two differ because they are different populations, not because they are wrong: the same computation on the same population reproduces exactly.) What the section states is therefore only what does not move with the population or the window: the void, and the class rule. Cluster centres are stable and are given per cluster rather than for the set: every-branch fast 43.5 s / slow 754 s, main-only fast 45.0 s / slow 754.5 s, each on its own `n`. Anyone quoting a whole-set rate or centre for this step must state population, window and as-of together.
+Step timings from the run that carried the fix are bimodal, and **a whole-set central measure here has no subject**. A median of a bimodal set measures the gap between its modes, and so does any other centre: over the 31 runs in the table below the mean is 459.9 s, and the median 734 s -- **both land inside the empty 50..730 s interval, where no observation in the table exists**. What the section states is therefore only what does not move: the empty interval, and the class rule. Cluster centres are stable and are given per cluster -- this table's fast cluster is 33-50 s (n=14, median 43.5) and its slow cluster 730-1031 s (n=17, median 754). **The exact endpoints of the empty interval move with the population, so the interval is the finding and the integers are not**: 50..730 for the 31 rows printed here, and a ~670 s void across the other populations checked. A whole-set rate or centre for this step must state population, window and as-of together, and successive pulls of the *same* labelled window have returned different medians -- the window label alone is not a specification.
 
-Pooled over every run carrying step 17, any branch, any event (`startedAt -> completedAt`, the runs API):
+Pooled over every run carrying step 17, any branch, any event that this table was built from (`startedAt -> completedAt`, the runs API, 31 successful runs; the population is named here rather than implied):
 
 | fast cluster | slow cluster |
 |---|---|
@@ -1589,7 +1589,7 @@ Pooled over every run carrying step 17, any branch, any event (`startedAt -> com
 | | 35584847491/a3 1016 s |
 | | 35576363690/a1 1031 s |
 
-The fast cluster runs 33-56 s and the slow one 728-1031 s with **nothing between 56 and 728** in any window queried. That void is the finding: the bimodality is a property of the runner, not a tail of one distribution, and it is what survives changing the population, the branch and the window.
+The fast cluster in this table runs 33-50 s and the slow one 730-1031 s, with **no entry between 50 and 730**. That empty interval is the finding: the bimodality is a property of the runner, not a tail of one distribution, and unlike a centre it survives changing the population and the window -- the interval's width is what holds (~670 s), while its exact endpoints move with which runs are included.
 
 **Within either cluster, a number of seconds is not the class.** 736 s appears twice in the pooled set -- as the cancelled attempt 35584847491/a1, and as a completed SUCCESSFUL step, 35591857451/a1 -- and sits 4 s from the successful 740 s. What separates them is `conclusion`, not the duration, so these timings are only readable with their event type attached; classified by seconds alone the two are indistinguishable.
 
