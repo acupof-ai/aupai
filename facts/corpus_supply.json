@@ -1988,6 +1988,41 @@
    "uncertainty": "The count of non-matching domains is exact for the two machines read here and is NOT a statement about any other tree: the mix values were read from the 8-domain revision still present on digest, while origin/main carries the 6-domain rebalance (#abfb6508) with the same fingerprint strings for the surviving domains, so the mismatch is not an artifact of the mix revision. Domains with no directory on either machine are recorded as absent rather than as matching or mismatching -- a comparison that did not run is not a comparison that passed. No value here is extrapolated: all three comparisons were computed with the production fp_dir, not by hand.",
    "boundary": "Answers 'is the mix json's inline fingerprint a live guard' (no, for this mix: train.py does not read it and the gate that does is waived), and gives the measured mismatch for every domain that has bytes to compare. Does NOT say the corpora are wrong -- in all three comparable domains the dir's own stamp equals its live bytes, which is the invariant train.py enforces at launch. Does NOT date when each inline value went stale, and does NOT cover the two domains whose directories do not exist yet (code_ultra_l2_dc, code_ultra_l3_noexec_dc) or the two dropped by the 2026-09-19 rebalance. Does NOT establish that any other mix file carries stale inline fields; mix_v41_r2/r3 and the older ladder mixes were not read.",
    "status": "measured"
+  },
+  {
+   "id": "cs.en_c4_stage2_dc_landed_0921",
+   "value": "5,783,727,841 exact document tokens in the rebuilt en_c4_stage2_dc domain (242 shards, 11,309,604 docs), counted full-population by scripts/count_dir.py under the train.py convention (per-doc len(encode(content).ids) + 1 <eos>). The SOURCE domain's stamp value is 5,779,033,864 and is EXTRAPOLATED, not measured (tokens_status='extrapolated: 3/242-shard sample, by bytes'); the same stamp separately carries kept_tokens=16,338,485,650, which is a chars/1.5 estimate and is 2.82x this measured value, so quoting it would overstate the domain by nearly 3x. The _dc domain is a SUBSET of its source (decontam dropped 18 of 11,309,622 rows, 1.59e-06), so the subset's measured 5,783,727,841 bounds the parent's true value from below and the source's extrapolation understates it by at least 4,693,977 tokens (0.0812%). THAT PERCENTAGE IS THE POINT OF THIS ENTRY: the same 3-of-242 by-bytes extrapolation, applied by the same builder, understates code by 0.41% (cs.code_py_starcoder_dc_landed_0921) and English web text by 0.0812% here -- a five-fold spread between two domains of one corpus, from one estimator. 'Extrapolation is not measurement' is therefore not a uniform correction that can be applied once; its size is a property of the domain's byte-to-token ratio, so a value carried across domains is a different fact (see the threshold-comparability rule: a threshold's comparability is set by the set it acts on, not by its name).",
+   "unit": "exact new-vocab document tokens (per-doc len(encode(content).ids)+1), post 13-gram decontam vs HumanEval+MBPP",
+   "measured": "2026-09-21",
+   "source": "pod container /work/aupai, 2026-09-21: scripts/count_dir.py data/corpus/en_c4_stage2_dc 24 -> /work/aupai/runs/count_en_c4_stage2_dc.json (242 shards, docs 11,309,604, bytes 25,323,227,281, tokens 5,783,727,841, packed_rows 1,411,698, fingerprint 15caa8587b64e20f, wall_s 212.7, full population, no sampling). The _dc stamp is data/corpus/en_c4_stage2_dc/build_corpus_stats.json (scripts/filter_gate_domains.py, 13-token containment against the two benchmark files it names in its own HUMANEVAL_REL / MBPP_REL constants; the byte content of those two files is carried as data by decontam_fp 302aa793f7067462, which hashes the decontam module together with them, so this entry cites no data/eval artifact and depends on none). The source stamp is data/corpus/en_c4_stage2/build_corpus_stats.json (datagen/build_corpus.py --source jsonl:data/raw/rp1t_c4/*.jsonl --filters light). All fingerprints were checked against a live fp_dir recompute on the pod, not inferred; train.py._assert_mix_domains(['en_c4_stage2_dc'], data/corpus) was run there and returned {'en_c4_stage2_dc': '15caa8587b64e20f'}.",
+   "config": {
+    "domain": "en_c4_stage2_dc",
+    "source_domain": "en_c4_stage2",
+    "source_dataset": "RedPajama-1T c4, the 32 surviving data/raw/rp1t_c4/*.jsonl (26 G) -- the source cannot be re-fetched: data.together.xyz 403s and no HF mirror exists for RedPajama-1T c4",
+    "decontam": "scripts/filter_gate_domains.py N=13 word-token containment; 17 of 242 shards rewritten, 225 hardlinked byte-for-byte",
+    "rows_scanned": 11309622,
+    "rows_dropped": 18,
+    "drop_fraction": 1.591565129232436e-06,
+    "docs_after": 11309604,
+    "n_shards": 242,
+    "bytes": 25323227281,
+    "packed_rows": 1411698,
+    "fingerprint": "15caa8587b64e20f",
+    "source_fingerprint": "7552cc88e1c25062",
+    "decontam_fp": "302aa793f7067462",
+    "vocab": "f1f860970d15d623",
+    "counter": "scripts/count_dir.py (count_docs from scripts/count_tokens.py), full population, 24 workers",
+    "convention": "ids + one <eos> per document (train.py encode)",
+    "gate_weight_share": "mix w=0.045 main / 0.04 anneal of 30B; the smallest-weight surviving domain",
+    "source_stamp_values": "tokens 5,779,033,864 (extrapolated 3/242 by bytes) and kept_tokens 16,338,485,650 (chars/1.5 estimate). NEITHER is this entry's value; the measured count is 5,783,727,841. The _dc stamp itself carries no token field at all (count_dir reports stamp_delta_note: build_corpus_stats.json carries no integer tokens/kept_tokens), which is the shape of every domain filtered by scripts/filter_gate_domains.py -- see cs.code_py_starcoder_dc_landed_0921.",
+    "hardlink_safety_verified": "225 of 242 output shards are hardlinks to source shards and 17 are rewrites, and the rewrite did NOT write through a link: sampled en_c4_005.jsonl has dc_size 104,825,720 against src_size 104,857,751 (different bytes) and dc_nthlink=1 (an independent file), so no source inode was truncated. This is the property that makes 'hardlink the clean shards' safe here, and it is a measurement rather than an assumption about the code path.",
+    "launch_guard": "train.py._assert_mix_domains(['en_c4_stage2_dc'], data/corpus) returned {'en_c4_stage2_dc': '15caa8587b64e20f'} on the pod. The mix json's INLINE fingerprint for this domain is c59c2e4227d875ec and does NOT match; that field is not the launch guard -- see cs.mix_inline_fingerprint_stale_0921, where this domain was recorded as ABSENT and is now comparable.",
+    "decontam_pair_evidence": "decontam_fp 302aa793f7067462 is identical to cs.code_py_starcoder_dc_landed_0921's and to cot_dc's, so all three domains were filtered against one decontam baseline; the drop rates differ by two orders of magnitude (18 rows here, 1,518 in starcoder) and the difference therefore comes from the domains' own content, not from different procedures."
+   },
+   "uncertainty": "The token count is exact for the pod's _dc dir, full population, no sampling. The 0.0812% figure is exact arithmetic between two measured values and is a LOWER bound on the source stamp's error, since the extrapolation could be worse than its own estimate. It is also specific to this domain's byte-to-token ratio and must not be reused for another domain -- the comparison against starcoder's 0.41% is what makes that visible rather than implied.",
+   "boundary": "Answers 'how many gate-vocabulary tokens does the rebuilt en_c4_stage2_dc domain hold'. Does NOT cover the token CACHE: no tokens_en_c4_stage2_dc.pt exists on the pod at this reading, so this is a corpus-side count and not a pool the trainer can draw from. Does NOT cover the source domain's true token count, only that it is at least this entry's value. Does NOT establish that the digest copy of this domain would count the same (it was built by an earlier holdout.py and its fp_dir cannot converge). Does NOT cover the 17 rewritten shards' individual drop counts.",
+   "status": "measured",
+   "tokens_status": "measured"
   }
  ]
 }
