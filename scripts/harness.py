@@ -4316,7 +4316,43 @@ def check_main_advances_by_ancestry(root):
                  # recovery, an update-ref, was retracted before anyone acted on it for exactly
                  # the reason this set exists: it is the sideways move the check catches.)
                  ("9066a3349b25757c4388e92dc6daf6b3cdaf112c",
-                  "437374e8d73d1d9492ad65031769a5576ca06f40")}
+                  "437374e8d73d1d9492ad65031769a5576ca06f40"),
+                 # 2026-09-21: controller (bc) authorized it and de executed it -- the FIRST
+                 # time this repo records an update-ref recovery as ordered rather than
+                 # unilateral. de's `merge_main.sh de-review-623` wrote its CAS 3785d78c on the
+                 # local ref and its push was refused non-fast-forward because origin had moved
+                 # when #623 merged, leaving main 8 behind / 2 ahead. The pair below is that
+                 # ref move: 3785d78c -> 99cdb7e0 (origin/main at the time).
+                 # WHERE THE CONTENT SURVIVES, stated exactly: all four local-only commits are
+                 # on origin/de-review-623 and each is confirmed an ancestor of it
+                 # (4a1163fb #624 approval row, 0a7dcbd8 #619 approval row, e320a0db #619
+                 # withdrawal row, 3785d78c the merge CAS), and the merge's second parent
+                 # 269e4f4a IS an ancestor of origin/main, so the discarded side carries only
+                 # that branch's own work returning by re-running merge_main. Relative to the
+                 # merge base the discarded side holds exactly runs/review.jsonl lines.
+                 # THE LEGAL FORM IS EXACTLY ONE, and it is narrow: destination = the current
+                 # value of origin/main, AND every commit being discarded is reachable from a
+                 # NAMED REMOTE BRANCH. Anything else -- a destination that is not origin/main,
+                 # or a discarded commit that exists only in this clone -- is the §245 forced
+                 # ref write and must still FAIL.
+                 # WHY THIS NOTE IS THE WHOLE PROTECTION: de proposed this same recovery on
+                 # 2026-09-18 and retracted it, for exactly the reason this set exists ("it is
+                 # the sideways move the check catches") -- and then proposed it again on
+                 # 2026-09-21 having forgotten the retraction. An exemption whose comment does
+                 # not carry that history lets the third recurrence look like the first.
+                 #
+                 # `git fetch origin main:main` IS NOT AN ALTERNATIVE HERE, and this is measured
+                 # rather than argued: on a genuinely diverged ref the fetch is REJECTED --
+                 # built as a real fixture (local-only commit Y on refs/heads/main, remote Z on
+                 # top of X, refs/heads/main checked out in no worktree), `git fetch origin
+                 # main:main` exits 1 with `! [rejected] main -> main (non-fast-forward)` and
+                 # the ref does not move. It works only for the fast-forward case -- which is
+                 # what the selftest above exercises, and why the selftest does not cover this.
+                 # So the recovery for a DIVERGENCE cannot be a fetch; it can only be a
+                 # controlled ref write, which is why the residual risk is real and why the
+                 # form above is stated as narrowly as it is.
+                 ("3785d78c25a7033dcf6adee663ce98c81156b223",
+                  "99cdb7e03158b2d73dcbdf720bf3724ae672ab1a")}
     jumps = []
     unsigned = []
     for ln in lines:
