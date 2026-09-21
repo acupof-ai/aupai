@@ -42,6 +42,18 @@ CLAIM_DIR = os.environ.get("AUPAI_CLAIM_DIR") or os.path.join(ROOT, "runs", "cla
 # Below this, a card counts as free. Idle H20s report a few MiB of context, and the settle
 # windows elsewhere in the repo use the same figure.
 FREE_MIB = 64
+# How long an unparseable claim file is left alone before claims() may call it stale. It exists
+# because acquire() writes the row in two steps (reserve the name, then fill it), so a file is
+# legitimately unparseable for a moment -- and acquire's sweep deletes whatever claims() files
+# stale, so calling that window "dead" dropped a claim its own writer had just reported as won
+# (2026-09-21). The bound is NOT the write's own cost: MEASURED, the atomic write (tmp + dump +
+# os.replace) is 0.56ms median and 4.66ms max over 200 runs, so 5s clears it by ~1000x. What the
+# grace actually has to cover is a writer that is DESCHEDULED between reserving the name and
+# filling it -- unbounded in principle, which is why this is a bounded heuristic and not a proof.
+# It is safe in both directions: a writer stalled past it loses only its reservation (its
+# os.replace still publishes the row afterwards), and a genuinely damaged row still frees its
+# card within one launch, since the device wait is 90s.
+UNPARSEABLE_GRACE = 5.0
 # The seam nvidia_fds reads through, so the selftest can build a /proc-shaped world on macOS.
 PROC_ROOT = "/proc"
 # How long a launch waits for the job to open a device. Measured 1.33s on the pod in the harness
@@ -524,6 +536,18 @@ def claims():
             continue
         c = _read(os.path.join(CLAIM_DIR, nm))
         if c is None:
+            # UNPARSEABLE IS NOT DEAD, and the difference is load-bearing because acquire's
+            # sweep DELETES what this function files stale. A file being written right now is
+            # unparseable for the whole window between the name appearing and its content
+            # landing, so filing it stale hands its cards to the next acquirer while its own
+            # writer is still returning success -- measured 2026-09-21 on two windows: a
+            # 0-byte file (O_CREAT|O_EXCL opens before json.dump runs) and a partially-written
+            # one (truncated mid-object). Both read as "unreadable or truncated" and were both
+            # swept. The recovery arms below are untouched: a file that stays unparseable past
+            # a grace period is the old damaged-row case and still becomes stale, so a dead
+            # claim can never pin a card forever.
+            if time.time() - os.stat(os.path.join(CLAIM_DIR, nm)).st_mtime < UNPARSEABLE_GRACE:
+                continue  # too new to judge: its writer may be mid-write
             stale.append({"file": nm, "why": "unreadable or truncated"})
             continue
         try:
@@ -1095,10 +1119,29 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
             if devs:
                 claim["device_fds"] = devs
             # O_EXCL: two acquirers racing on the same name must not both believe they won.
+            # KEPT ON THE FINAL NAME, because that is the only thing that carries the exclusion:
+            # a unique tmp name would let both racers write their own tmp and both replace
+            # successfully, so both would report a win. The placeholder this creates is empty,
+            # and `claims()` leaves a too-new unparseable file alone (UNPARSEABLE_GRACE), so the
+            # reservation is not swept out from under the writer.
             try:
                 fd = os.open(mine, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
             except FileExistsError:
                 existing = _read(mine)
+                # UNPARSEABLE IS NOT ABSENT. `existing is None` falls through every `if existing
+                # and ...` arm below to the unlink, so a name whose writer is mid-write gets
+                # deleted and re-reserved -- and the second reserver reports a win too. Measured
+                # 2026-09-21: 8 concurrent acquirers of one name+cards, all 8 reported success.
+                # The same 5s grace claims() uses applies here, for the same reason: a name that
+                # just appeared may be a reservation, not a corpse. Past the grace it is a
+                # damaged row and the arms below still reclaim it.
+                if existing is None and os.path.exists(mine) \
+                        and time.time() - os.stat(mine).st_mtime < UNPARSEABLE_GRACE:
+                    return False, (
+                        f"{name}: a claim file for {','.join(cards)} appeared moments ago and is "
+                        f"not yet readable -- another process is writing it. This is not a stale "
+                        f"row: retry in a moment rather than taking the cards."
+                    )
                 try:
                     old = int(existing.get("pid", -1)) if existing else -1
                 except (TypeError, ValueError):
@@ -1166,10 +1209,27 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                         f". If pid {holder} is the real job and not a descendant of "
                         f"{old}, release first."
                     )
-                os.unlink(mine)
+                # A MISSING FILE IS THE END STATE THIS WANTS. Another acquirer can unlink the
+                # same name between the read above and this call -- measured 2026-09-21 under 8
+                # concurrent acquirers, where an unguarded unlink raised FileNotFoundError out
+                # of acquire and killed the process. The claim is gone either way, which is what
+                # this line is for, so losing the race to delete it is not an error.
+                try:
+                    os.unlink(mine)
+                except FileNotFoundError:
+                    pass
                 continue
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            # FILL IT ATOMICALLY, so no reader can ever observe a partial row. Writing through
+            # the O_EXCL fd is what let the sweep delete the name and leave the fd writing into
+            # an unlinked inode -- json.dump succeeded and the caller was told it held the cards
+            # while nothing on disk said so (measured 2026-09-21). os.replace publishes the name
+            # only when the content is complete, and re-creates it if the placeholder was swept
+            # meanwhile.
+            tmp = f"{mine}.tmp.{os.getpid()}"
+            with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(claim, fh, ensure_ascii=False)
+            os.replace(tmp, mine)
+            os.close(fd)  # the placeholder's fd is no longer needed; replace published the row
             return True, f"claimed {','.join(cards)} for {name}"
         if time.time() >= deadline:
             # NAME A ZOMBIE HOLDER HERE TOO. 6e's ruling of 2026-09-04 -- acquire's own message
