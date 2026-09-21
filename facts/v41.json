@@ -930,6 +930,33 @@
    "uncertainty": "The save->load round-trip falsification is exact (bit-exact equality, 0/13.1M elements) and arm-specific. The master-weight family is UNTESTED, not excluded: the dump has no weight values. The rng_preSave/postLoad difference is a measurement with no attributed cause. The cross-arm optK and rng_atK equalities are construction guarantees and carry no information.",
    "status": "measured",
    "boundary": "Answers 'did the save/load round trip preserve the optimizer state' -- yes, exactly, at every sampled leaf. Does NOT answer 'what state diverged to produce max|delta|=1.334e-02 n_diff=506533/524288 on the fp32 master', because no artifact from this run recorded a weight value; #624's instrument (merge c13e9d06) adds exactly those two tensors and no red has yet uploaded one. Two comparisons in this dump (cross-arm optK, cross-arm rng_atK) are construction guarantees and must not be cited as corroboration."
+  },
+  {
+   "id": "v41.d17_two_state_not_save_load_0922",
+   "value": "RETRACTION of the 2026-09-19 ruling that the CI-only gate_resume_equivalent_to_uninterrupted red is a DETERMINISTIC save/load asymmetry. The same GitHub run, on the same tree, with the same event, produced opposite outcomes across a rerun: run 35603567150 (sha 5171ad89, event=pull_request) had its check job FAIL with max|delta|=1.334e-02 n_diff=506533/524288 first_flat_idx=0 n_nan=0, and the identical run after `gh run rerun --failed` completed SUCCESS. The rerun's log carries the gate's own PASS line -- 'resume: save/load mid-run bit-identical to control; fresh optim diverges' -- so the gate EXECUTED and passed; it was not skipped, and the comparison is same-tree/same-event rather than the push-vs-PR tree confound that defeated an earlier attempt at this claim. This is the third independent line of evidence against the asymmetry reading and the first that is a controlled comparison: (1) the #549 dump shows the save->load round trip bit-exact on exp_avg/exp_avg_sq/step at all 5 leaves (facts/v41.json#v41.d17_dump_falsifies_optim_rng_0921); (2) that same dump shows the optimizer and RNG families equal across arms, leaving only the master-weight family untested; (3) this rerun shows the outcome is not a function of the tree. The red is therefore two-state -- a property of the runner, not of the code under test.",
+   "measured": "2026-09-22",
+   "source": "gh run view 35603567150 (original: check failure) vs the same run after `gh run rerun --failed` (check: completed success); gate PASS line read from `gh run view 35603567150 --log`",
+   "config": {
+    "run": "35603567150",
+    "sha": "5171ad89",
+    "event": "pull_request",
+    "original_conclusion": "failure",
+    "rerun_conclusion": "success",
+    "jobs_compared": "check (diag-resume skipped in both)",
+    "gate_passed_line": "resume: save/load mid-run bit-identical to control; fresh optim diverges",
+    "signature_on_the_red": "max|delta|=1.334e-02 n_diff=506533/524288 first_flat_idx=0 n_nan=0",
+    "method": "rerun of the SAME run id, not a re-push -- so the tree and the event are held fixed"
+   },
+   "uncertainty": "One controlled observation of the flip, plus a documented history of the same signature red on 4+ shas. That the two outcomes are runner-dependent is established; WHICH runner property causes it is not -- thread/BLAS order, load, oneDNN and an unseeded init were each falsified earlier, and the setsid and time-to-fork hypotheses were falsified for the adjacent card_claim world-control. No mechanism is claimed here.",
+   "status": "retracted",
+   "retracted_value": [
+    "deterministic save/load asymmetry",
+    "a real control vs save/load-restart asymmetry (name-keyed optim rebind / exp_avg / exp_avg_sq / step / serialization)"
+   ],
+   "claim": "The 2026-09-19 ruling, also written into .github/workflows/ci.yml's diag-resume header, was a deterministic save/load asymmetry, and more precisely \"a real control vs save/load-restart asymmetry (name-keyed optim rebind / exp_avg / exp_avg_sq / step / serialization)\" to be localised by microstage. Both readings are retracted: the same run on the same tree both fails and passes.",
+   "audit": "Same-run rerun on the same tree (35603567150) returned SUCCESS with the gate's own PASS line; combined with the #549 dump showing the round trip bit-exact on every sampled leaf.",
+   "refuted_by": "gh run view 35603567150 --log (rerun): 'resume: save/load mid-run bit-identical to control; fresh optim diverges'; facts/v41.json#v41.d17_dump_falsifies_optim_rng_0921",
+   "boundary": "Answers 'is the red a property of the code under test' -- no, the same tree both fails and passes. Does NOT answer what makes a runner produce it, and does NOT test the master-weight family, which no artifact from a red run has ever recorded."
   }
  ]
 }
