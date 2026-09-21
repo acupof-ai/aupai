@@ -1,5 +1,5 @@
 ---
-question: How do the 34 surviving rp1t_c4 raw files get from the digest machine into the pod container, when no direct ssh route exists in either direction?
+question: How do the 32 surviving rp1t_c4 raw files get from the digest machine into the pod container, when no direct ssh route exists in either direction?
 status: measured
 source: measured 2026-09-21 on the laptop, digest (n37-112-238) and pod arle; sha256 compared at each hop
 ---
@@ -8,8 +8,14 @@ source: measured 2026-09-21 on the laptop, digest (n37-112-238) and pod arle; sh
 
 `en_c4_stage2_dc` is the one gate domain whose source cannot be re-fetched: `data.together.xyz`
 returns 403 at the host level (verified again 2026-09-21 from the pod itself, not only from
-digest). The 34 surviving `rp1t_c4` raw files are the only bytes consistent with the historical
+digest). The 32 surviving `rp1t_c4` raw files are the only bytes consistent with the historical
 corpus fingerprint, so they have to be physically moved. This page is the route that works.
+
+**32, not 34: count `*.jsonl`, never the directory entries.** `ls | wc -l` in `$SRC` returns
+**34** because the directory also holds `fetch_stats.json` and `fetch_stats.log`; `ls *.jsonl |
+wc -l` returns **32**. Bytes total **27,055,295,271** (25.197 GiB) either way. The verification
+command at the end of this page uses the `*.jsonl` glob and prints 32, which is the number that
+must match — a reader who counts directory entries will conclude two shards are missing.
 
 ## Why the obvious routes do not
 
@@ -46,7 +52,7 @@ for f in $(ssh digest "ls $SRC"); do
   rm -f /tmp/gate_transfer/$f
 done
 
-# then, in the container, confirm all 34 against the digest-side list
+# then, in the container, confirm all 32 against the digest-side list
 ~/bin/pod "cd /work/aupai_c4 && sha256sum *.jsonl | sort > /tmp/pod_sums.txt; wc -l < /tmp/pod_sums.txt"
 ssh digest "cd $SRC && sha256sum *.jsonl | sort > /tmp/digest_sums.txt; wc -l < /tmp/digest_sums.txt"
 ```
