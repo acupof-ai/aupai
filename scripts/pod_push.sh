@@ -14,9 +14,9 @@
 # five other sessions' uncommitted work, every time anyone pushes a file to the pod. That
 # is the same hazard as `git checkout` on a file you did not write, run automatically.
 #
-# Large files (>100KB gzip+base64) bypass podput's argv limit by pushing directly to the
-# container's emptyDir host path via `tn push`. The file lands at /work/aupai/<path> in
-# the container, same as podput.
+# Large files (>100KB gzip+base64) bypass podput's argv limit by streaming straight to
+# the HOST path that backs the container's /work via `tn write` (see host_put). The file
+# lands at /work/aupai/<path> in the container, same as podput.
 set -euo pipefail
 export PODPUT_TRACKED_OK=1
 cd "$(dirname "$0")/.."
@@ -377,17 +377,63 @@ if [ "${1:-}" = "--all" ]; then ALL=1; shift; fi
 # the same ref, so resolving inside either would put a network round trip in the loop.
 MAIN_REF=$(resolve_main_ref)
 
-find_emptydir() {
-  [ -n "${EMPTYPATH:-}" ] && return
-  EMPTYPATH=$(tn exec "for d in /var/lib/kubelet/pods/*/volumes/kubernetes.io~empty-dir/work; do [ -d \"\$d/aupai\" ] && echo \"\$d\" && break; done" 2>/dev/null | head -1)
-  if [ -z "$EMPTYPATH" ]; then
-    echo "pod_push: cannot find /work emptyDir host path (is the pod running?)" >&2
+# The host path backing the container's /work. POD_CONTAINER is the crictl name; override
+# only if the pod shape changes.
+POD_CONTAINER="${POD_CONTAINER:-sglang-test}"
+
+resolve_work_host() {
+  [ -n "${WORKHOST:-}" ] && return
+  # PRIMARY: read /work's source from the running container's own runtime spec. This is true
+  # for emptyDir, hostPath and bind mounts alike. Measured 2026-09-21: /work is now a bind
+  # mount of host /data00/aupai_work, and the emptyDir glob below matched dirs holding no
+  # aupai/, so the resolver returned empty and every LARGE file silently failed to ship. The
+  # parser runs on THIS host (the merged copy), fed the host's crictl JSON over stdin -- the
+  # pod host needs no copy of the python file.
+  local cid
+  cid=$(tn exec "crictl ps -q --name $POD_CONTAINER --state Running 2>/dev/null | head -1" 2>/dev/null)
+  if [ -n "$cid" ]; then
+    WORKHOST=$(tn exec "crictl inspect $cid 2>/dev/null" 2>/dev/null \
+      | python3 scripts/pod_work_hostpath.py)
+  fi
+  # Validate it really backs /work/aupai before trusting it -- an empty or stale answer must
+  # not become a push into a fabricated path.
+  if [ -n "$WORKHOST" ] && ! tn exec "[ -d '$WORKHOST/aupai' ]" >/dev/null 2>&1; then
+    echo "pod_push: crictl named '$WORKHOST' but it holds no aupai/ -- not trusting it" >&2
+    WORKHOST=""
+  fi
+  # FALLBACK: the older emptyDir layout, kept for a pod that still mounts /work that way.
+  if [ -z "$WORKHOST" ]; then
+    WORKHOST=$(tn exec "for d in /var/lib/kubelet/pods/*/volumes/kubernetes.io~empty-dir/work; do [ -d \"\$d/aupai\" ] && echo \"\$d\" && break; done" 2>/dev/null | head -1)
+  fi
+  if [ -z "$WORKHOST" ]; then
+    echo "pod_push: cannot resolve /work host path (crictl and emptyDir both empty; is $POD_CONTAINER running?)" >&2
     exit 1
   fi
 }
 
+# Stream one large file to the HOST path backing /work, then verify the byte count.
+# tn PUSH (sftp) is unusable here -- it returns SSH_FX_FAILURE AND exits 0, so an rc-only
+# check records a successful transfer that never happened (measured 2026-09-21). tn write
+# streams stdin and renames atomically; the guard below is the evidence rc cannot give.
+host_put() {
+  local f="$1" want got dst
+  resolve_work_host
+  dst="$WORKHOST/aupai/$f"
+  want=$(wc -c < "$f" | tr -d ' ')
+  if [ -z "$want" ] || [ "$want" -eq 0 ]; then
+    echo "REFUSING: refusing to push $f with empty/zero size ($want B)" >&2; exit 1
+  fi
+  tn write "$dst" < "$f" || { echo "REFUSING: tn write failed for $f" >&2; exit 1; }
+  got=$(tn exec "wc -c < '$dst' 2>/dev/null | tr -d ' '" 2>/dev/null)
+  if [ -z "$got" ] || [ "$got" != "$want" ]; then
+    echo "REFUSING: $f landed $got B on the host, wanted $want B -- partial/empty write" >&2
+    exit 1
+  fi
+  echo "pod_push: $f ($want B) verified on host $dst" >&2
+}
+
 # Push one committed, main-reachable file. Large files (>100KB gzip+base64) bypass
-# podput's argv limit via the container's emptyDir host path.
+# podput's argv limit via the host path backing the container's /work (host_put).
 # True when a script of this name is executing on the pod. ps with STAT Z filtered,
 # not pgrep -f: a ZOMBIE keeps its argv, and run_ddp.sh had three of them beside the
 # one live process, so pgrep would match the dead ones forever and make the guard a
@@ -454,12 +500,10 @@ push_one() {
   if [ "$b64_size" -le 100000 ]; then
     ~/bin/podput "$f" "/work/aupai/$f" || { echo "REFUSING: podput failed for $f; nothing after it shipped" >&2; exit 1; }
   else
-    find_emptydir
-    echo "pod_push: $f ($b64_size b64 chars) via emptyDir path" >&2
-    tn push "$f" "$EMPTYPATH/aupai/$f"
+    host_put "$f"
   fi
   # RESTORE THE MODE GIT RECORDS. Neither transport carries it: podput pipes into `> $R`
-  # and tn push writes content, so the pod file gets whatever the remote umask says --
+  # and tn write streams content, so the pod file gets whatever the remote umask says --
   # 644. Every .sh that git marks 100755 landed non-executable, and a pod call naming
   # the script path then dies on "Permission denied" (b0-17's first launch, 2026-09-02;
   # 16 tracked .sh were in that state, measured, not the 5 the task estimated).
@@ -637,8 +681,7 @@ b64_size=$(gzip -9c "$manifest" | base64 | tr -d '\n' | wc -c | tr -d ' ')
 if [ "$b64_size" -le 100000 ]; then
   ~/bin/podput "$manifest" "/work/aupai/$manifest"
 else
-  find_emptydir
-  tn push "$manifest" "$EMPTYPATH/aupai/$manifest"
+  host_put "$manifest"
 fi
 
 # The drift gate decides the stamp now, so its exit code has to be CAPTURED rather than
