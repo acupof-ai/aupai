@@ -37,9 +37,12 @@ def _discover_units(src):
     groups), so those names do not exist at all and the default silently selects
     nothing. An env override could not rescue it either: the hardcoded
     `stats_s001.json` below meant any override still read a file that is not
-    there. Deriving from the product makes the proof work for either recipe,
-    which is the property the gate needs -- it compares two DRIVERS on whatever
-    units exist, and has no business knowing how they were named."""
+    there. Deriving from the product makes the proof work for either recipe --
+    it compares two DRIVERS on whatever units exist, and has no business knowing
+    how they were named. (This covers the unit NAMES; the gate's liveness
+    predicate still recognises a converter by `--no-exec` in its argv, which is
+    a separate, still-live boundary -- see the note in
+    aggregate_l3_noexec_gated.sh.)"""
     tags = sorted(
         os.path.basename(p)[len("stats_") : -len(".json")]
         for p in glob.glob(f"{src}/stats_*.json")
