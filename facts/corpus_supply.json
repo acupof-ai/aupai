@@ -1834,41 +1834,77 @@
    "tokens_status": "measured",
    "guard_phrases": [],
    "retracted_value": []
+  },
+  {
+   "id": "cs.gate_domains_dc_packed_0911",
+   "value": {
+    "code_ultra_l2_dc": 15340876449,
+    "code_ultra_l3_noexec_dc": 26697332099,
+    "code_py_starcoder_dc": 7948925654,
+    "math_owm_stage2_dc": 5857969755,
+    "en_c4_stage2_dc": 1985211248,
+    "cot_dc": 399994717,
+    "total_packed_tokens": 58230309922
+   },
+   "measured": "2026-09-11",
+   "status": "measured",
+   "unit": "packed tokens (seq 4096 rows) of the 13-gram-decontaminated _dc gate caches, vocab f1f860970d15d623, epochs-scheduling row-aligned basis",
+   "config": {
+    "vocab_id": "f1f860970d15d623",
+    "basis": "measured_pool_tokens from data/mix_v41_gate.json domains[].epochs_pool_source: each a full-load torch load of tokens_<domain>.pt on the pod 2026-09-11 with .srcfp == build_corpus_stats fingerprint; row-aligned count is build_mix cap=len(pool)*epochs basis, post-decontamination",
+    "domain_set": "six gate domains surviving the 2026-09-16 pod loss; code_keep_p1_dc and code_py_rp1t_dc EXCLUDED (user ruling 2026-09-19: drop code_keep_p1_dc, rebalance within survivors; rp1t github source unreachable)",
+    "per_domain_fp": {
+     "code_ultra_l2_dc": "adf2ff20698dae8a",
+     "code_ultra_l3_noexec_dc": "63a3b0e64b97e589"
     },
- {
-  "id": "cs.gate_domains_dc_packed_0911",
-  "value": {
-   "code_ultra_l2_dc": 15340876449,
-   "code_ultra_l3_noexec_dc": 26697332099,
-   "code_py_starcoder_dc": 7948925654,
-   "math_owm_stage2_dc": 5857969755,
-   "en_c4_stage2_dc": 1985211248,
-   "cot_dc": 399994717,
-   "total_packed_tokens": 58230309922
-  },
-  "measured": "2026-09-11",
-  "status": "measured",
-  "unit": "packed tokens (seq 4096 rows) of the 13-gram-decontaminated _dc gate caches, vocab f1f860970d15d623, epochs-scheduling row-aligned basis",
-  "config": {
-   "vocab_id": "f1f860970d15d623",
-   "basis": "measured_pool_tokens from data/mix_v41_gate.json domains[].epochs_pool_source: each a full-load torch load of tokens_<domain>.pt on the pod 2026-09-11 with .srcfp == build_corpus_stats fingerprint; row-aligned count is build_mix cap=len(pool)*epochs basis, post-decontamination",
-   "domain_set": "six gate domains surviving the 2026-09-16 pod loss; code_keep_p1_dc and code_py_rp1t_dc EXCLUDED (user ruling 2026-09-19: drop code_keep_p1_dc, rebalance within survivors; rp1t github source unreachable)",
-   "per_domain_fp": {
-    "code_ultra_l2_dc": "adf2ff20698dae8a",
-    "code_ultra_l3_noexec_dc": "63a3b0e64b97e589"
+    "ultra_full_tensor_basis": "cs.gate_cache_ultra_l2_dc_0911 full-tensor 15,340,877,471 = 1,022-token trailing partial row above the 15,340,876,449 scheduling basis used here; L3 full tensor equals scheduling value. Same data, two bases.",
+    "dropped_domains_history": {
+     "ruling_date": "2026-09-19",
+     "code_keep_p1_dc": 2626977570,
+     "code_py_rp1t_dc": 379600071,
+     "note": "pre-drop measured_pool_tokens same basis; keep_p1 dropped by user order (labels+raw lost 0916, no fingerprint-preserving source), rp1t dropped with unreachable github source; together freed 0.04 eff weight / 1.2B target; held for rebalance audit, NOT in value/total"
+    },
+    "cot_status": "399,994,717 = the 09-11 measured packed _dc gate cache and is the basis of this value. 0e's faithful source rebuild was reported complete by the data lead on 2026-09-19 with a corpus FULL_TOKENS of 400,105,114 (+0.028%); that figure is not independently verified here and its basis (raw corpus total vs gate-vocab packed cache with .srcfp) is unconfirmed, so this packed value stays 399,994,717 until a rebuilt packed cache is produced and fingerprint-checked. An interim target_tokens=1e9 note was retracted by fb and is not a basis here"
    },
-   "ultra_full_tensor_basis": "cs.gate_cache_ultra_l2_dc_0911 full-tensor 15,340,877,471 = 1,022-token trailing partial row above the 15,340,876,449 scheduling basis used here; L3 full tensor equals scheduling value. Same data, two bases.",
-   "dropped_domains_history": {
-    "ruling_date": "2026-09-19",
-    "code_keep_p1_dc": 2626977570,
-    "code_py_rp1t_dc": 379600071,
-    "note": "pre-drop measured_pool_tokens same basis; keep_p1 dropped by user order (labels+raw lost 0916, no fingerprint-preserving source), rp1t dropped with unreachable github source; together freed 0.04 eff weight / 1.2B target; held for rebalance audit, NOT in value/total"
-   },
-   "cot_status": "399,994,717 = the 09-11 measured packed _dc gate cache and is the basis of this value. 0e's faithful source rebuild was reported complete by the data lead on 2026-09-19 with a corpus FULL_TOKENS of 400,105,114 (+0.028%); that figure is not independently verified here and its basis (raw corpus total vs gate-vocab packed cache with .srcfp) is unconfirmed, so this packed value stays 399,994,717 until a rebuilt packed cache is produced and fingerprint-checked. An interim target_tokens=1e9 note was retracted by fb and is not a basis here"
+   "source": "data/mix_v41_gate.json domains[].epochs_pool_source; facts/corpus_supply.json#cs.v41_gate_token_caches_rebuilt_f1f86097_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l2_dc_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l3_noexec_dc_0911",
+   "uncertainty": "starcoder/math/en/cot exact measured, post-dc vs pre-dc drop <=0.19%; ultra L2/L3 exact measured 09-11 aggregates (NOT estimates; supersede stale 59.9B/31.8B once printed in the mix _comment); L2 scheduling vs full-tensor differs by a 1,022-token trailing row; cot_dc source rebuild done but no fingerprint-checked rebuilt packed cache yet, so the packed figure stays the 09-11 399,994,717 and the +0.028% corpus-only report is unconfirmed-basis (see config.cot_status); recorded pod measurements not downgraded by the 0916 byte loss",
+   "boundary": "supply upper bound for the within-survivor rebalance only; recorded pod measurements, not a re-verification of destroyed bytes"
   },
-  "source": "data/mix_v41_gate.json domains[].epochs_pool_source; facts/corpus_supply.json#cs.v41_gate_token_caches_rebuilt_f1f86097_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l2_dc_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l3_noexec_dc_0911",
-  "uncertainty": "starcoder/math/en/cot exact measured, post-dc vs pre-dc drop <=0.19%; ultra L2/L3 exact measured 09-11 aggregates (NOT estimates; supersede stale 59.9B/31.8B once printed in the mix _comment); L2 scheduling vs full-tensor differs by a 1,022-token trailing row; cot_dc source rebuild done but no fingerprint-checked rebuilt packed cache yet, so the packed figure stays the 09-11 399,994,717 and the +0.028% corpus-only report is unconfirmed-basis (see config.cot_status); recorded pod measurements not downgraded by the 0916 byte loss",
-  "boundary": "supply upper bound for the within-survivor rebalance only; recorded pod measurements, not a re-verification of destroyed bytes"
- }
+  {
+   "id": "cs.gate_rebuild_m4_checklist_state_0921",
+   "value": "M4 (launch-ready checklist) independent items, measured on the live pod 2026-09-21 while the six gate domains are still absent. [1] PASS: all 8 GPUs report 0 MiB used; runs/card_assignment.json present on the pod. [2] PARTIAL/BLOCKED: data/mix_v41_gate.json present on the pod (total_tokens 3.0e10, 6 domains); data/tokenizer.json present and its vocab_fingerprint is f1f860970d15d623 (32768 get_vocab() slots, <eos>=1, [NUM]=32767) -- but 0 of 6 domains have a pretokenized cache, and 0 of 6 have corpus shards. [3] RESOLVED: de-108 closed as delivered (94f8127a); amendment 6 adopted --csa2_win_flash (de-109) into the launcher, which supersedes it. [4] controller decision, not measured here. [5] RESOLVED: amendment 1 rules warmup 500 / warmdown 0.65 / anneal_frac 0.10, matching runs/v41_gate_0911.sh:29. NET: 3 of 5 items green, item 2 is the only blocker and it is exactly the six-domain data funnel.",
+   "unit": "checklist items",
+   "measured": "2026-09-21",
+   "source": "~/bin/pod on the live pod: nvidia-smi --query-gpu=index,memory.used; ls data/tokenizer.json data/mix_v41_gate.json; python3 -c 'from tokenizers import Tokenizer; from loader import vocab_fingerprint'",
+   "config": {
+    "host": "sglang-test pod, container 8bc9f22978b7",
+    "tree": "/work/aupai",
+    "vocab_expected": "f1f860970d15d623",
+    "checklist_src": "runs/prereg.jsonl#v41_gate_0911 launch_checklist",
+    "gpu_count": 8
+   },
+   "uncertainty": "Item [2] is stated as PARTIAL because the cache half is 0/6 and the mix half passes; the mix's own domain weights were not re-checked against facts/corpus_supply.json#cs.gate_domains_dc_packed_0911 in this pass. Item [4] is a controller decision and is not measured by this fact at all.",
+   "status": "measured",
+   "boundary": "Says nothing about whether the six domains can be rebuilt (see cs.gate_domains_dc_packed_0911 for the 58.23B supply) and nothing about the pod's ability to receive the c4 raw bytes -- that transfer has no usable route in either direction as of the same date. A green item here is a property of the pod at one instant, not of the funnel."
+  },
+  {
+   "id": "cs.c4_transfer_route_0921",
+   "value": "The 34 surviving rp1t_c4 raw files (25.2 GiB) can reach the pod container over a two-hop route, sha-verified at each hop. HOP 1 digest -> laptop (ssh digest 'cat file') measured 10 MiB/s (64 MiB in 5 s). HOP 2 laptop -> pod host (tn write, stdin + atomic rename) measured 0.44-0.53 MiB/s (64 MiB in 146 s, 16 MiB in 29 s) and is the bottleneck by ~20x. Both hop-2 points are close, so the rate is roughly constant rather than degrading. Route: digest -> laptop -> tn write /data00/aupai_work/<dst> -> visible in the container at /work/<dst>, because /work is a hostPath onto the pod host's /data00/aupai_work. tn push (sftp) fails with SSH_FX_FAILURE on every destination AND exits 0, so rc is not the signal; tn write is the working verb.",
+   "unit": "MiB/s",
+   "measured": "2026-09-21",
+   "source": "measured on the laptop 2026-09-21: ssh digest 'dd if=<c4 file> bs=1M count=64 | sha256sum' vs local shasum vs ~/bin/pod 'sha256sum /work/...'; timing by date +%s around each hop",
+   "config": {
+    "src": "digest /data00/home/chenkailun.c/aupai-cimap/wt-3b/data/raw/rp1t_c4 (34 files, 25.197 GiB)",
+    "dst_host": "/data00/aupai_work/aupai_c4",
+    "dst_container": "/work/aupai_c4",
+    "tn_host": "arle",
+    "hop2_verb": "tn write",
+    "sha_verified": "8 MiB slice bf85ed57530d05ca..., 64 MiB file 06395e5d0d442696..., both identical digest -> laptop -> container",
+    "doc": "docs/standards/c4_transfer_route_0921.md"
+   },
+   "uncertainty": "Two points for hop 2 (16 and 64 MiB) from one unpaced run; the pod host is shared, so a concurrent job could depress or inflate either. An 8 MiB slice runs at ~7 MiB/s, 20x hop 2's rate -- the small-sample number is not the transfer's rate. The 25.2 GiB total (~16.7 h at 0.44 MiB/s) is an extrapolation from two points, not a measurement.",
+   "status": "measured",
+   "boundary": "The route moves bytes only; it says nothing about build, decontamination or tokenisation. It also does not establish that digest->pod exists for any OTHER dataset, and it was not tested with a resumed/partial file, so an interrupted transfer's recovery is unmeasured."
+  }
  ]
 }
