@@ -42,6 +42,18 @@ CLAIM_DIR = os.environ.get("AUPAI_CLAIM_DIR") or os.path.join(ROOT, "runs", "cla
 # Below this, a card counts as free. Idle H20s report a few MiB of context, and the settle
 # windows elsewhere in the repo use the same figure.
 FREE_MIB = 64
+# How long an unparseable claim file is left alone before claims() may call it stale. It exists
+# because acquire() writes the row in two steps (reserve the name, then fill it), so a file is
+# legitimately unparseable for a moment -- and acquire's sweep deletes whatever claims() files
+# stale, so calling that window "dead" dropped a claim its own writer had just reported as won
+# (2026-09-21). The bound is NOT the write's own cost: MEASURED, the atomic write (tmp + dump +
+# os.replace) is 0.56ms median and 4.66ms max over 200 runs, so 5s clears it by ~1000x. What the
+# grace actually has to cover is a writer that is DESCHEDULED between reserving the name and
+# filling it -- unbounded in principle, which is why this is a bounded heuristic and not a proof.
+# It is safe in both directions: a writer stalled past it loses only its reservation (its
+# os.replace still publishes the row afterwards), and a genuinely damaged row still frees its
+# card within one launch, since the device wait is 90s.
+UNPARSEABLE_GRACE = 5.0
 # The seam nvidia_fds reads through, so the selftest can build a /proc-shaped world on macOS.
 PROC_ROOT = "/proc"
 # How long a launch waits for the job to open a device. Measured 1.33s on the pod in the harness
@@ -524,6 +536,29 @@ def claims():
             continue
         c = _read(os.path.join(CLAIM_DIR, nm))
         if c is None:
+            # UNPARSEABLE IS NOT DEAD, and the difference is load-bearing because acquire's
+            # sweep DELETES what this function files stale. A file being written right now is
+            # unparseable for the whole window between the name appearing and its content
+            # landing, so filing it stale hands its cards to the next acquirer while its own
+            # writer is still returning success -- measured 2026-09-21 on two windows: a
+            # 0-byte file (O_CREAT|O_EXCL opens before json.dump runs) and a partially-written
+            # one (truncated mid-object). Both read as "unreadable or truncated" and were both
+            # swept. The recovery arms below are untouched: a file that stays unparseable past
+            # a grace period is the old damaged-row case and still becomes stale, so a dead
+            # claim can never pin a card forever.
+            # THE STAT ITSELF CAN RACE. This predicate reads a path a concurrent caller may
+            # have just removed -- `acquire`'s sweep deletes what claims() files stale and
+            # `release` unlinks the row -- so the file can be gone between `_read` above and
+            # this stat. Uncaught, that FileNotFoundError escapes claims() and takes down the
+            # shared "who holds which card" tool for a row that no longer exists (3b, #626
+            # review). "Gone" means this round has no judgement to make about it: the next
+            # os.listdir cannot see it either.
+            try:
+                too_new = time.time() - os.stat(os.path.join(CLAIM_DIR, nm)).st_mtime < UNPARSEABLE_GRACE
+            except FileNotFoundError:
+                continue
+            if too_new:
+                continue  # too new to judge: its writer may be mid-write
             stale.append({"file": nm, "why": "unreadable or truncated"})
             continue
         try:
@@ -1095,10 +1130,38 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
             if devs:
                 claim["device_fds"] = devs
             # O_EXCL: two acquirers racing on the same name must not both believe they won.
+            # KEPT ON THE FINAL NAME, because that is the only thing that carries the exclusion:
+            # a unique tmp name would let both racers write their own tmp and both replace
+            # successfully, so both would report a win. The placeholder this creates is empty,
+            # and `claims()` leaves a too-new unparseable file alone (UNPARSEABLE_GRACE), so the
+            # reservation is not swept out from under the writer.
             try:
                 fd = os.open(mine, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
             except FileExistsError:
                 existing = _read(mine)
+                # UNPARSEABLE IS NOT ABSENT. `existing is None` falls through every `if existing
+                # and ...` arm below to the unlink, so a name whose writer is mid-write gets
+                # deleted and re-reserved -- and the second reserver reports a win too. Measured
+                # 2026-09-21: 8 concurrent acquirers of one name+cards, all 8 reported success.
+                # The same 5s grace claims() uses applies here, for the same reason: a name that
+                # just appeared may be a reservation, not a corpse. Past the grace it is a
+                # damaged row and the arms below still reclaim it.
+                # THIS SITS IN A HANDLER BODY, so the try at :1127 does NOT protect it: Python
+                # never routes an exception raised inside a handler to that same try's handlers.
+                # A stat here throwing FileNotFoundError would escape acquire() entirely -- a
+                # normal refusal turned into a crash, on the exception path (3b, #626 review).
+                # The fallback is the OPPOSITE of claims()'s: a file that is gone is not a
+                # fresh reservation, so `too_new` is False and the reclaim arms below run.
+                try:
+                    too_new = time.time() - os.stat(mine).st_mtime < UNPARSEABLE_GRACE
+                except FileNotFoundError:
+                    too_new = False
+                if existing is None and too_new:
+                    return False, (
+                        f"{name}: a claim file for {','.join(cards)} appeared moments ago and is "
+                        f"not yet readable -- another process is writing it. This is not a stale "
+                        f"row: retry in a moment rather than taking the cards."
+                    )
                 try:
                     old = int(existing.get("pid", -1)) if existing else -1
                 except (TypeError, ValueError):
@@ -1166,10 +1229,27 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                         f". If pid {holder} is the real job and not a descendant of "
                         f"{old}, release first."
                     )
-                os.unlink(mine)
+                # A MISSING FILE IS THE END STATE THIS WANTS. Another acquirer can unlink the
+                # same name between the read above and this call -- measured 2026-09-21 under 8
+                # concurrent acquirers, where an unguarded unlink raised FileNotFoundError out
+                # of acquire and killed the process. The claim is gone either way, which is what
+                # this line is for, so losing the race to delete it is not an error.
+                try:
+                    os.unlink(mine)
+                except FileNotFoundError:
+                    pass
                 continue
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            # FILL IT ATOMICALLY, so no reader can ever observe a partial row. Writing through
+            # the O_EXCL fd is what let the sweep delete the name and leave the fd writing into
+            # an unlinked inode -- json.dump succeeded and the caller was told it held the cards
+            # while nothing on disk said so (measured 2026-09-21). os.replace publishes the name
+            # only when the content is complete, and re-creates it if the placeholder was swept
+            # meanwhile.
+            tmp = f"{mine}.tmp.{os.getpid()}"
+            with open(tmp, "w", encoding="utf-8") as fh:
                 json.dump(claim, fh, ensure_ascii=False)
+            os.replace(tmp, mine)
+            os.close(fd)  # the placeholder's fd is no longer needed; replace published the row
             return True, f"claimed {','.join(cards)} for {name}"
         if time.time() >= deadline:
             # NAME A ZOMBIE HOLDER HERE TOO. 6e's ruling of 2026-09-04 -- acquire's own message
@@ -1452,9 +1532,10 @@ def status():
 def _selftest():
     """Known answers over a temporary claim dir. No cards."""
     import shutil
+    import sys as _sys
     import tempfile
 
-    global CLAIM_DIR
+    global CLAIM_DIR, _read
     bad = 0
     # Counted as the cases run, not hardcoded. `n = 10` at the bottom stayed 10 when two cases
     # were added, so the line read "10/10 pass" while running twelve -- a total that cannot
@@ -1537,6 +1618,140 @@ def _selftest():
     good = r4.returncode == 0 and [c.get("cards") for c in live_m] == [["8"]]
     _case(good, f"CLI release --cards frees only that card ({r4.stdout.strip() or r4.stderr.strip()}; left {[c.get('cards') for c in live_m]})")
     _sp.run([sys.executable, here, "release", "--name", "cliMulti"], capture_output=True, text=True, env=env)
+
+    # THE STAT CAN RACE. Both grace readers stat a path a concurrent caller may have just
+    # removed -- acquire's sweep deletes what claims() files stale, release unlinks the row --
+    # so the file can be gone between _read and the stat. Uncaught, that FileNotFoundError
+    # escapes claims(), which is what status/acquire/the harness all call, so a row that no
+    # longer exists takes down the shared "who holds which card" tool (3b, #626 review).
+    #
+    # BOTH CASES MUST DISCRIMINATE, and the acquire() one did not in the first version (3b
+    # measured it): reverting ONLY that fix left 154/154 green. The cause is that acquire()
+    # calls claims() for its sweep first, and the wrapper deleted the file during THAT read --
+    # so O_EXCL never failed, `except FileExistsError` was never entered, and the assertion
+    # tested the O_EXCL-success path instead of the window. Repeating a name does not help:
+    # acquire's first act is the sweep, so any file present at entry is swept as stale by
+    # claims() before the reservation code runs. The case therefore invokes the handler
+    # DIRECTLY, the same way the sibling cases call an internal predicate rather than a
+    # full command, with `_read` wrapped to delete the row at the moment the handler reads it.
+    _race_dir = tempfile.mkdtemp(prefix="claim_race_")
+    _saved_race = CLAIM_DIR
+    CLAIM_DIR = _race_dir
+    _real_read = _read
+    try:
+        _rp = os.path.join(_race_dir, "racevictim.json")
+        open(_rp, "w").close()  # 0 bytes: the state _read reports as None
+
+        def _read_then_vanish(path, _p=_rp):
+            if os.path.abspath(path) == _p:
+                try:
+                    os.unlink(_p)
+                except FileNotFoundError:
+                    pass
+                return None
+            return _real_read(path)
+
+        _read = _read_then_vanish
+        try:
+            claims()
+            _case(True, "claims() survives a file unlinked between _read and its stat")
+        except FileNotFoundError as e:
+            _case(False, f"claims() raised FileNotFoundError errno={e.errno} on a vanished file")
+
+        # ACQUIRE'S OWN HANDLER, reached by running acquire(), with the row removed inside the
+        # exists->stat gap. Four earlier versions failed to discriminate and each looked like it
+        # worked (3b measured the first two, then two more here):
+        #   v1 deleted the row on the SWEEP's read, so claims() never saw it, O_EXCL succeeded
+        #      and `except FileExistsError` was never entered at all;
+        #   v2 invoked a local mirror of the handler, so reverting the production fix could not
+        #      turn it red -- it asserted on a copy of the code, not on the code. Worse than v1:
+        #      v1 tests the wrong property of the real code, v2 tests the right property of a
+        #      copy, and nothing but a mutation run can tell them apart;
+        #   v3 deleted the row at the handler's own _read, which is still too early;
+        #   v4 hooked exists/stat globally, so the SWEEP's claims() stat fired first and removed
+        #      the file before O_EXCL, landing back in v1's world.
+        # The hooks therefore fire only OUTSIDE claims() -- which is also the only place the
+        # handler's own preamble runs. Frame test by function NAME so it cannot rot. Armed only
+        # around this one acquire() call, since every other case calls os.stat too.
+        _rm = os.path.join(_race_dir, claim_file("raceprobe", ["7"]))
+        open(_rm, "w").close()  # fresh and unparseable: claims() leaves it, O_EXCL still fails
+        _real_exists, _real_stat = os.path.exists, os.stat
+        _armed = []
+        _gone = []
+
+        def _in_claims():
+            _f = _sys._getframe(1)
+            while _f is not None:
+                if _f.f_code.co_name == "claims":
+                    return True
+                _f = _f.f_back
+            return False
+
+        def _fire():
+            try:
+                os.unlink(_rm)
+            except FileNotFoundError:
+                pass
+            # COUNT THE EFFECT, AND OBSERVE IT WITHOUT THE INSTRUMENT. Two earlier versions of
+            # this line counted the CALL and passed with the deletion disabled (3b, then genA,
+            # both by mutation): `_gone.append(1)` on the next line runs whether or not the
+            # unlink did anything, so reaching it is not evidence the row went away.
+            # The check must also not use os.path.exists: this case patches os.stat globally,
+            # so exists() recurses through the instrument and would report whatever the
+            # instrument says. listdir reads the directory itself.
+            if os.path.basename(_rm) not in os.listdir(os.path.dirname(_rm)):
+                _gone.append(1)
+
+        def _exists(path, _p=_rm, _real=_real_exists):
+            if _armed and os.path.abspath(str(path)) == _p:
+                _fire()  # removed, then reported present: the gap between the two calls
+                return True
+            return _real(path)
+
+        def _stat(path, _p=_rm, _real=_real_stat):
+            if _armed and os.path.abspath(str(path)) == _p and not _in_claims():
+                _fire()
+                raise FileNotFoundError(2, "No such file or directory", _p)
+            return _real(path)
+
+        os.path.exists, os.stat = _exists, _stat
+        _armed.append(True)
+        try:
+            _rok, _rmsg = acquire("raceprobe", ["7"], wait=0, pid=1)
+            _case(
+                _rok,
+                f"acquire()'s handler reclaims when the reserving file vanishes between its "
+                f"exists and its stat ({_rmsg[:70]})",
+            )
+            # THE CASE MUST PROVE THE ROW ACTUALLY VANISHED, not that a function was called.
+            # Instrument deaths, and which are loud (all measured by mutation):
+            #   hooks bypassed entirely (a refactor stops calling os.stat here): the
+            #   production code sees a fresh row and REFUSES, so the assertion above
+            #   already reds -- 153/155, both cases BUG;
+            #   the unlink no-op'd while the rest of _fire runs: SILENT unless this count
+            #   observes the effect without the instrument. Two versions failed here --
+            #   counting calls (154/155, twice reported as fixed) and monitoring the row
+            #   with os.path.exists, which recurses through the patched os.stat.
+            # listdir asks the directory itself, so it cannot be answered by the instrument
+            # it is checking (genA's fix, #626 review).
+            _case(
+                bool(_gone),
+                f"the case reached its target: the reserving row was removed "
+                f"({len(_gone)} time(s))",
+            )
+        except FileNotFoundError as e:
+            _tb = _sys.exc_info()[2]
+            while _tb.tb_next is not None:
+                _tb = _tb.tb_next
+            _case(False, f"FileNotFoundError errno={e.errno} escaped acquire() from "
+                         f"{_tb.tb_frame.f_code.co_name}()")
+        finally:
+            _armed.clear()
+            os.path.exists, os.stat = _real_exists, _real_stat
+    finally:
+        _read = _real_read
+        CLAIM_DIR = _saved_race
+        shutil.rmtree(_race_dir, ignore_errors=True)
 
     # SAME NAME, DISJOINT CARDS, BOTH GRANTED. b0's production defect, 2026-09-04: two
     # score_matrix passes -- armA on card 4, armB's doc_cu on card 2 -- and the second was
