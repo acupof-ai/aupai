@@ -34,6 +34,48 @@ So the surviving hypothesis is a **real asymmetry between the two trajectories**
 `diag_resume_bimodal.py` is the right instrument family. What it does not yet cover is specified
 below.
 
+## The red is TWO-STATE, proven on the same run (2026-09-22)
+
+**The same GitHub run, on the same tree, with the same event, both fails and passes.** Run
+`35603567150` (sha `5171ad89`, `event=pull_request`) had its `check` job FAIL with the signature
+below; after `gh run rerun --failed` the identical run completed **success**, and its log carries the
+gate's own PASS line:
+
+```
+resume: save/load mid-run bit-identical to control; fresh optim diverges
+```
+
+The gate therefore **executed and passed** — it was not skipped, so this is not a missing run.
+
+**This retracts the 2026-09-19 ruling** (recorded as `facts/v41.json#v41.d17_two_state_not_save_load_0922`,
+`status: retracted`), which is also the working hypothesis in `.github/workflows/ci.yml`'s diag-resume
+header. The **same-generation cause** is now three independent lines, and this is the first that is a
+controlled comparison rather than an inference:
+
+1. the dump shows the save→load round trip bit-exact at all 5 leaves (section above);
+2. the dump shows the optimizer and RNG families equal across arms, leaving only the weight family
+   untested (§ below);
+3. **this rerun shows the outcome is not a function of the tree at all.**
+
+**An earlier attempt at this claim was wrong and is worth keeping as the trap it was.** I first read a
+push run FAIL and a pull_request run SUCCESS on one sha as two-state; they had checked out *different
+trees* (`raw refs/heads/*` vs `+refs/pull/619/merge`, since `actions/checkout@v4` has no `ref:` and a
+PR run takes the synthetic merge ref). `gh run list --commit` reports one snapshot sha for both, which
+is what hid it. **A two-state claim needs the checked-out sha per run, not the run-list sha** — and
+the way to hold every variable fixed is to rerun the SAME run id, which is what settled it here.
+
+**No mechanism is claimed.** Which runner property flips it is unknown: thread/BLAS order, load,
+oneDNN and an unseeded init were each falsified earlier, and the `setsid` and time-to-fork hypotheses
+were falsified for the adjacent `card_claim` world control. What is established is only that a green
+and a red can be the same code on the same tree.
+
+**Consequence for the gate, and for the launch.** A two-state red is not evidence about the change
+under test, so a push whose only failure is this signature is **not** a reason to hold a merge. It is
+also **not** grounds to keep rerunning until green: the correct read is that the check is
+runner-dependent, and the falsifiable question moves to the **master-weight family**, which no red has
+ever recorded — `#624` (merged `c13e9d06`) dumps exactly those two tensors, and **the next red on a sha
+carrying it decides that family.** The launch does not wait on it.
+
 ## The first red-after-instrumentation, and what it falsified (2026-09-21)
 
 Run `35603567150` (sha `5171ad89`) failed the required gate on the runner and uploaded
