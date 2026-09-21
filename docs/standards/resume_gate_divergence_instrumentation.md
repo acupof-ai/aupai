@@ -76,6 +76,41 @@ runner-dependent, and the falsifiable question moves to the **master-weight fami
 ever recorded — `#624` (merged `c13e9d06`) dumps exactly those two tensors, and **the next red on a sha
 carrying it decides that family.** The launch does not wait on it.
 
+### Adjudication: what a code-free PR may do with this red (2026-09-22)
+
+**This is the operative rule, and it exists so that a red with no relation to the diff does not block
+unrelated work.** It applies **only** to a failing `check` job whose failing step is `train checkpoint
+gates`, whose only failing assertion is `gate_resume_equivalent_to_uninterrupted`, and whose reported
+signature is byte-identical to the one above (`max|delta|=1.334e-02`, `n_diff=506533/524288`,
+`first_flat_idx=0`, `n_nan=0`).
+
+**What does NOT license a pass.** Two arguments that have been used are both invalid, and the second
+is the more dangerous because it cites this very file:
+
+- *"the clean physical host is 14/14 green"* — that is an environment difference, and the whole
+  finding here is that the runner and the physical host disagree. Citing it as evidence that a
+  runner red is spurious assumes the conclusion.
+- *"this job is never a gate"* — `.github/workflows/ci.yml` says that about **`diag-resume`**
+  (`:153-166`, a `continue-on-error` job that push/PR skip entirely). Its last two lines say the
+  opposite about the job that actually fails: *"The required check job above keeps the real gate
+  fail-closed; this job exits 0 by construction."* **The failing job is the required one.**
+
+**The procedure.** A PR that touches no code (docs, ledgers, facts) and whose CI is red *only* under
+the paragraph above may proceed after its second reader records, **in the review row**, that they
+checked all four conditions in the paragraph above against the run's own log. The row must name the
+run id. A PR touching `tests/v41f/`, `v41f/`, `train.py` or the workflow itself does **not** qualify —
+there the red is in scope until the weight family is measured.
+
+**The residual, stated as a residual.** This does not say the red is harmless. The master-weight
+family is still unmeasured, and until a red uploads `#624`'s two tensors **nobody can say the two
+trajectories agree on the weights themselves** — only that the optimizer state, the RNG and the
+tree are not the difference. If the weight family later turns out to diverge, this rule was the wrong
+call and the PRs it passed need re-examination; that is the cost being accepted, and it is bounded
+because the affected merges are docs and ledgers, which no gate re-reads.
+
+**Next step, and it is the only one.** The next red on a sha carrying `c13e9d06` decides the family.
+Nothing further should be specified before that artifact exists.
+
 ## The first red-after-instrumentation, and what it falsified (2026-09-21)
 
 Run `35603567150` (sha `5171ad89`) failed the required gate on the runner and uploaded
