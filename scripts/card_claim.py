@@ -2096,6 +2096,31 @@ def _selftest():
         # built on a laptop, because it needs two processes holding real device fds. nvidia_fds is
         # stubbed to answer for the pids this world DOES have, so the branch under test runs on the
         # real _job_descendants output rather than on an invented tree.
+        #
+        # THE GATE MUST BE LOUD, AND IT MUST CARRY ITS OWN DIAGNOSIS (de, 2026-09-21).
+        #
+        # This was `if kids:`, and everything below it is 3 assertions. When the world control
+        # above fails -- measured on CI 2026-09-21, "(0 found)" -- the block does not run, so
+        # those 3 cases are neither ok nor BUG: they vanish. The only trace is the total, which
+        # is exactly the reader this suite does not have (a run prints 145/148 and nothing says
+        # WHICH three are missing, or that they were suppressed rather than passed).
+        #
+        # The gate stays (the cases genuinely cannot run without a descendant), but it now
+        # reports itself: the suppression is a named BUG listing what did not run, so the count
+        # and the names move together. The raw descendant table goes in the message because the
+        # next CI red has to explain itself -- the 2026-09-21 red could not be attributed from
+        # its own output, and the mechanism is still undetermined (a setsid shim on macOS and a
+        # 20 ms-vs-1.5 s fork race were both falsified; see runs/friction.jsonl).
+        if not kids:
+            _case(
+                False,
+                f"world: NO python descendant, so 3 case(s) below CANNOT RUN and are suppressed, "
+                f"not passed: 'one descendant on a card resolves to it' / 'two descendants on a "
+                f"card REFUSE' / the ambiguity-refusal world control.\n"
+                f"        _descendants({shell_pid}) = {_descendants(shell_pid)!r}; "
+                f"ps sees {len(_ps_table())} row(s); "
+                f"_job_descendants = {_job_descendants(shell_pid)!r}",
+            )
         if kids:
             _real_fds = nvidia_fds
             try:
@@ -2132,6 +2157,17 @@ def _selftest():
 
         # The job itself is accepted.
         job_pid = kids[0][0] if kids else None
+        # SAME LOUD GATE AS ABOVE, and its own 3 cases: the accepted-job case, the VE rebind, and
+        # the unrelated-pid refusal. These are the acquire() paths the pod actually exercises, so a
+        # silent suppression here removes coverage of the behaviour that matters most while the
+        # total still looks complete.
+        if job_pid is None:
+            _case(
+                False,
+                "world: NO job descendant, so 3 case(s) below CANNOT RUN and are suppressed, not "
+                "passed: 'acquire accepts the python descendant' / 'a live claim on an ancestor "
+                "rebinds to the job (the VE case)' / 'an unrelated live pid is still refused'",
+            )
         if job_pid:
             ok, msg = acquire("de34_job", ["7"], pid=job_pid)
             _case(ok, f"acquire accepts the python descendant (pid {job_pid})")
