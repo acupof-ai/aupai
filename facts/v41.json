@@ -900,6 +900,36 @@
    "uncertainty": "SAMPLING: the max of 112 samples at 2 s intervals is not the allocator's high-water mark -- a transient shorter than ~2 s above the plateau would be missed, though the flat multi-sample plateau argues against one. ENVIRONMENT: this peak was measured on the rebuilt container's binaries, which are NOT the ones the 72.64 GiB figure was measured on (flash_attn was restored from a different install path), so the 5.3 GiB difference must not be read as an improvement. DEPENDENCIES RESTORED TO GET HERE, all three found by launching: data/corpus/sample/build_corpus_stats.json was missing from the tree (shards force-added, fingerprint not, .gitignore:28 -- a REPO-side gap that any fresh checkout hits), then cutlass, then liger_kernel (CONTAINER-side gaps from the rebuild; train.py's 'set the symbol to None on ImportError' style means no pre-launch static check sees them).",
    "boundary": "Answers 'does the V4.1 stack train on the rebuilt container' (yes) and 'what is the peak per-rank memory at batch 4 / seq 4096' (67.31 GiB). Does NOT establish numerical agreement with the 2026-09-11 run: the mix differs (219-row sample vs the gate mix), the step count differs (13 vs 381), and no step line was even emitted because total_steps = 219//(4*4) = 13 falls under the step%10 logging interval, leaving the epoch summary's 'train {last:.3f}' field (train.py, the runlog at the end of the epoch loop) printing its 0.0 initialiser. Throughput is not comparable for the same reason (dynamo compile dominates a 13-step run). A numeric or throughput comparison needs a larger mix; mix_smoke_warmup has 0 shards on the pod, so that is a corpus build first.",
    "status": "measured"
+  },
+  {
+   "id": "v41.d17_dump_falsifies_optim_rng_0921",
+   "value": "The uploaded dump of the red gate_resume_equivalent_to_uninterrupted run 35603567150 (sha 5171ad89) falsifies the optimizer-rebind and RNG families for the CI-only red, and cannot test the master-weight family. Three arms (control/fresh/restart), 5 leaves, 69 files, artifact gate-resume-dump-35603567150 (432,361,251 bytes). (1) save->load round trip BIT-EXACT: restart/loadK vs restart/optK on exp_avg/exp_avg_sq/step at all 5 leaves, max|delta|=0.0 and 0 differing elements (e.g. l0 exp_avg 0/13,107,200; l4 0/524,288). (2) two trajectories at step K BIT-EXACT: fresh/optK vs restart/optK, max|delta|=0.0, 0 differing at all 5 leaves. (3) rng_atK byte-identical across control, fresh and restart. (4) rng_preSave vs rng_postLoad (restart arm) DIFFER, 2,488/5,056 bytes -- the two dumps straddle save_train_checkpoint + load_train_checkpoint, so a difference is expected even where training consumes no RNG; NOT established as a cause in either direction. (5) ckpt_identity.json: populated_but_dropped=[], model_missing_keys=[], model_unexpected_keys=[], 228 state_by_name keys. This RETRACTS the 2026-09-19 'deterministic save/load asymmetry' ruling, which is also the working hypothesis written at .github/workflows/ci.yml:148-159 naming exactly the state shown bit-exact. What the dump CANNOT answer: it records optimizer moments, RNG bytes, key names and shapes, and NO model or master weight VALUES (every .pt with numel>1e6 is exp_avg/exp_avg_sq), so the gate's n_diff=506533/524288 on the fp32 master is unobserved by the artifact and the master-weight family (fp32->bf16->fp32, refresh_bf16, save-time dtype truncation at v41f/master.py:246-249) remains untested.",
+   "measured": "2026-09-21",
+   "source": "gh run download 35603567150 -n gate-resume-dump-35603567150; 69 files under control/ fresh/ restart/; compared with torch.load(weights_only=False) on the laptop (torch 2.12.0, CPU)",
+   "config": {
+    "run": "35603567150",
+    "sha": "5171ad89",
+    "event": "pull_request",
+    "gate": "tests/v41f/test_p1_train_ckpt.py::gate_resume_equivalent_to_uninterrupted",
+    "arms": [
+     "control",
+     "fresh",
+     "restart"
+    ],
+    "leaves": 5,
+    "artifact_bytes": 432361251,
+    "instrument": "#549 dump (pre-#624: optimizer triple + RNG + key sets, no master tensors)",
+    "compared_parts": [
+     "exp_avg",
+     "exp_avg_sq",
+     "step"
+    ],
+    "comparison_tool": "torch.load weights_only=False, map_location=cpu",
+    "laptop_torch": "2.12.0"
+   },
+   "uncertainty": "The optimizer/RNG falsification is exact (bit-exact equality, 0/13.1M elements). The master-weight family is UNTESTED, not excluded: the dump has no weight values. The rng_preSave/postLoad difference is a measurement with no attributed cause.",
+   "status": "measured",
+   "boundary": "Answers 'was the optimizer state or RNG different across the save/load or across trajectories' -- no. Does NOT answer 'what state diverged to produce max|delta|=1.334e-02 n_diff=506533/524288 on the fp32 master', because no artifact from this run recorded a weight value; #624's instrument (merge c13e9d06) adds exactly those two tensors and no red has yet uploaded one."
   }
  ]
 }
