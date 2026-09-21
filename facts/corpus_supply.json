@@ -1872,16 +1872,17 @@
   },
   {
    "id": "cs.gate_rebuild_m4_checklist_state_0921",
-   "value": "M4 (launch-ready checklist) independent items, measured on the live pod 2026-09-21 while the six gate domains are still absent. [1] PASS: all 8 GPUs report 0 MiB used; runs/card_assignment.json present on the pod. [2] PARTIAL/BLOCKED: data/mix_v41_gate.json present on the pod (total_tokens 3.0e10, 6 domains); data/tokenizer.json present and its vocab_fingerprint is f1f860970d15d623 (32768 get_vocab() slots, <eos>=1, [NUM]=32767) -- but 0 of 6 domains have a pretokenized cache, and 0 of 6 have corpus shards. [3] RESOLVED: de-108 closed as delivered (94f8127a); amendment 6 adopted --csa2_win_flash (de-109) into the launcher, which supersedes it. [4] controller decision, not measured here. [5] RESOLVED: amendment 1 rules warmup 500 / warmdown 0.65 / anneal_frac 0.10, matching runs/v41_gate_0911.sh:29. NET: 3 of 5 items green, item 2 is the only blocker and it is exactly the six-domain data funnel.",
+   "value": "M4 (launch-ready checklist) independent items, measured on the live pod 2026-09-21 while the six gate domains are still absent. [1] PASS: all 8 GPUs report 0 MiB used; runs/card_assignment.json present on the pod. [2] PARTIAL/BLOCKED: data/mix_v41_gate.json present on the pod (total_tokens 3.0e10, 6 domains); data/tokenizer.json present and its vocab_fingerprint is f1f860970d15d623 (32768 get_vocab() slots, <eos>=1, [NUM]=32767) -- but 0 of 6 domains have a pretokenized cache, and 0 of 6 have corpus shards. [3] RESOLVED: de-108 closed as delivered (94f8127a); amendment 6 adopted --csa2_win_flash (de-109) into the launcher, which supersedes it. [4] controller decision, not measured here. [5] RESOLVED: amendment 1 rules warmup 500 / warmdown 0.65 / anneal_frac 0.10, matching runs/v41_gate_0911.sh:29. NET: 3 of 5 items green, item 2 is the only blocker and it is exactly the six-domain data funnel. [PARAM GATE] train.py --build_only with the exact runs/v41_gate_0911.sh flag line prints total 3,209,392,128 / active 342,847,488, matching the M4 acceptance criterion to the digit. Measured on the live pod 2026-09-21.",
    "unit": "checklist items",
    "measured": "2026-09-21",
-   "source": "~/bin/pod on the live pod: nvidia-smi --query-gpu=index,memory.used; ls data/tokenizer.json data/mix_v41_gate.json; python3 -c 'from tokenizers import Tokenizer; from loader import vocab_fingerprint'",
+   "source": "~/bin/pod on the live pod: nvidia-smi --query-gpu=index,memory.used; ls data/tokenizer.json data/mix_v41_gate.json; python3 -c 'from tokenizers import Tokenizer; from loader import vocab_fingerprint'; python3 train.py <runs/v41_gate_0911.sh flags> --build_only on the pod (prints a JSON line)",
    "config": {
     "host": "sglang-test pod, container 8bc9f22978b7",
     "tree": "/work/aupai",
     "vocab_expected": "f1f860970d15d623",
     "checklist_src": "runs/prereg.jsonl#v41_gate_0911 launch_checklist",
-    "gpu_count": 8
+    "gpu_count": 8,
+    "param_gate": "total 3,209,392,128 / active 342,847,488, flags exactly as runs/v41_gate_0911.sh:28-31"
    },
    "uncertainty": "Item [2] is stated as PARTIAL because the cache half is 0/6 and the mix half passes; the mix's own domain weights were not re-checked against facts/corpus_supply.json#cs.gate_domains_dc_packed_0911 in this pass. Item [4] is a controller decision and is not measured by this fact at all.",
    "status": "measured",
