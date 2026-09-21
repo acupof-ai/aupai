@@ -546,7 +546,18 @@ def claims():
             # swept. The recovery arms below are untouched: a file that stays unparseable past
             # a grace period is the old damaged-row case and still becomes stale, so a dead
             # claim can never pin a card forever.
-            if time.time() - os.stat(os.path.join(CLAIM_DIR, nm)).st_mtime < UNPARSEABLE_GRACE:
+            # THE STAT ITSELF CAN RACE. This predicate reads a path a concurrent caller may
+            # have just removed -- `acquire`'s sweep deletes what claims() files stale and
+            # `release` unlinks the row -- so the file can be gone between `_read` above and
+            # this stat. Uncaught, that FileNotFoundError escapes claims() and takes down the
+            # shared "who holds which card" tool for a row that no longer exists (3b, #626
+            # review). "Gone" means this round has no judgement to make about it: the next
+            # os.listdir cannot see it either.
+            try:
+                too_new = time.time() - os.stat(os.path.join(CLAIM_DIR, nm)).st_mtime < UNPARSEABLE_GRACE
+            except FileNotFoundError:
+                continue
+            if too_new:
                 continue  # too new to judge: its writer may be mid-write
             stale.append({"file": nm, "why": "unreadable or truncated"})
             continue
@@ -1135,8 +1146,17 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                 # The same 5s grace claims() uses applies here, for the same reason: a name that
                 # just appeared may be a reservation, not a corpse. Past the grace it is a
                 # damaged row and the arms below still reclaim it.
-                if existing is None and os.path.exists(mine) \
-                        and time.time() - os.stat(mine).st_mtime < UNPARSEABLE_GRACE:
+                # THIS SITS IN A HANDLER BODY, so the try at :1127 does NOT protect it: Python
+                # never routes an exception raised inside a handler to that same try's handlers.
+                # A stat here throwing FileNotFoundError would escape acquire() entirely -- a
+                # normal refusal turned into a crash, on the exception path (3b, #626 review).
+                # The fallback is the OPPOSITE of claims()'s: a file that is gone is not a
+                # fresh reservation, so `too_new` is False and the reclaim arms below run.
+                try:
+                    too_new = time.time() - os.stat(mine).st_mtime < UNPARSEABLE_GRACE
+                except FileNotFoundError:
+                    too_new = False
+                if existing is None and too_new:
                     return False, (
                         f"{name}: a claim file for {','.join(cards)} appeared moments ago and is "
                         f"not yet readable -- another process is writing it. This is not a stale "
@@ -1514,7 +1534,7 @@ def _selftest():
     import shutil
     import tempfile
 
-    global CLAIM_DIR
+    global CLAIM_DIR, _read
     bad = 0
     # Counted as the cases run, not hardcoded. `n = 10` at the bottom stayed 10 when two cases
     # were added, so the line read "10/10 pass" while running twelve -- a total that cannot
@@ -1597,6 +1617,67 @@ def _selftest():
     good = r4.returncode == 0 and [c.get("cards") for c in live_m] == [["8"]]
     _case(good, f"CLI release --cards frees only that card ({r4.stdout.strip() or r4.stderr.strip()}; left {[c.get('cards') for c in live_m]})")
     _sp.run([sys.executable, here, "release", "--name", "cliMulti"], capture_output=True, text=True, env=env)
+
+    # THE STAT CAN RACE. Both grace readers stat a path a concurrent caller may have just
+    # removed -- acquire's sweep deletes what claims() files stale, release unlinks the row --
+    # so the file can be gone between _read and the stat. Uncaught, that FileNotFoundError
+    # escapes claims(), which is what status/acquire/the harness all call, so a row that no
+    # longer exists takes down the shared "who holds which card" tool (3b, #626 review).
+    #
+    # LANDED IN THE WINDOW, not approximated: _read is wrapped so it performs the unlink and
+    # only then reports None, which is exactly the state the caller sees mid-race. Without the
+    # fix the first case raises and the second returns a crash; with it, claims() skips a file
+    # that is gone and acquire() reads "gone" as "not a fresh reservation".
+    _race_dir = tempfile.mkdtemp(prefix="claim_race_")
+    _saved_race = CLAIM_DIR
+    CLAIM_DIR = _race_dir
+    _real_read = _read
+    try:
+        _rp = os.path.join(_race_dir, "racevictim.json")
+        open(_rp, "w").close()  # 0 bytes: the state _read reports as None
+
+        def _read_then_vanish(path, _p=_rp):
+            if os.path.abspath(path) == _p:
+                try:
+                    os.unlink(_p)
+                except FileNotFoundError:
+                    pass
+                return None
+            return _real_read(path)
+
+        _read = _read_then_vanish
+        try:
+            claims()
+            _case(True, "claims() survives a file unlinked between _read and its stat")
+        except FileNotFoundError as e:
+            _case(False, f"claims() raised FileNotFoundError errno={e.errno} on a vanished file")
+
+        _rm = os.path.join(_race_dir, claim_file("raceprobe", ["7"]))
+        open(_rm, "w").close()  # exists, so O_EXCL raises and the handler is reached
+
+        def _read_then_vanish_mine(path, _p=_rm):
+            if os.path.abspath(path) == _p:
+                try:
+                    os.unlink(_p)
+                except FileNotFoundError:
+                    pass
+                return None
+            return _real_read(path)
+
+        _read = _read_then_vanish_mine
+        try:
+            _rok, _rmsg = acquire("raceprobe", ["7"], wait=0, pid=1)
+            _case(
+                _rok and "appeared moments ago" not in _rmsg,
+                f"acquire() reclaims when the reserving file vanished mid-window, instead of "
+                f"crashing or reading it as fresh ({_rmsg[:60]})",
+            )
+        except FileNotFoundError as e:
+            _case(False, f"acquire() raised FileNotFoundError errno={e.errno} from a handler body")
+    finally:
+        _read = _real_read
+        CLAIM_DIR = _saved_race
+        shutil.rmtree(_race_dir, ignore_errors=True)
 
     # SAME NAME, DISJOINT CARDS, BOTH GRANTED. b0's production defect, 2026-09-04: two
     # score_matrix passes -- armA on card 4, armB's doc_cu on card 2 -- and the second was
