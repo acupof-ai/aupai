@@ -13,9 +13,11 @@ corpus fingerprint, so they have to be physically moved. This page is the route 
 
 **32, not 34: count `*.jsonl`, never the directory entries.** `ls | wc -l` in `$SRC` returns
 **34** because the directory also holds `fetch_stats.json` and `fetch_stats.log`; `ls *.jsonl |
-wc -l` returns **32**. Bytes total **27,055,283,205** (25.197 GiB) either way. The verification
-command at the end of this page uses the `*.jsonl` glob and prints 32, which is the number that
-must match — a reader who counts directory entries will conclude two shards are missing.
+wc -l` returns **32**. The 32 jsonl files total **27,055,283,205 B (25.197 GiB)**; summing all 34
+entries gives 27,055,291,175 B, and `du -sb .` gives 27,055,295,271 B because it adds the
+directory's own 4,096-byte block. All three round to 25.197 GiB. The verification command at
+the end of this page uses the `*.jsonl` glob and prints 32, which is the number that must match
+— a reader who counts directory entries will conclude two shards are missing.
 
 ## Why the obvious routes do not
 
