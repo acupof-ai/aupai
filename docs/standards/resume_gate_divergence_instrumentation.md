@@ -44,14 +44,31 @@ built to produce, and it removes half the live candidates:**
 | comparison | result |
 |---|---|
 | `restart/loadK.*` vs `restart/optK.*` — the save/load round trip | `max\|delta\|=0.0`, **0 differing elements** on `exp_avg`, `exp_avg_sq`, `step`, at all 5 leaves (l0 `exp_avg` 0/13,107,200; l4 0/524,288) |
-| `fresh/optK.*` vs `restart/optK.*` — the two trajectories at step K | `max\|delta\|=0.0`, **0 differing** at all 5 leaves |
-| `rng_atK` — control vs fresh vs restart | **byte-identical** |
 | `ckpt_identity.json` | `populated_but_dropped=[]`, `model_missing_keys=[]`, `model_unexpected_keys=[]`, 228 `state_by_name` keys |
+
+**The row above is the whole load-bearing result, and the other two comparisons the dump invites you to
+make are NOT evidence.** Each arm is a separate process, but all three run identical code from
+`torch.manual_seed(123)` through `_build` and the per-batch generator
+(`tests/v41f/test_p1_train_ckpt.py:356-357`, `:346`), and the `optK`/`rng_atK` dump at the `i == k`
+loop head (`:374-380`) is reached **before every arm-specific branch** — the save/load for restart and
+fresh (`:381-389`), the new-optimizer swap at `:390-391`, restart's `loadK` dump at `:392-395`. So the
+cross-arm equalities a reader would naturally tabulate —
+
+- `fresh/optK` vs `restart/optK` → `max|delta|=0.0`
+- `rng_atK` identical across control, fresh, restart
+
+— are **construction guarantees**: the same state read three times, not three independent
+trajectories agreeing. A *nonzero* value there would have been the finding. Citing them as
+corroboration asserts "two independent runs confirm the same value" when there is one run and three
+reads, which is the shape `docs/lessons` files under an aggregate that cannot fail on what it hides.
+`ckpt_identity.json` is the exception among the auxiliary records: it compares control's *pre-save*
+populated set (`:384`) against the **restart** arm's loaded blob, so it is arm-specific and does carry
+information.
 
 **Candidate 2 (name re-bind) and candidate 3 (fp32-alias break) are falsified**, and so is the
 optimizer arm of candidate 1: after the load, every sampled leaf's AdamW triple equals its
-control-side counterpart *and* equals its own pre-save value, bit for bit. The round trip preserved
-the optimizer exactly.
+own pre-save value, bit for bit, across the boundary the two arms actually differ at. The round trip
+preserved the optimizer exactly.
 
 **The RNG dump found a difference, and it is not yet a cause.** `restart/rng_preSave.pt` vs
 `restart/rng_postLoad.pt` differ at 2,488 of 5,056 bytes. The worker writes `preSave` *before*
@@ -220,16 +237,18 @@ exactly why it is worth pinning: it converts "I read the code and saw no RNG" in
 and it catches a future step that adds one.
 
 **Measured 2026-09-21, and the prediction above was wrong as stated.** `rng_atK` is byte-identical
-across all three arms, so the seeded trajectories agree on RNG at K. But `restart/rng_preSave.pt` vs
-`restart/rng_postLoad.pt` differ at **2,488/5,056 bytes**, and the written reading does not hold: the
-two dumps straddle `save_train_checkpoint` + `load_train_checkpoint`, so a difference is expected
-even where training consumes no RNG. **"The RNG state does not survive the round trip" and "the round
-trip itself draws from the RNG" are both consistent with this pair, and the dump cannot separate
-them.** A speculative mechanism (save/load consuming RNG) is recorded as a *possibility*, not a
-finding: the competing reading — that the round trip and the trained steps in between consume none —
-is not excluded by any measurement. **The discriminating measurement is a third dump with nothing
-between the two reads**; until it exists, report this as an undetermined difference and never as the
-cause.
+across all three arms — but per the section above, that is a **construction guarantee**, not a
+measurement of seeded agreement: the dump sits ahead of every arm-specific branch, so there is one
+state read three times. It carries no information about the arms. The informative pair is
+`restart/rng_preSave.pt` vs `restart/rng_postLoad.pt`, which differ at **2,488/5,056 bytes** and are
+on opposite sides of the save/load boundary within a single arm. The written reading still does not
+hold: those two dumps straddle `save_train_checkpoint` + `load_train_checkpoint`, so a difference is
+expected even where training consumes no RNG. **"The RNG state does not survive the round trip" and
+"the round trip itself draws from the RNG" are both consistent with this pair, and the dump cannot
+separate them.** A speculative mechanism (save/load consuming RNG) is recorded as a *possibility*,
+not a finding: the competing reading — that the round trip draws nothing — is not excluded by any
+measurement. **The discriminating measurement is a third dump with nothing between the two reads**;
+until it exists, report this as an undetermined difference and never as the cause.
 
 ### 5. Missing / unexpected keys on load
 
