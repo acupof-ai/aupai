@@ -14699,9 +14699,27 @@ def _ids_at_every_ref(owner, root=None):
             if not line.strip():
                 continue
             try:
-                rid = json.loads(line).get("id", "")
+                row = json.loads(line)
             except json.JSONDecodeError:
                 continue  # a torn line at some ref is not worth failing an allocation over
+            rid = row.get("id", "")
+            # A bare number is restored by json.loads as an int, and pat.fullmatch then
+            # raises TypeError -- one such row anywhere in the clone (`{"id": 47, "owner":
+            # "de"}` on a departed session's branch) took out `task add/done/reopen/drop`
+            # and `friction add` for EVERY session in EVERY worktree, because this function
+            # is the allocation path and it scans every ref.
+            #
+            # TOLERATED IS NOT IGNORED. Such a row records a real allocation: it must enter
+            # `seen` or the id gets handed out twice. `str(rid)` alone does NOT do that --
+            # "47" matches no `<owner>-(\d+)$`, so it silently drops the id and the fix
+            # becomes the ignore it was meant to avoid. The `owner` field is what makes it
+            # attributable, so an int is counted when its row declares this owner, and
+            # ignored when it does not (another owner's ids are a different namespace).
+            # Every row in the register carries `owner` (723,656 checked, 0 missing).
+            if isinstance(rid, int):
+                if row.get("owner") == owner:
+                    seen.add(rid)
+                continue
             m = pat.fullmatch(rid or "")
             if m:
                 seen.add(int(m.group(1)))
@@ -25739,9 +25757,31 @@ def _selftest_id_allocation_sees_every_ref():
     g("checkout", "-q", "main")
     assert _ids_at_every_ref("own", root=d) == {7, 8}, "a ref with no register must not break the scan"
 
+    # A BARE-NUMBER id must not kill the scan, and must not be dropped either. Measured
+    # 2026-09-21: `{"id": 47, "owner": "de"}` on a departed session's branch raised
+    # TypeError and took down every session's `task`/`friction`. It is a real allocation,
+    # so it must enter `seen`; `str(rid)` alone would let it match nothing and vanish.
+    # Two rows, because "counted" and "not counted" are the two halves of one criterion:
+    # our own int counts, and another owner's int does not (a different id namespace).
+    _write_tasks(_read_tasks(p) + [
+        {"id": 47, "owner": "own", "state": "open", "task": "our int"},
+        {"id": 99, "owner": "someone-else", "state": "open", "task": "their int"},
+    ], p)
+    g("add", "-A"); g("commit", "-q", "-m", "rows whose ids are bare numbers")
+    ints = _ids_at_every_ref("own", root=d)
+    # THE MUTATIONS for this leg live in the equality, not below it. Two variants do not
+    # raise and lose a real allocation -- `continue` (ignore) and `str(rid or "")` (the
+    # first proposal, which makes "47" match no `<owner>-(\d+)$`): both produce {7, 8}, so
+    # a criterion of "does not raise" would pass them. Only a set equality separates them
+    # from the fix, which is why the assertion above is `==` and not an absence of
+    # exceptions. (genA, 2026-09-21: the first version of this leg followed that line with
+    # `assert 47 not in {7, 8}` -- a constant, true at parse time, judging nothing.)
+    assert ints == {7, 8, 47}, f"an int id of THIS owner must be counted, another's must not: {ints}"
+
     shutil.rmtree(d, ignore_errors=True)
     print("  ids: an unmerged peer allocation at another ref is seen (own-9, not own-8); the "
-          "tree-only max reproduces the collision; a ref with no register is skipped")
+          "tree-only max reproduces the collision; a ref with no register is skipped; a "
+          "bare-number id counts for its own owner and is skipped for another's")
 
 
 def _selftest_auto_resume():
