@@ -1677,6 +1677,7 @@ def _selftest():
         open(_rm, "w").close()  # fresh and unparseable: claims() leaves it, O_EXCL still fails
         _real_exists, _real_stat = os.path.exists, os.stat
         _armed = []
+        _gone = []
 
         def _in_claims():
             _f = _sys._getframe(1)
@@ -1689,6 +1690,7 @@ def _selftest():
         def _fire():
             try:
                 os.unlink(_rm)
+                _gone.append(1)  # recorded only if the row ACTUALLY vanished
             except FileNotFoundError:
                 pass
 
@@ -1712,6 +1714,23 @@ def _selftest():
                 _rok,
                 f"acquire()'s handler reclaims when the reserving file vanishes between its "
                 f"exists and its stat ({_rmsg[:70]})",
+            )
+            # THE CASE MUST PROVE THE ROW ACTUALLY VANISHED, not that a function was
+            # called. Two instrument deaths, and only one of them is loud:
+            #   hooks bypassed entirely (a refactor stops calling os.stat here): the
+            #   production code sees a fresh row and REFUSES, so the assertion above
+            #   already reds -- measured 153/155, both cases BUG;
+            #   hook installed but neutered, e.g. _fire stops unlinking: silent. A row
+            #   that never vanished is reclaimed normally and the assertion above is
+            #   ok. Measured on a counter placed inside _fire: 155/155, identical to
+            #   the real run.
+            # So the count is taken AFTER the unlink, where it records the effect
+            # rather than the call (3b's point on #626; first version of this guard
+            # counted the call and missed exactly the silent case).
+            _case(
+                bool(_gone),
+                f"the case reached its target: the reserving row was removed "
+                f"({len(_gone)} time(s))",
             )
         except FileNotFoundError as e:
             _tb = _sys.exc_info()[2]
