@@ -1563,7 +1563,29 @@ A third effect is a check that reported a weaker state than the loss deserved, f
 
 Rule: when a ref or a ledger loses content, establish what was lost by **set membership in the direction concurrent writers cannot touch**, never by count and never by a diff statistic. Before trusting a content-loss recovery, prove the discarded bytes exist somewhere already landed, by hashing them against that location -- "it looks like main's" is not evidence, and no local reading is. When a guard covers one artifact, name which artifacts it does not cover: the loud refusal and the silent loss were the same cause, and only one of them had a check.
 
-Cost: one repo-wide commit freeze for the window between the sideways move and #625 landing, ~120 minutes (`runs/friction.jsonl`, `d8ef1711`). Three review rows absent from `main` for that window, during which #624 read as unreviewed. A fourth ref write escaped the guard entirely. Step timings from the run that carried the fix are bimodal across 31 successful runs and must not be pooled: 14 land at 33-50 s and 17 at 730-1031 s (median 734), with nothing between 50 and 730 -- a 14x gap in a sample of 31, so the two clusters are real states of the runner and not the tails of one distribution. The cancelled attempt shows 736 s, and 736 s ALSO appears as a completed successful step in the same sample: the number alone cannot say which class it belongs to, and one 4 s away from it sits a step duration. `ci.yml:73`'s `~2-4 min CPU` estimate for that step is therefore wrong in both directions -- 240 s is above the entire fast cluster and below the entire slow one, ~3.1x under the slow median and ~0.15x over the fast one (a 20x span).
+Cost: one repo-wide commit freeze for the window between the sideways move and #625 landing, ~120 minutes (`runs/friction.jsonl`, `d8ef1711`). Three review rows absent from `main` for that window, during which #624 read as unreviewed. A fourth ref write escaped the guard entirely. Step timings from the run that carried the fix are bimodal across 31 successful runs and must not be pooled. The runs themselves (`startedAt -> completedAt`, the runs API, `--selftest` step number 17) are the evidence and any range is derived from them:
+
+| fast cluster | slow cluster |
+|---|---|
+| 35591547172/a1 33 s | 35572833006/a1 730 s |
+| 35571679617/a1 34 s | 35572684194/a1 734 s |
+| 35592854828/a1 35 s | 35591857451/a1 736 s |
+| 35579045775/a1 36 s | 35572680534/a1 738 s |
+| 35578442965/a1 37 s | 35580866583/a1 740 s |
+| 35571675300/a1 43 s | 35580132444/a1 747 s |
+| 35573952682/a1 43 s | 35582189599/a1 752 s |
+| 35577950779/a1 44 s | 35593120579/a1 752 s |
+| 35584847491/a2 44 s | 35576311500/a1 754 s |
+| 35577295522/a1 45 s | 35584841163/a1 754 s |
+| 35592277031/a1 45 s | 35572827761/a1 755 s |
+| 35571752277/a1 46 s | 35580181721/a1 755 s |
+| 35592316959/a1 47 s | 35584841163/a2 757 s |
+| 35592311717/a1 50 s | 35591900345/a1 945 s |
+| | 35593111087/a1 980 s |
+| | 35584847491/a3 1016 s |
+| | 35576363690/a1 1031 s |
+
+Fourteen land at 33-50 s and seventeen at 730-1031 s, median 734, with nothing between 50 and 730 -- a 14x gap in a sample of 31, so the two clusters are real states of the runner and not the tails of one distribution. **A number of seconds is not the class.** 736 s appears twice: as the cancelled attempt 35584847491/a1, and as a completed SUCCESSFUL step, 35591857451/a1. It sits 4 s from the successful 740 s. What separates them is `conclusion`, not the duration, so these timings are only readable with their event type attached; classified by seconds alone the two are indistinguishable. `ci.yml:73`'s `~2-4 min CPU` estimate for that step is wrong in both directions -- 240 s sits above the entire fast cluster and below the entire slow one, ~3.1x under the slow median and ~0.15x over the fast one (a 20x span).
 
 Evidence: `scripts/hooks/pre-commit:3148-3151` (the unconditional `harness.py check`, no staged-path filter), `:367-372` (the 2026-09-08 precedent: b0's `484a9528` sideways move "refused every commit repo-wide until PR #54 recorded the pair"); `scripts/harness.py:4221-4232` (the reflog scope is `logs/refs/heads/main`, resolved from the common git dir), `:4268` (`_RECORDED`), `:4363` (the exemption skip), `:4390` (the unsigned-WARN prefix whitelist -- `fetch`, `reset`, `branch` are legitimate commands there, which is why a `reset` of a branch ref is not a shape this check can report), `:4432` (the PASS string, whose `len(lines)` is the reflog window length and not the exemption count); commits `766a32c7` (PR #625, the exemption) and `d8ef1711` (the friction row). The reflog pair for the branch write is `8f849eff -> f4a8d86f` on `de-cardclaim-atomic-0921`, read from the local ref's reflog; `origin/de-cardclaim-atomic-0921` held `8f849eff` throughout, and PR #626's head reads `0a5afcb9` after the fix that review produced.
 
