@@ -1690,9 +1690,17 @@ def _selftest():
         def _fire():
             try:
                 os.unlink(_rm)
-                _gone.append(1)  # recorded only if the row ACTUALLY vanished
             except FileNotFoundError:
                 pass
+            # COUNT THE EFFECT, AND OBSERVE IT WITHOUT THE INSTRUMENT. Two earlier versions of
+            # this line counted the CALL and passed with the deletion disabled (3b, then genA,
+            # both by mutation): `_gone.append(1)` on the next line runs whether or not the
+            # unlink did anything, so reaching it is not evidence the row went away.
+            # The check must also not use os.path.exists: this case patches os.stat globally,
+            # so exists() recurses through the instrument and would report whatever the
+            # instrument says. listdir reads the directory itself.
+            if os.path.basename(_rm) not in os.listdir(os.path.dirname(_rm)):
+                _gone.append(1)
 
         def _exists(path, _p=_rm, _real=_real_exists):
             if _armed and os.path.abspath(str(path)) == _p:
@@ -1715,18 +1723,17 @@ def _selftest():
                 f"acquire()'s handler reclaims when the reserving file vanishes between its "
                 f"exists and its stat ({_rmsg[:70]})",
             )
-            # THE CASE MUST PROVE THE ROW ACTUALLY VANISHED, not that a function was
-            # called. Two instrument deaths, and only one of them is loud:
+            # THE CASE MUST PROVE THE ROW ACTUALLY VANISHED, not that a function was called.
+            # Instrument deaths, and which are loud (all measured by mutation):
             #   hooks bypassed entirely (a refactor stops calling os.stat here): the
             #   production code sees a fresh row and REFUSES, so the assertion above
-            #   already reds -- measured 153/155, both cases BUG;
-            #   hook installed but neutered, e.g. _fire stops unlinking: silent. A row
-            #   that never vanished is reclaimed normally and the assertion above is
-            #   ok. Measured on a counter placed inside _fire: 155/155, identical to
-            #   the real run.
-            # So the count is taken AFTER the unlink, where it records the effect
-            # rather than the call (3b's point on #626; first version of this guard
-            # counted the call and missed exactly the silent case).
+            #   already reds -- 153/155, both cases BUG;
+            #   the unlink no-op'd while the rest of _fire runs: SILENT unless this count
+            #   observes the effect without the instrument. Two versions failed here --
+            #   counting calls (154/155, twice reported as fixed) and monitoring the row
+            #   with os.path.exists, which recurses through the patched os.stat.
+            # listdir asks the directory itself, so it cannot be answered by the instrument
+            # it is checking (genA's fix, #626 review).
             _case(
                 bool(_gone),
                 f"the case reached its target: the reserving row was removed "
