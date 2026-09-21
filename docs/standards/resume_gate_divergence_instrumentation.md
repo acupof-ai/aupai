@@ -34,6 +34,140 @@ So the surviving hypothesis is a **real asymmetry between the two trajectories**
 `diag_resume_bimodal.py` is the right instrument family. What it does not yet cover is specified
 below.
 
+## The red is TWO-STATE, proven on the same run (2026-09-22)
+
+**The same GitHub run, on the same tree, with the same event, both fails and passes.** Run
+`35603567150` (sha `5171ad89`, `event=pull_request`) had its `check` job FAIL with the signature
+below; after `gh run rerun --failed` the identical run completed **success**, and its log carries the
+gate's own PASS line:
+
+```
+resume: save/load mid-run bit-identical to control; fresh optim diverges
+```
+
+The gate therefore **executed and passed** — it was not skipped, so this is not a missing run.
+
+**This retracts the 2026-09-19 ruling** (recorded as `facts/v41.json#v41.d17_two_state_not_save_load_0922`,
+`status: retracted`), which is also the working hypothesis in `.github/workflows/ci.yml`'s diag-resume
+header. The case against that ruling is now three independent lines, and this is the first that is a
+controlled comparison rather than an inference:
+
+1. the dump shows the save→load round trip bit-exact at all 5 leaves (section above);
+2. the dump shows the optimizer and RNG families equal across arms, leaving only the weight family
+   untested (§ below);
+3. **this rerun shows the outcome is not a function of the tree at all.**
+
+**An earlier attempt at this claim was wrong and is worth keeping as the trap it was.** I first read a
+push run FAIL and a pull_request run SUCCESS on one sha as two-state; they had checked out *different
+trees* (`raw refs/heads/*` vs `+refs/pull/619/merge`, since `actions/checkout@v4` has no `ref:` and a
+PR run takes the synthetic merge ref). `gh run list --commit` reports one snapshot sha for both, which
+is what hid it. **A two-state claim needs the checked-out sha per run, not the run-list sha** — and
+the way to hold every variable fixed is to rerun the SAME run id, which is what settled it here.
+
+**No mechanism is claimed.** Which runner property flips it is unknown: thread/BLAS order, load,
+oneDNN and an unseeded init were each falsified earlier, and the `setsid` and time-to-fork hypotheses
+were falsified for the adjacent `card_claim` world control. What is established is only that a green
+and a red can be the same code on the same tree.
+
+**Consequence for the gate, and for the launch.** A two-state red is not evidence about the change
+under test, so a push whose only failure is this signature is **not** a reason to hold a merge. It is
+also **not** grounds to keep rerunning until green: the correct read is that the check is
+runner-dependent, and the falsifiable question moves to the **master-weight family**, which no red has
+ever recorded — `#624` (merged `c13e9d06`) dumps exactly those two tensors, and **the next red on a sha
+carrying it decides that family.** The launch does not wait on it.
+
+### Adjudication: what a code-free PR may do with this red (2026-09-22)
+
+**This is the operative rule, and it exists so that a red with no relation to the diff does not block
+unrelated work.** It applies **only** to a failing `check` job whose failing step is `train checkpoint
+gates`, whose only failing assertion is `gate_resume_equivalent_to_uninterrupted`, and whose reported
+signature is byte-identical to the one above (`max|delta|=1.334e-02`, `n_diff=506533/524288`,
+`first_flat_idx=0`, `n_nan=0`).
+
+**What does NOT license a pass.** Two arguments that have been used are both invalid, and the second
+is the more dangerous because it cites this very file:
+
+- *"the clean physical host is 14/14 green"* — that is an environment difference, and the whole
+  finding here is that the runner and the physical host disagree. Citing it as evidence that a
+  runner red is spurious assumes the conclusion.
+- *"this job is never a gate"* — `.github/workflows/ci.yml` says that about **`diag-resume`**
+  (`:153-166`, a `continue-on-error` job that push/PR skip entirely). Its last two lines say the
+  opposite about the job that actually fails: *"The required check job above keeps the real gate
+  fail-closed; this job exits 0 by construction."* **The failing job is the required one.**
+
+**The procedure.** A PR that touches no code (docs, ledgers, facts) and whose CI is red *only* under
+the paragraph above may proceed after its second reader records, **in the review row**, that they
+checked all four conditions in the paragraph above against the run's own log. The row must name the
+run id. A PR touching `tests/v41f/`, `v41f/`, `train.py` or the workflow itself does **not** qualify —
+there the red is in scope until the weight family is measured.
+
+**The residual, stated as a residual.** This does not say the red is harmless. The master-weight
+family is still unmeasured, and until a red uploads `#624`'s two tensors **nobody can say the two
+trajectories agree on the weights themselves** — only that the optimizer state, the RNG and the
+tree are not the difference. If the weight family later turns out to diverge, this rule was the wrong
+call and the PRs it passed need re-examination; that is the cost being accepted, and it is bounded
+because the affected merges are docs and ledgers, which no gate re-reads.
+
+**Next step, and it is the only one.** The next red on a sha carrying `c13e9d06` decides the family.
+Nothing further should be specified before that artifact exists.
+
+## The first red-after-instrumentation, and what it falsified (2026-09-21)
+
+Run `35603567150` (sha `5171ad89`) failed the required gate on the runner and uploaded
+`gate-resume-dump-35603567150` (432,361,251 bytes, 69 files, three arms, 5 leaves). Read on the
+laptop with `torch.load(weights_only=False)`. **This is the artifact the `#549` instrumentation was
+built to produce, and it removes half the live candidates:**
+
+| comparison | result |
+|---|---|
+| `restart/loadK.*` vs `restart/optK.*` — the save/load round trip | `max\|delta\|=0.0`, **0 differing elements** on `exp_avg`, `exp_avg_sq`, `step`, at all 5 leaves (l0 `exp_avg` 0/13,107,200; l4 0/524,288) |
+| `ckpt_identity.json` | `populated_but_dropped=[]`, `model_missing_keys=[]`, `model_unexpected_keys=[]`, 228 `state_by_name` keys |
+
+**The row above is the whole load-bearing result, and the other two comparisons the dump invites you to
+make are NOT evidence.** Each arm is a separate process, but all three run identical code from
+`torch.manual_seed(123)` through `_build` and the per-batch generator
+(`tests/v41f/test_p1_train_ckpt.py:356-357`, `:346`), and the `optK`/`rng_atK` dump at the `i == k`
+loop head (`:374-380`) is reached **before every arm-specific branch** — the save/load for restart and
+fresh (`:381-389`), the new-optimizer swap at `:390-391`, restart's `loadK` dump at `:392-395`. So the
+cross-arm equalities a reader would naturally tabulate —
+
+- `fresh/optK` vs `restart/optK` → `max|delta|=0.0`
+- `rng_atK` identical across control, fresh, restart
+
+— are **construction guarantees**: the same state read three times, not three independent
+trajectories agreeing. A *nonzero* value there would have been the finding. Citing them as
+corroboration asserts "two independent runs confirm the same value" when there is one run and three
+reads, which is the shape `docs/lessons` files under an aggregate that cannot fail on what it hides.
+`ckpt_identity.json` is the exception among the auxiliary records: it compares control's *pre-save*
+populated set (`:384`) against the **restart** arm's loaded blob, so it is arm-specific and does carry
+information.
+
+**Candidate 2 (name re-bind) and candidate 3 (fp32-alias break) are falsified**, and so is the
+optimizer arm of candidate 1: after the load, every sampled leaf's AdamW triple equals its
+own pre-save value, bit for bit, across the boundary the two arms actually differ at. The round trip
+preserved the optimizer exactly.
+
+**The RNG dump found a difference, and it is not yet a cause.** `restart/rng_preSave.pt` vs
+`restart/rng_postLoad.pt` differ at 2,488 of 5,056 bytes. The worker writes `preSave` *before*
+`save_train_checkpoint` and `postLoad` *after* `load_train_checkpoint`, and the round trip itself
+consumes global RNG, so this is expected wherever training consumes none. §4 predicted a no-op and
+got a difference; **which of the two readings is right is undetermined.** Do not report it as the
+cause. The measurement to settle it is the same one §4 asks for, now with a known-answer value: dump
+RNG at a point where *nothing* has touched it between the two reads, and compare.
+
+**What the dump cannot answer, and this is the load-bearing gap.** It records optimizer moments, RNG
+bytes, key names and shapes, and **no model or master weight values anywhere** — every `.pt` with
+`numel > 1e6` is an `exp_avg`/`exp_avg_sq`. So when the gate reports `n_diff=506533/524288` on the
+**fp32 master**, this artifact is blind to it. What is excluded is the optimizer/rebind/RNG family;
+the **master-weight family is untested**, not excluded: the fp32→bf16→fp32 path, `refresh_bf16`, and
+the save-time dtype truncation assertions at `v41f/master.py:246-249` were never observed by any
+artifact from this run.
+
+**`#624` (merged `c13e9d06`) closes exactly that gap** — it dumps the two fp32 master tensors and the
+bf16 run weight that actually differed, plus a `call_site`/`values` record. **No red has uploaded one
+yet.** The next red on a sha that carries `c13e9d06` is the decisive artifact; nothing further should
+be specified until it exists.
+
 ## Candidate causes, and the measurement that separates them
 
 Four candidates. Each has a distinct expected signature, so the instrumentation is diagnostic, not
@@ -47,7 +181,14 @@ merely descriptive.
 | 4 | **Non-deterministic kernel on the runner** | divergence does **not** correlate with the load boundary; control and restart differ *before* the checkpoint step |
 
 Candidate 4 is already excluded for the seeded case by the measurement above, and
-`diag_resume_bimodal.py --diag-arm` re-tests it per run. Candidates 1 and 2 are the live ones.
+`diag_resume_bimodal.py --diag-arm` re-tests it per run.
+
+**Status after the 2026-09-21 dump (section above): candidates 2 and 3 are FALSIFIED, candidate 1's
+optimizer arm is falsified.** Candidate 1 remains live only in its weight-carrying form —
+something about the fp32 master or the bf16 run weight does not survive the round trip. Stated as
+the open question rather than as a hypothesis with a mechanism: **no artifact has yet recorded a
+weight value from a red run, so nothing is known about which weights differ, by how much, or at
+which leaf.** `#624` is the instrument for that question and it has not yet fired on a red.
 
 ### One mechanism already excluded, and what the exclusion bought
 
@@ -171,6 +312,20 @@ training path currently consumes no RNG (`v41f/train.py` has no `rand`/`dropout`
 and `_last_loss_terms` is the only module-level mutable), so this should be a no-op — which is
 exactly why it is worth pinning: it converts "I read the code and saw no RNG" into a measurement,
 and it catches a future step that adds one.
+
+**Measured 2026-09-21, and the prediction above was wrong as stated.** `rng_atK` is byte-identical
+across all three arms — but per the section above, that is a **construction guarantee**, not a
+measurement of seeded agreement: the dump sits ahead of every arm-specific branch, so there is one
+state read three times. It carries no information about the arms. The informative pair is
+`restart/rng_preSave.pt` vs `restart/rng_postLoad.pt`, which differ at **2,488/5,056 bytes** and are
+on opposite sides of the save/load boundary within a single arm. The written reading still does not
+hold: those two dumps straddle `save_train_checkpoint` + `load_train_checkpoint`, so a difference is
+expected even where training consumes no RNG. **"The RNG state does not survive the round trip" and
+"the round trip itself draws from the RNG" are both consistent with this pair, and the dump cannot
+separate them.** A speculative mechanism (save/load consuming RNG) is recorded as a *possibility*,
+not a finding: the competing reading — that the round trip draws nothing — is not excluded by any
+measurement. **The discriminating measurement is a third dump with nothing between the two reads**;
+until it exists, report this as an undetermined difference and never as the cause.
 
 ### 5. Missing / unexpected keys on load
 
