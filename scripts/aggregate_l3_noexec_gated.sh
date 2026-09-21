@@ -13,10 +13,27 @@
 # directory that does not exist (0 forever) and `n` read 37 against a target of
 # 147. Neither is a corruption: the gate was addressed to a different builder.
 #
-# The fix is to ask the OUT directory what it holds, so the check holds for any
-# recipe. What is asserted is the property this gate actually wants -- "the
-# units the aggregate will consume are present, stamped, and still growing" --
-# rather than "someone's file naming reached a number I chose".
+# The fix is to ask the OUT directory what it holds, so the COMPLETION signal
+# holds for any recipe. What is asserted is the property this gate actually
+# wants -- "the units the aggregate will consume are present and the set has
+# stopped growing" -- rather than "someone's file naming reached a number I
+# chose".
+#
+# THE LIVENESS PREDICATE KEEPS A BUILDER ASSUMPTION, stated so it is not read as
+# part of the above: `converters_alive` recognises a converter by `--no-exec`
+# appearing in its argv, i.e. "a converter started as `python3 ... --no-exec`".
+# That holds for the committed per-shard builder and for the pod's per-group
+# one (measured on the pod 2026-09-22, including through the `taskset` wrapper
+# that launcher uses), but it is not recipe-independent. If a future builder
+# renames the flag or execs the converter from a wrapper whose argv omits it,
+# this predicate reads false, the loop takes the `elif [ "$u" -gt 0 ]` branch,
+# and the proof plus aggregate start WHILE CONVERSION IS STILL RUNNING --
+# producing a silently truncated domain rather than a hang. That is the same
+# defect class as the one fixed here, and its failure direction is worse
+# (silent partial output beats an innocent hang in cost). Not changed in this
+# PR: removing it means deriving liveness from the product too (e.g. units
+# appearing this round), which changes the `--no-exec` predicate two reviews
+# asked to leave alone. Recorded as a known boundary.
 #
 # Still retained from the original: a stale stats file from an earlier run must
 # not satisfy the gate. That is why the count is paired with a LIVENESS check on
