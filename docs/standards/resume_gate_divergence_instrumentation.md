@@ -34,6 +34,46 @@ So the surviving hypothesis is a **real asymmetry between the two trajectories**
 `diag_resume_bimodal.py` is the right instrument family. What it does not yet cover is specified
 below.
 
+## The first red-after-instrumentation, and what it falsified (2026-09-21)
+
+Run `35603567150` (sha `5171ad89`) failed the required gate on the runner and uploaded
+`gate-resume-dump-35603567150` (432,361,251 bytes, 69 files, three arms, 5 leaves). Read on the
+laptop with `torch.load(weights_only=False)`. **This is the artifact the `#549` instrumentation was
+built to produce, and it removes half the live candidates:**
+
+| comparison | result |
+|---|---|
+| `restart/loadK.*` vs `restart/optK.*` — the save/load round trip | `max\|delta\|=0.0`, **0 differing elements** on `exp_avg`, `exp_avg_sq`, `step`, at all 5 leaves (l0 `exp_avg` 0/13,107,200; l4 0/524,288) |
+| `fresh/optK.*` vs `restart/optK.*` — the two trajectories at step K | `max\|delta\|=0.0`, **0 differing** at all 5 leaves |
+| `rng_atK` — control vs fresh vs restart | **byte-identical** |
+| `ckpt_identity.json` | `populated_but_dropped=[]`, `model_missing_keys=[]`, `model_unexpected_keys=[]`, 228 `state_by_name` keys |
+
+**Candidate 2 (name re-bind) and candidate 3 (fp32-alias break) are falsified**, and so is the
+optimizer arm of candidate 1: after the load, every sampled leaf's AdamW triple equals its
+control-side counterpart *and* equals its own pre-save value, bit for bit. The round trip preserved
+the optimizer exactly.
+
+**The RNG dump found a difference, and it is not yet a cause.** `restart/rng_preSave.pt` vs
+`restart/rng_postLoad.pt` differ at 2,488 of 5,056 bytes. The worker writes `preSave` *before*
+`save_train_checkpoint` and `postLoad` *after* `load_train_checkpoint`, and the round trip itself
+consumes global RNG, so this is expected wherever training consumes none. §4 predicted a no-op and
+got a difference; **which of the two readings is right is undetermined.** Do not report it as the
+cause. The measurement to settle it is the same one §4 asks for, now with a known-answer value: dump
+RNG at a point where *nothing* has touched it between the two reads, and compare.
+
+**What the dump cannot answer, and this is the load-bearing gap.** It records optimizer moments, RNG
+bytes, key names and shapes, and **no model or master weight values anywhere** — every `.pt` with
+`numel > 1e6` is an `exp_avg`/`exp_avg_sq`. So when the gate reports `n_diff=506533/524288` on the
+**fp32 master**, this artifact is blind to it. What is excluded is the optimizer/rebind/RNG family;
+the **master-weight family is untested**, not excluded: the fp32→bf16→fp32 path, `refresh_bf16`, and
+the save-time dtype truncation assertions at `v41f/master.py:246-249` were never observed by any
+artifact from this run.
+
+**`#624` (merged `c13e9d06`) closes exactly that gap** — it dumps the two fp32 master tensors and the
+bf16 run weight that actually differed, plus a `call_site`/`values` record. **No red has uploaded one
+yet.** The next red on a sha that carries `c13e9d06` is the decisive artifact; nothing further should
+be specified until it exists.
+
 ## Candidate causes, and the measurement that separates them
 
 Four candidates. Each has a distinct expected signature, so the instrumentation is diagnostic, not
@@ -47,7 +87,14 @@ merely descriptive.
 | 4 | **Non-deterministic kernel on the runner** | divergence does **not** correlate with the load boundary; control and restart differ *before* the checkpoint step |
 
 Candidate 4 is already excluded for the seeded case by the measurement above, and
-`diag_resume_bimodal.py --diag-arm` re-tests it per run. Candidates 1 and 2 are the live ones.
+`diag_resume_bimodal.py --diag-arm` re-tests it per run.
+
+**Status after the 2026-09-21 dump (section above): candidates 2 and 3 are FALSIFIED, candidate 1's
+optimizer arm is falsified.** Candidate 1 remains live only in its weight-carrying form —
+something about the fp32 master or the bf16 run weight does not survive the round trip. Stated as
+the open question rather than as a hypothesis with a mechanism: **no artifact has yet recorded a
+weight value from a red run, so nothing is known about which weights differ, by how much, or at
+which leaf.** `#624` is the instrument for that question and it has not yet fired on a red.
 
 ### One mechanism already excluded, and what the exclusion bought
 
@@ -171,6 +218,18 @@ training path currently consumes no RNG (`v41f/train.py` has no `rand`/`dropout`
 and `_last_loss_terms` is the only module-level mutable), so this should be a no-op — which is
 exactly why it is worth pinning: it converts "I read the code and saw no RNG" into a measurement,
 and it catches a future step that adds one.
+
+**Measured 2026-09-21, and the prediction above was wrong as stated.** `rng_atK` is byte-identical
+across all three arms, so the seeded trajectories agree on RNG at K. But `restart/rng_preSave.pt` vs
+`restart/rng_postLoad.pt` differ at **2,488/5,056 bytes**, and the written reading does not hold: the
+two dumps straddle `save_train_checkpoint` + `load_train_checkpoint`, so a difference is expected
+even where training consumes no RNG. **"The RNG state does not survive the round trip" and "the round
+trip itself draws from the RNG" are both consistent with this pair, and the dump cannot separate
+them.** A speculative mechanism (save/load consuming RNG) is recorded as a *possibility*, not a
+finding: the competing reading — that the round trip and the trained steps in between consume none —
+is not excluded by any measurement. **The discriminating measurement is a third dump with nothing
+between the two reads**; until it exists, report this as an undetermined difference and never as the
+cause.
 
 ### 5. Missing / unexpected keys on load
 
