@@ -1941,6 +1941,30 @@
    "source": "python3 -c torch.load('/data00/tokens_code.pt'); du -sh data/raw/*; df -h /data00; ls data/raw/ultradata/*.parquet | wc -l",
    "uncertainty": "The multiplication is exact for the cache (dtype fixes bytes/token, so 30B -> 120 GB has no extrapolation in it). The raw term is a projection from a 69-shard mean across a corpus whose shards are visibly uniform (1.07 GB, tight); the c4 27 GB term is the same mean times 30 remaining shards and c4 is a different corpus. Peak-without-release is stated as an order of magnitude, not a number, because the built shard size is not yet measured for any of the six domains.",
    "boundary": "This is a projection from two measured inputs, not a reading of a state that exists - of the six _dc domains, zero are built, so the +120 GB cache term and the built-shard term are both still ahead. It says nothing about whether 2.6 TB is enough for any other line (math_owm_stage2 was 64 GB and rising; other worktrees share /data00). It does not model inode pressure, page cache, or any filesystem other than /data00. Verify raw retention empirically on the first aggregate run rather than against the help text: the code path is that aggregate() never references the raw parquet directory at all - every os.remove in it targets a file under out/fout (tagged_p, cf, xdrop_p) - so --release_intermediates cannot reach raw, but that was established by reading the function, not by observing a run."
+  },
+  {
+   "id": "cs.code_ultra_l2_dc_rebuilt_0921",
+   "value": 36161205782,
+   "unit": "kept_tokens (sum of per-doc exact tokenizer ids + one <eos> per doc), post decontam + global exact dedup, of the rebuilt code_ultra_l2_dc domain on the pod",
+   "measured": "2026-09-21",
+   "status": "measured",
+   "config": {
+    "domain_stamp": "code_ultra_l2_dc",
+    "intermediate_domain": "code_ultra_l2",
+    "final_shard_prefix": "code_ultra_l2_ (taken from --out basename, NOT --final-out)",
+    "n_final_shards": 1304,
+    "kept_rows": 39018564,
+    "total_input_rows": 72844227,
+    "decontam_fp": "302aa793f7067462",
+    "vocab": "data/tokenizer.json (gate vocab f1f860970d15d623)",
+    "raw": "119 UltraData-Code-L2 parquet, 119.04 GiB, retained (aggregate never references the raw dir)",
+    "build": "30 parallel groups (29x4 + 1x3 shards) via datagen/ultradata_shards.py --level L2, each row-conservation gated (bucket sum == total_rows == parquet num_rows), then --aggregate 'stats_g*.json' --agg-workers 20",
+    "wall_clock": "group convert 82 min + aggregate 122 min (global crossdup pass wrote a 29.4 GB intermediate, final global hash ran ~129 cores)",
+    "non_reentrant": "aggregate() ends with an UNCONDITIONAL `for shard in tagged: os.remove(shard)` loop (datagen/ultradata_shards.py, independent of --release-intermediates; that flag only also removes .clean/.ngdrop). The tagged input jsonl are therefore gone after one aggregate, so the aggregate cannot be re-run as-is. The ONLY way to rebuild without re-fetching is to keep the 30 stats_g*.json together with the 119 raw parquet and reconvert. Do not delete data/corpus/code_ultra_l2/stats_g*.json."
+   },
+   "source": "pod build_corpus_stats.json in data/corpus/code_ultra_l2_dc (git-ignored corpus bytes, not in this tree; domain/kept_tokens/decontam_fp read there 2026-09-21); conversion driver datagen/ultradata_shards.py; driver script /work/aupai/l2_full_build30.sh; group logs /work/aupai/runs/ultra_groups/l2_g*.log on the pod hostPath",
+   "uncertainty": "kept_tokens is the full-document tokenizer count stamped by the aggregate, not the 4096-row packed cache count (cs.gate_domains_dc_packed_0911 lists the 09-11 L2 packed basis as 15,340,876,449 - a different unit, not a disagreement; no packed tokens_code_ultra_l2_dc.pt exists yet). Exact for this build; a different raw set or filter would change it.",
+   "boundary": "Measures one rebuilt domain on the pod. Says nothing about L3 (larger shards, its own aggregate timing not extrapolated from this) and does not produce the gate token cache, which still needs pretokenize_domains."
   }
  ]
 }
