@@ -79,42 +79,59 @@ unlike the finemath fetch, a serial total here is a sum of like-sized terms.
 
 ### The transfer must fit a per-stream timeout — chunk it
 
-**A `tn write` stream is killed after a fixed window, independent of speed.** Measured
-2026-09-21: four concurrent streams each died at ~196 MB with `held connection no response for
-5m0s`, and 300 s × 0.65 MiB/s = 196 MB — the arithmetic matches, so **the 5-minute window is
-what ended them, not a rate collapse.** A real 843 MB shard at 0.65 MiB/s needs ~21.6 min and
-therefore **cannot be sent as one stream at all.**
+**A `tn write` stream is killed 300 s after it starts, at any speed.** Measured directly with a
+single 250 MiB stream: it died at `held connection: no response for 5m0s` with `rc=1` and
+`elapsed=300s` exactly, having landed **172,163,072 B = 164.2 MiB** (0.547 MiB/s that run).
 
-**This invalidates the parallel figure below for real work.** The 3.8× was measured with 8 MiB
-probes finishing in 12–13 s, which never come close to the window. **A probe answers "is the
-route up"; it does not answer "will this payload finish".** The two intervals are different, and
-a number from one does not transfer to the other.
+**Cut by SECONDS, not by bytes.** A byte ceiling is not a constant — it is `rate × 300 s`, and
+the rate moves (0.44–0.65 MiB/s across runs). A "196 MB limit" computed from one run's rate
+would send an oversized chunk the moment the link slows. Budget **240 s** (60 s of margin) and
+convert at the rate you are actually seeing; re-measure per chunk rather than trusting a number
+from an earlier one.
 
-**The working shape is: cut each shard into ~80 MB chunks, stream each chunk, concatenate on the
-host, then verify.**
+### `tn write` FAILS OPEN on timeout — verify every chunk by hash
 
-```bash
-# per shard, per chunk: ~80 MB is ~125 s at 0.65 MiB/s -- inside the 5-minute window
-split -b 80m shard.bin /tmp/chunk_
-for c in /tmp/chunk_*; do
-  cat "$c" | tn write /data00/aupai_work/aupai_c4/parts/$(basename "$c") || exit 1   # 3 retries
-done
-# concatenate on the pod HOST (not in the container: /work is the same filesystem)
-tn exec "cd /data00/aupai_work/aupai_c4/parts && cat chunk_* > ../shard.bin"
-# then the three-way sha, as below
+This is the part that costs a silent corruption if it is missed. After the 250 MiB stream died
+at the window, the host held:
+
+```
+big.bin       172,163,072 B     <- the FINAL name
+*.tn-tmp      none              <- no leftover temp file
+head -c 1MB   identical to the source's first 1MB   <- a true prefix of the source
 ```
 
-**Retry each chunk independently**, up to 3 times. A chunk that dies at the window is the normal
-case, not an error — the chunk boundary is what makes the retry cheap.
+**A truncated fragment was renamed into place under the correct name.** `tn write`'s atomic
+temp+rename was not violated — a truncated file *is* a valid new file under that contract. The
+result is a file that exists, is non-empty, has correct content as far as it goes, correct name,
+and the wrong length. **`rc=1` is the only external signal.**
+
+```bash
+# per chunk: transfer, then hash IMMEDIATELY -- never gate on rc alone, never on file existence
+cat "$chunk" | tn write "$DST/parts/$(basename "$chunk")"; rc=$?
+for try in 1 2 3; do
+  a=$(sha256sum "$chunk" | cut -d' ' -f1)
+  b=$(tn exec "sha256sum $DST/parts/$(basename "$chunk")" | cut -d' ' -f1)
+  [ "$rc" = 0 ] && [ "$a" = "$b" ] && break
+  cat "$chunk" | tn write "$DST/parts/$(basename "$chunk")"; rc=$?
+done
+[ "$a" = "$b" ] || { echo "CHUNK UNRECOVERABLE: $chunk"; exit 1; }
+```
+
+**A chunk that dies at the window is the normal case, not an error** — the chunk boundary is
+what makes the retry cheap. **And the final whole-shard sha is the last line of defence, not a
+formality:** if a truncated chunk ever reaches the concatenation, a mismatch there is the only
+thing that catches it.
 
 ### Throughput: per-stream, and the probe caveat
 
-Four concurrent `tn write`s of 8 MiB each finished in 12 s = **2.46 MiB/s aggregate** against
-**0.65 MiB/s single-stream, 3.8×** — the limit is per stream rather than per host. **Read that
-number with the paragraph above: it was measured in the probe interval and says nothing about
-whether 4 parallel streams of 80 MB chunks complete.** Parallelism is still the right lever
-(each stream carries its own window, so more streams carry more bytes per window), but the
-speed-up for real payloads is **unmeasured**.
+Four concurrent 8 MiB writes finished in 12 s = **2.46 MiB/s aggregate** against 0.65 MiB/s
+single-stream, **3.8×** — the limit is per stream, not per host, so concurrency is still the
+right lever (each stream carries its own 300 s window).
+
+**But that number was measured in the probe interval and does not transfer to real payloads.**
+8 MiB at 12–13 s never approaches the window, so it measures throughput while the window is
+irrelevant. **A probe answers "is the route up"; it does not answer "will this payload finish".**
+The speed-up for chunked, real-sized payloads is **unmeasured**.
 
 The measured figures are also in `facts/corpus_supply.json#cs.c4_transfer_route_0921`; read them
 there rather than from this page, which would go stale.
