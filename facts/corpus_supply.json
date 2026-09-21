@@ -1988,7 +1988,7 @@
     "vocab": "f1f860970d15d623",
     "counter": "scripts/count_dir.py (count_docs from scripts/count_tokens.py), full population, 24 workers",
     "convention": "ids + one <eos> per document (train.py encode)",
-    "gate_weight_share": "mix w=0.07 main / 0.05 anneal of 30B",
+    "gate_weight_share": "mix w=0.073415 main / annealing w=0.052667 of 30B, read from data/mix_v41_gate.json on origin/main at 2026-09-21 (commit abfb6508 rebalanced the six surviving domains on 2026-09-20; an earlier revision of this entry carried 0.07/0.05, the pre-rebalance values). The weight is cited with its source and as-of rather than as a bare number, because the file it comes from changes and a bare number cannot be told from a current one.",
     "launch_guard": "train.py._assert_mix_domains(['code_py_starcoder_dc'], data/corpus) returned {'code_py_starcoder_dc': '117f8fcbbefef881'} on the pod, i.e. the dir's own stamp equals its live bytes -- the invariant the launch enforces. The mix json's INLINE fingerprint for this domain is 390a13a56b6472b3 and does NOT match; see cs.mix_inline_fingerprint_stale_0921 for why that field is not the launch guard.",
     "two_machines": "pod /work/aupai: 283 shards, 6,180,174 scanned rows, fingerprint 117f8fcbbefef881 (this entry). digest /data00/home/chenkailun.c/aupai-cimap/wt-3b: 282 shards, 6,180,116 scanned rows, fingerprint e12700ddb174f1cb. The 58-row / 1-shard difference is the two machines' source copies, not a discrepancy in either build; the fingerprints cannot converge in any case because fp_dir hashes holdout_slice_*.jsonl, which is produced by holdout.py and differs across code versions (post-#621 on the pod)."
    },
