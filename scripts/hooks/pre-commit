@@ -1941,6 +1941,11 @@ def main():
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
         "scripts/pod_verify_landed.py",
+        # pod_work_hostpath: pure-stdin parser of `crictl inspect` -> the host path backing
+        # /work. Registered because pod_push's large-file path depends on it and the mutation
+        # that matters (a startswith that accepts a /workspace decoy, or a missing mount
+        # guessed rather than answered empty) is a wrong host path with no pod in the test.
+        "scripts/pod_work_hostpath.py",
         # Builds a real two-branch conflict in a throwaway repo: no data, no card, ~1s.
         "scripts/merge_drivers.py",
         # Six pure-dict worlds, no git and no I/O, ~0.1s. Registered because the mutant that
