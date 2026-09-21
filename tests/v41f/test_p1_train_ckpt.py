@@ -467,6 +467,55 @@ def gate_resume_equivalent_to_uninterrupted():
             n_nan = int(torch.isnan(wf).sum().item() + torch.isnan(gf).sum().item())
             first = int(torch.nonzero(neq, as_tuple=False)[0].item()) if n_diff else -1
             d = (wf - gf).abs()
+            # DUMP THE TWO TENSORS THAT ACTUALLY DIFFERED, before the raise. #549's artifact
+            # carries optK triples (optimizer state) and NEVER the master values, so the one
+            # question the red signature poses -- is the 96.6% "one whole block replaced" or
+            # "per-element drift"? -- has had no data behind it. These are the right bytes and
+            # they are already in memory here; re-saving the checkpoint instead would cost
+            # 2.5 GB and add an identity question (is this snapshot the same step the red came
+            # from?). 2 MiB per tensor against a 432 MB artifact.
+            #
+            # WHY THE SHAPE MATTERS, computed rather than guessed (2026-09-20): an fp32->bf16
+            # integer round-trip is exact ONLY where the low 16 mantissa bits are already zero,
+            # so it predicts n_diff ~= 100% on any real weight distribution (measured:
+            # N(0,0.02) 100.0%, uniform/sqrt(fan) 100.0%, with 5% exact zeros 95.0%). The red
+            # reads 96.6%, so ~3.4% of elements are bit-identical -- which a whole-block
+            # replacement explains and per-element accumulation does not. That inference is
+            # only as good as the assumption that the distribution is one of those; these
+            # files are what tests it.
+            #
+            # want/got, NOT control/restart: both call sites pass (control, restart), but that
+            # is a property of the CALLERS, and naming by it here would bake a hidden
+            # assumption into a generic helper -- the same shape as an optimizer-state dump
+            # whose "dtype" field was read as the model's.
+            if dump_root:
+                try:
+                    import json as _json
+                    for label, t in (("want", wf), ("got", gf)):
+                        slug = "".join(c if c.isalnum() else "_" for c in tag.lower()).strip("_")
+                        base = os.path.join(dump_root, f"{slug}.{label}")
+                        open(base + ".bin", "wb").write(
+                            t.detach().cpu().contiguous().numpy().tobytes())
+                        _json.dump({"tag": tag, "shape": list(t.shape),
+                                    "dtype": "float32",
+                                    "source_dtype": str(want.dtype if label == "want" else got.dtype),
+                                    "dtype_note": "the .bin holds float32 bytes because _eq "
+                                                  "compares want.float() and got.float(); "
+                                                  "source_dtype is what the tensor was before "
+                                                  "that cast, recorded so a reader does not have "
+                                                  "to assume the two are the same",
+                                    "values": "the two tensors that differed at the moment of "
+                                              "the red -- NOT a step snapshot; there is no "
+                                              "identity question because these ARE the failing "
+                                              "bytes, not a re-read of them",
+                                    "call_site": "want is the FIRST argument at the _eq call, "
+                                                 "got the second; both current call sites pass "
+                                                 "(control, restart) but that is the caller's "
+                                                 "property, not this helper's"},
+                                   open(base + ".json", "w"))
+                except OSError as e:
+                    # A dump that cannot be written must not replace the real failure.
+                    print(f"  (could not write the {tag} diff dump: {e})", file=sys.stderr)
             raise AssertionError(
                 f"{tag} differs after save/load resume: max|delta|={d.max().item():.3e} "
                 f"n_diff={n_diff}/{d.numel()} first_flat_idx={first} n_nan={n_nan} "
