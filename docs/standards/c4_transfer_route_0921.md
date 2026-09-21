@@ -69,6 +69,14 @@ ssh digest "cd $SRC && sha256sum *.jsonl | sort > /tmp/digest_sums.txt; wc -l < 
 - **`tn push`'s source path must be local to the laptop.** A digest path is stat'd on the pod
   host and reports `no such file or directory` — the error names a path that was never in
   scope, not a missing file.
+- **`tn write`'s DESTINATION must be a HOST path, and a wrong one fails silently.** Measured
+  2026-09-21: writing to a container-relative path returned **rc=0 and landed nothing** — no
+  error, no file. `$DST` above is the host path (`/data00/aupai_work/...`); the container path
+  (`/work/...`) is the same directory seen from the other side, and passing it to `tn write`
+  does not resolve. **The two hops are two different mechanisms** — HOP 1 is `ssh digest "cat"`
+  and HOP 2 is `tn write` — so neither can be given the other's path: a digest path in a
+  `tn write` names a filesystem the verb never reaches, and a container path names one it
+  silently drops. This is the same rule as the row above, applied to the other end of the pipe.
 - **Per-file sha, all three sides.** HOP 1 and HOP 2 each fail independently; a single
   end-to-end check after the loop cannot say which hop corrupted a byte.
 
