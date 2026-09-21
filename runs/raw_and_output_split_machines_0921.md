@@ -44,11 +44,26 @@ corpus directories hold more than shards, and the extras are not removable by a 
 | `cot_dc` | 13 | **13** | 0 | 1 | 14 |
 | `math_owm_stage2` | 334 | **333** | 1 | 1 | — |
 
-**The `holdout_slice_*.jsonl` is the trap**: it *is* a `.jsonl`, so `ls *.jsonl | wc -l` counts it,
-and it is the frozen holdout basis — 65 bytes of metadata, not corpus content. A copy loop that
-globs `*.jsonl` moves it (which is correct, the domain is not valid without it) while a count
-that globs `*.jsonl` miscounts it. **The two operations want different filters on the same
-directory**, which is exactly how `en_c4_stage2_dc` reads as 243 shards when it holds 242.
+**The `holdout_slice_*.jsonl` is the case that forces this**: it *is* a `.jsonl`, so
+`ls *.jsonl | wc -l` counts it, and it is the frozen holdout basis — 65 bytes of metadata, not
+corpus content. A copy loop that globs `*.jsonl` moves it (correct — the domain is not valid
+without it) while a count that globs `*.jsonl` miscounts it. **The two operations want
+different filters on the same directory**, which is how `en_c4_stage2_dc` reads as 243 shards
+when it holds 242.
+
+**This one is not newly discovered, and the correction matters.** `scripts/filter_gate_domains.py:274`
+already carries the assertion, with the measurement:
+
+> THE HOLDOUT SLICE IS NOT A SHARD. A --phase build leaves holdout_slice_{phase}.jsonl in the
+> source dir beside its shards, and a bare `*.jsonl` glob counts it. Measured on the 2026-09-19
+> en_c4_stage2 rebuild: shards_total 243 and rows_scanned 11,309,623 against a real 242 shards /
+> 11,309,622 documents — both off by exactly this file.
+
+Its selftest writes a `holdout_slice_p.jsonl` into a fixture and asserts neither count moves, so
+the fix is tested rather than merely commented. **The reason it is recorded here anyway is that
+the fix lives in that driver, and this page describes the counts as an operator would compute
+them** — which is where the same glob is reachable again. Attributed so a reader does not take it
+for a new finding, and does not have to rediscover the test.
 
 Same shape across this round: a directory-listing count is not a count of the thing the sentence
 is about, and the missing filter is invisible because the number looks right.
