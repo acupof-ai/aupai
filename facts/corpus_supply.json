@@ -1889,7 +1889,7 @@
   },
   {
    "id": "cs.c4_transfer_route_0921",
-   "value": "The 34 surviving rp1t_c4 raw files (25.2 GiB) can reach the pod container over a two-hop route, sha-verified at each hop. HOP 1 digest -> laptop (ssh digest 'cat file') measured 10 MiB/s (64 MiB in 5 s). HOP 2 laptop -> pod host (tn write, stdin + atomic rename) measured 0.44-0.53 MiB/s (64 MiB in 146 s, 16 MiB in 29 s) and is the bottleneck by ~20x. Both hop-2 points are close, so the rate is roughly constant rather than degrading. Route: digest -> laptop -> tn write /data00/aupai_work/<dst> -> visible in the container at /work/<dst>, because /work is a hostPath onto the pod host's /data00/aupai_work. tn push (sftp) fails with SSH_FX_FAILURE on every destination AND exits 0, so rc is not the signal; tn write is the working verb.",
+   "value": "The 34 surviving rp1t_c4 raw files (25.2 GiB) can reach the pod container over a two-hop route, sha-verified at each hop. HOP 1 digest -> laptop (ssh digest 'cat file') measured 10-12.8 MiB/s. HOP 2 laptop -> pod host (tn write, stdin + atomic rename) measured 0.44-0.65 MiB/s (64 MiB in 146 s, 16 MiB in 29 s, 32 MiB in 49 s single-stream) and is the bottleneck by ~20x. HOP 2 is limited PER STREAM: four concurrent 8 MiB writes finished in 12 s = 2.46 MiB/s aggregate, 3.8x single-stream, so concurrency is the lever (serial ~11.9 h vs 4-way ~3 h for 25.2 GiB). Route: digest -> laptop -> tn write /data00/aupai_work/<dst> -> visible in the container at /work/<dst>, because /work is a hostPath onto the pod host's /data00/aupai_work. tn push (sftp) fails with SSH_FX_FAILURE on every destination AND exits 0, so rc is not the signal; tn write is the working verb.",
    "unit": "MiB/s",
    "measured": "2026-09-21",
    "source": "measured on the laptop 2026-09-21: ssh digest 'dd if=<c4 file> bs=1M count=64 | sha256sum' vs local shasum vs ~/bin/pod 'sha256sum /work/...'; timing by date +%s around each hop",
@@ -1902,9 +1902,9 @@
     "sha_verified": "8 MiB slice bf85ed57530d05ca..., 64 MiB file 06395e5d0d442696..., both identical digest -> laptop -> container",
     "doc": "docs/standards/c4_transfer_route_0921.md"
    },
-   "uncertainty": "Two points for hop 2 (16 and 64 MiB) from one unpaced run; the pod host is shared, so a concurrent job could depress or inflate either. An 8 MiB slice runs at ~7 MiB/s, 20x hop 2's rate -- the small-sample number is not the transfer's rate. The 25.2 GiB total (~16.7 h at 0.44 MiB/s) is an extrapolation from two points, not a measurement.",
+   "uncertainty": "Hop-2 single-stream rests on three points (16/32/64 MiB) from unpaced runs and the pod host is shared. The 3.8x parallel figure is one 4-way run of 8 MiB files; higher concurrency is untested, and hop 1 may saturate before 8-way. Both totals (11.9 h serial, ~3 h 4-way) are extrapolations, not measurements.",
    "status": "measured",
-   "boundary": "The route moves bytes only; it says nothing about build, decontamination or tokenisation. It also does not establish that digest->pod exists for any OTHER dataset, and it was not tested with a resumed/partial file, so an interrupted transfer's recovery is unmeasured."
+   "boundary": "The route moves bytes only; it says nothing about build, decontamination or tokenisation. It does not establish that digest->pod exists for any OTHER dataset, and it was not tested with a resumed/partial file, so an interrupted transfer's recovery is unmeasured. The parallel figure measures aggregate throughput, not per-file completion order."
   }
  ]
 }

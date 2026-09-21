@@ -73,16 +73,30 @@ Both hops measured separately on 2026-09-21, laptop → digest → pod host:
 | 1 — digest → laptop (`ssh digest "cat file"`) | **10 MiB/s** | 64 MiB in 5 s |
 | 2 — laptop → pod host (`tn write`) | **0.44–0.53 MiB/s** | 64 MiB in 146 s; 16 MiB in 29 s |
 
-**Hop 2 is the bottleneck by ~20×**, and the two hop-2 points (16 MiB → 0.53, 64 MiB → 0.44)
-say the rate is roughly **constant**, not degrading — so unlike the finemath fetch, a serial
-total here is a sum of like-sized terms. That is why a rate × size estimate is legitimate for
-*this* transfer and was not for that one.
+**Hop 2 is the bottleneck by ~20×**, and the hop-2 points are close (16 MiB → 0.53, 64 MiB →
+0.44, and an independent 32 MiB → 0.65), so the rate is **roughly constant, not degrading** —
+unlike the finemath fetch, a serial total here is a sum of like-sized terms.
 
-**25.2 GiB at hop 2's 0.44 MiB/s is ≈ 16.7 hours.** Treat that as an estimate, not a fact: it
-rests on two points from a single unpaced run, and the pod host is shared. A small slice (8 MiB)
-runs at ~7 MiB/s, which is how a fast number gets quoted from a transfer that then takes hours —
-**measure the size you actually intend to move.** Record per-file seconds as they land; the sum
-of measurements is the schedule, the estimated total is only a sanity bound.
+### Hop 2 is limited PER STREAM, so run it parallel
+
+Measured 2026-09-21: four concurrent `tn write`s of 8 MiB each finished in 12 s =
+**2.46 MiB/s aggregate**, against **0.65 MiB/s single-stream — 3.8×**. The limit is per stream,
+not per host, so concurrency is the lever.
+
+```bash
+# N-way parallel, one file per worker, every file sha-checked independently
+ls /tmp/gate_transfer/*.bin | xargs -P 4 -I{} sh -c \
+  'cat {} | tn write /data00/aupai_work/aupai_c4/$(basename {})'
+```
+
+**Serialize the digest→laptop hop instead** if hop 1 saturates: it measured 10–12.8 MiB/s, so it
+is ~20× faster than hop 2 and does not need to be parallel, but it also should not be run at high
+concurrency against a shared machine.
+
+**Serial ≈ 11.9 h at 0.6 MiB/s; 4-way parallel ≈ 3 h.** Both are estimates from a few points, and
+the pod host is shared — record per-file seconds as they land and let the sum be the schedule.
+Per-file seconds also expose the two things a total cannot: one file that is anomalously slow, and
+whether the parallelism actually took.
 
 The measured figures are also in `facts/corpus_supply.json#cs.c4_transfer_route_0921`; read them
 there rather than from this page, which would go stale.
