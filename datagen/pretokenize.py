@@ -56,7 +56,7 @@ def main():
     total = 0
     for d in names:
         t0 = time.time()
-        seqs = train._domain_seqs(d, tok, is_main=True, ddp=False, workers=a.workers)
+        seqs = train._domain_seqs(d, tok, is_main=True, ddp=False, workers=a.workers, allow_build=True)
         n = seqs.numel()
         total += n
         print(
