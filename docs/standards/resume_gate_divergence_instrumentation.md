@@ -49,7 +49,7 @@ The gate therefore **executed and passed** — it was not skipped, so this is no
 
 **This retracts the 2026-09-19 ruling** (recorded as `facts/v41.json#v41.d17_two_state_not_save_load_0922`,
 `status: retracted`), which is also the working hypothesis in `.github/workflows/ci.yml`'s diag-resume
-header. The **same-generation cause** is now three independent lines, and this is the first that is a
+header. The case against that ruling is now three independent lines, and this is the first that is a
 controlled comparison rather than an inference:
 
 1. the dump shows the save→load round trip bit-exact at all 5 leaves (section above);
