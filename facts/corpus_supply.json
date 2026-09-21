@@ -1963,6 +1963,39 @@
    "uncertainty": "The count of non-matching domains is exact for the two machines read here and is NOT a statement about any other tree: the mix values were read from the 8-domain revision still present on digest, while origin/main carries the 6-domain rebalance (#abfb6508) with the same fingerprint strings for the surviving domains, so the mismatch is not an artifact of the mix revision. Domains with no directory on either machine are recorded as absent rather than as matching or mismatching -- a comparison that did not run is not a comparison that passed. No value here is extrapolated: all three comparisons were computed with the production fp_dir, not by hand.",
    "boundary": "Answers 'is the mix json's inline fingerprint a live guard' (no, for this mix: train.py does not read it and the gate that does is waived), and gives the measured mismatch for every domain that has bytes to compare. Does NOT say the corpora are wrong -- in all three comparable domains the dir's own stamp equals its live bytes, which is the invariant train.py enforces at launch. Does NOT date when each inline value went stale, and does NOT cover the two domains whose directories do not exist yet (code_ultra_l2_dc, code_ultra_l3_noexec_dc) or the two dropped by the 2026-09-19 rebalance. Does NOT establish that any other mix file carries stale inline fields; mix_v41_r2/r3 and the older ladder mixes were not read.",
    "status": "measured"
+  },
+  {
+   "id": "cs.code_py_starcoder_dc_landed_0921",
+   "value": "7,948,956,977 exact document tokens in the rebuilt _dc domain (data/corpus/code_py_starcoder_dc, 283 shards, 6,178,656 docs), counted full-population by scripts/count_dir.py under the train.py convention (per-doc len(encode(content).ids) + 1 <eos>). The SOURCE domain's stamp value is 7,916,417,537 and is EXTRAPOLATED, not measured: build_corpus_stats.json records tokens_status='extrapolated: 3/283-shard sample, by bytes'. The two are not two readings of one quantity and must not be compared as such: the _dc domain is a SUBSET of the source (decontam dropped 1,518 of 6,180,174 rows, 0.0246%), so the subset's measured 7,948,956,977 bounds the parent's TRUE value from below and the source's extrapolation understates it by at least 32,539,440 tokens (0.41%). That is the measured size of the 'extrapolation is not measurement' error for this domain, not an estimate of it. The gate mix's own epochs_pool field independently records measured_pool_tokens=7,948,925,654, which differs from this count by 31,323 tokens (0.0004%) because the packed pool is truncated at 4,097 rows per row-aligned shard; two independent paths agreeing to 0.0004% is what makes this entry's value load-bearing rather than one instrument's output.",
+   "unit": "exact new-vocab document tokens (per-doc len(encode(content).ids)+1), post 13-gram decontam vs HumanEval+MBPP",
+   "measured": "2026-09-21",
+   "source": "pod container /work/aupai, 2026-09-21, read in the container (not from a host view): /work/aupai/runs/count_code_py_starcoder_dc.json, the output of `scripts/count_dir.py data/corpus/code_py_starcoder_dc 24` -- 283 shards, docs 6,178,656, bytes 29,565,823,573, tokens 7,948,956,977, fingerprint 117f8fcbbefef881, wall_s 263.6, full population, no sampling. The _dc stamp is data/corpus/code_py_starcoder_dc/build_corpus_stats.json (written by scripts/filter_gate_domains.py, 13-token containment against the two benchmark files it names in its own HUMANEVAL_REL / MBPP_REL constants; the byte content of those two files is carried as data by decontam_fp 302aa793f7067462, which hashes the decontam module together with them, so this entry cites no data/eval artifact and depends on none). The source stamp is data/corpus/code_py_starcoder/build_corpus_stats.json (datagen/build_starcoder_py.py). The epoch-pool figure is data/mix_v41_gate.json domains[code_py_starcoder_dc].epochs_pool_source. All three fingerprints were checked against a live fp_dir recompute on the pod, not inferred; train.py._assert_mix_domains(['code_py_starcoder_dc'], data/corpus) was run there and returned {'code_py_starcoder_dc': '117f8fcbbefef881'}.",
+   "config": {
+    "domain": "code_py_starcoder_dc",
+    "source_domain": "code_py_starcoder",
+    "source_dataset": "bigcode/starcoderdata python, 59 train-*.parquet, ast.parse as language ID and syntax filter (datagen/build_starcoder_py.py)",
+    "decontam": "scripts/filter_gate_domains.py, N=13 word-token containment vs HumanEval+MBPP; 280 of 283 shards rewritten, 3 hardlinked byte-for-byte",
+    "rows_scanned": 6180174,
+    "rows_dropped": 1518,
+    "drop_fraction": 0.00024562415232969167,
+    "docs_after": 6178656,
+    "n_shards": 283,
+    "bytes": 29565823573,
+    "packed_rows": 1940189,
+    "fingerprint": "117f8fcbbefef881",
+    "source_fingerprint": "81b7d89527adafba",
+    "decontam_fp": "302aa793f7067462",
+    "vocab": "f1f860970d15d623",
+    "counter": "scripts/count_dir.py (count_docs from scripts/count_tokens.py), full population, 24 workers",
+    "convention": "ids + one <eos> per document (train.py encode)",
+    "gate_weight_share": "mix w=0.07 main / 0.05 anneal of 30B",
+    "launch_guard": "train.py._assert_mix_domains(['code_py_starcoder_dc'], data/corpus) returned {'code_py_starcoder_dc': '117f8fcbbefef881'} on the pod, i.e. the dir's own stamp equals its live bytes -- the invariant the launch enforces. The mix json's INLINE fingerprint for this domain is 390a13a56b6472b3 and does NOT match; see cs.mix_inline_fingerprint_stale_0921 for why that field is not the launch guard.",
+    "two_machines": "pod /work/aupai: 283 shards, 6,180,174 scanned rows, fingerprint 117f8fcbbefef881 (this entry). digest /data00/home/chenkailun.c/aupai-cimap/wt-3b: 282 shards, 6,180,116 scanned rows, fingerprint e12700ddb174f1cb. The 58-row / 1-shard difference is the two machines' source copies, not a discrepancy in either build; the fingerprints cannot converge in any case because fp_dir hashes holdout_slice_*.jsonl, which is produced by holdout.py and differs across code versions (post-#621 on the pod)."
+   },
+   "uncertainty": "The token count is exact for the pod's _dc dir, full population, no sampling. It is NOT a statement about the digest copy, whose shard set differs by one shard and 58 rows and whose fingerprint is a different value for the reason in config.two_machines. The 0.41% understatement by the source stamp's extrapolation is exact arithmetic on two measured values; it is a lower bound on the error, since the extrapolation could be worse than its own estimate.",
+   "boundary": "Answers 'how many gate-vocabulary tokens does the rebuilt code_py_starcoder_dc domain hold'. Does NOT cover the token CACHE: no tokens_code_py_starcoder_dc.pt exists on the pod at this reading (find over /data00 and the host mount returns none of the six _dc domains' caches), so this is a corpus-side count and not a pool the trainer can draw from yet. Does NOT cover the source domain's true token count, only that it is at least this entry's value. Does NOT establish that the digest copy would count the same if counted.",
+   "status": "measured",
+   "tokens_status": "measured"
   }
  ]
 }
