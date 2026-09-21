@@ -273,6 +273,20 @@ python3 scripts/filter_gate_domains.py \
 Verify each re-fetched/rebuilt shard against its recorded sha before trusting strata
 downstream.
 
+### Raw textbook dumps must not end `_<digits>.jsonl`
+
+`check_shard_contract` treats every `data/corpus/*/*.jsonl` whose name matches train.py's
+`SHARD_RE` (`_\d{3,}\.jsonl$`) as a training shard whose first row must carry the `content`
+key. Off-GPU textbook generations write the **`text`** key, so a raw dump named
+`genA_0000.jsonl` or `textbooks_s02_0007.jsonl` passes the name gate and dies at tokenize
+with `KeyError: 'content'` (six `textbooks_claude_v41/genA_0000..0005.jsonl`, 2026-09-20).
+Rule: raw/feed dumps under `data/corpus/` must end so they do NOT match `_\d{3,}\.jsonl$`
+(e.g. `genA_0000raw.jsonl`), while still matching the consumer globs
+(`build_textbook_domain.py` reads `gen*.jsonl`, `gen_textbooks.py` resume reads `*.jsonl`).
+`gen_textbooks.py` enforces this at the writer (`shard_fname`, with a selftest); a hand-staged
+delivery from outside the repo follows the same convention. The training-shaped projection
+(`textbook_claude_v41_dc/*_000.jsonl`) carries `content` and is unaffected.
+
 ## 2d. Gate-mix survivor audit (de, 2026-09-19) — read-only, digest machine
 
 `data/mix_v41_gate.json` names eight domains. Before this audit only two had a surviving-raw
