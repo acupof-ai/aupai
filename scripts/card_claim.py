@@ -1532,6 +1532,7 @@ def status():
 def _selftest():
     """Known answers over a temporary claim dir. No cards."""
     import shutil
+    import sys as _sys
     import tempfile
 
     global CLAIM_DIR, _read
@@ -1624,10 +1625,15 @@ def _selftest():
     # escapes claims(), which is what status/acquire/the harness all call, so a row that no
     # longer exists takes down the shared "who holds which card" tool (3b, #626 review).
     #
-    # LANDED IN THE WINDOW, not approximated: _read is wrapped so it performs the unlink and
-    # only then reports None, which is exactly the state the caller sees mid-race. Without the
-    # fix the first case raises and the second returns a crash; with it, claims() skips a file
-    # that is gone and acquire() reads "gone" as "not a fresh reservation".
+    # BOTH CASES MUST DISCRIMINATE, and the acquire() one did not in the first version (3b
+    # measured it): reverting ONLY that fix left 154/154 green. The cause is that acquire()
+    # calls claims() for its sweep first, and the wrapper deleted the file during THAT read --
+    # so O_EXCL never failed, `except FileExistsError` was never entered, and the assertion
+    # tested the O_EXCL-success path instead of the window. Repeating a name does not help:
+    # acquire's first act is the sweep, so any file present at entry is swept as stale by
+    # claims() before the reservation code runs. The case therefore invokes the handler
+    # DIRECTLY, the same way the sibling cases call an internal predicate rather than a
+    # full command, with `_read` wrapped to delete the row at the moment the handler reads it.
     _race_dir = tempfile.mkdtemp(prefix="claim_race_")
     _saved_race = CLAIM_DIR
     CLAIM_DIR = _race_dir
@@ -1652,28 +1658,70 @@ def _selftest():
         except FileNotFoundError as e:
             _case(False, f"claims() raised FileNotFoundError errno={e.errno} on a vanished file")
 
+        # ACQUIRE'S OWN HANDLER, reached by running acquire(), with the row removed inside the
+        # exists->stat gap. Four earlier versions failed to discriminate and each looked like it
+        # worked (3b measured the first two, then two more here):
+        #   v1 deleted the row on the SWEEP's read, so claims() never saw it, O_EXCL succeeded
+        #      and `except FileExistsError` was never entered at all;
+        #   v2 invoked a local mirror of the handler, so reverting the production fix could not
+        #      turn it red -- it asserted on a copy of the code, not on the code. Worse than v1:
+        #      v1 tests the wrong property of the real code, v2 tests the right property of a
+        #      copy, and nothing but a mutation run can tell them apart;
+        #   v3 deleted the row at the handler's own _read, which is still too early;
+        #   v4 hooked exists/stat globally, so the SWEEP's claims() stat fired first and removed
+        #      the file before O_EXCL, landing back in v1's world.
+        # The hooks therefore fire only OUTSIDE claims() -- which is also the only place the
+        # handler's own preamble runs. Frame test by function NAME so it cannot rot. Armed only
+        # around this one acquire() call, since every other case calls os.stat too.
         _rm = os.path.join(_race_dir, claim_file("raceprobe", ["7"]))
-        open(_rm, "w").close()  # exists, so O_EXCL raises and the handler is reached
+        open(_rm, "w").close()  # fresh and unparseable: claims() leaves it, O_EXCL still fails
+        _real_exists, _real_stat = os.path.exists, os.stat
+        _armed = []
 
-        def _read_then_vanish_mine(path, _p=_rm):
-            if os.path.abspath(path) == _p:
-                try:
-                    os.unlink(_p)
-                except FileNotFoundError:
-                    pass
-                return None
-            return _real_read(path)
+        def _in_claims():
+            _f = _sys._getframe(1)
+            while _f is not None:
+                if _f.f_code.co_name == "claims":
+                    return True
+                _f = _f.f_back
+            return False
 
-        _read = _read_then_vanish_mine
+        def _fire():
+            try:
+                os.unlink(_rm)
+            except FileNotFoundError:
+                pass
+
+        def _exists(path, _p=_rm, _real=_real_exists):
+            if _armed and os.path.abspath(str(path)) == _p:
+                _fire()  # removed, then reported present: the gap between the two calls
+                return True
+            return _real(path)
+
+        def _stat(path, _p=_rm, _real=_real_stat):
+            if _armed and os.path.abspath(str(path)) == _p and not _in_claims():
+                _fire()
+                raise FileNotFoundError(2, "No such file or directory", _p)
+            return _real(path)
+
+        os.path.exists, os.stat = _exists, _stat
+        _armed.append(True)
         try:
             _rok, _rmsg = acquire("raceprobe", ["7"], wait=0, pid=1)
             _case(
-                _rok and "appeared moments ago" not in _rmsg,
-                f"acquire() reclaims when the reserving file vanished mid-window, instead of "
-                f"crashing or reading it as fresh ({_rmsg[:60]})",
+                _rok,
+                f"acquire()'s handler reclaims when the reserving file vanishes between its "
+                f"exists and its stat ({_rmsg[:70]})",
             )
         except FileNotFoundError as e:
-            _case(False, f"acquire() raised FileNotFoundError errno={e.errno} from a handler body")
+            _tb = _sys.exc_info()[2]
+            while _tb.tb_next is not None:
+                _tb = _tb.tb_next
+            _case(False, f"FileNotFoundError errno={e.errno} escaped acquire() from "
+                         f"{_tb.tb_frame.f_code.co_name}()")
+        finally:
+            _armed.clear()
+            os.path.exists, os.stat = _real_exists, _real_stat
     finally:
         _read = _real_read
         CLAIM_DIR = _saved_race
