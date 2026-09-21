@@ -2093,6 +2093,126 @@
    "boundary": "Answers 'how many gate-vocabulary tokens does the rebuilt code_py_starcoder_dc domain hold'. Does NOT cover the token CACHE: no tokens_code_py_starcoder_dc.pt exists on the pod at this reading (find over /data00 and the host mount returns none of the six _dc domains' caches), so this is a corpus-side count and not a pool the trainer can draw from yet. Does NOT cover the source domain's true token count, only that it is at least this entry's value. Does NOT establish that the digest copy would count the same if counted.",
    "status": "measured",
    "tokens_status": "measured"
+  },
+  {
+   "id": "cs.code_ultra_l3_noexec_aggregate_identity_0922",
+   "value": "PROOF_BYTE_IDENTICAL: the OLD pre-sidecar aggregate (serial json parse + _norm + sha1 per line, git 9aa6e4c2) and the NEW sidecar aggregate (precomputed sha1 .sigs + raw line copy, current driver) emit byte-identical final shards for L3-noexec on a common nonempty input. cmp of the two sha256 manifests returned rc=0; old and new concatenated final bytes share one sha256 3a8bbd5066dbcdc87cb7dc29d44f9c4bb1f4d3301f2d021b926d61be4c99609b; both sides total 2,005,620,079 bytes over the same 20 final shards.",
+   "unit": "byte identity of aggregate final shards; sha256; bytes; comparison rc",
+   "measured": "2026-09-21",
+   "status": "measured",
+   "config": {
+    "groups": "s01,s02,s03 (three reconverted groups, one raw parquet each: UltraData-Code-L3 parts 00001/00002/00003 of 00147)",
+    "input_rows_nonempty": "314,746 rows entered the case (s01 kept 104,715 + s02 104,846 + s03 105,185 from row-conservation-gated reconversion; parquet rows 141,159/141,160/141,160). The nonempty guard matters: on an empty glob the proof script still prints PROOF_BYTE_IDENTICAL, so an empty case would be a false green; this case was verified nonempty before running (7 then 21 tagged jsonl, first row content_len 4074).",
+    "result": {
+     "kept": 312501,
+     "kept_tokens": 543991678,
+     "kept_chars": 1923358803,
+     "n_final_shards": 20,
+     "decontam_ngram_rows_dropped": 2245,
+     "cross_group_dup": 0,
+     "fingerprint": "faff05920a42b8d2",
+     "proof_exit_rc": 0
+    },
+    "comparison": "both old and new emitted the identical 20-name file set; per-file sha256sum and stat size were collected independently on each side into sorted manifests, and `cmp old.manifest new.manifest` returned rc=0 (manifest sha256 c4a48f6de2107e8c on both sides); every per-file size matched with zero differences; each side concatenated in sorted filename order hashes to 3a8bbd50...c99609b and totals 2,005,620,079 bytes.",
+    "final_shard_sha256_and_size_identical_on_both_sides": {
+     "code_ultra_l3_noexec_000.jsonl": [
+      "ce26b9686f4cb842b3401ae7fd4424a41ed4036d7b8a5dd4f0a233d45f66c767",
+      104851912
+     ],
+     "code_ultra_l3_noexec_001.jsonl": [
+      "c89d764b68fbf7a6a82ee96a987ff40ea5abd964493d72acc05137038e024679",
+      104853288
+     ],
+     "code_ultra_l3_noexec_002.jsonl": [
+      "a84c1875f422a1b14bcbd09855b11324c24d5e7d584aa3adae079070279fcc3b",
+      104854070
+     ],
+     "code_ultra_l3_noexec_003.jsonl": [
+      "d7396fd82598e792d2eaeaff5e41478ba6cc29c3acd1a8b2f52f6a0f5562d60",
+      104855308
+     ],
+     "code_ultra_l3_noexec_004.jsonl": [
+      "602d9e863d8b6b3fb45fe685e86df2d9110645add1533a48bf430dd049d64a08",
+      104852726
+     ],
+     "code_ultra_l3_noexec_005.jsonl": [
+      "af04c76a7ee6005c2098f0db11aae8f309223f83f55420b31a781c0b2436e988",
+      104854863
+     ],
+     "code_ultra_l3_noexec_006.jsonl": [
+      "2987d86cbbe7de6b4c3e43b3bd79071b83319343827acc144dff48ee7256a5e076",
+      104855538
+     ],
+     "code_ultra_l3_noexec_007.jsonl": [
+      "09857757de1ad1bd51c180c35d3e3c7f1919fa635638657901073621b11304e4",
+      104852675
+     ],
+     "code_ultra_l3_noexec_008.jsonl": [
+      "a5bd578d499e2033cd37407dc2f0e56387d538acdf250bb3e74a70ef1d3f968d",
+      104856624
+     ],
+     "code_ultra_l3_noexec_009.jsonl": [
+      "226686042306604af683b3b4026bfa7c386eefcd0af26c7df147435771d355b8",
+      104854880
+     ],
+     "code_ultra_l3_noexec_010.jsonl": [
+      "94d2a525a9d359ecff28ed52046c44f8dde5eb4dbcce30971aeac094a77b4558",
+      104855919
+     ],
+     "code_ultra_l3_noexec_011.jsonl": [
+      "1587c59c27cc66cb73963e92313915e6b2ce07118df3d8c0160f5a6ee57c93ef",
+      104856466
+     ],
+     "code_ultra_l3_noexec_012.jsonl": [
+      "a952b3f751c903d8849a70b393ecc8bba60784cfd3fd7910c46f357a459f3b4e",
+      104855093
+     ],
+     "code_ultra_l3_noexec_013.jsonl": [
+      "603b7ad355769671c4308d664badfed371617ab125228f64d533351753fbd73f",
+      104854601
+     ],
+     "code_ultra_l3_noexec_014.jsonl": [
+      "8e16f740b609c16d6dc06d8983f2a251a0ab13f5452a2377602d9c2d1fb802f5",
+      104854720
+     ],
+     "code_ultra_l3_noexec_015.jsonl": [
+      "aa8c2301dd139d9c8ae882a52eeee3f9a48eb3b3495617abbb539c879099bcdb",
+      104855603
+     ],
+     "code_ultra_l3_noexec_016.jsonl": [
+      "360b451f9a2facb098709e73495dc5f7364e691831e4ef9a95447a589c69f5a3",
+      104848997
+     ],
+     "code_ultra_l3_noexec_017.jsonl": [
+      "6634f648a270e25d488a40d9da47d5dc4dc4b4cd0a694a76a6c7db5430316328",
+      104854636
+     ],
+     "code_ultra_l3_noexec_018.jsonl": [
+      "d1fa65ca75a8a5e54454ae45dd1f04c69044ba2a361fdb5f32f1d7f204621305",
+      104849645
+     ],
+     "code_ultra_l3_noexec_019.jsonl": [
+      "c928f284211b800bc2307a2ded451883981c957a00b1d672c9bd41035c16185e",
+      13392515
+     ]
+    },
+    "concat_sha256_both_sides": "3a8bbd5066dbcdc87cb7dc29d44f9c4bb1f4d3301f2d021b926d61be4c99609b",
+    "total_bytes_both_sides": 2005620079,
+    "manifest_cmp_rc": 0,
+    "old_driver": "git 9aa6e4c2:datagen/ultradata_shards.py materialized to /tmp/oldref/datagen/ultradata_shards_pre_sidecar.py (21,538 bytes, sha256 1fac6dda1f9ad1dca8bd0069b649d71f28d16059900606756ab27217b366918e), placed one package deep so root=dirname(dirname(__file__)) resolves; the CURRENT datagen and filters modules and data/eval benchmarks were copied under /tmp/oldref so both arms run the same decontam baseline (humaneval sha256 1d49078b...), differing only in aggregate logic.",
+    "new_driver": "/work/aupai/datagen/ultradata_shards.py (current main, sidecar path)",
+    "reproduce_steps": [
+     "1) reconvert into an ISOLATED proof-only dir (never the production data/corpus/code_ultra_l3_noexec or _dc): python3 datagen/ultradata_shards.py --level L3 --no-exec --first N --last N --exec-workers 1 --raw /work/aupai/data/raw/ultradata --tag s0N --stats-name stats_s0N.json --out /work/aupai/data/proof_l3_src/code_ultra_l3_noexec, run for N=1,2,3 (taskset to one core each).",
+     "2) build the case: scripts/proof_aggregate_identity.py build_case() globs {AUPAI_PROOF_SRC}/code_ultra_l3_noexec_{s}_*.jsonl for s in AUPAI_PROOF_SHARDS, copies them into /tmp/proof_identity/{O,N}/code_ultra_l3_noexec as one g00 group, and tokenizes to build stats_g00.json.",
+     "3) materialize the old driver: mkdir -p /tmp/oldref/datagen && git show 9aa6e4c2:datagen/ultradata_shards.py > /tmp/oldref/datagen/ultradata_shards_pre_sidecar.py; copy current datagen/filters/data-eval under /tmp/oldref so the decontam baseline and imports resolve.",
+     "4) run the proof: AUPAI_ROOT=/work/aupai AUPAI_PROOF_SRC=/work/aupai/data/proof_l3_src/code_ultra_l3_noexec AUPAI_PROOF_SHARDS=s01,s02,s03 AUPAI_NEW=/work/aupai/datagen/ultradata_shards.py AUPAI_OLD=/tmp/oldref/datagen/ultradata_shards_pre_sidecar.py python3 scripts/proof_aggregate_identity.py ; it aggregates the COPIES only (shutil.copytree to O and N), so the proof source tagged shards are not touched."
+    ],
+    "temporary_patch": "scripts/proof_aggregate_identity.py line 51 is hardcoded `stats = json.load(open(f\"{SRC}/stats_s001.json\"))` with no env override, but this run's two-digit tags are s01/s02/s03 (the default SHARDS=s001,s002 does not exist here). A TEMPORARY copy at /tmp/proof_identity_patched.py (NOT committed) changed line 51 to read `stats_{SHARDS[0]}.json` so it loads stats_s01.json; original text: stats = json.load(open(f\"{SRC}/stats_s001.json\")). SHARDS itself was already env-overridable at line 29 via AUPAI_PROOF_SHARDS. A proper fix would give line 51 the same env override; recorded here rather than silently editing the repo file.",
+    "ordering_safety": "aggregate() unconditionally os.remove's its tagged inputs, so no aggregate was run on the reconverted source outside the proof; the proof aggregates only its own /tmp/proof_identity copies. The production data/corpus/code_ultra_l3_noexec (37 stats, 0 jsonl after the production aggregate) and code_ultra_l3_noexec_dc were never written, and data/mix_v41_gate.json was not modified."
+   },
+   "source": "pod (not a git repo) 2026-09-21T18:41Z: proof log /work/aupai/runs/proof_identity/proof_run.log (prints PROOF_BYTE_IDENTICAL) and /work/aupai/runs/proof_identity/proof_run.rc (PROOF_RC=0); reconversion logs /work/aupai/runs/proof_identity/conv_s0{1,2,3}.log and runner /work/aupai/proof_reconvert.sh (RECONVERT_DONE 18:18:38Z); independent manifests computed in the container at /tmp/O.manifest and /tmp/N.manifest (cmp rc=0); proof driver copy /tmp/proof_identity_patched.py and old driver /tmp/oldref/datagen/ultradata_shards_pre_sidecar.py. In-tree proof driver: scripts/proof_aggregate_identity.py; conversion driver: datagen/ultradata_shards.py;",
+   "uncertainty": "Identity is established for the L3-noexec aggregate on three real groups (314,746 input rows, 20 final shards, including a nonzero 13-gram drop of 2,245 and the global dedup path with cross_group_dup=0). It proves byte equivalence of the old and new aggregate logic for this input shape and frozen tokenizer/decontam baseline; it does not re-run the whole 147-shard corpus (the production domain's own fingerprint c40de52d is a separate measurement in cs.code_ultra_l3_noexec_dc_rebuilt_0921). The case used one raw shard per group; the aggregate code path exercised (classify, .sigs vs serial hash, final dedup, shard emission) is the same code that runs at full scale.",
+   "boundary": "Answers 'does the sidecar aggregate change output bytes vs the pre-sidecar driver' (no). Does NOT measure the full-domain token count and does NOT certify the L2 driver or exec-enabled L3 (only L3 --no-exec). The temporary line-51 patch is a test-harness workaround, not a claim the in-tree script already supports arbitrary tags."
   }
  ]
 }
