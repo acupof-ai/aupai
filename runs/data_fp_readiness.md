@@ -21,6 +21,8 @@ source: pod /data00 token caches + stamps, ckpt_v41_r3_0914.pt FINAL (sha256[:8]
 | 谁核 | SFT pack 的 `holdout_fp`，check_pack 逐字节比 | r3 pretrain cache 经 mix `cache_exclude` 排除，保证 SFT 目标未被预训练 |
 | 实测 | pack=10d9c13f == live=10d9c13f | manifest 273,879 行 sha56d；r3 mix 带 cache_exclude=56d，loader 读 `.excl` cache |
 
+**2026-09-21 更正：eval holdout 一列的 `10d9c13fd4ffa359` 已失效。** 两个门文件由上游重建、`REGISTRY_SHA1` 重钉（PR #621），故 `holdout_hashes.txt` 的内容未变（body md5 `fdf511d7…`、`# n:305007`）但**字节变了**：其内部 `# fp:` 头由 `0dbff3db89b62d24` 变为 `0442058d7e053826`，整个文件的 sha256[:16] 由 `10d9c13fd4ffa359` 变为 `e252f0f6d82c0237`。上表两行记的是**当时实测**，保留不改；**任何在 2026-09-21 之前打的 pack 都带旧值、会 mismatch**（`data/sft/` 当时 0 个 pack，故未挡任何东西）。pretrain 排除 manifest 一列不受影响。
+
 ## 就绪 / 异常表
 
 | # | 对象 | 期望 | pod 实测 | 判定 |
