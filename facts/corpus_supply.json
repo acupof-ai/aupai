@@ -1906,6 +1906,78 @@
    "uncertainty": "The 300 s figure is one measured death at exactly elapsed=300s for a single 250 MiB stream, plus four concurrent streams that each died at ~196 MB; the window's precise value and whether it is configurable were not read from tn's source. Whether the truncated-rename behaviour is universal or specific to this daemon's death path was not tested beyond this one case. The 3.8x parallel figure is probe-interval only. No total is given: an earlier version carried an 11.9 h / 3 h pair, both extrapolations from the wrong interval.",
    "status": "measured",
    "boundary": "The route moves bytes only; it says nothing about build, decontamination or tokenisation. It does not establish that digest->pod exists for any OTHER dataset. One shard has completed the full chunked path, and that shard was DELETED after its final whole-shard sha verified, so it is absent from both the pod and the host -- do not go looking for it as evidence. the parallel throughput for real payloads remains unmeasured (the 3.8x figure is probe-interval only), so the batch's total time is still an open quantity rather than an estimate."
+  },
+  {
+   "id": "cs.hf_finemath_4plus_two_copies_0920",
+   "value": "hf_finemath_4plus fetched twice on 2026-09-20, once to digest and once to the pod. Pod: 64/64 shards, FETCH_RC=0, no shard abandoned (giving_up=0); 4 of 64 shards (6.3%) hit a failure and recovered (attempt 1 x4, attempt 2 x1); hf-mirror.com served all 64, so the failover chain to huggingface.co never fired. Digest: 64/64, 3.1% (2 rc-18 events, 3 shards then served by huggingface.co). The two copies are byte-identical: sha256sum -c of the digest list against the pod directory returned 64 OK / 0 FAILED, and parquet bytes match exactly (18,365,184,633 both; the 13,132 B directory difference is fetch_stats.json 7,244 + fetch_stats.log 5,888). Pod wall clock 101.6 min for 64 shards = 95.2 s/shard. THE RATE IS AN OPTIMISTIC MEAN AND MUST NOT BE EXTRAPOLATED: it is pulled down by early fast shards while the sequence degrades monotonically (0056 took 581 s against a 22-46 s early baseline; 0057 was slower still). Extrapolating the ~287 GB L2/L3 set at 95.2 s gives ~26 h, which is a FLOOR, not an estimate. THE SHARD COUNT IN THAT SET IS 266 (L2 119 + L3 147, datagen/fetch_ultradata.py:15), at a mean 1.074 GB each -- measured from the HF tree API, 287,145,174,803 B total. An earlier revision of this entry said 1003 shards, which applied THIS source's 286 MB shard template to UltraData; the byte total still matched, so the error hid. The time projection is unchanged by the correction (the extrapolation is by bytes), but the shard count is not.",
+   "unit": "shards; seconds per shard; bytes",
+   "measured": "2026-09-20",
+   "source": "digest /data00/home/chenkailun.c/aupai-cimap/wt-0e-cot/data/raw/hf_finemath_4plus, re-hashed 2026-09-20 with `sha256sum *.parquet` (rc=0, 64 lines; the list is carried as data/raw/hf_finemath_4plus_sha256_manifest.txt in its own PR, not cited here because a source path must resolve on the tree that holds this fact) verified against the pod at /work/aupai/data/raw/hf_finemath_4plus by `sha256sum -c <that list>` (64 OK / 0 FAILED); pod fetch log /work/aupai/runs/fm_fetch_pod.log (ends FETCH_RC=0); pod fetch_stats.json + fetch_stats.log; per-shard wall clock from .parquet mtimes (fetch_corpus.py:1171 os.rename makes that mtime the completion instant).",
+   "config": {
+    "source": "huggingface.co/datasets/HuggingFaceTB/finemath, refs/convert/parquet/finemath-4plus/train",
+    "target_bytes": 18365184633,
+    "shards": 64,
+    "fetch_tool": "datagen/fetch_corpus.py --source hf_finemath_4plus",
+    "digest_host": "n37-112-238, /data00, 55G free at start",
+    "pod_host": "sglang-test container, /work, 2.7T free",
+    "proxy": "sys-proxy-rd-relay:8118 (set on digest; pod path uses the container egress)",
+    "mode": "SINGLE STREAM -- ranged chunking never engaged on either host, see boundary",
+    "pod_artifacts_not_in_git": "ran on the pod (not a git repo): the fetch log /work/aupai/runs/fm_fetch_pod.log, fetch_stats.json/.log and the .parquet bytes live only on the pod hostPath under /work/aupai. The fact gate cannot open them, so they are described here rather than cited as source paths; the code that produced the bytes is in the tree."
+   },
+   "uncertainty": "Two separate 6.3% and 3.1% rates measure different failure modes and must not be pooled: digest failures were rc-18 followed by a successful host failover, pod failures were both hosts returning status None in the same instant, recovered by retrying the SAME host with -C - resume. Neither log carries timestamps or an attempts field, so the failure times are reconstructed from .parquet mtimes, which are post-rename and therefore exact completion instants but tell nothing about when a shard STARTED. The 6.3%/3.1% are per-shard ever-failed rates, not per-attempt rates: a shard that failed twice and succeeded counts once. PROXY: the two hosts were not tested under identical egress. On digest the fetch ran with http_proxy/https_proxy=sys-proxy-rd-relay:8118; on the pod that hostname does NOT resolve (measured 2026-09-20: socket.gethostbyname raises gaierror -2 \"Name or service not known\"), so the pod path is direct egress and the container has no proxy to fall back to. This is a second, independent reason the two paths cannot be compared and their rates cannot be pooled, alongside the different failure modes.",
+   "boundary": "Answers \"are the digest and pod copies the same bytes\" (yes, sha256 per shard) and \"what did each fetch cost\" (101.6 min / 64 shards on the pod). Does NOT give a time estimate for the ~287G UltraData L2/L3 fetch: the rate is single-stream because ranged chunking is disabled by a missing -L (fetch_corpus.py:368 runs `curl -4 -sI` and so reads the length of the 302 redirect BODY (1020 B) as the object size, which is below the 64 MB floor -- measured; the real object is 286,267,316 B). With ranged working the transfer would be chunked-parallel, and per the note at :355 the achievable rate varies 177x between two connections on the same host in the same second, so no multiplier is derivable. The slow regime is also not attributable: it is not caused by failure (shard 0056 succeeded first try in 581 s) and not by connection age (a brand-new connection to 0057 ran at 259 KB/s, slower than 0056). Do not cite 95.2 s/shard as a planning input until per-shard timing is recorded and a small-scale run is measured. THE RATE IS ALSO NOT TRANSFERABLE BETWEEN THESE TWO SOURCES, which is a stronger objection than the optimistic-mean one: a finemath shard is 286 MB and an UltraData shard is 1.074 GB, a factor of 3.75, so the two are not the same measurement. The 64 MB floor at `fetch_corpus.py:389` tests the OBJECT's content-length (size), and `per = size // chunks` is computed only after it -- the floor never sees a chunk. The probe is `curl -4 -sIL` (:373), following redirects so the ranged-capability headers are read off the FINAL response rather than the 302 -- before #608 (669ae632, 2026-09-21) it was a bare -sI, which read no length and no ranges and wrongly judged every redirecting source unable to serve ranges, forcing it onto the throttled single stream (fetch_corpus.py:368-372 records that). With the probe fixed both objects clear the floor: finemath 286,267,316 B = 273 MiB, UltraData 1.074 GB. What a working -L buys is therefore larger per-shard parallelism on UltraData -- a statement about the parallelism available, not a claim about which source passes the floor. An earlier revision of this entry argued the opposite (that finemath failed the floor on this host), which was read off a copy of fetch_corpus.py predating #608; the floor was never the reason, the missing -L was. The 26 h figure above is therefore not evidence about UltraData: it is this source's rate applied to another source's byte total. The \"1018 B\" and \"1020 B\" figures that circulate for this source are both the length of the 302 redirect BODY, and the body length varies per shard because the signed redirect token does (measured 2026-09-20 with the -sI form: 0000 -> 1020, 0002 -> 1018, 0063 -> 1020); the same three shards under -sIL report 286,267,316 / 287,634,720 / 289,240,443 B. So 1018 and 1020 are not conflicting measurements, they are the same artifact on different URLs -- and neither is the object size.",
+   "status": "measured"
+  },
+  {
+   "id": "cs.gate_rebuild_disk_projection_0921",
+   "value": "Six-domain gate rebuild adds about 330 GB to /data00: 211 GB of raw parquet still inbound (UltraData L2 remaining 54 GB over 54 shards + L3 full 157 GB over 147 shards, at the measured 1.07 GB mean shard; rp1t_c4 ~27 GB over the remaining 30 of 34) plus about 120 GB of packed token cache for the gate mix's 30B-token budget at 4.000 bytes/token. /data00 read 3.5T total / 737G used / 2.6T free (23%) at the same reading. Peak depends on --release_intermediates: with it the peak is the ~330 GB above, without it the raw parquets are retained alongside the built shards and the caches, which is a ~700 GB order of magnitude. Current headroom covers either, so the binding constraint is not today's total but the peak the recipe chooses.",
+   "measured": "2026-09-21",
+   "status": "recorded",
+   "unit": "GB added to /data00",
+   "config": {
+    "bytes_per_token": {
+     "value": 4.0,
+     "source_file": "/data00/tokens_code.pt",
+     "file_bytes": 230279173,
+     "elements": 57569402,
+     "dtype": "torch.int32",
+     "elem_size": 4,
+     "note": "no per-cache header; the dtype fixes the unit, so the 30B-token gate mix gives ~120 GB by multiplication"
+    },
+    "raw_inbound_gb": {
+     "total": 211,
+     "l2_remaining": {
+      "shards": 54,
+      "gb": 54,
+      "from": "N_SHARDS L2=119 (datagen/ultradata_shards.py:34) minus 69 on disk"
+     },
+     "l3_total": {
+      "shards": 147,
+      "gb": 157,
+      "from": "N_SHARDS L3=147"
+     },
+     "rp1t_c4": {
+      "shards": 30,
+      "gb": 27,
+      "from": "30 of 34 still to move"
+     },
+     "mean_shard_gb": 1.07,
+     "mean_shard_from": "mean over the 69 UltraData L2 parquet on disk 2026-09-21"
+    },
+    "packed_cache_gb": 120,
+    "gate_mix_total_tokens": 30000000000.0,
+    "df_at_reading": {
+     "fs": "/data00",
+     "total": "3.5T",
+     "used": "737G",
+     "free": "2.6T",
+     "pct": 23
+    },
+    "peak_switch": "--release_intermediates: peak ~330 GB with it, ~700 GB order of magnitude without it (raw retained alongside built shards and caches)"
+   },
+   "source": "python3 -c torch.load('/data00/tokens_code.pt'); du -sh data/raw/*; df -h /data00; ls data/raw/ultradata/*.parquet | wc -l",
+   "uncertainty": "The multiplication is exact for the cache (dtype fixes bytes/token, so 30B -> 120 GB has no extrapolation in it). The raw term is a projection from a 69-shard mean across a corpus whose shards are visibly uniform (1.07 GB, tight); the c4 27 GB term is the same mean times 30 remaining shards and c4 is a different corpus. Peak-without-release is stated as an order of magnitude, not a number, because the built shard size is not yet measured for any of the six domains.",
+   "boundary": "This is a projection from two measured inputs, not a reading of a state that exists - of the six _dc domains, zero are built, so the +120 GB cache term and the built-shard term are both still ahead. It says nothing about whether 2.6 TB is enough for any other line (math_owm_stage2 was 64 GB and rising; other worktrees share /data00). It does not model inode pressure, page cache, or any filesystem other than /data00. Verify raw retention empirically on the first aggregate run rather than against the help text: the code path is that aggregate() never references the raw parquet directory at all - every os.remove in it targets a file under out/fout (tagged_p, cf, xdrop_p) - so --release_intermediates cannot reach raw, but that was established by reading the function, not by observing a run."
   }
  ]
 }

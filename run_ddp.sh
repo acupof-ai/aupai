@@ -203,7 +203,13 @@ if [ $rc -eq 0 ] && [ -n "$NAME" ] && [ -f "ckpt_${NAME}.pt" ]; then
     DONE_STATUS=ok
     DONE_RESULT="${VAL:-training completed}, score_matrix on card $CARD"
   else
-    DONE_STATUS=error
+    # score-blocked, NOT error. TRAINING SUCCEEDED here -- this branch is only reachable
+    # under `rc -eq 0 && ckpt exists` (the guard above), so the run produced its checkpoint
+    # and its val loss and only the SCORING was refused. Writing `error` put that fact and a
+    # killed-at-2-min run (b0_mem_m1) under one word: 10 rows in experiments.jsonl carried
+    # `error`, 9 of them with a healthy `val 2.1xx`, and a reader could not tell them apart
+    # from the status column at all.
+    DONE_STATUS=score-blocked
     DONE_RESULT="${VAL:-training completed}, scoring FAILED rc=$SCORING_RC -- no metrics"
   fi
   python scripts/exp.py done --name "$NAME" --status "$DONE_STATUS" \
@@ -215,6 +221,14 @@ if [ $rc -eq 0 ] && [ -n "$NAME" ] && [ -f "ckpt_${NAME}.pt" ]; then
   # silently while the run exited 0, and a red nobody can act on is no signal.
   # The checkpoint is fine -- re-score with the command above -- but a run that
   # produced no metrics must not read as a success.
+  #
+  # rc AND THE ROW ARE TWO DIFFERENT CHANNELS, and `status=score-blocked` above does not
+  # soften this. The exit code is the CALLER's control flow: the launcher, the watchdog and
+  # the chain that decides whether to keep going read it, and a run with no metrics must
+  # still stop them. The row's status is the READER's semantics: whether a person looking at
+  # experiments.jsonl can tell "training failed" from "training worked and scoring was
+  # blocked". Keeping the row honest does not make the run a success, so do not "fix" this
+  # to `exit 0` to match the row -- that is the 2026-09-02 defect returning.
   if [ "$SCORING_RC" -ne 0 ]; then
     echo "FATAL: scoring failed for ckpt_${NAME}.pt (rc=$SCORING_RC) -- exiting nonzero" >&2
     exit 1
