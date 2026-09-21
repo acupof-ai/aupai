@@ -26,7 +26,31 @@ NEW = os.environ.get("AUPAI_NEW", f"{ROOT}/datagen/ultradata_shards.py")
 OLD = os.environ.get("AUPAI_OLD", f"{ROOT}/datagen/ultradata_shards_pre_sidecar.py")
 TOK = f"{ROOT}/data/tokenizer.json"
 PREFIX = "code_ultra_l3_noexec"
-SHARDS = os.environ.get("AUPAI_PROOF_SHARDS", "s001,s002").split(",")
+
+
+def _discover_units(src):
+    """The unit tags present in `src`, from `stats_<tag>.json`, sorted.
+
+    DERIVED, NOT DEFAULTED (de, 2026-09-22). This was the literal "s001,s002",
+    which assumed the committed per-SHARD builder (tag = "s%03d", 147 shards).
+    The build that actually ran used a per-GROUP recipe (tag = "s%02d", 37
+    groups), so those names do not exist at all and the default silently selects
+    nothing. An env override could not rescue it either: the hardcoded
+    `stats_s001.json` below meant any override still read a file that is not
+    there. Deriving from the product makes the proof work for either recipe,
+    which is the property the gate needs -- it compares two DRIVERS on whatever
+    units exist, and has no business knowing how they were named."""
+    tags = sorted(
+        os.path.basename(p)[len("stats_") : -len(".json")]
+        for p in glob.glob(f"{src}/stats_*.json")
+    )
+    return [t for t in tags if t]
+
+
+_UNITS = _discover_units(SRC)
+SHARDS = [
+    s for s in os.environ.get("AUPAI_PROOF_SHARDS", "").split(",") if s
+] or _UNITS[:2]
 
 
 def build_case(td):
@@ -48,7 +72,12 @@ def build_case(td):
                 kt += len(tok.encode(c).ids) + 1
                 kc += len(c)
             i += 1
-    stats = json.load(open(f"{SRC}/stats_s001.json"))
+    # The schema TEMPLATE, taken from a unit that exists (see _discover_units).
+    # This was the literal "stats_s001.json", which no builder produces here, so
+    # the proof could not run at all against the real tree -- and because s001
+    # was both the assumed default AND absent, no AUPAI_PROOF_SHARDS override
+    # could route around it. Any unit's keys serve: only the schema is read.
+    stats = json.load(open(f"{SRC}/stats_{SHARDS[0]}.json"))
     stats.update(kept=k, kept_tokens=kt, kept_chars=kc, total_rows=k, n_shards=0)
     stats["reasons"] = {key: 0 for key in stats["reasons"]}
     stats["reasons"]["kept"] = k
