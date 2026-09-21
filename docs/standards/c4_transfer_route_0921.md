@@ -77,26 +77,44 @@ Both hops measured separately on 2026-09-21, laptop → digest → pod host:
 0.44, and an independent 32 MiB → 0.65), so the rate is **roughly constant, not degrading** —
 unlike the finemath fetch, a serial total here is a sum of like-sized terms.
 
-### Hop 2 is limited PER STREAM, so run it parallel
+### The transfer must fit a per-stream timeout — chunk it
 
-Measured 2026-09-21: four concurrent `tn write`s of 8 MiB each finished in 12 s =
-**2.46 MiB/s aggregate**, against **0.65 MiB/s single-stream — 3.8×**. The limit is per stream,
-not per host, so concurrency is the lever.
+**A `tn write` stream is killed after a fixed window, independent of speed.** Measured
+2026-09-21: four concurrent streams each died at ~196 MB with `held connection no response for
+5m0s`, and 300 s × 0.65 MiB/s = 196 MB — the arithmetic matches, so **the 5-minute window is
+what ended them, not a rate collapse.** A real 843 MB shard at 0.65 MiB/s needs ~21.6 min and
+therefore **cannot be sent as one stream at all.**
+
+**This invalidates the parallel figure below for real work.** The 3.8× was measured with 8 MiB
+probes finishing in 12–13 s, which never come close to the window. **A probe answers "is the
+route up"; it does not answer "will this payload finish".** The two intervals are different, and
+a number from one does not transfer to the other.
+
+**The working shape is: cut each shard into ~80 MB chunks, stream each chunk, concatenate on the
+host, then verify.**
 
 ```bash
-# N-way parallel, one file per worker, every file sha-checked independently
-ls /tmp/gate_transfer/*.bin | xargs -P 4 -I{} sh -c \
-  'cat {} | tn write /data00/aupai_work/aupai_c4/$(basename {})'
+# per shard, per chunk: ~80 MB is ~125 s at 0.65 MiB/s -- inside the 5-minute window
+split -b 80m shard.bin /tmp/chunk_
+for c in /tmp/chunk_*; do
+  cat "$c" | tn write /data00/aupai_work/aupai_c4/parts/$(basename "$c") || exit 1   # 3 retries
+done
+# concatenate on the pod HOST (not in the container: /work is the same filesystem)
+tn exec "cd /data00/aupai_work/aupai_c4/parts && cat chunk_* > ../shard.bin"
+# then the three-way sha, as below
 ```
 
-**Serialize the digest→laptop hop instead** if hop 1 saturates: it measured 10–12.8 MiB/s, so it
-is ~20× faster than hop 2 and does not need to be parallel, but it also should not be run at high
-concurrency against a shared machine.
+**Retry each chunk independently**, up to 3 times. A chunk that dies at the window is the normal
+case, not an error — the chunk boundary is what makes the retry cheap.
 
-**Serial ≈ 11.9 h at 0.6 MiB/s; 4-way parallel ≈ 3 h.** Both are estimates from a few points, and
-the pod host is shared — record per-file seconds as they land and let the sum be the schedule.
-Per-file seconds also expose the two things a total cannot: one file that is anomalously slow, and
-whether the parallelism actually took.
+### Throughput: per-stream, and the probe caveat
+
+Four concurrent `tn write`s of 8 MiB each finished in 12 s = **2.46 MiB/s aggregate** against
+**0.65 MiB/s single-stream, 3.8×** — the limit is per stream rather than per host. **Read that
+number with the paragraph above: it was measured in the probe interval and says nothing about
+whether 4 parallel streams of 80 MB chunks complete.** Parallelism is still the right lever
+(each stream carries its own window, so more streams carry more bytes per window), but the
+speed-up for real payloads is **unmeasured**.
 
 The measured figures are also in `facts/corpus_supply.json#cs.c4_transfer_route_0921`; read them
 there rather than from this page, which would go stale.
