@@ -28,9 +28,30 @@ an operator needs answered is "what do I hold right now", not "could I get it ag
 | domain | **holds raw now?** | **raw re-fetchable?** | **output is the only copy?** | delete permission |
 |---|---|---|---|---|
 | `en_c4_stage2_dc` | **yes** — digest `wt-3b/data/raw/rp1t_c4`, 32 jsonl / 26 G | **no** — `data.together.xyz` 403 at the host level (re-measured 2026-09-21), no HF mirror for RedPajama-1T c4; the 32 files are the only bytes consistent with the historical corpus fingerprint | no | **raw: named instruction only** |
-| `code_py_starcoder_dc` | **no** — digest `wt-3b/data/raw/` holds `ms_starcoder_py_manifest.txt` (59 lines), `ms_starcoder_py_sha256.txt` and `ms_starcoder_fetch.log` reading `FETCH_DONE rc=0` / `MANIFEST_DONE 59 files`; no parquet on digest or pod | yes — `www.modelscope.cn` and `hf-mirror.com` both 200/rc=0 from digest, measured 2026-09-21; the manifest names all 59 files | **yes** — digest `wt-3b/data/corpus/code_py_starcoder_dc`, 283 shards / 28 G | **output: named instruction only** |
+| `code_py_starcoder_dc` | **no** — digest `wt-3b/data/raw/` holds `ms_starcoder_py_manifest.txt` (59 lines), `ms_starcoder_py_sha256.txt` and `ms_starcoder_fetch.log` reading `FETCH_DONE rc=0` / `MANIFEST_DONE 59 files`; no parquet on digest or pod | yes — `www.modelscope.cn` and `hf-mirror.com` both 200/rc=0 from digest, measured 2026-09-21; the manifest names all 59 files | **yes** — digest `wt-3b/data/corpus/code_py_starcoder_dc`, **282 shards + `build_corpus_stats.json`** (283 directory entries) / 28 G | **output: named instruction only** |
 | `cot_dc` | yes — digest `wt-0e-cot/data/raw/hf_numma` 1.2 G + `hf_numma_jsonl` 1.3 G | not re-verified 2026-09-21 | no | **raw: named instruction only** |
-| `code_ultra_l2_dc` / `code_ultra_l3_noexec_dc` / `math_owm_stage2_dc` | yes — pod `data/raw/ultradata` 133 G (L2 119/119) + L3 in flight, `hf_finemath_4plus` 18 G (64/64) | yes | no | raw and output on the same machine — **not an instance** |
+| `code_ultra_l2_dc` / `code_ultra_l3_noexec_dc` / `math_owm_stage2_dc` | yes — pod `data/raw/ultradata`, **as-of 2026-09-21T08:31Z: 153 G (L2 119/119 done + L3 33/147 in flight) and growing**, `hf_finemath_4plus` 18 G (64/64) | yes | no | raw and output on the same machine — **not an instance** |
+
+## Every count says what it counted
+
+A row in this table may not write "N shards" without naming the filter that produced N. The
+corpus directories hold more than shards, and the extras are not removable by a `.jsonl` glob:
+
+| directory | `ls *.jsonl` | shards | `holdout_slice_*.jsonl` | `build_corpus_stats.json` | entries |
+|---|---|---|---|---|---|
+| `code_py_starcoder_dc` | 282 | **282** | 0 | 1 | 283 |
+| `en_c4_stage2_dc` | **243** | **242** | 1 (65 B, `{"rule_fp":"74b34c96d67013ba","n":0}`) | 1 | 244 |
+| `cot_dc` | 13 | **13** | 0 | 1 | 14 |
+| `math_owm_stage2` | 334 | **333** | 1 | 1 | — |
+
+**The `holdout_slice_*.jsonl` is the trap**: it *is* a `.jsonl`, so `ls *.jsonl | wc -l` counts it,
+and it is the frozen holdout basis — 65 bytes of metadata, not corpus content. A copy loop that
+globs `*.jsonl` moves it (which is correct, the domain is not valid without it) while a count
+that globs `*.jsonl` miscounts it. **The two operations want different filters on the same
+directory**, which is exactly how `en_c4_stage2_dc` reads as 243 shards when it holds 242.
+
+Same shape across this round: a directory-listing count is not a count of the thing the sentence
+is about, and the missing filter is invisible because the number looks right.
 
 **The rule, with both columns:** a domain where **the output is the only copy** needs a named
 instruction to delete the output; a domain where **the raw cannot be re-fetched** needs one to
