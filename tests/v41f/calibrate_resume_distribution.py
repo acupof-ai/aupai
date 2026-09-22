@@ -13,8 +13,12 @@ Two families, the same split the replacement gate uses:
   det         bit-exact: optimizer AdamW triple control-optK vs restart-loadK
               (torch.equal), populated-but-dropped leaf set, strict-load missing/unexpected.
   geometric   whole-tensor on the gate's own probe leaf (layers.0.attn.qproj.wq_b.weight)
-              for BOTH fp32 master and bf16 run weight: rel-L2, cosine, max|d|/rms.
+              for BOTH fp32 master and bf16 run weight: rel-L2, cosine, RMSE/ref-RMS.
               Elementwise equality is deliberately NOT a verdict (the rejected oracle).
+              Only rel-L2 is an ACTIVE geometric predicate in THIS collector (mutant
+              caught_by); cosine and RMSE/ref-RMS are measured here solely to bound the
+              gate-replacement PR's three-way conjunction. max|d|/RMS is reported as a
+              diagnostic, never a predicate (single-coordinate, healthy ~0.33).
 
 Modes:
   --healthy N   N independent control/restart pairs, ZERO injection, reusing the REAL gate
@@ -169,9 +173,11 @@ HEALTHY_ARMS = [
     {"name": "D_load_t1", "stress": 4, "env": {"GATE_OMP": "1"}},
 ]
 
-# Whole-tensor metrics a bound is written from. max_abs_over_rms is deliberately excluded:
-# it is a single-coordinate statistic (healthy ~0.33) with no headroom for a margin.
-HARD_METRICS = ("rel_l2", "cosine", "rmse_over_rms")
+# Metrics reported per arm. rel_l2 is the only ACTIVE geometric predicate in this collector;
+# cosine and rmse_over_rms are measured now for the gate-PR conjunction (see metric_role in
+# the healthy record). max_abs_over_rms is excluded entirely: single-coordinate (healthy
+# ~0.33), no margin headroom.
+REPORT_METRICS = ("rel_l2", "cosine", "rmse_over_rms")
 
 
 def healthy(pairs_per_arm: int, out: str, env: dict) -> dict:
@@ -212,7 +218,7 @@ def healthy(pairs_per_arm: int, out: str, env: dict) -> dict:
 
     def fam_dist(subset):
         return {fam: {metric: _dist([r[fam] for r in subset], metric)
-                      for metric in HARD_METRICS}
+                      for metric in REPORT_METRICS}
                 for fam in ("master_fp32", "bf16_weight")}
 
     per_arm = {arm["name"]: fam_dist([r for r in rows if r["arm"] == arm["name"]])
@@ -231,9 +237,21 @@ def healthy(pairs_per_arm: int, out: str, env: dict) -> dict:
             "rmse_over_rms_max": max(rmsf, default=None),
             "cosine_min": min(cos, default=None),
         }
+    # Explicit role statement so a reader of this JSON does not mistake all three numbers for
+    # an active conjunction. In THIS collector only rel_l2 enters a geometric verdict (the
+    # mutant caught_by predicate below); cosine and rmse_over_rms are measured here only to
+    # supply the gate-replacement PR, where the three become a conjunction (each bounded from
+    # these same load-arm extremes). max_abs_over_rms is never a bound (single-coordinate).
+    metric_role = {
+        "rel_l2": "ACTIVE in this collector: mutant geometric caught uses load rel_l2_max",
+        "cosine": "RESERVED for the gate-PR conjunction; measured here, not a verdict yet",
+        "rmse_over_rms": "RESERVED for the gate-PR conjunction; measured here, not a verdict yet",
+        "max_abs_over_rms": "diagnostic only; single-coordinate, never a bound",
+    }
     return {"schema": "v41f-resume-healthy-distribution/v2", "calibrated": False,
             "kind": "healthy", "probe": PROBE, "pairs_per_arm": pairs_per_arm,
             "arms": [a["name"] for a in HEALTHY_ARMS],
+            "metric_role": metric_role,
             "env": env_header(), "pairs": rows,
             "distribution_per_arm": per_arm,
             "distribution_pooled": fam_dist(rows),
