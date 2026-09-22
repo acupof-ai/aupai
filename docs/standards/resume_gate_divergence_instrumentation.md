@@ -412,3 +412,65 @@ reset optimizer leaf does not produce CI's 96.6%/1.334e-02 (measured, table abov
 red-after-merge shows candidates 1-3 all clean with the divergence present before the load boundary,
 the conclusion is that the seeded determinism does not hold on that runner, and the measurement to
 run is the seeded cross-process pair from the table above **on that runner**, not on the laptop.
+
+---
+
+## Gate redesign: judge at the reproducible granularity (2026-09-22, D61/K6)
+
+The Adjudication above unblocked code-free PRs but did not fix the gate. The red-run artifact
+for `35677058625` (sha `d1d4aef3`, #624 dump) located the cause and named the wrong contract.
+
+**Root cause, measured.** `gate_resume_equivalent_to_uninterrupted` bit-compares two
+SEPARATELY LAUNCHED processes' fp32 master. At the save boundary the two processes are
+identical (control `optK` == restart `optK` bit-for-bit on all five sampled leaves; restart
+`optK` == `loadK` across the save/load; no dropped/missing keys), yet the two post-resume
+steps diverge. train_step has no dropout or training RNG (only seeded weight init), so the
+only varying input is the runner's bf16 forward/backward kernel numerics (atomic
+reductions); bf16 gradients differ process-to-process, are cast into the fp32 master, and
+AdamW compounds the difference. The fp32 master deliberately retains sub-bf16 information
+that an independent process cannot reproduce.
+
+**The granularity finding (criterion 70).** Per-coordinate equality is NOT reproducible;
+aggregate/geometric equality IS. Measured on the failing run's probe
+(`layers.0.attn.qproj.wq_b.weight`): fp32 master 96.6% of elements differ; after a bf16 cast
+51.5% still differ (ulp gap up to ~6e5, near-zero coordinates random-walk so per-element
+relative error is meaningless). But the tensors agree as objects: relative-L2 ~1.6%,
+cosine ~0.99987, sign agreement 99.8%. Same training result via a coordinate-divergent
+path. Neither fp32 nor bf16 elementwise `torch.equal`/`allclose` is the right predicate.
+
+**The replacement gate — `scripts/resume_equiv_gate.py` (K6 harness).** Two layers:
+
+1. **Deterministic state — bit-exact, hard fail.** What a checkpoint actually promises and
+   kernel nondeterminism cannot affect: optimizer triple (`exp_avg`, `exp_avg_sq`, `step`)
+   identical `optK`==`loadK` per leaf; no populated leaf dropped from the saved key set;
+   no missing/unexpected model keys. Any mismatch is a real save/load bug
+   (`rc=1`).
+2. **Training trajectory — calibrated whole-tensor bounds, not per-element.** For fp32
+   master AND bf16 run weight, compare relative-L2 (`||a-b||/||a||`), cosine, and a
+   near-zero-aware RMS floor (RMSE/reference-RMS) (`rc=2` when outside bounds). Bounds come
+   from a calibration JSON built from paired HEALTHY control/restart runs on the RUNNER
+   (the noisy environment the gate executes in), widened by a documented margin; they are
+   never taken from one red run or guessed. Without a calibration the layer reports
+   UNCALIBRATED and does not invent a tolerance (`rc=4`, or a loud pass only with
+   `--allow-uncalibrated`).
+
+**Calibration is deferred until after CED.** The flat forward is being deleted; its
+bf16-reduction shape (and the new W_KV/W_Z path) changes the green-noise distribution, so
+bounds calibrated now would be stale. Sequence: CED forward + smoke pass → run several
+paired control/restart samples on the runner under 08's GPU authorization → compute bounds
+at a ~3-5x margin over observed healthy noise with provenance (runner, sample count,
+margin) → wire `resume_equiv_gate.py` into CI in place of the bit-exact assertion, same PR
+as this doc's update. The W_KV/W_Z save/load check uses exact-state + bf16-tolerant weight
+bounds, never fp32 bit equality.
+
+**Mutation contract (the gate must be lenient but not blind).** Demonstrated in the
+harness selftest and against real/synthetic dumps:
+
+- drop a populated leaf, or corrupt one optimizer tensor across the boundary → layer 1
+  `rc=1`;
+- current runner bf16 noise within calibrated bounds → `rc=0`;
+- a fresh re-init, or a localized real regression (one block scaled ×1.1) → layer 2
+  `rc=2` — the bound must catch a true localized bug, proving it is not vacuous.
+
+Calibration samples (healthy pairs) and mutation inputs (injected harm) must never be mixed:
+the bounds describe observed healthy noise, and the mutations validate them from outside.

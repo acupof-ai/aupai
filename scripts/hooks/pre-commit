@@ -2521,6 +2521,13 @@ def main():
         # (evaluate() over injected lists, zero network) and pins GO only on all-pass, exit 2 on
         # a fabricated IN_PROGRESS/QUEUED check, fail>pending, cancel/empty/unknown fail closed.
         "scripts/pr_merge_gate.py",
+        # Resume-equivalence calibration gate (genA, K6/D61). Registered because its two-layer
+        # contract is the whole point: layer 1 bit-exact on deterministic save/load state,
+        # layer 2 whole-tensor bounds on the noisy trajectory. numpy-only --selftest pins the
+        # geometry (rel-L2/cosine/RMS), the rc=4 uncalibrated refusal, and the mutation matrix
+        # (drop leaf/corrupt optim/re-init/block x1.1 must not pass); torch is imported lazily
+        # so the commit-time run needs no GPU stack.
+        "scripts/resume_equiv_gate.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
