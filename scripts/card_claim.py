@@ -1548,6 +1548,39 @@ def _selftest():
         bad += 0 if good else 1
         print(f"  {'ok  ' if good else 'BUG '} {text}")
 
+    # WAIT FOR A FORKED WORLD TO CROSS, DO NOT SLEEP AND HOPE (2026-09-22). Every world below
+    # forks `bash -c '<child>; true'` and then samples the process tree once. The parent runs
+    # before its children and a forked child has to be SCHEDULED, and on a loaded shared runner
+    # that loses the race: `time.sleep(1.5)` followed by one `_ps_table()` returned an empty
+    # descendant list, which is the state `_job_descendants` reads at t=0 -- no python child was
+    # running as far as the kernel was concerned. Measured in CI run 35712886484 at a3ac2588: the
+    # same sha PASSED as a pull_request run (35712988441) and FAILED as a push run, 1 of 262
+    # targets, with "world: it really has a python descendant (0 found)". The empty list then
+    # cascaded -- nothing was killed for the ORPHAN-SHELL case, so that read green-to-BUG too --
+    # which is why one sleep produced three BUG lines.
+    #
+    # THE CONDITION IS THE PREDICATE ITSELF, not a fixed settle time. Polling for "some
+    # descendant exists" is what the callers below actually need, and it is the same pattern
+    # wait_for_device already uses at :242 (poll to the condition, deadline as a CEILING): a
+    # child that will never appear costs `deadline` instead of passing silently, and the deadline
+    # is a backstop over the reported state, never the sample point.
+    def _await_ps(pred, deadline=15.0, interval=0.05, sample=None):
+        """(value, verdict) once `pred(value)` is truthy, else (last value, None) at the deadline.
+
+        `sample` defaults to the process table. The CVD case below passes a reader instead, because
+        its condition is "the child is VISIBLE to ps", not "the child is in the tree".
+        """
+        sample = _ps_table if sample is None else sample
+        end = time.time() + deadline
+        val = sample()
+        while True:
+            if pred(val):
+                return val, True
+            if time.time() >= end:
+                return val, None
+            time.sleep(interval)
+            val = sample()
+
     d = tempfile.mkdtemp(prefix="claim_")
     CLAIM_DIR = d
 
@@ -2029,9 +2062,14 @@ def _selftest():
             stdin=subprocess.DEVNULL,
             start_new_session=True,
         )
-        time.sleep(1.5)
+        # POLL TO THE CONDITION, not to a clock: the two children have to be scheduled before
+        # this world exists at all (see _await_ps). Two, because the ambiguity refusal below is
+        # built on having two candidates; the deadline is the backstop for a world that never
+        # forms, and the assertions below report it rather than passing on an empty tree.
         shell_pid = tree.pid
-        table = _ps_table()
+        table, _formed = _await_ps(
+            lambda t: len(_job_descendants(shell_pid, t)) >= 2, deadline=15.0
+        )
         kids = _job_descendants(shell_pid, table)
 
         # The world must actually BE the pod's shape, or the cases below prove nothing.
@@ -2233,7 +2271,7 @@ def _selftest():
             )
         _, dup_now, lines_now = status()
         _case(
-            not any("ORPHAN-SHELL" in x for x in lines_now),
+            bool(kids) and not any("ORPHAN-SHELL" in x for x in lines_now),
             "no ORPHAN-SHELL while the job is still running (the negative case)",
         )
 
@@ -2242,7 +2280,11 @@ def _selftest():
                 os.kill(p, 9)
             except OSError:
                 pass
-        time.sleep(1.0)
+        # Poll for the state the case is about -- the children are GONE while the shell lives.
+        # A bare sleep here read green when the kill had not been reaped yet, which is the other
+        # direction of the same race; and when `kids` was empty this case could not fail at all,
+        # which is why it is now guarded on `kids` above.
+        _await_ps(lambda t: not _job_descendants(shell_pid, t), deadline=10.0)
         _, dup_now, lines_now = status()
         said = [x for x in lines_now if "ORPHAN-SHELL" in x]
         _case(
@@ -2396,7 +2438,7 @@ def _selftest():
             start_new_session=True,
         )
         try:
-            time.sleep(1.0)
+            _await_ps(lambda t: len(_job_descendants(idle.pid, t)) >= 1, deadline=15.0)
             kids2 = _job_descendants(idle.pid)
             _case(bool(kids2), f"world: the idle tree has a python descendant ({len(kids2)})")
             for q, _a in kids2:
@@ -2536,7 +2578,7 @@ def _selftest():
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
             start_new_session=True)
         try:
-            time.sleep(0.8)
+            _await_ps(lambda t: len(_job_descendants(lnch.pid, t)) >= 1, deadline=15.0)
             rank_kids = _job_descendants(lnch.pid)
             _case(len(rank_kids) == 1,
                   f"world: the non-shell launcher has exactly one python rank ({len(rank_kids)})")
@@ -2644,7 +2686,7 @@ def _selftest():
         )
         _saved_jd = globals()["_job_descendants"]
         try:
-            time.sleep(1.0)
+            _await_ps(lambda t: len(_saved_jd(vlive.pid, t)) >= 1, deadline=15.0)
             kids4 = _saved_jd(vlive.pid)
             _case(bool(kids4), f"world: the vanish tree has a real descendant ({len(kids4)})")
             if kids4:
@@ -2764,8 +2806,10 @@ def _selftest():
             start_new_session=True,
         )
         try:
-            time.sleep(1.5)
-            reparented = [(q, pp) for q, pp, a in _ps_table() if "time.sleep(8)" in a and pp == 1]
+            table5, _rp = _await_ps(
+                lambda t: any("time.sleep(8)" in a and pp == 1 for _q, pp, a in t), deadline=15.0
+            )
+            reparented = [(q, pp) for q, pp, a in table5 if "time.sleep(8)" in a and pp == 1]
             _case(
                 bool(reparented),
                 f"world: the job really did reparent out of the tree (ppid 1): {reparented[:1]}",
@@ -2803,7 +2847,7 @@ def _selftest():
             start_new_session=True,
         )
         try:
-            time.sleep(1.0)
+            _await_ps(lambda t: len(_job_descendants(good.pid, t)) >= 1, deadline=15.0)
             kids3 = _job_descendants(good.pid)
             for q, _a in kids3:
                 _fake_proc(q, nvidia=52)
@@ -3169,7 +3213,10 @@ def _selftest():
         stderr=subprocess.DEVNULL,
     )
     try:
-        time.sleep(1.0)
+        # The condition is "both children are VISIBLE to ps", which is what _cvd reads. A bare
+        # sleep sampled before the second child was scheduled and read None -- the same race as
+        # _await_ps's other callers, against a different reader.
+        _await_ps(lambda v: v is not None, deadline=15.0, sample=lambda: _cvd(kid_trap.pid))
         _case(
             _cvd(kid_set.pid) == "2,3",
             f"_cvd reads the exec-time value ({_cvd(kid_set.pid)!r} for a child given 2,3)",
