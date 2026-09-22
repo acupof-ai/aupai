@@ -2312,6 +2312,51 @@ except ValueError as _e:
 else:
     raise AssertionError("ced=1 with ced_enc_layers=0 constructed (no encoder left)")
 
+# 9. FP8 M-AXIS PADDING (smoke v41_ced_smoke_0922, 2026-09-22). torchao Float8Linear flattens a
+#    >2-D input to (B*NB, d) and its backward grad_weight = grad_out^T @ input contracts over
+#    that flattened M; fp8 scaled_mm requires M%16==0. CED projects d->d BEFORE the head split
+#    (so M=B*NB carries no H factor -- flat was accidentally 16-aligned by B*H*NB), and an odd
+#    NB (518 at B=4) gives M=2072%16=8. _fp8_linear_entries pads M (NOT d) to 16 and slices the
+#    pad rows off the output. These checks cover everything that is dtype-independent on CPU;
+#    the "real fp8 kernel no longer raises divisible-by-16" half is the GPU smoke itself.
+#    SHAPE ORDER IS LOAD-BEARING: pad AFTER flattening. Padding `pad` rows onto each of B
+#    batches then flattening gives B*(NB+pad), which is NOT aligned in general (measured
+#    B=4 NB=518: 4*526=2104 still 8 mod 16).
+for _B, _NB in ((4, 518), (1, 518), (4, 517), (8, 518)):
+    _M = _B * _NB
+    _pad = (-_M) % 16
+    _d, _H, _hd = 64, 4, 16
+    torch.manual_seed(9)
+    _lin = torch.nn.Linear(_d, _d, bias=False).double()
+    _hb = torch.randn(_B, _NB, _d, dtype=torch.double, requires_grad=True)
+    _out = model._fp8_linear_entries(_lin, _hb, _B, _NB, _H, _hd)
+    assert tuple(_out.shape) == (_B, _H, _NB, _hd), (
+        f"pad helper changed the output shape at B={_B} NB={_NB}: {tuple(_out.shape)}")
+    # reference: the SAME linear over only the real M rows, unflattened identically
+    _ref = _lin(_hb.reshape(_M, _d))[:_M].view(_B, _NB, _H, _hd).transpose(1, 2).contiguous()
+    assert torch.equal(_out, _ref), (
+        f"padding changed the numeric result at B={_B} NB={_NB} (max d "
+        f"{(_out - _ref).abs().max().item():.3e}) -- pad rows must not alter real rows")
+    # PAD ROWS CONTRIBUTE ZERO GRADIENT. A zero input row adds 0 to grad_weight = g^T @ input.
+    _out.float().sum().backward()
+    _gw = _lin.weight.grad
+    assert torch.isfinite(_gw).all(), f"non-finite weight grad at B={_B} NB={_NB}"
+    if _pad:
+        # recompute reference grad using only the unpadded M rows, must match the padded call
+        _lin.zero_grad()
+        _ref.sum().backward()
+        _gref = _lin.weight.grad.clone()
+        assert torch.equal(_gw, _gref), (
+            f"the {_pad} pad rows changed weight grad at B={_B} NB={_NB} -- a zero input row "
+            f"must add nothing to grad_weight")
+    # aligned world-8-like shape pads by 0
+    if _B == 8 and _NB % 2 == 0 and _M % 16 == 0:
+        assert _pad == 0, f"expected an already-aligned M, got pad={_pad}"
+
+# the original failure input really was unaligned: this is the 2072 case
+assert (- (4 * 518)) % 16 == 8 and (4 * 518 + ((- (4 * 518)) % 16)) % 16 == 0, (
+    "the pad arithmetic no longer reproduces the 2072 -> 2080 alignment the smoke required")
+
 print("CED: global entries from H_{L/2} (moves on a visible encoder mutation, not on an "
       "invisible one); window branch still reads own k/v (asserted both directions); W_KV and "
       "W_Z both read; missing H_{L/2} refuses; decoders hold per-layer unshared pairs, encoders "
