@@ -6,10 +6,10 @@ on:
   # resume-gate calibration job; both run on this event ONLY -- push/PR skip them.
   workflow_dispatch:
     inputs:
-      calibration_pairs:
-        description: "calibrate-resume: number of zero-injection healthy pairs"
+      calibration_pairs_per_arm:
+        description: "calibrate-resume: healthy pairs PER ARM (4 arms: idle + 3 loaded)"
         required: false
-        default: "10"
+        default: "5"
 # One in-flight run per (ref, event); a newer run cancels the older one's in-progress jobs.
 # Without this, every push to main queues independently and the backlog grows linearly --
 # measured 2026-09-20: 32 queued / 3 in progress, oldest waiting 48 min, and still growing.
@@ -229,12 +229,10 @@ jobs:
         with: { python-version: "3.11" }
       - run: pip install numpy
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - name: "10 healthy control/restart pairs + 4 blob mutants (probe leaf geometric + det)"
-        env:
-          GATE_OMP: "2"
+      - name: "healthy pairs x4 arms (idle + 3 loaded) + 4 blob mutants"
         run: |
           python tests/v41f/calibrate_resume_distribution.py \
-            --healthy "${{ github.event.inputs.calibration_pairs || '10' }}" \
+            --healthy "${{ github.event.inputs.calibration_pairs_per_arm || '5' }}" \
             --mutants --out "${{ runner.temp }}/k6_resume_calibration"
       - uses: actions/upload-artifact@v4
         with:

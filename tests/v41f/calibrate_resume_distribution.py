@@ -60,12 +60,21 @@ def tensor_metrics(want: torch.Tensor, got: torch.Tensor) -> dict:
     nw = float(torch.linalg.norm(w))
     ng = float(torch.linalg.norm(g))
     rms = float(torch.sqrt(torch.mean(w ** 2)))
+    rmse = float(torch.sqrt(torch.mean(diff ** 2)))
     return {
         "n": int(w.numel()),
+        "n_nan": int(torch.isnan(diff).sum()),
+        "n_inf": int(torch.isinf(diff).sum()),
         "rel_l2": float(torch.linalg.norm(diff) / nw) if nw > 0 else None,
         "cosine": float(torch.dot(w, g) / (nw * ng)) if nw > 0 and ng > 0 else None,
         "max_abs": float(diff.abs().max()),
         "rms_want": rms,
+        # AGGREGATE near-zero-robust HARD metric: RMSE/ref-RMS is a whole-tensor ratio and
+        # discriminates on measured data (healthy runner ~0.02, block x1.1 ~0.1). max|d|/rms
+        # is a single-coordinate statistic dominated by the largest coordinate (healthy
+        # ~0.33, x3 margin exceeds 1) -> diagnostic only, never a verdict.
+        "rmse": rmse,
+        "rmse_over_rms": float(rmse / rms) if rms > 0 else None,
         "max_abs_over_rms": float(diff.abs().max() / rms) if rms > 0 else None,
         "frac_element_diff": int((~torch.eq(w, g)).sum()) / int(w.numel()),
     }
@@ -146,37 +155,89 @@ def _det_from_dump(pair_dir: str):
     return rec
 
 
-def healthy(n_pairs: int, out: str, env: dict) -> dict:
+# The healthy distribution is sampled UNDER LOAD, not only idle. The D17 red fires under
+# scheduling contention on a shared runner; an idle runner produces a zero-variance bf16
+# quantization gap (batch 1 measured rel-L2 0.0161556 constant across 10 pairs), and a margin
+# on a constant has no statistical basis. These arms mirror diag_resume_bimodal's matrix:
+# stress = outer-sibling CPU burners (diag._start_burn); GATE_OMP/GATE_ONEDNN are read by the
+# gate worker itself (_apply_diag_thread_env). `load` marks the arms the bound must cover;
+# idle is the baseline only.
+HEALTHY_ARMS = [
+    {"name": "A_idle_t2", "stress": 0, "env": {"GATE_OMP": "2"}},
+    {"name": "B_load_t2", "stress": 4, "env": {"GATE_OMP": "2"}},
+    {"name": "C_load_t2_nodnn", "stress": 4, "env": {"GATE_OMP": "2", "GATE_ONEDNN": "0"}},
+    {"name": "D_load_t1", "stress": 4, "env": {"GATE_OMP": "1"}},
+]
+
+# Whole-tensor metrics a bound is written from. max_abs_over_rms is deliberately excluded:
+# it is a single-coordinate statistic (healthy ~0.33) with no headroom for a margin.
+HARD_METRICS = ("rel_l2", "cosine", "rmse_over_rms")
+
+
+def healthy(pairs_per_arm: int, out: str, env: dict) -> dict:
+    import diag_resume_bimodal as diag
+
     rows = []
-    for i in range(n_pairs):
-        pair_dir = os.path.join(out, f"pair{i}")
-        os.makedirs(pair_dir, exist_ok=True)
-        penv = dict(env, GATE_DUMP_DIR=pair_dir)
-        cm, cb = _run_gate_worker("control", pair_dir, penv)
-        rm, rb = _run_gate_worker("restart", pair_dir, penv)
-        det = _det_from_dump(pair_dir)
-        row = {"pair": i,
-               "det": det,
-               "master_fp32": tensor_metrics(cm, rm),
-               "bf16_weight": tensor_metrics(cb, rb)}
-        rows.append(row)
-        # The durable result is the row above; the pair dump holds ~5-leaf AdamW triples only
-        # (no full tensors in the gate worker), but ten pairs still add up on a ~14 GiB runner.
-        # Drop it as soon as the det verdict is read, mirroring diag's coloc disk discipline.
-        shutil.rmtree(pair_dir, ignore_errors=True)
-        print(f"pair {i:2d}: det={'PASS' if det['pass'] else 'FAIL'} | "
-              f"master rel-L2 {row['master_fp32']['rel_l2']:.4e} cos "
-              f"{row['master_fp32']['cosine']:.6f} max/rms "
-              f"{row['master_fp32']['max_abs_over_rms']:.4e} | bf16 rel-L2 "
-              f"{row['bf16_weight']['rel_l2']:.4e} cos {row['bf16_weight']['cosine']:.6f} "
-              f"max/rms {row['bf16_weight']['max_abs_over_rms']:.4e}", flush=True)
-    dist = {}
+    for arm in HEALTHY_ARMS:
+        aenv = dict(env)
+        aenv.update({k: v for k, v in arm["env"].items() if v is not None})
+        aout = os.path.join(out, arm["name"])
+        os.makedirs(aout, exist_ok=True)
+        # burners live for the whole arm: build + both workers per pair, same budget the diag
+        # colocate matrix uses (~60 s/pair + startup margin).
+        burns = diag._start_burn(arm["stress"], pairs_per_arm * 60 + 120) if arm["stress"] else []
+        try:
+            for i in range(pairs_per_arm):
+                pair_dir = os.path.join(aout, f"pair{i}")
+                os.makedirs(pair_dir, exist_ok=True)
+                penv = dict(aenv, GATE_DUMP_DIR=pair_dir)
+                cm, cb = _run_gate_worker("control", pair_dir, penv)
+                rm, rb = _run_gate_worker("restart", pair_dir, penv)
+                det = _det_from_dump(pair_dir)
+                row = {"arm": arm["name"], "load_arm": bool(arm["stress"]), "pair": i,
+                       "det": det,
+                       "master_fp32": tensor_metrics(cm, rm),
+                       "bf16_weight": tensor_metrics(cb, rb)}
+                rows.append(row)
+                shutil.rmtree(pair_dir, ignore_errors=True)
+                mm = row["master_fp32"]
+                print(f"{arm['name']:16s} pair {i:2d}: det={'PASS' if det['pass'] else 'FAIL'} | "
+                      f"master rel-L2 {mm['rel_l2']:.4e} cos {mm['cosine']:.6f} "
+                      f"rmse/rms {mm['rmse_over_rms']:.4e} | bf16 rel-L2 "
+                      f"{row['bf16_weight']['rel_l2']:.4e} cos {row['bf16_weight']['cosine']:.6f} "
+                      f"rmse/rms {row['bf16_weight']['rmse_over_rms']:.4e}", flush=True)
+        finally:
+            for bp in burns:
+                bp.terminate()
+
+    def fam_dist(subset):
+        return {fam: {metric: _dist([r[fam] for r in subset], metric)
+                      for metric in HARD_METRICS}
+                for fam in ("master_fp32", "bf16_weight")}
+
+    per_arm = {arm["name"]: fam_dist([r for r in rows if r["arm"] == arm["name"]])
+               for arm in HEALTHY_ARMS}
+    load_rows = [r for r in rows if r["load_arm"]]
+    # The bound inputs over the arms the red actually occurs on: maxima for the upper-bounded
+    # metrics, minimum cosine. Recorded per family so a later PR cannot silently use idle.
+    load_extreme = {}
     for fam in ("master_fp32", "bf16_weight"):
-        dist[fam] = {metric: _dist([r[fam] for r in rows], metric)
-                     for metric in ("rel_l2", "cosine", "max_abs_over_rms")}
-    return {"schema": "v41f-resume-healthy-distribution/v1", "calibrated": False,
-            "kind": "healthy", "probe": PROBE, "n_pairs": n_pairs,
-            "env": env_header(), "pairs": rows, "distribution": dist}
+        rel = [r[fam]["rel_l2"] for r in load_rows if r[fam]["rel_l2"] is not None]
+        rmsf = [r[fam]["rmse_over_rms"] for r in load_rows
+                if r[fam]["rmse_over_rms"] is not None]
+        cos = [r[fam]["cosine"] for r in load_rows if r[fam]["cosine"] is not None]
+        load_extreme[fam] = {
+            "rel_l2_max": max(rel, default=None),
+            "rmse_over_rms_max": max(rmsf, default=None),
+            "cosine_min": min(cos, default=None),
+        }
+    return {"schema": "v41f-resume-healthy-distribution/v2", "calibrated": False,
+            "kind": "healthy", "probe": PROBE, "pairs_per_arm": pairs_per_arm,
+            "arms": [a["name"] for a in HEALTHY_ARMS],
+            "env": env_header(), "pairs": rows,
+            "distribution_per_arm": per_arm,
+            "distribution_pooled": fam_dist(rows),
+            "load_arm_extremes": load_extreme}
 
 
 # ---------------------------------------------------------------------------- mutation worker
@@ -279,6 +340,10 @@ def mutant_arm(kind: str, out: str):
     ident["populated_but_dropped"] = dropped
     with open(os.path.join(out, "ckpt_identity.json"), "w") as fh:
         json.dump(ident, fh)
+    # The blob has served its only purpose (load + loadK triple + identity sha/keys). Keep it
+    # out of the uploaded artifact: each arm's blob is ~2.5 GB and five of them made batch 1's
+    # artifact 18 GB. loadK/identity/probe are already in hand/JSON before this point.
+    os.remove(f)
     for i in range(K, N):
         train_step(m, batches[i], None, state=st)
     st.refresh_bf16()
@@ -314,10 +379,11 @@ MUTANT_EXPECT = {
 GEOM_CUTOFF_FALLBACK = 0.05
 
 
-def mutants(out: str, env: dict, healthy_max_rel_l2: float | None = None) -> dict:
-    # one shared healthy control across mutant arms; its dump provides control optK
-    # Build the whole mutant root fresh so a second `--out` run is a clean resample instead
-    # of dying on the symlinks from the previous run (the restartable contract).
+def mutants(out: str, env: dict, load_extreme: dict | None = None) -> dict:
+    # one shared healthy control across mutant arms; its dump provides control optK. The
+    # control runs IDLE: the mutant harms are O(0.2..1.0), far above even loaded healthy
+    # noise, so idle control measures the same separation and avoids holding burners for the
+    # whole mutant sweep. Build the mutant root fresh so re-running is a clean resample.
     shutil.rmtree(out, ignore_errors=True)
     cdir = os.path.join(out, "mut_control", "control")
     os.makedirs(cdir, exist_ok=True)
@@ -341,18 +407,20 @@ def mutants(out: str, env: dict, healthy_max_rel_l2: float | None = None) -> dic
         row = {"kind": kind, "expected_family": expect_family, "det": det,
                "master_fp32": tensor_metrics(cm, rm),
                "bf16_weight": tensor_metrics(cb, rb)}
-        # Geometric cutoff is the measured healthy MAX when the healthy arm ran in this same
-        # invocation; a mutant is "caught" only if it lands strictly above healthy noise, so
-        # the conclusion cannot be a consequence of a typed constant.
-        cutoff = (healthy_max_rel_l2 if healthy_max_rel_l2 is not None
-                  else GEOM_CUTOFF_FALLBACK)
+        # Geometric cutoff is the LOAD-arm healthy rel-L2 MAX (the environment the red occurs
+        # on) when the healthy arm ran this invocation; a mutant counts as geometrically
+        # caught only strictly above that measured noise, or outright on NaN/Inf. Standalone
+        # --mutants falls back to the labelled constant; neither is a published bound.
+        cutoff = (load_extreme["master_fp32"]["rel_l2_max"]
+                  if load_extreme is not None else GEOM_CUTOFF_FALLBACK)
+        mm = row["master_fp32"]
         det_caught = not det["pass"]
-        geom_caught = (row["master_fp32"]["rel_l2"] is not None
-                       and row["master_fp32"]["rel_l2"] > cutoff)
+        nonfinite = (mm["n_nan"] > 0 or mm["n_inf"] > 0)
+        geom_caught = nonfinite or (mm["rel_l2"] is not None and mm["rel_l2"] > cutoff)
         caught_family = "det" if det_caught else ("geometric" if geom_caught else "NONE")
         row["geom_cutoff_used"] = cutoff
-        row["cutoff_source"] = ("healthy_max_rel_l2 (this run)"
-                                if healthy_max_rel_l2 is not None
+        row["cutoff_source"] = ("load_arm healthy rel_l2_max (this run)"
+                                if load_extreme is not None
                                 else "GEOM_CUTOFF_FALLBACK (no healthy arm; not a bound)")
         row["caught_by"] = caught_family
         row["separates"] = caught_family == expect_family
@@ -363,16 +431,16 @@ def mutants(out: str, env: dict, healthy_max_rel_l2: float | None = None) -> dic
 
         print(f"mutant {kind:11s}: expect {expect_family:9s} caught_by {caught_family:9s} "
               f"{'OK' if row['separates'] else 'FAILURE'} | master rel-L2 "
-              f"{f(row['master_fp32']['rel_l2'])} cos {f(row['master_fp32']['cosine'], '.6f')} "
-              f"max/rms {f(row['master_fp32']['max_abs_over_rms'])} (cutoff {f(cutoff)})",
-              flush=True)
+              f"{f(mm['rel_l2'])} cos {f(mm['cosine'], '.6f')} "
+              f"rmse/rms {f(mm['rmse_over_rms'])} (cutoff {f(cutoff)})", flush=True)
     geom_rows = [r["master_fp32"]["rel_l2"] for r in rows
                  if r["expected_family"] == "geometric"
                  and r["master_fp32"]["rel_l2"] is not None]
-    return {"schema": "v41f-resume-mutation-discrimination/v1", "calibrated": False,
+    return {"schema": "v41f-resume-mutation-discrimination/v2", "calibrated": False,
             "kind": "mutants", "probe": PROBE, "env": env_header(),
             "separated": all(r["separates"] for r in rows),
-            "healthy_max_rel_l2_supplied": healthy_max_rel_l2,
+            "load_rel_l2_max_supplied": cutoff,
+            "cutoff_source": rows[0]["cutoff_source"] if rows else None,
             "mutant_min_rel_l2": min(geom_rows) if geom_rows else None,
             "mutants": rows}
 
@@ -381,7 +449,8 @@ def mutants(out: str, env: dict, healthy_max_rel_l2: float | None = None) -> dic
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--healthy", type=int, default=0, metavar="N")
+    p.add_argument("--healthy", type=int, default=0, metavar="N",
+                   help="healthy PAIRS PER ARM (4 arms: idle + 3 loaded); >=5 recommended")
     p.add_argument("--mutants", action="store_true")
     p.add_argument("--mutant-arm", choices=list(MUTANT_EXPECT), help=argparse.SUPPRESS)
     p.add_argument("--out", default=None)
@@ -406,21 +475,21 @@ def main(argv=None) -> int:
         healthy_rec = healthy(args.healthy, os.path.join(args.out, "healthy"), env)
         with open(os.path.join(args.out, "healthy_distribution.json"), "w") as fh:
             json.dump(healthy_rec, fh, indent=2)
-        print("\nHEALTHY distribution (min/median/MAX; bound candidates derive from MAX):")
-        for fam in ("master_fp32", "bf16_weight"):
-            for metric in ("rel_l2", "cosine", "max_abs_over_rms"):
-                d = healthy_rec["distribution"][fam][metric]
-                print(f"  {fam:12s} {metric:16s} {d['min']:.4e} / {d['median']:.4e} / {d['max']:.4e}")
+        print(f"\nHEALTHY, {args.healthy} pairs each over {len(HEALTHY_ARMS)} arms "
+              "(idle + loaded). Bound inputs are the LOAD-arm extremes, not idle:")
+        for fam, ex in healthy_rec["load_arm_extremes"].items():
+            print(f"  {fam:12s} LOAD rel_l2_max {ex['rel_l2_max']:.4e} "
+                  f"rmse/rms_max {ex['rmse_over_rms_max']:.4e} cosine_min "
+                  f"{ex['cosine_min']:.6f}")
+        print("  per-arm master rel-L2 (min/median/MAX):")
+        for arm in HEALTHY_ARMS:
+            d = healthy_rec["distribution_per_arm"][arm["name"]]["master_fp32"]["rel_l2"]
+            print(f"    {arm['name']:16s} {d['min']:.4e} / {d['median']:.4e} / {d['max']:.4e}")
     if args.mutants:
-        # Pass the in-run healthy master MAX so the mutant geometric cutoff is measured in the
-        # same job/environment, not typed. Falls back to the labelled constant only if --mutants
-        # ran alone.
-        hmax = None
-        if healthy_rec is not None:
-            hvals = [r["master_fp32"]["rel_l2"] for r in healthy_rec["pairs"]
-                     if r["master_fp32"]["rel_l2"] is not None]
-            hmax = max(hvals) if hvals else None
-        result = mutants(os.path.join(args.out, "mutants"), env, healthy_max_rel_l2=hmax)
+        # Pass the load-arm extremes so mutant geometric cutoff is measured on the environment
+        # the red fires in. Standalone --mutants passes None -> labelled fallback.
+        lext = healthy_rec["load_arm_extremes"] if healthy_rec is not None else None
+        result = mutants(os.path.join(args.out, "mutants"), env, load_extreme=lext)
         with open(os.path.join(args.out, "mutation_discrimination.json"), "w") as fh:
             json.dump(result, fh, indent=2)
         print(f"\nMUTATION SEPARATION: {'all mutants caught by their family' if result['separated'] else 'A MUTANT WAS NOT CAUGHT'}")
