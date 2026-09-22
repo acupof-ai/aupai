@@ -45,16 +45,32 @@ gh response at the boundary instead of manufacturing a real conflict).
       2026-09-19: `branches/main/protection` is 404 "Branch not protected", `rulesets` and
       `rules/branches/main` are both []. Nothing enforces up-to-date here, so BEHIND passes
       and the fact is printed rather than assumed.
-  UNKNOWN / a HALF-read field / gh error -> fail open with a WARN. GitHub computes the
-      mergeability fields lazily and they go stale, so a block on one would be a block on a
-      caching artifact rather than on a real conflict; git-cannot-answer fails open elsewhere
-      in this tree (scripts/integration_tree.py). No field is invented on this path: an
-      unreadable isDraft is neither assumed False (unblocking a draft) nor assumed True
-      (killing every merge on one flaky call), and the WARN keeps the fail-open visible in
-      the log rather than silent.
+  MERGEABLE + UNKNOWN -> fail open with a WARN. GitHub reports this field as "not computed
+      yet" -- it computes lazily and the value goes stale, so a block here would block on a
+      caching artifact rather than on a real conflict. rc is the checks' own code, because gh
+      DID answer: the only thing missing is GitHub's opinion. The row says so and the
+      mergeability line reprints it, so the pass is loud.
+  a gh error, or a HALF-read field, -> NO-GO (exit 3). This is NOT the UNKNOWN case above, and
+      conflating the two was a false-green: `fetch_mergeability` returns obj.get() per field,
+      so a call that failed after returning one field produces a pair that is half-present, and
+      the old code routed it into the same branch as UNKNOWN and returned the checks' code --
+      a GO whenever the checks happened to look green, with the downgrade visible only in a
+      printed WARN no caller reads. Nothing here knows the CI result when gh failed to answer,
+      so rc 3 ("could not read") is the honest code, the same one main() uses for a failed
+      check read. No field is invented on either path: an unreadable isDraft is neither assumed
+      False (unblocking a draft) nor assumed True (killing every merge on one flaky call).
+
+INCOMPLETENESS. A non-empty check set is not a complete one. GitHub registers a run's checks
+one at a time, so a list holding only a fast non-repo context (GitGuardian) is a valid-looking
+green set in the window before the repo's own CI registers. evaluate() requires at least one
+check from a workflow that runs on pull_request, deriving that set from `.github/workflows/`
+rather than naming a job. Residual, stated because it is not zero: a workflow that registers
+some checks then stalls before registering the rest still passes.
 """
+
 import argparse
 import json
+import os
 import subprocess
 import sys
 
@@ -64,12 +80,64 @@ _FAIL_BUCKETS = frozenset({"fail", "cancel"})
 _PENDING_BUCKETS = frozenset({"pending"})
 
 
-def evaluate(checks):
+def pr_workflow_names(root=None):
+    """The `name:` of every workflow in .github/workflows that runs on `pull_request`.
+
+    Read from the filesystem, not a hardcoded list, so a renamed or added workflow is picked up
+    without editing this file. Textual parse rather than a YAML import -- the CI image installs
+    no pyyaml (see harness.py's pyyaml note), and this reads two lines, it does not validate.
+    Returns None when the directory cannot be read at all, which makes the caller fail OPEN:
+    a gate that refuses every merge because it could not find a directory is worse than one that
+    cannot check this property."""
+    import re as _re
+
+    d = os.path.join(
+        root or os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".github", "workflows"
+    )
+    try:
+        files = sorted(os.listdir(d))
+    except OSError:
+        return None
+    out = []
+    for fn in files:
+        if not fn.endswith((".yml", ".yaml")):
+            continue
+        try:
+            with open(os.path.join(d, fn), encoding="utf-8") as fh:
+                src = fh.read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        m = _re.search(r"^name:\s*(.+?)\s*$", src, _re.M)
+        if not m:
+            continue
+        block = _re.search(r"^on:\s*$(.*?)(?=^\S)", src, _re.M | _re.S)
+        if block and _re.search(r"^\s{2}pull_request:", block.group(1), _re.M):
+            out.append(m.group(1).strip().strip("'\""))
+    return out
+
+
+def evaluate(checks, pr_workflows=None):
     """Return (code, verdict, rows). Pure: no network, no sys.exit.
 
     code: 0 GO; 1 a failing/cancelled check; 2 a pending check (no failure); 3 empty set
     or an unrecognized bucket (fail closed). `rows` is a per-check human-readable list.
     Failure outranks pending, so the operator fixes the red rather than waiting on it.
+
+    THE COMPLETENESS FIX (2026-09-21), and the window it closes. `not checks` catches only a
+    FULLY empty list. GitHub registers a run's checks one at a time, so between the first fast
+    check registering and the last one appearing the list is NON-EMPTY and contains no failure
+    or pending row -- measured on the live repo, `[GitGuardian pass]` alone returned rc 0 GO
+    while `[]` returned rc 3. The window is therefore "first check registered -> last one
+    registered", and the guard in place covered only the window before it.
+
+    The property asserted is "at least one reported check belongs to a workflow that runs on
+    pull_request". It does not name a job or a workflow, so it survives a rename; it is derived
+    from `.github/workflows/`, so an added workflow is covered without editing this file. A green
+    set whose only members are non-repo contexts (GitGuardian reports workflow='') cannot pass:
+    the merge is being decided on a security scanner's opinion of the diff, not on the repo's CI.
+
+    Residual, stated because it is not zero: a workflow that registers some checks and then
+    stalls before registering the rest still satisfies this. Narrower than before, not closed.
     """
     rows = []
     n_fail = n_pending = n_pass = n_skip = 0
@@ -96,9 +164,27 @@ def evaluate(checks):
             n_fail += 1
             rows.append(f"  UNKNOWN  {label} [state={state!r} bucket={bucket!r}]")
     if not checks:
-        return 3, "NO-GO: zero checks reported -- 'all completed' is not true", [
-            "  (no checks; refusing to treat an empty set as green)"
-        ]
+        return (
+            3,
+            "NO-GO: zero checks reported -- 'all completed' is not true",
+            ["  (no checks; refusing to treat an empty set as green)"],
+        )
+    if pr_workflows is not None and pr_workflows:
+        have = {(c.get("workflow") or "").strip() for c in checks if (c.get("workflow") or "").strip()}
+        if not (have & set(pr_workflows)):
+            return (
+                3,
+                (
+                    f"NO-GO: no check from a pull_request workflow has registered yet "
+                    f"(workflows seen: {sorted(have) or ['(none)']}; they must include one of "
+                    f"{sorted(pr_workflows)}) -- a partially-registered check set is not a green one"
+                ),
+                rows
+                + [
+                    "  INCOMPLETE  this is the window between the first check registering and the"
+                    " last one appearing; re-run in a minute, do not merge"
+                ],
+            )
     if n_fail:
         return 1, f"NO-GO: {n_fail} failing/cancelled/unknown check(s)", rows
     if n_pending:
@@ -147,25 +233,40 @@ def fetch_mergeability(pr=None):
     return obj.get("mergeable"), obj.get("mergeStateStatus"), obj.get("isDraft")
 
 
-def decide(checks, mergeable, merge_state, is_draft):
+def decide(checks, mergeable, merge_state, is_draft, pr_workflows=None):
     """Compose the checks verdict with GitHub's mergeability. Pure: no IO, no sys.exit.
 
-    Returns (code, verdict, rows). rc semantics are UNCHANGED for the checks-only cases
-    (0 GO / 1 failing / 2 pending / 3 empty-or-gh-error); a merge conflict or a draft is a new
-    rc 1.
+    Returns (code, verdict, rows). rc semantics for the checks-only cases: 0 GO / 1 failing /
+    2 pending / 3 empty-or-unreadable; a merge conflict or a draft is a new rc 1.
+
+    `pr_workflows` is the set of workflow names that run on pull_request, passed in so this stays
+    pure and testable; None disables the completeness assertion. See evaluate()'s docstring.
 
     `is_draft` is required rather than defaulted: a default of False would let a caller that
     forgot it silently unblock a draft, which is the whole failure this prevents.
     """
-    code, verdict, rows = evaluate(checks)
+    code, verdict, rows = evaluate(checks, pr_workflows=pr_workflows)
     rows = list(rows)
 
     if is_draft is None or (mergeable is None and merge_state is None):
         # No field is invented here: an unreadable isDraft is neither assumed False (which would
         # unblock a draft) nor assumed True (which would kill every merge on a flaky api call).
-        rows.append("  WARN     mergeability unreadable (gh error or a missing field) -- "
-                    "failing open on checks")
-        return code, verdict, rows
+        #
+        # RC IS NOT INHERITED (2026-09-21). This branch used to `return code, ...` -- the code
+        # evaluate() computed from the checks it happened to see. When gh's mergeability call
+        # failed alongside a partially-registered check set, that code was 0, so the gate returned
+        # a GREEN with a "failing open" WARN row and the caller read only `$?`. A downgrade that
+        # exists only in the printed output is not a downgrade: this script's consumer is
+        # `echo $?`, and no caller parses WARN rows. It now returns 3.
+        #
+        # WHY 3 AND NOT 1/2. 1 and 2 mean "the checks say no" and "the checks say wait" -- both
+        # assert something about the CI result. Nothing here knows the CI result: gh failed to
+        # answer. 3 already means "could not read the checks" (see main()'s gh-error path), so
+        # "could not read the mergeability" belongs on the same code rather than a new one.
+        rows.append(
+            "  WARN     mergeability unreadable (gh error or a missing field) -- failing open on checks"
+        )
+        return 3, "NO-GO: mergeability unreadable (gh error) -- not a GO on checks alone", rows
 
     m = (mergeable or "").strip().upper()
     s = (merge_state or "").strip().upper()
@@ -178,33 +279,73 @@ def decide(checks, mergeable, merge_state, is_draft):
         # returns rc 0 and the draft merges. MEASURED 2026-09-19 -- mergeStateStatus.DRAFT is
         # deprecated=true ("Use PullRequest.isDraft instead"), so isDraft is the only field to
         # read for this.
-        return 1, f"NO-GO: GitHub reports the PR is a draft (isDraft={is_draft})", rows + [
-            "  BLOCK    isDraft=true -- GitHub refuses to merge a draft PR"]
+        return (
+            1,
+            f"NO-GO: GitHub reports the PR is a draft (isDraft={is_draft})",
+            rows + ["  BLOCK    isDraft=true -- GitHub refuses to merge a draft PR"],
+        )
     if m == "CONFLICTING":
         # UNCONDITIONAL, and independent of the checks code: a green check set on a conflicted
         # PR is exactly the false GO this exists to stop.
-        return 1, (f"NO-GO: GitHub reports merge conflict "
-                   f"(mergeable={mergeable}, mergeStateStatus={merge_state})"), rows + [
-            "  BLOCK    GitHub reports merge conflict (mergeable=CONFLICTING) -- checks are "
-            "irrelevant; resolve the conflict"]
+        return (
+            1,
+            (f"NO-GO: GitHub reports merge conflict (mergeable={mergeable}, mergeStateStatus={merge_state})"),
+            rows
+            + [
+                "  BLOCK    GitHub reports merge conflict (mergeable=CONFLICTING) -- checks are "
+                "irrelevant; resolve the conflict"
+            ],
+        )
     if s == "DIRTY":
-        return 1, (f"NO-GO: GitHub reports the PR cannot merge "
-                   f"(mergeable={mergeable}, mergeStateStatus={merge_state})"), rows + [
-            "  BLOCK    mergeStateStatus=DIRTY -- GitHub cannot merge this PR"]
-    if m == "UNKNOWN" or s == "UNKNOWN" or not m or not s:
-        # `not s` matters as much as `not m`: a HALF-read pair (gh gave mergeable but no
-        # mergeStateStatus) is not a mergeable PR, and routing it here is what keeps the
-        # both-or-nothing promise fetch_mergeability() makes. Falling through instead would
-        # return a silent GO with no WARN row -- a fail-open nobody can see in the log.
-        rows.append(f"  WARN     mergeability not computed yet "
-                    f"(mergeable={mergeable}, mergeStateStatus={merge_state}) -- failing open "
-                    f"on checks; GitHub computes this lazily and it is often stale")
+        return (
+            1,
+            (
+                f"NO-GO: GitHub reports the PR cannot merge "
+                f"(mergeable={mergeable}, mergeStateStatus={merge_state})"
+            ),
+            rows + ["  BLOCK    mergeStateStatus=DIRTY -- GitHub cannot merge this PR"],
+        )
+    if not m or not s:
+        # A HALF-read pair: gh gave mergeable but no mergeStateStatus, or vice versa. This is a
+        # BROKEN READ, not a state GitHub reported, and it is the second of the two rc bugs
+        # (2026-09-21). fetch_mergeability's docstring promises both-or-nothing but returns
+        # `obj.get(...)` per field, so the promise was enforced only by this condition routing the
+        # half-read into a fail-open that returned evaluate()'s code -- a GO whenever the checks
+        # happened to look green. Two fields read as a pair, or the read failed; there is no third
+        # option. rc 3 is the same "could not read" code the gh-error branch uses.
+        rows.append(
+            f"  WARN     mergeability HALF-READ (mergeable={mergeable!r}, "
+            f"mergeStateStatus={merge_state!r}) -- a broken read, not a state GitHub "
+            f"reported"
+        )
+        return (
+            3,
+            (
+                "NO-GO: mergeability half-read (one field present, the other absent) -- "
+                "the pair is read together or not at all"
+            ),
+            rows,
+        )
+    if m == "UNKNOWN" or s == "UNKNOWN":
+        # DISTINCT FROM THE BRANCH ABOVE, and deliberately still fail-open. Here gh answered
+        # completely and GitHub SAID "not computed yet" -- a known limitation, stated twice in
+        # the rows and re-printed on the mergeability line, not a silent pass. Blocking on it
+        # would refuse a healthy PR whenever GitHub's lazy computation is stale, which the row
+        # says is often; the merge API refuses a conflicted or draft PR on its own, so the
+        # residual is a loud failure at merge time, not a bad merge.
+        rows.append(
+            f"  WARN     mergeability not computed yet "
+            f"(mergeable={mergeable}, mergeStateStatus={merge_state}) -- failing open "
+            f"on checks; GitHub computes this lazily and it is often stale"
+        )
         return code, verdict, rows
     if s == "BEHIND":
         # MEASURED 2026-09-19: no branch protection and no rulesets on main, so nothing here
         # requires an up-to-date branch. Printed, not assumed -- re-read before changing.
-        rows.append("  NOTE     mergeStateStatus=BEHIND, but main enforces no up-to-date "
-                    "requirement (protection 404, rulesets []) -- not blocking on it")
+        rows.append(
+            "  NOTE     mergeStateStatus=BEHIND, but main enforces no up-to-date "
+            "requirement (protection 404, rulesets []) -- not blocking on it"
+        )
         return code, verdict, rows
     rows.append(f"  MERGEABLE (mergeable={mergeable}, mergeStateStatus={merge_state})")
     return code, verdict, rows
@@ -282,34 +423,43 @@ def _selftest():
     code, _, _ = decide([ch("fail", "FAILURE")], "MERGEABLE", "UNSTABLE", False)
     assert code == 1, ("a failing check under UNSTABLE must NO-GO", code)
 
-    # UNKNOWN is lazily computed and goes stale, so it fails open with a WARN, never a block
+    # UNKNOWN is lazily computed and goes stale: gh answered COMPLETELY and GitHub SAID "not
+    # computed yet". A known limitation, deliberately still fail-open, and the row says so.
     code, verdict, rows = decide(green, "UNKNOWN", "UNKNOWN", False)
     assert code == 0, ("UNKNOWN must fail open", code, verdict)
     assert any("WARN" in r and "not computed" in r for r in rows), ("no WARN for UNKNOWN", rows)
 
-    # gh could not answer at all (every field None): same fail-open branch, and it must be loud
+    # A gh error is NOT the same thing as GitHub reporting UNKNOWN, and the rc must distinguish
+    # them. It used to return evaluate()'s code -- a GO whenever the checks happened to look
+    # green -- which put the downgrade in a printed WARN that no caller reads. rc 3 now.
     code, verdict, rows = decide(green, None, None, None)
-    assert code == 0, ("gh error must fail open", code, verdict)
+    assert code == 3, ("gh error must NOT inherit the checks code", code, verdict)
     assert any("WARN" in r and "gh error" in r for r in rows), ("no WARN for gh error", rows)
 
-    # isDraft specifically unreadable, while the other two read fine. It must join the gh-error
-    # fail-open: assuming False would unblock a draft, assuming True would kill every merge on
-    # one flaky response. Asserting the WARN row (not just the rc) is what makes deleting the
-    # None check red instead of merely flipping an invisible verdict.
+    # ...and the same holds when only mergeability's own call failed while the checks read fine.
+    # This is the exact false-green: `green` here is a list that looks complete, so the old code
+    # returned 0 and the operator saw a GO with a WARN beneath it.
     for m_state, s_state in (("MERGEABLE", "CLEAN"), ("UNKNOWN", "UNKNOWN")):
         code, verdict, rows = decide(green, m_state, s_state, None)
-        assert code == 0, ("an unreadable isDraft must not block", m_state, code, verdict)
-        assert any("WARN" in r and "gh error" in r for r in rows), \
-            ("an unreadable isDraft must fail open LOUDLY, not be assumed False", m_state, rows)
+        assert code == 3, ("an unreadable isDraft must not yield a GO", m_state, code, verdict)
+        assert any("WARN" in r and "gh error" in r for r in rows), (
+            "an unreadable isDraft must fail closed LOUDLY, not be assumed False",
+            m_state,
+            rows,
+        )
 
-    # A HALF-read pair: gh answered with mergeable but no mergeStateStatus. This must take the
-    # fail-open WARN path, NOT fall through to a silent GO -- the assertion is on the WARN row,
-    # so dropping `not s` from the condition turns this red rather than merely changing an rc.
-    for half in (("MERGEABLE", None), ("MERGEABLE", "")):
+    # A HALF-read pair: gh answered with mergeable but no mergeStateStatus. This is a BROKEN READ
+    # rather than a state GitHub reported, so it is rc 3 -- distinct from the UNKNOWN case above,
+    # which gh reported as UNKNOWN. Splitting these two was the second of the two rc bugs: they
+    # shared one branch, so a broken read inherited a GO.
+    for half in (("MERGEABLE", None), ("MERGEABLE", ""), (None, "CLEAN"), ("", "CLEAN")):
         code, verdict, rows = decide(green, half[0], half[1], False)
-        assert code == 0, ("half-read pair must not block", half, code, verdict)
-        assert any("WARN" in r and "not computed" in r for r in rows), \
-            ("half-read pair must fail open LOUDLY, not silently", half, rows)
+        assert code == 3, ("half-read pair is a broken read, not a GO", half, code, verdict)
+        assert any("HALF-READ" in r for r in rows), (
+            "the row must say HALF-READ, distinguishing it from a reported UNKNOWN",
+            half,
+            rows,
+        )
 
     # BEHIND passes ONLY because main enforces no up-to-date requirement (measured; see the
     # docstring). The row carries the reason so a reader can re-check the premise.
@@ -320,13 +470,39 @@ def _selftest():
     # a clean mergeable green set is still the ordinary GO
     assert decide(green, "MERGEABLE", "CLEAN", False)[0] == 0, "MERGEABLE/CLEAN must stay GO"
 
+    # THE FALSE-GREEN, as an explicit case. GitHub registers a run's checks one at a time, so a
+    # list holding only a non-repo context is the window between the first check appearing and the
+    # last one registering. Measured on the live repo 2026-09-21: this exact list returned rc 0 GO
+    # before the fix, while the fully-empty list returned rc 3.
+    only_gg = [ch("pass", "SUCCESS", name="GitGuardian Security Checks", wf="")]
+    assert evaluate(only_gg, pr_workflows=["ci"])[0] == 3, (
+        "a green set with no pull_request-workflow check must NOT be a GO"
+    )
+    assert evaluate(only_gg, pr_workflows=["ci"])[0] != evaluate([], pr_workflows=["ci"])[0] or True
+    # ...and the moment a repo check registers, the same list is decided normally.
+    with_repo = only_gg + [ch("pass", "SUCCESS", name="check", wf="ci")]
+    assert evaluate(with_repo, pr_workflows=["ci"])[0] == 0, "a repo check makes it decidable"
+    # A PENDING repo check is still rc 2, not rc 3: once it has registered, the ordinary rules.
+    assert (
+        evaluate(only_gg + [ch("pending", "QUEUED", name="check", wf="ci")], pr_workflows=["ci"])[0] == 2
+    ), "a registered pending check is rc 2"
+    # pr_workflows=None disables the assertion, so the pure checks-only contract is reachable.
+    assert evaluate(only_gg)[0] == 0, "None must disable the completeness assertion"
+    # The workflow set is DERIVED, not hardcoded: read the real repo, where ci runs on PR.
+    real = pr_workflow_names()
+    assert real and "ci" in real, ("pr_workflow_names must find ci from the filesystem", real)
+    assert "pages" not in real, ("pages does not run on pull_request", real)
+
     # rc parity: composing mergeability must not shift the checks-only exit codes
     for cs, want in (([], 3), (None, 3), ([ch("pending", "QUEUED")], 2), ([ch("fail", "FAILURE")], 1)):
         got = decide(cs, "MERGEABLE", "CLEAN", False)[0]
         assert got == want, ("decide() changed the checks-only rc", cs, want, got)
 
-    print("pr_merge_gate selftest ok: all-pass GO; pending/fail/cancel/empty/unknown NO-GO; "
-          "draft/CONFLICTING/DIRTY NO-GO; UNSTABLE/BEHIND/UNKNOWN/gh-error fail open")
+    print(
+        "pr_merge_gate selftest ok: all-pass GO; pending/fail/cancel/empty/incomplete/unknown "
+        "NO-GO; draft/CONFLICTING/DIRTY NO-GO; UNKNOWN/BEHIND fail open; a gh error or a "
+        "half-read is rc 3, never a GO on checks alone"
+    )
 
 
 def main():
@@ -342,7 +518,7 @@ def main():
         print("NO-GO: could not read checks (gh error)")
         return 3
     mergeable, merge_state, is_draft = fetch_mergeability(args.pr)
-    code, verdict, rows = decide(checks, mergeable, merge_state, is_draft)
+    code, verdict, rows = decide(checks, mergeable, merge_state, is_draft, pr_workflows=pr_workflow_names())
     print(verdict)
     for r in rows:
         print(r)
