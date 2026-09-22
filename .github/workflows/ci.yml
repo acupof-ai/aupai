@@ -2,9 +2,14 @@ name: ci
 on:
   push:
   pull_request:
-  # manual trigger for the diag-resume causal stress matrix (A/B/C/D arms); no inputs needed,
-  # the arms are the job matrix. That job runs on this event ONLY -- push/PR skip it.
+  # manual trigger for the diag-resume causal stress matrix (A/B/C/D arms) and the K6
+  # resume-gate calibration job; both run on this event ONLY -- push/PR skip them.
   workflow_dispatch:
+    inputs:
+      calibration_pairs:
+        description: "calibrate-resume: number of zero-injection healthy pairs"
+        required: false
+        default: "10"
 # One in-flight run per (ref, event); a newer run cancels the older one's in-progress jobs.
 # Without this, every push to main queues independently and the backlog grows linearly --
 # measured 2026-09-20: 32 queued / 3 in progress, oldest waiting 48 min, and still growing.
@@ -204,3 +209,36 @@ jobs:
           GATE_OMP: "${{ matrix.gate_omp }}"
           GATE_ONEDNN: "${{ matrix.onednn }}"
         run: python tests/v41f/diag_resume_bimodal.py --diag-colocate 6 --stress "${{ matrix.stress }}"
+
+  # K6 resume-gate calibration (genA, 2026-09-22). DISPATCH ONLY, CPU, continue-on-error:
+  # samples the geometric healthy distribution + mutation discrimination for the future
+  # replacement of the bit-exact step-15 gate, on the ubuntu/torch-cpu runner that actually
+  # flakes (a GPU or physical-host sample is a different bf16 kernel and must not be borrowed).
+  # It sets NO bound and is not a required check; it uploads the raw per-pair JSON so the
+  # bound (healthy MAX times a margin) is written in a later PR with this artifact as
+  # provenance. Injections happen inside the collector on the saved blob, never in v41f/ or
+  # the required test. Spec: docs/standards/resume_gate_divergence_instrumentation.md (K6).
+  calibrate-resume:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install numpy
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: "10 healthy control/restart pairs + 4 blob mutants (probe leaf geometric + det)"
+        env:
+          GATE_OMP: "2"
+        run: |
+          python tests/v41f/calibrate_resume_distribution.py \
+            --healthy "${{ github.event.inputs.calibration_pairs || '10' }}" \
+            --mutants --out "${{ runner.temp }}/k6_resume_calibration"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: k6-resume-calibration-${{ github.run_id }}
+          path: ${{ runner.temp }}/k6_resume_calibration
+          if-no-files-found: error
+          retention-days: 30
