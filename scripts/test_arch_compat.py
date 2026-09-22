@@ -2334,21 +2334,34 @@ for _B, _NB in ((4, 518), (1, 518), (4, 517), (8, 518)):
         f"pad helper changed the output shape at B={_B} NB={_NB}: {tuple(_out.shape)}")
     # reference: the SAME linear over only the real M rows, unflattened identically
     _ref = _lin(_hb.reshape(_M, _d))[:_M].view(_B, _NB, _H, _hd).transpose(1, 2).contiguous()
-    assert torch.equal(_out, _ref), (
-        f"padding changed the numeric result at B={_B} NB={_NB} (max d "
-        f"{(_out - _ref).abs().max().item():.3e}) -- pad rows must not alter real rows")
+    if _pad:
+        # cat-zero adds rows then the GEMM retiles the contraction, so floating-point
+        # association order shifts by a few fp64 ULPs (measured 5e-16 on Linux, 0 on macOS);
+        # the pad rows are still exact zeros, so their contribution is mathematically nil.
+        # allclose at 1e-12 is 10^3 above that noise and 10^9 below any real signal -- tight
+        # enough to fail if a pad row actually leaked nonzero content. (In bf16/fp8, where the
+        # fix runs, 5e-16 is far below one ULP.)
+        assert torch.allclose(_out, _ref, rtol=1e-12, atol=1e-12), (
+            f"padding changed the result beyond FP-association noise at B={_B} NB={_NB} "
+            f"(max d {(_out - _ref).abs().max().item():.3e})")
+    else:
+        # the production (world-8 aligned) path pads 0 and must be byte-identical
+        assert torch.equal(_out, _ref), (
+            f"the pad=0 path drifted from the original expression at B={_B} NB={_NB}")
     # PAD ROWS CONTRIBUTE ZERO GRADIENT. A zero input row adds 0 to grad_weight = g^T @ input.
     _out.float().sum().backward()
     _gw = _lin.weight.grad
     assert torch.isfinite(_gw).all(), f"non-finite weight grad at B={_B} NB={_NB}"
     if _pad:
-        # recompute reference grad using only the unpadded M rows, must match the padded call
+        # recompute reference grad using only the unpadded M rows, must match within the same
+        # FP-association tolerance (same GEMM-retile effect on the reduction)
         _lin.zero_grad()
         _ref.sum().backward()
         _gref = _lin.weight.grad.clone()
-        assert torch.equal(_gw, _gref), (
-            f"the {_pad} pad rows changed weight grad at B={_B} NB={_NB} -- a zero input row "
-            f"must add nothing to grad_weight")
+        assert torch.allclose(_gw, _gref, rtol=1e-12, atol=1e-12), (
+            f"the {_pad} pad rows changed weight grad beyond association noise at B={_B} "
+            f"NB={_NB} (max d {(_gw - _gref).abs().max().item():.3e}) -- a zero input row must "
+            f"add nothing to grad_weight")
     # aligned world-8-like shape pads by 0
     if _B == 8 and _NB % 2 == 0 and _M % 16 == 0:
         assert _pad == 0, f"expected an already-aligned M, got pad={_pad}"
