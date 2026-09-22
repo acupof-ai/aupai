@@ -2370,6 +2370,64 @@ for _B, _NB in ((4, 518), (1, 518), (4, 517), (8, 518)):
 assert (- (4 * 518)) % 16 == 8 and (4 * 518 + ((- (4 * 518)) % 16)) % 16 == 0, (
     "the pad arithmetic no longer reproduces the 2072 -> 2080 alignment the smoke required")
 
+
+# 9b. THE M MUST REACH THE FP8 GEMM 16-ALIGNED. The numeric checks above are satisfied by BOTH
+#     the pad and a no-pad implementation (a CPU nn.Linear has no divisibility precondition), so
+#     they cannot guard the one thing this fix exists for. Mirror torchao's flatten: a Float8-
+#     Linear sees the >2-D input as (-1, d), and scaled_mm requires that flattened M % 16 == 0.
+#     A spy that recomputes M exactly as torchao does and enforces the precondition is the
+#     discriminating fixed point: deleting the pad turns cases 1-3 RED, case 4 stays GREEN
+#     (8*518=4144 is aligned without padding -- that shape genuinely needs no pad).
+class _SpyAlignedLinear(torch.nn.Module):
+    def __init__(self, d):
+        super().__init__()
+        self.lin = torch.nn.Linear(d, d, bias=False).double()
+        self.seen_ms = []
+
+    def forward(self, x):
+        m = x.numel() // x.shape[-1]   # torchao's input.reshape(-1, in_features).shape[0]
+        self.seen_ms.append(m)
+        assert m % model.FP8_MM_ALIGN == 0, (
+            f"fp8 scaled_mm precondition violated: flattened M={m} not divisible by "
+            f"{model.FP8_MM_ALIGN} (this is the 2072 smoke failure)")
+        return self.lin(x)
+
+
+for _B, _NB in ((4, 518), (1, 518), (4, 517), (8, 518)):
+    _spy = _SpyAlignedLinear(64)
+    _hb = torch.randn(_B, _NB, 64, dtype=torch.double)
+    _o = model._fp8_linear_entries(_spy, _hb, _B, _NB, 4, 16)
+    assert torch.isfinite(_o).all()
+    _M = _B * _NB
+    _expect_pad = (-_M) % model.FP8_MM_ALIGN
+    assert _spy.seen_ms and all(m % model.FP8_MM_ALIGN == 0 for m in _spy.seen_ms), (
+        f"an unaligned M reached the GEMM at B={_B} NB={_NB}: {_spy.seen_ms}")
+    assert _spy.seen_ms[0] == _M + _expect_pad, (
+        f"spy saw M={_spy.seen_ms[0]}, expected the padded {_M + _expect_pad} at B={_B} NB={_NB}")
+
+# MUTANT GUARD (run standalone): a helper that does NOT pad must fail the spy on the three
+# unaligned shapes and only pass the naturally-aligned one. This asserts the test above is a
+# real guard, not an invariant both implementations satisfy.
+def _no_pad_entries(lin, hb, B, NB, H, hd):
+    m = B * NB
+    return lin(hb.reshape(m, hb.shape[-1]))[:m].view(B, NB, H, hd).transpose(1, 2).contiguous()
+
+
+_spy_red, _spy_green = 0, 0
+for _B, _NB in ((4, 518), (1, 518), (4, 517), (8, 518)):
+    _s = _SpyAlignedLinear(64)
+    try:
+        _no_pad_entries(_s, torch.randn(_B, _NB, 64, dtype=torch.double), _B, _NB, 4, 16)
+        _naturally_aligned = ((_B * _NB) % model.FP8_MM_ALIGN == 0)
+        assert _naturally_aligned, f"no-pad unexpectedly passed an unaligned shape B={_B} NB={_NB}"
+        _spy_green += 1
+    except AssertionError:
+        assert (_B * _NB) % model.FP8_MM_ALIGN != 0, f"aligned shape B={_B} NB={_NB} should not RED"
+        _spy_red += 1
+assert _spy_red == 3 and _spy_green == 1, (
+    f"the pad fixed-point lost discrimination (red={_spy_red} green={_spy_green}, want 3/1) -- "
+    f"without this the fix could be deleted and the test would stay green")
+
 print("CED: global entries from H_{L/2} (moves on a visible encoder mutation, not on an "
       "invisible one); window branch still reads own k/v (asserted both directions); W_KV and "
       "W_Z both read; missing H_{L/2} refuses; decoders hold per-layer unshared pairs, encoders "
