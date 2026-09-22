@@ -136,8 +136,13 @@ def _det_from_dump(pair_dir: str):
         rec["populated_but_dropped"] = ident.get("populated_but_dropped", [])
         rec["model_missing_keys"] = ident.get("model_missing_keys")
         rec["model_unexpected_keys"] = ident.get("model_unexpected_keys")
-    rec["pass"] = (not rec["triple_mismatch"] and not rec["populated_but_dropped"]
+    rec["pass"] = (rec["triple_checked"] > 0
+                   and not rec["triple_mismatch"] and not rec["populated_but_dropped"]
                    and not rec["model_missing_keys"] and not rec["model_unexpected_keys"])
+    # triple_checked > 0 is load-bearing: every predicate above is a negation, so a dump with
+    # no optK/loadK tensors at all (a picked leaf that had no AdamW state at K, or a broken
+    # dump path) would otherwise pass vacuously and silently void the drop_leaf/rot_triple
+    # discrimination. One-sided absence is already a mismatch; this closes both-sides-absent.
     return rec
 
 
@@ -300,8 +305,20 @@ MUTANT_EXPECT = {
 }
 
 
-def mutants(out: str, env: dict) -> dict:
+# Geometric separation cutoff when NO healthy distribution is supplied (a standalone
+# --mutants run). This is a DISCRIMINATOR, not a calibrated bound: it is deliberately far
+# above the one measured red-run rel-L2 (1.6e-2) and far below the mildest mutant the
+# mutation arm injects (block x1.1 ~0.3), only to name caught/not-caught in isolation. The
+# CI path always passes the in-run healthy MAX, which replaces this with a measured number;
+# the published gate bound comes later from healthy_distribution.json, never from here.
+GEOM_CUTOFF_FALLBACK = 0.05
+
+
+def mutants(out: str, env: dict, healthy_max_rel_l2: float | None = None) -> dict:
     # one shared healthy control across mutant arms; its dump provides control optK
+    # Build the whole mutant root fresh so a second `--out` run is a clean resample instead
+    # of dying on the symlinks from the previous run (the restartable contract).
+    shutil.rmtree(out, ignore_errors=True)
     cdir = os.path.join(out, "mut_control", "control")
     os.makedirs(cdir, exist_ok=True)
     cenv = dict(env, GATE_DUMP_DIR=os.path.join(out, "mut_control"))
@@ -311,20 +328,32 @@ def mutants(out: str, env: dict) -> dict:
         rdir = os.path.join(out, f"mut_{kind}")
         os.makedirs(rdir, exist_ok=True)
         # mutant arm writes into rdir directly; give _det_from_dump a pair-shaped dir by
-        # symlinking the shared control dump as its "control".
+        # symlinking the shared control dump as its "control". Remove a stale link first.
         pair_dir = os.path.join(out, f"pair_{kind}")
         os.makedirs(pair_dir, exist_ok=True)
-        os.symlink(cdir, os.path.join(pair_dir, "control"))
-        os.symlink(rdir, os.path.join(pair_dir, "restart"))
+        for link_name, target in (("control", cdir), ("restart", rdir)):
+            link = os.path.join(pair_dir, link_name)
+            if os.path.islink(link) or os.path.exists(link):
+                os.unlink(link)
+            os.symlink(target, link)
         rm, rb = _run_mutant_worker(kind, rdir, env)
         det = _det_from_dump(pair_dir)
         row = {"kind": kind, "expected_family": expect_family, "det": det,
                "master_fp32": tensor_metrics(cm, rm),
                "bf16_weight": tensor_metrics(cb, rb)}
+        # Geometric cutoff is the measured healthy MAX when the healthy arm ran in this same
+        # invocation; a mutant is "caught" only if it lands strictly above healthy noise, so
+        # the conclusion cannot be a consequence of a typed constant.
+        cutoff = (healthy_max_rel_l2 if healthy_max_rel_l2 is not None
+                  else GEOM_CUTOFF_FALLBACK)
         det_caught = not det["pass"]
         geom_caught = (row["master_fp32"]["rel_l2"] is not None
-                       and row["master_fp32"]["rel_l2"] > 0.05)
+                       and row["master_fp32"]["rel_l2"] > cutoff)
         caught_family = "det" if det_caught else ("geometric" if geom_caught else "NONE")
+        row["geom_cutoff_used"] = cutoff
+        row["cutoff_source"] = ("healthy_max_rel_l2 (this run)"
+                                if healthy_max_rel_l2 is not None
+                                else "GEOM_CUTOFF_FALLBACK (no healthy arm; not a bound)")
         row["caught_by"] = caught_family
         row["separates"] = caught_family == expect_family
         rows.append(row)
@@ -335,10 +364,17 @@ def mutants(out: str, env: dict) -> dict:
         print(f"mutant {kind:11s}: expect {expect_family:9s} caught_by {caught_family:9s} "
               f"{'OK' if row['separates'] else 'FAILURE'} | master rel-L2 "
               f"{f(row['master_fp32']['rel_l2'])} cos {f(row['master_fp32']['cosine'], '.6f')} "
-              f"max/rms {f(row['master_fp32']['max_abs_over_rms'])}", flush=True)
+              f"max/rms {f(row['master_fp32']['max_abs_over_rms'])} (cutoff {f(cutoff)})",
+              flush=True)
+    geom_rows = [r["master_fp32"]["rel_l2"] for r in rows
+                 if r["expected_family"] == "geometric"
+                 and r["master_fp32"]["rel_l2"] is not None]
     return {"schema": "v41f-resume-mutation-discrimination/v1", "calibrated": False,
             "kind": "mutants", "probe": PROBE, "env": env_header(),
-            "separated": all(r["separates"] for r in rows), "mutants": rows}
+            "separated": all(r["separates"] for r in rows),
+            "healthy_max_rel_l2_supplied": healthy_max_rel_l2,
+            "mutant_min_rel_l2": min(geom_rows) if geom_rows else None,
+            "mutants": rows}
 
 
 # ---------------------------------------------------------------------------- CLI
@@ -365,18 +401,25 @@ def main(argv=None) -> int:
     if os.environ.get("GATE_ONEDNN") == "0":
         torch.backends.mkldnn.enabled = False
 
-    result = None
+    healthy_rec = None
     if args.healthy:
-        result = healthy(args.healthy, os.path.join(args.out, "healthy"), env)
+        healthy_rec = healthy(args.healthy, os.path.join(args.out, "healthy"), env)
         with open(os.path.join(args.out, "healthy_distribution.json"), "w") as fh:
-            json.dump(result, fh, indent=2)
+            json.dump(healthy_rec, fh, indent=2)
         print("\nHEALTHY distribution (min/median/MAX; bound candidates derive from MAX):")
         for fam in ("master_fp32", "bf16_weight"):
             for metric in ("rel_l2", "cosine", "max_abs_over_rms"):
-                d = result["distribution"][fam][metric]
+                d = healthy_rec["distribution"][fam][metric]
                 print(f"  {fam:12s} {metric:16s} {d['min']:.4e} / {d['median']:.4e} / {d['max']:.4e}")
     if args.mutants:
-        result = mutants(os.path.join(args.out, "mutants"), env)
+        # Pass the in-run healthy master MAX so the mutant geometric cutoff is measured in the
+        # same job/environment, not typed. Falls back to the labelled constant only if --mutants
+        # ran alone.
+        hmax = None
+        if healthy_rec is not None:
+            hmax = max(r["master_fp32"]["rel_l2"] for r in healthy_rec["pairs"]
+                       if r["master_fp32"]["rel_l2"] is not None)
+        result = mutants(os.path.join(args.out, "mutants"), env, healthy_max_rel_l2=hmax)
         with open(os.path.join(args.out, "mutation_discrimination.json"), "w") as fh:
             json.dump(result, fh, indent=2)
         print(f"\nMUTATION SEPARATION: {'all mutants caught by their family' if result['separated'] else 'A MUTANT WAS NOT CAUGHT'}")
