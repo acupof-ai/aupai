@@ -417,8 +417,9 @@ def main(argv=None) -> int:
         # ran alone.
         hmax = None
         if healthy_rec is not None:
-            hmax = max(r["master_fp32"]["rel_l2"] for r in healthy_rec["pairs"]
-                       if r["master_fp32"]["rel_l2"] is not None)
+            hvals = [r["master_fp32"]["rel_l2"] for r in healthy_rec["pairs"]
+                     if r["master_fp32"]["rel_l2"] is not None]
+            hmax = max(hvals) if hvals else None
         result = mutants(os.path.join(args.out, "mutants"), env, healthy_max_rel_l2=hmax)
         with open(os.path.join(args.out, "mutation_discrimination.json"), "w") as fh:
             json.dump(result, fh, indent=2)
