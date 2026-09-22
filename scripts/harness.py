@@ -27406,6 +27406,12 @@ _FROZEN_KEYS = (
     "csa2", "csa2_m", "csa2_top_k", "csa2_n_win", "csa2_indexer_heads", "csa2_indexer_dim",
     "csa2_win_flash",
     "csa2_modes", "rope_dims", "n_swa_only_layers",  # V4.1 flat stack (fb, 2026-09-10)
+    # ARCHITECTURE, user order 2026-09-22: CED replaces where a decoder layer's global KV comes
+    # from and adds a per-decoder-layer W_KV/W_Z, so a resume that disagreed on it would be a
+    # different model under one run's name -- head_mixed's argument exactly. ced_enc_layers is
+    # the magnitude to match: it moves the encoder/decoder SPLIT, so the same layer would be an
+    # encoder in one segment and a decoder in the next, changing which parameters exist at all.
+    "ced", "ced_enc_layers",
     # b0-17: untie_head acts only at __init__ (model.py:359) -- the arm's weights carry the
     # architecture and a resume silently ignores the flag, which is the drift this set catches.
     # head_lr is NOT here: it is the A/B knob that exists to take two values (1e's ruling
