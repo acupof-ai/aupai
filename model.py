@@ -332,6 +332,61 @@ def _doc_blocks(q, cu, m):
     return block_id, doc, vis, NB
 
 
+FP8_MM_ALIGN = 16
+
+
+def _fp8_linear_entries(lin, hb, B, NB, H, hd):
+    """`lin(hb)` then (B,NB,d) -> (B,H,NB,hd), padding the M axis to fp8's 16 if needed.
+
+    WHY THE PAD EXISTS, measured 2026-09-22 on the pod (smoke v41_ced_smoke_0922, one H20,
+    fp8, B=4 T=4096 d=1024 m=8 -> NB=518):
+
+        RuntimeError: Expected self.size(1) to be divisible by 16, but got self.size(1)=2072
+
+    2072 is `B * NB`, and it is the M axis, not the contraction axis. torchao's
+    Float8Linear.forward flattens any input past 2-D (`(4,518,1024) -> (2072,1024)`) and its
+    backward computes `grad_weight = mm(grad_output.t(), input)` (float8_linear.py:197), whose
+    CONTRACTION dim is that flattened M. `_check_scaled_mm_sizes`
+    (torch/_meta_registrations.py:6588) requires it divisible by 16.
+
+    THE FLAT PATH NEVER HIT THIS, and the reason is the whole shape of the trap: flat's
+    compression Linear is fed `bk.reshape(B*H, NB, m*D)` (entries_per_doc, below), so its M
+    axis is `B*H*NB` and carries the head factor -- at H=8, `B*H` is 32 and the axis is
+    ALWAYS 16-aligned. CED's projection is d->d and applies BEFORE the head split (spec:
+    v41_pivot:9-15), so its M axis is only `B*NB`; the factor that made flat safe is gone.
+    B=4 alone gives 4, and 4*x is 16-aligned only when x is a multiple of 4 -- NB is
+    ceiling-divided per document, so it is 518 here and arbitrary in general.
+
+    NOT A CONTRACTION-DIM BUG: `hb.shape[-1]` is d=1024 before the pad, exactly as the
+    projection requires. Padding d would be wrong -- it would change the projection's input
+    width. Only the M axis is padded, and it is padded on the OUTSIDE of the Linear.
+
+    PAD ROWS ARE ZERO AND THEIR GRADIENT IS ZERO BY CONSTRUCTION, not by masking afterwards:
+    the padded rows are literal zeros, and a zero input row contributes nothing to
+    grad_weight (`grad_weight = grad_output^T @ input`, so a zero input row adds zero) . The
+    slice below then drops those rows from the OUTPUT, so nothing downstream can read them
+    either. Both halves are asserted on the real fp8 path in scripts/test_arch_compat.py.
+
+    The pad is applied unconditionally when the axis is already aligned? No -- `pad` is 0
+    then, and the no-pad path is the old expression byte for byte, so the aligned case (the
+    world-8 B=4 with NB a multiple of 4, and every flat shape) is unchanged.
+    """
+    M = B * NB
+    pad = (-M) % FP8_MM_ALIGN
+    # FLATTEN FIRST, THEN PAD, and that order is load-bearing. Padding `pad` rows onto each
+    # of the B batches would give a flattened M of B*(NB+pad), which is divisible by 16 only
+    # by accident (measured: B=4 NB=518, pad computed as (-2072)%16=8 -> 4*526=2104, still
+    # 8 mod 16). Flattening to (M, d) and padding that axis pads exactly the axis the checker
+    # measures, so M+pad is 16-aligned by construction.
+    if pad:
+        hb = hb.reshape(M, hb.shape[-1])
+        hb = torch.cat([hb, hb.new_zeros(pad, hb.shape[-1])], dim=0)   # (M+pad, d)
+    out = lin(hb)                                            # (M+pad, d)
+    if pad:
+        out = out[:M]                                        # drop the pad rows
+    return out.view(B, NB, H, hd).transpose(1, 2).contiguous()   # B,H,NB,hd
+
+
 def _ced_kv_from_enc(q, h_enc, cu, m, w_kv, w_z, n_head):
     """CED decoder global KV, projected from the encoder's H_{L/2} (Eq.1, §2.2).
 
@@ -379,8 +434,8 @@ def _ced_kv_from_enc(q, h_enc, cu, m, w_kv, w_z, n_head):
     cnt = h_enc.new_zeros(B, NB, dtype=torch.float32)
     cnt.scatter_add_(1, block_id, torch.ones(B, h_enc.shape[1], device=h_enc.device))
     hb = (acc / cnt.clamp(min=1)[:, None, :, None].to(acc.dtype)).squeeze(1)   # B,NB,d
-    kc = w_kv(hb).view(B, NB, H, hd).transpose(1, 2).contiguous()              # B,H,NB,hd
-    vc = w_z(hb).view(B, NB, H, hd).transpose(1, 2).contiguous()
+    kc = _fp8_linear_entries(w_kv, hb, B, NB, H, hd)                          # B,H,NB,hd
+    vc = _fp8_linear_entries(w_z, hb, B, NB, H, hd)
     return kc, vc, vis, doc
 
 
