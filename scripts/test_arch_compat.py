@@ -2156,6 +2156,167 @@ print("CSA2Reuse: source-change propagates (kc/vc/topk_idx); neighbour-change in
       "zero global-branch params (6 keys dropped); causal+doc masking exact; stream mismatch, "
       "no-package, Reuse-first and grad_ckpt refuse; F,R body threads the package and clears the slot")
 
+# ── CED (user order 2026-09-22): decoder global KV from H_{L/2} ───────────────
+# The property that separates CED from the flat stack is WHERE a decoder's global KV comes
+# from. Flat: a layer's entries are a function of its own K/V (entries_per_doc). CED: they come
+# from the encoder's final hidden state, through that layer's OWN W_KV/W_Z.
+#
+# THE GLOBAL ENTRY PATH IS NOT THE WHOLE LAYER. The layer-local SWA window still reads the
+# layer's OWN k/v -- v41_pivot:14 says "Decoder layers keep their own Q and their own local SWA
+# KV". So "the decoder is invariant to its own k/v" is FALSE as a blanket claim, and an assertion
+# that merely mutates the layer's own k/v somewhere will pass or fail for reasons that have
+# nothing to do with CED (measured: a first version perturbed position 3 and passed because the
+# window happened not to reach the query it was compared against). The contract is therefore
+# asserted in BOTH directions, at positions chosen so the window and the entry path are
+# separable:
+#   position 15 is outside query 12's window (5..12) and outside its visible entries
+#     (block 3 has blk_last=15 > 12) -> mutating it must move NOTHING
+#   position 8 is inside query 12's window                                          -> must move it
+#   position 8 is also inside block 2 (blk_last=11 <= 12), so H_{L/2} at that block is visible
+#     -> mutating the encoder state must move it, which is what makes this CED and not flat
+class _CfgCed(_CfgCsa2On):
+    d, heads = 64, 4
+    ced, ced_enc_layers = 1, 2
+
+
+torch.manual_seed(21)
+_TE = 16
+_qe, _ke, _ve = (torch.randn(1, _TE, 4, 16, dtype=torch.double) for _ in range(3))
+_xe = torch.randn(1, _TE, 64, dtype=torch.double)
+_cue = torch.tensor([0, _TE], dtype=torch.int32)
+_csa_ced = model.CompressedSparseAttention(_CfgCed, 4, 16).double()
+_csa_ced.ced_kv = True
+_csa_ced.w_kv = torch.nn.Linear(64, 64, bias=False).double()
+_csa_ced.w_z = torch.nn.Linear(64, 64, bias=False).double()
+_h_enc = torch.randn(1, _TE, 64, dtype=torch.double)
+_csa_ced._h_enc = _h_enc
+_ye = _csa_ced(_qe, _ke, _ve, cu=_cue, x=_xe)
+assert torch.isfinite(_ye).all(), "CED decoder produced non-finite output"
+_Q = 12  # the query every assertion below is read at
+
+
+def _ced_at(qidx, k, v, h):
+    _csa_ced._h_enc = h
+    return _csa_ced(_qe, k, v, cu=_cue, x=_xe)[:, qidx]
+
+
+# 1. A POSITION THE QUERY CANNOT SEE BY EITHER PATH MOVES NOTHING. This is the assertion a flat
+#    layer would FAIL if it reverted to entries_per_doc over its own k/v (pos 15 is in a block
+#    that is not yet visible), and it is the one that catches "still reading own K/V".
+_ke2, _ve2 = _ke.clone(), _ve.clone()
+_ke2[0, 15] += 7.0
+_ve2[0, 15] += 7.0
+_d = (_ced_at(_Q, _ke2, _ve2, _h_enc) - _ye[:, _Q]).abs().max().item()
+assert _d == 0.0, (
+    f"query {_Q} moved ({_d:.3e}) when a position outside both its window and its visible "
+    f"entries was mutated -- the layer is reading its OWN k/v for the global entries")
+
+# 2. A POSITION INSIDE THE WINDOW DOES MOVE IT. Without this, assertion 1 passes trivially on a
+#    dead layer -- invariance that holds because nothing is read is not the property claimed.
+_ke3, _ve3 = _ke.clone(), _ve.clone()
+_ve3[0, 8] += 7.0
+_d = (_ced_at(_Q, _ke3, _ve3, _h_enc) - _ye[:, _Q]).abs().max().item()
+assert _d > 1e-6, (
+    f"query {_Q} did NOT move ({_d:.3e}) when a position inside its SWA window was mutated -- "
+    f"the window branch is dead, so assertion 1 was asserting over nothing")
+
+# 3. THE ENCODER STATE IS THE GLOBAL SOURCE. Block 2 (positions 8..11, blk_last=11) is visible to
+#    query 12, so mutating H_{L/2} inside it must move the query. This is the CED-specific
+#    direction: a flat layer has no H_{L/2} to read at all.
+_h2 = _h_enc.clone()
+_h2[0, 8] += 7.0
+_d = (_ced_at(_Q, _ke, _ve, _h2) - _ye[:, _Q]).abs().max().item()
+assert _d > 1e-6, (
+    f"query {_Q} unchanged ({_d:.3e}) by an H_{{L/2}} mutation in a block it can see -- the "
+    f"global entries are not coming from the encoder state")
+
+# 4. AN H_{L/2} POSITION THE QUERY CANNOT SEE MOVES NOTHING. Block 3 (15) is invisible to q12, so
+#    this is the causality half for the projection: it shows the encoder state is masked by the
+#    same block rule, not read wholesale.
+_h3 = _h_enc.clone()
+_h3[0, 15] += 7.0
+assert (_ced_at(_Q, _ke, _ve, _h3) - _ye[:, _Q]).abs().max().item() == 0.0, (
+    f"H_{{L/2}} at a NOT-YET-VISIBLE position moved query {_Q} -- the projection is bypassing "
+    f"the block visibility rule")
+_csa_ced._h_enc = _h_enc
+
+# 5. W_KV AND W_Z ARE BOTH READ.
+for _nm in ("w_kv", "w_z"):
+    _saved = getattr(_csa_ced, _nm)
+    _alt = torch.nn.Linear(64, 64, bias=False).double()
+    with torch.no_grad():
+        _alt.weight.copy_(_saved.weight)
+        _alt.weight[0, 0] += 0.5
+    setattr(_csa_ced, _nm, _alt)
+    _d = (_csa_ced(_qe, _ke, _ve, cu=_cue, x=_xe) - _ye).abs().max().item()
+    assert _d > 1e-6, f"CED decoder output blind to {_nm} ({_d:.2e})"
+    setattr(_csa_ced, _nm, _saved)
+
+# 6. NO STASHED H_{L/2} REFUSES, rather than silently falling back to the layer's own K/V.
+_csa_ced._h_enc = None
+try:
+    _csa_ced(_qe, _ke, _ve, cu=_cue, x=_xe)
+except ValueError as _e:
+    assert "H_{L/2}" in str(_e), f"the no-H_enc refusal does not name the cause: {_e}"
+else:
+    raise AssertionError("a CED decoder forwards with no H_{L/2} stashed")
+_csa_ced._h_enc = _h_enc
+
+
+# 7. PER-LAYER UNSHARED, end to end through the stack. Rebased on the REAL Cfg via _CfgPaDense
+#    (_CfgReuseStack's pattern): HybridLM reads fields off cfg directly, so a bare class here
+#    dies at `cfg.grad_ckpt` before any CED assertion runs. n_swa_only_layers=2 at layers=4 puts
+#    the two CSA2 layers at 2 and 3, which is exactly the encoder/decoder split being asserted.
+class _CfgCedStack(_CfgPaDense):
+    layers, attn_every = 4, 1
+    n_swa_only_layers, rope_dims = 2, 8  # rope_dims>0 lifts the zero-KDA refusal on all-attn
+    attn_res = False                     # the CED body runs only off the AttnRes path
+    ced, ced_enc_layers = 1, 2
+    csa, csa2 = True, True
+    csa2_m, csa2_top_k, csa2_n_win = 4, 2, 8
+    csa2_indexer_heads, csa2_indexer_dim = 2, 8
+
+
+_cedm = model.HybridLM(_CfgCedStack)
+_dec_csa = [_cedm.blocks[i].mixer.csa for i in range(2, 4)]
+assert all(getattr(c, "ced_kv", False) for c in _dec_csa), (
+    "a decoder layer did not get ced_kv assigned")
+assert _dec_csa[0].w_kv is not _dec_csa[1].w_kv, "the two decoders SHARE one W_KV"
+assert _dec_csa[0].w_kv.weight.data_ptr() != _dec_csa[1].w_kv.weight.data_ptr(), (
+    "the two decoders' W_KV are the same storage -- per-layer unshared was the spec")
+assert not any(getattr(_cedm.blocks[i].mixer.csa, "ced_kv", False) for i in range(0, 2)), (
+    "an ENCODER layer was given a W_KV/W_Z pair; only decoders project from H_{L/2}")
+
+# 8. CONSTRUCTION-TIME REFUSALS. ced needs the two-pass body, which runs only off the AttnRes
+#    path; left at its default True the model used to CONSTRUCT and die at the first forward.
+class _CfgCedAttnRes(_CfgCedStack):
+    attn_res = True
+
+
+try:
+    model.HybridLM(_CfgCedAttnRes)
+except ValueError as _e:
+    assert "attn_res" in str(_e), f"the ced/attn_res refusal does not name the flag: {_e}"
+else:
+    raise AssertionError("ced=1 with attn_res left on constructed -- it dies at first forward")
+
+
+class _CfgCedBadSplit(_CfgCedStack):
+    ced_enc_layers = 0
+
+
+try:
+    model.HybridLM(_CfgCedBadSplit)
+except ValueError as _e:
+    assert "ced_enc_layers" in str(_e), f"the split refusal does not name the field: {_e}"
+else:
+    raise AssertionError("ced=1 with ced_enc_layers=0 constructed (no encoder left)")
+
+print("CED: global entries from H_{L/2} (moves on a visible encoder mutation, not on an "
+      "invisible one); window branch still reads own k/v (asserted both directions); W_KV and "
+      "W_Z both read; missing H_{L/2} refuses; decoders hold per-layer unshared pairs, encoders "
+      "hold none; attn_res-on and a degenerate split refuse at construction")
+
 # ── PureSWA (V4.1 Step 3, task 0e-2): CSA's window branch, alone ──────────────
 # Same perturbation discipline as the CSA cases above: a masked position must be EXACTLY
 # invisible (its softmax weight is exactly 0), and the perturbation must be visible where
