@@ -100,6 +100,30 @@ def _cpu_model():
     return platform.processor() or "unknown"
 
 
+def worker_env_rec(arm: dict, penv: dict) -> dict:
+    """Per-pair environment the two gate WORKER subprocesses actually ran under. The workers
+    share this runner's host with the collector, so cpu_model/torch read here are the workers'
+    too; the arm-specific knobs are what the collector injected into penv (the gate worker's
+    _apply_diag_thread_env consumes GATE_OMP/GATE_ONEDNN). Recording them per pair -- rather
+    than only the parent env_header -- is what lets a pooled cross-SKU distribution attribute
+    a rel_l2 value to the host and the arm (batch1 Intel 8573C ~0.016 vs batch2 AMD EPYC
+    9V74 0.0)."""
+    return {
+        "cpu_model": _cpu_model(),
+        "torch": torch.__version__,
+        "cpu_count": os.cpu_count(),
+        "affinity_cpus": (str(len(os.sched_getaffinity(0)))
+                          if hasattr(os, "sched_getaffinity") else "n/a"),
+        "mkldnn_available": bool(torch.backends.mkldnn.is_available()),
+        "arm": arm["name"],
+        "stress_burners": arm["stress"],
+        "GATE_OMP": penv.get("GATE_OMP"),
+        "OMP_NUM_THREADS": penv.get("OMP_NUM_THREADS"),
+        "MKL_NUM_THREADS": penv.get("MKL_NUM_THREADS"),
+        "GATE_ONEDNN": penv.get("GATE_ONEDNN"),
+    }
+
+
 def env_header():
     return {
         "torch": torch.__version__, "platform": platform.platform(), "cpu_model": _cpu_model(),
@@ -201,6 +225,7 @@ def healthy(pairs_per_arm: int, out: str, env: dict) -> dict:
                 rm, rb = _run_gate_worker("restart", pair_dir, penv)
                 det = _det_from_dump(pair_dir)
                 row = {"arm": arm["name"], "load_arm": bool(arm["stress"]), "pair": i,
+                       "worker_env": worker_env_rec(arm, aenv),
                        "det": det,
                        "master_fp32": tensor_metrics(cm, rm),
                        "bf16_weight": tensor_metrics(cb, rb)}
