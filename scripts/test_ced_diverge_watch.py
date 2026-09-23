@@ -12,11 +12,15 @@ Run: python scripts/test_ced_diverge_watch.py --selftest
 import argparse
 import math
 import os
+import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+
+WATCH_PY = os.path.join(ROOT, "scripts", "ced_diverge_watch.py")
 
 from scripts.ced_diverge_watch import (  # noqa: E402
     DivergeDetector,
@@ -138,6 +142,92 @@ def t_cmdline_nul_separated():
     assert not cmdline_matches("torchrun train.py --name v41_ced_0923 ", "v41_ced_0923")
 
 
+def _run_live(log, max_stale, out_path, interval=0.1):
+    return subprocess.Popen(
+        [
+            sys.executable,
+            WATCH_PY,
+            "--name",
+            "x",
+            "--log",
+            log,
+            "--interval",
+            str(interval),
+            "--ready_wait",
+            "5",
+            "--max_stale",
+            str(max_stale),
+            "--dry_run",
+        ],
+        stdout=out_path,
+        stderr=subprocess.STDOUT,
+    )
+
+
+def _wait_exit(p, deadline=5.0):
+    end = time.time() + deadline
+    while time.time() < end:
+        rc = p.poll()
+        if rc is not None:
+            return rc
+        time.sleep(0.05)
+    p.kill()
+    return None
+
+
+def t_live_history_is_ignored_new_lines_watch():
+    # The blocking defect: live mode on a pre-existing log replayed from offset 0 and would
+    # SIGTERM a healthy resumed run for a PRIOR segment's divergence. Now it seeks to EOF.
+    with tempfile.TemporaryDirectory() as d:
+        log = os.path.join(d, "l.log")
+        with open(log, "w") as f:  # history already contains a full trigger
+            for g in (239.0, 1184.0, 5000.0):
+                f.write(f"step 12640/38146 33% [main] | loss 4.0 | gnorm {g}\n")
+        with open(os.path.join(d, "o.txt"), "w") as out:
+            p = _run_live(log, max_stale=20.0, out_path=out)
+            time.sleep(0.6)
+            assert p.poll() is None, "watchdog fired on pre-attach history (must seek EOF)"
+            # append a NEW diverged sequence -> must trigger on the third new line
+            with open(log, "a") as a:
+                for g in (15.0, 16.0, 17.0):
+                    a.write(f"step 14010/38146 40% [main] | loss 3.5 | gnorm {g}\n")
+                    a.flush()
+                    time.sleep(0.15)
+            assert _wait_exit(p) == 2
+        with open(os.path.join(d, "o.txt")) as got:
+            assert "TRIGGER" in got.read()
+
+
+def t_live_history_only_goes_stale_not_trigger():
+    # history-only: with nothing appended after attach, outcome is STALE (4), never TRIGGER(2)
+    with tempfile.TemporaryDirectory() as d:
+        log = os.path.join(d, "l.log")
+        with open(log, "w") as f:
+            for g in (239.0, 1184.0, 5000.0):
+                f.write(f"step 12640/38146 33% [main] | loss 4.0 | gnorm {g}\n")
+        with open(os.path.join(d, "o.txt"), "w") as out:
+            p = _run_live(log, max_stale=0.6, out_path=out)
+            assert _wait_exit(p) == 4
+
+
+def t_live_chatter_does_not_reset_staleness():
+    # non-progress lines must NOT refresh the progress staleness timer
+    with tempfile.TemporaryDirectory() as d:
+        log = os.path.join(d, "l.log")
+        with open(log, "w") as f:
+            f.write("step 12000/38146 31% [main] | loss 1.0 | gnorm 0.5\n")
+        with open(os.path.join(d, "o.txt"), "w") as out:
+            p = _run_live(log, max_stale=0.6, out_path=out)
+            deadline = time.time() + 1.2
+            while time.time() < deadline:
+                if p.poll() is not None:
+                    break
+                with open(log, "a") as a:  # chatter, no progress shape
+                    a.write("saving checkpoint / warming compile / val noise\n")
+                time.sleep(0.15)
+            assert _wait_exit(p) == 4
+
+
 TESTS = [
     t_parse_progress,
     t_healthy_silent,
@@ -147,6 +237,9 @@ TESTS = [
     t_nonfinite_fires,
     t_scan_broken_raises,
     t_cmdline_nul_separated,
+    t_live_history_is_ignored_new_lines_watch,
+    t_live_history_only_goes_stale_not_trigger,
+    t_live_chatter_does_not_reset_staleness,
 ]
 
 
