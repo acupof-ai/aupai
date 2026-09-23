@@ -153,6 +153,12 @@ def main():
     ap.add_argument("--temp", type=float, default=0.2)
     ap.add_argument("--top_p", type=float, default=0.95)
     ap.add_argument("--no-greedy", action="store_true", help="skip the greedy arm (reproduced separately)")
+    ap.add_argument("--no-sample", action="store_true",
+                    help="greedy arm only -- the mid-run CPU trend read (stop rule 4); no n-sample "
+                         "arm and no sampled control, which need the post-training GPU shards")
+    ap.add_argument("--preds", default=None,
+                    help="explicit preds artifact path (default: data/eval/...); a mid-run CPU "
+                    "trend read writes under runs/")
     ap.add_argument("--shard_i", type=int, default=None,
                     help="multi-card shard: generate only fixed-order problem indices i with "
                          "i %% --shard_n == shard_i. Pair with --shard_n; N cards cover every "
@@ -234,7 +240,7 @@ def main():
                         break
         return truncate(tok.decode(new))
 
-    preds_path = os.path.join(
+    preds_path = args.preds or os.path.join(
         ROOT, "data", "eval",
         f"preds_humaneval_sample_{os.path.basename(str(args.ckpt).rstrip('/'))}"
         + (f".limit{args.limit}" if args.shard_n is None and args.limit is not None else "")
@@ -297,45 +303,55 @@ def main():
             if expected is not None:
                 print("greedy reproduction OK -- running sampled arm", flush=True)
 
-        # Phase 2: n samples per problem.
-        for i, p in enumerate(probs, 1):
-            samples = []
-            for _ in range(args.n):
-                c = gen(p["prompt"], args.temp)
-                samples.append({"gen": c, "ok": judge(p, c)})
-            c = sum(s["ok"] for s in samples)
-            sample_pass += c / args.n
-            ctrl_pass += int(judge(p, p["canonical_solution"]))
-            sample_empty += sum(not s["gen"].strip() for s in samples)
-            fout.write(json.dumps(
-                {"phase": "sample", "task_id": p["task_id"], "c": c, "samples": samples},
-                ensure_ascii=False) + "\n")
-            fout.flush()
-            if i % 20 == 0 or i == len(probs):
-                print(f"  sample {i}/{len(probs)}  pass@1(n={args.n}) = "
-                      f"{100 * sample_pass / i:.2f}%  ({time.time() - t0:.0f}s)", flush=True)
+        if args.no_sample:
+            # Greedy-only mid-run CPU trend read: skip the n-sample arm (20x the greedy
+            # work) and its control; they run on the post-training GPU shards.
+            pass
+        else:
+            # Phase 2: n samples per problem.
+            for i, p in enumerate(probs, 1):
+                samples = []
+                for _ in range(args.n):
+                    c = gen(p["prompt"], args.temp)
+                    samples.append({"gen": c, "ok": judge(p, c)})
+                c = sum(s["ok"] for s in samples)
+                sample_pass += c / args.n
+                ctrl_pass += int(judge(p, p["canonical_solution"]))
+                sample_empty += sum(not s["gen"].strip() for s in samples)
+                fout.write(json.dumps(
+                    {"phase": "sample", "task_id": p["task_id"], "c": c, "samples": samples},
+                    ensure_ascii=False) + "\n")
+                fout.flush()
+                if i % 20 == 0 or i == len(probs):
+                    print(f"  sample {i}/{len(probs)}  pass@1(n={args.n}) = "
+                          f"{100 * sample_pass / i:.2f}%  ({time.time() - t0:.0f}s)", flush=True)
 
-        # The known-answer control through the SAMPLED phase's own judge call, plus
-        # the sample empty rate: a pass@1 that quietly counts empty completions as
-        # failures is a format number, and a sampled figure without its control is
-        # not a figure (e1-58).
-        n_samples = len(probs) * args.n
-        fout.write(json.dumps(
-            {"phase": "sample_summary", "control_canonical_pass": ctrl_pass,
-             "control_n": len(probs), "sample_empty": sample_empty,
-             "sample_empty_n": n_samples}, ensure_ascii=False) + "\n")
-        print(f"\nCONTROL canonical_solution through sampled path = "
-              f"{ctrl_pass}/{len(probs)} (must be {len(probs)})", flush=True)
-        print(f"sampled empty completions = {sample_empty}/{n_samples} = "
-              f"{100 * sample_empty / n_samples:.1f}%", flush=True)
-        if ctrl_pass != len(probs):
-            sys.exit(
-                f"SAMPLED CONTROL FAILED: canonical_solution scored {ctrl_pass}/{len(probs)} "
-                "through the sampled phase's judge -- the pass@1 above is not a figure.")
+            # The known-answer control through the SAMPLED phase's own judge call, plus
+            # the sample empty rate: a pass@1 that quietly counts empty completions as
+            # failures is a format number, and a sampled figure without its control is
+            # not a figure (e1-58).
+            n_samples = len(probs) * args.n
+            fout.write(json.dumps(
+                {"phase": "sample_summary", "control_canonical_pass": ctrl_pass,
+                 "control_n": len(probs), "sample_empty": sample_empty,
+                 "sample_empty_n": n_samples}, ensure_ascii=False) + "\n")
+            print(f"\nCONTROL canonical_solution through sampled path = "
+                  f"{ctrl_pass}/{len(probs)} (must be {len(probs)})", flush=True)
+            print(f"sampled empty completions = {sample_empty}/{n_samples} = "
+                  f"{100 * sample_empty / n_samples:.1f}%", flush=True)
+            if ctrl_pass != len(probs):
+                sys.exit(
+                    f"SAMPLED CONTROL FAILED: canonical_solution scored {ctrl_pass}/{len(probs)} "
+                    "through the sampled phase's judge -- the pass@1 above is not a figure.")
 
     attest(out_path)
-    print(f"\nHUMANEVAL pass@1 (n={args.n}, temp={args.temp}, top_p={args.top_p}) = "
-          f"{sample_pass}/{len(probs)} = {100 * sample_pass / len(probs):.2f}%", flush=True)
+    if args.no_sample:
+        print(f"\nHUMANEVAL greedy-only pass@1 = {greedy_pass}/{len(probs)} = "
+              f"{100 * greedy_pass / len(probs):.2f}%  empty {greedy_empty}/{len(probs)} "
+              f"(mid-run trend read; no n-sample arm)", flush=True)
+    else:
+        print(f"\nHUMANEVAL pass@1 (n={args.n}, temp={args.temp}, top_p={args.top_p}) = "
+              f"{sample_pass}/{len(probs)} = {100 * sample_pass / len(probs):.2f}%", flush=True)
     print(f"preds saved: {out_path}", flush=True)
 
 
