@@ -5619,7 +5619,7 @@ def _broken_launch_line_oom():
 
 
 def _ckpt_names(text):
-    """Concrete checkpoint filenames named in a fact's source/config text.
+    r"""Concrete checkpoint filenames named in a fact's source/config text.
 
     Brace notation `X.pt.step{1500,2000,2500}` is an explicit enumeration and is
     expanded; everything else is exact-match only. A fact that shortens a name
@@ -5666,7 +5666,7 @@ def _ckpt_names(text):
 
 
 def _parse_ckpt_listing(path):
-    """-> (listing_date, keep_set, {candidate: (mtime, section)}).
+    r"""-> (listing_date, keep_set, {candidate: (mtime, section)}).
 
     KEEP lines carry series shorthand (`X.pt.step2000, .pt.step2500`); a
     continuation attaches after the bare core OR after the `.pt` boundary, and
@@ -16905,7 +16905,7 @@ def _broken_train_cite_targets():
 
 
 def _selftest_train_cite_abbreviated_form():
-    """The branch _broken_train_cite_targets cannot reach: the ABBREVIATED `:NNN` citation.
+    r"""The branch _broken_train_cite_targets cannot reach: the ABBREVIATED `:NNN` citation.
 
     Registered separately because one world exercises one branch. The single world strips a
     sha from a QUALIFIED citation, so the abbreviated reader never runs in it -- deleting
