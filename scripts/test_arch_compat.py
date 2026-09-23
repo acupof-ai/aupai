@@ -2587,3 +2587,128 @@ print(
     "equal to its own value; placement swa,swa,csa,hca,csa,hca with n=2 and the legacy "
     "interleave unchanged with n=0"
 )
+
+# =====================================================================================
+# CED PASS STRUCTURE (genB, 2026-09-23). Step 1 of the flat-refactor sequence.
+#
+# WHY THIS LANDS FIRST. The flat-refactor plan deletes the flat single-pass branch in
+# HybridLM._body. Two things that plan rests on were never asserted for the real two-half
+# stack: (a) the ENCODER half runs entries_per_doc -- the same global-KV source the flat
+# stack runs, which is why the refactor cannot delete it -- and (b) the encoder pass
+# finishes over exactly layers [0, ced_enc_layers) BEFORE any decoder layer runs.
+#
+# THE DEFECT THIS IS SHAPED FOR was found by mutating. Moving _body's pass boundary by one
+# (`blocks[:N-1]` / `blocks[N-1:]`) leaves the per-layer ced_kv WIRING untouched, so the
+# construction assertions above stay green, the entries_per_doc call COUNT still reads 6/6
+# (the counts follow each layer's own ced_kv, not the pass boundary), and nothing raises.
+# The execution ORDER does not change either -- layer N-1 still runs in position N-1, just
+# inside the second loop -- so an order check alone is structurally blind to it. What changes
+# is WHAT THE DECODER READS: H_{L/2} becomes the encoder's second-to-last hidden state.
+#
+# SO THERE ARE THREE CHECKS, covering different mutants: (1) the order check catches an
+# interleaved or repeated pass; (2) the per-layer SOURCE cells catch the CED wiring being on
+# a layer it does not belong to; (3) the H_{L/2} IDENTITY check catches the silent boundary
+# shift.
+#
+# NO DIGEST LITERAL HERE, deliberately. A first version pinned the forward's sha256 as a
+# constant: green locally (arm64), red in CI (x86_64) at the same seed, because float
+# reductions are not bit-identical across host classes -- the same reason this file's other
+# numeric checks use tolerances rather than equality against a recorded absolute. A pinned
+# digest would have made the test a property of the runner. Check (3) instead asserts an
+# identity between two tensors produced in the SAME process, which is host-independent.
+class _CfgCedPassStack(Cfg):
+    d, heads, layers, ffn_hidden, vocab, seq = 128, 4, 12, 256, 1024, 64
+    attn_every = 1
+    n_swa_only_layers = 2
+    attn_res = False
+    csa = True
+    csa2 = True
+    csa2_win_flash = False
+    moe_experts = 0
+    moe_layers = ""
+    rope_dims = 32
+    ced = 1
+    ced_enc_layers = 6
+
+
+_n_enc = _CfgCedPassStack.ced_enc_layers
+_CED_ROWS, _CED_SEQ = 2, _CfgCedPassStack.seq
+# A forward hook that RETURNS A VALUE REPLACES THE MODULE'S OUTPUT. `lambda ...: (a, b)` returns
+# a tuple of Nones, which is not None, so it replaced every block's output and the next sublayer
+# got a tuple. Every hook below returns None explicitly.
+order, outs, srcs = [], {}, {}
+torch.manual_seed(11)
+_cedm = HybridLM(_CfgCedPassStack).eval()
+for _i, _b in enumerate(_cedm.blocks):
+    _b.register_forward_hook(
+        lambda mod, inp, out, idx=_i: (order.append(idx), outs.__setitem__(idx, out), None)[-1]
+    )
+
+_seen_h = {}
+_oe, _oc = model.entries_per_doc, model._ced_kv_from_enc
+
+
+def _spy_entries(*a, **k):
+    srcs[len(srcs)] = "entries"
+    return _oe(*a, **k)
+
+
+def _spy_ced(q, h_enc, *a, **k):
+    _seen_h["h_enc"] = h_enc  # _ced_kv_from_enc(q, h_enc, ...) -- arg 1 IS H_{L/2}
+    srcs[len(srcs)] = "ced"
+    return _oc(q, h_enc, *a, **k)
+
+
+model.entries_per_doc, model._ced_kv_from_enc = _spy_entries, _spy_ced
+try:
+    torch.manual_seed(12)
+    with torch.no_grad():
+        _cedm(torch.randint(0, _CfgCedPassStack.vocab, (_CED_ROWS, _CED_SEQ)))
+finally:
+    model.entries_per_doc, model._ced_kv_from_enc = _oe, _oc
+
+# 1. EVERY LAYER ONCE, IN ORDER. Catches an interleaved or repeated pass.
+assert order == list(range(_CfgCedPassStack.layers)), (
+    f"the CED body did not run every layer exactly once, in order: {order}. A decoder that "
+    f"runs before the encoder has finished reads a stale H_{{L/2}}, and an encoder layer that "
+    f"runs inside the decoder pass reads its own K/V where it should read the encoder's -- "
+    f"both are silent in the loss."
+)
+assert order[:_n_enc] == list(range(_n_enc)), (
+    f"the encoder pass is not exactly layers [0, {_n_enc}): executed {order[:_n_enc]}"
+)
+
+# 2. THE SOURCE SPLIT, BY COUNT PER HALF -- six entries_per_doc calls for the encoder half and
+#    six H_{L/2} projections for the decoder half, in that order.
+_src_seq = [srcs[k] for k in sorted(srcs)]
+assert _src_seq == ["entries"] * _n_enc + ["ced"] * (_CfgCedPassStack.layers - _n_enc), (
+    f"the CED global-KV sources are not one half each: got {_src_seq}. The encoder half is the "
+    f"flat path (entries_per_doc); a refactor that deletes it deletes the encoder too."
+)
+
+# 3. H_{L/2} IS THE LAST ENCODER LAYER'S OUTPUT. The value check, as an in-process identity so
+#    it does not depend on the host's reduction order. A pass boundary shifted by one makes the
+#    decoder read layer N-2 while layer N-1 still executes in position N-1, which checks 1 and
+#    2 both miss.
+assert _seen_h.get("h_enc") is not None, (
+    "no decoder layer projected from H_{L/2}: the CED two-pass body did not run, or the "
+    "decoders were not marked ced_kv, so check 3 would pass vacuously"
+)
+_last_enc = outs.get(_n_enc - 1)
+assert _last_enc is not None, f"the last encoder layer (index {_n_enc - 1}) never ran"
+_delta = (_seen_h["h_enc"] - _last_enc).abs().max().item()
+assert _delta == 0.0, (
+    f"the decoder's H_{{L/2}} is NOT layer {_n_enc - 1}'s output (max|delta|={_delta:.3e}). "
+    f"With ced_enc_layers={_n_enc} the decoder must read the output of layer {_n_enc - 1}; a "
+    f"pass boundary shifted by one makes it read layer {_n_enc - 2}, which leaves the "
+    f"execution order, the per-layer ced_kv wiring and the entries_per_doc count all unchanged."
+)
+
+print(
+    f"CED pass structure: every layer runs once in order; the encoder half [0,{_n_enc}) uses "
+    f"entries_per_doc and the decoder half [{_n_enc},{_CfgCedPassStack.layers}) projects from "
+    f"H_{{L/2}} ({_n_enc} calls each, in halves); and that H_{{L/2}} IS layer {_n_enc - 1}'s "
+    f"output (max|delta| 0.0) -- so a pass boundary shifted by one reds here while leaving the "
+    f"order, the wiring and the counts unchanged. The value check is an in-process identity, "
+    f"not a pinned digest, so it does not depend on the host class"
+)
