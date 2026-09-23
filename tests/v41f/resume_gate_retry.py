@@ -323,12 +323,17 @@ def selftest(quiet=False):
     if not quiet:
         print(f"  {counts['pos']} positive allowed, {counts['neg']} negatives refused, "
               "fail-closed on missing evidence")
-    return fails
+    # (failures, counts). The counts are RETURNED, not left in a print, because the gate that
+    # calls this prints its own one-line summary and used to hardcode "1 positive, 10 refusals" --
+    # a literal that goes stale the moment a world is added (it did: #668 took the worlds from
+    # 11 to 16 and the gate's line kept saying 10). A caller rendering a count must derive it
+    # from the run, or the next added world reproduces the same rot.
+    return fails, counts
 
 
 if __name__ == "__main__":
     import sys
-    _f = selftest()
+    _f, _c = selftest()
     if _f:
         print(f"resume_gate_retry selftest FAILED: {len(_f)}")
         for x in _f:
