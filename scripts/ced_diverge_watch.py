@@ -210,21 +210,29 @@ def main():
         return 0
 
     # live tail. Wait for the file to appear (launch race); that wait is not a read fault.
+    # On open, seek to EOF: a resumed run reuses its append log, and the file already on
+    # disk is HISTORY (it may contain a prior segment's divergence). Tailing from offset 0
+    # would feed that history to the detector and SIGTERM a healthy resume for a runaway
+    # that happened before this watchdog started. Guard only lines appended after attach.
     f, waited = None, 0.0
     while f is None:
         try:
             f = open(args.log, errors="replace")  # noqa: SIM115 handle outlives this loop, tailed below
+            f.seek(0, os.SEEK_END)
         except OSError:
             if waited >= args.ready_wait:
                 print(f"WATCHDOG READ ERROR {args.log}: did not appear within {args.ready_wait}s", flush=True)
                 return 3
             time.sleep(args.interval)
             waited += args.interval
-    last_seen = time.time()
+    # staleness is time since the last PROGRESS line, not since any byte -- a stuck run that
+    # keeps emitting non-progress chatter must still cross max_stale. Initialized at attach;
+    # if no progress line arrives within max_stale (and ready_wait already passed), it fires.
+    last_progress = time.time()
     while True:
         line = f.readline()
         if not line:
-            if time.time() - last_seen > args.max_stale:
+            if time.time() - last_progress > args.max_stale:
                 print(
                     f"WATCHDOG STALE {args.log}: no progress line for {args.max_stale}s "
                     f"(last step {det.last_step}); reporting, not killing",
@@ -236,13 +244,13 @@ def main():
             except KeyboardInterrupt:
                 return 0
             continue
-        last_seen = time.time()
         try:
             rec = parse_step_line(line)
         except LogParseError as e:
             print(f"WATCHDOG PARSE ERROR {args.log}: {e}", flush=True)
             return 3
         if rec is not None:
+            last_progress = time.time()
             reason = det.feed(*rec)
             if reason:
                 return act(reason)
