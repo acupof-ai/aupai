@@ -147,7 +147,12 @@ if [ $rc -eq 0 ] && [ -n "$NAME" ] && [ -f "ckpt_${NAME}.pt" ]; then
   # CUDA_VISIBLE_DEVICES is still the seven-card block, so it used to take whatever
   # card 0 was doing -- on 2026-09-01 a process holding 14.37 GiB, and the scorer
   # died asking for 96 MiB. Measure a free lane card, and queue rather than force.
-  CARD=$(python scripts/harness.py free-card --wait 1800)
+  # torchrun has returned above, so this run's own ranks are reaped; with a full-block
+  # grant there is no lane (lane_card: null) and --from-held-block lets the post-exit
+  # scorer take one card from THIS run's granted block, but only if it measures idle.
+  # The measurement -- never the grant alone -- is what prevents taking a card another
+  # job grabbed after the run ended.
+  CARD=$(python scripts/harness.py free-card --from-held-block --wait 1800)
   SCORING_RC=0
   if [ -n "$CARD" ]; then
     CUDA_VISIBLE_DEVICES="$CARD" python eval/score_matrix.py --ckpt "ckpt_${NAME}.pt" --json runs/score_matrix.jsonl &
@@ -175,7 +180,7 @@ if [ $rc -eq 0 ] && [ -n "$NAME" ] && [ -f "ckpt_${NAME}.pt" ]; then
     python scripts/exp.py note --name "$NAME" --quiet-if-absent \
       --text "score_matrix FINISHED on card $CARD (container-pid $SCORER_PID) rc=$SCORING_RC" >/dev/null || true
   else
-    echo "FATAL: no free lane card in 30min -- ckpt_${NAME}.pt unscored, training succeeded but this run produced NO metrics. Re-score: CUDA_VISIBLE_DEVICES=<lane> python eval/score_matrix.py --ckpt ckpt_${NAME}.pt --json runs/score_matrix.jsonl" >&2
+    echo "FATAL: no free card in 30min (lane or this run's held block) -- ckpt_${NAME}.pt unscored, training succeeded but this run produced NO metrics. Re-score once the ranks are gone: CUDA_VISIBLE_DEVICES=<one idle granted card> python eval/score_matrix.py --ckpt ckpt_${NAME}.pt --json runs/score_matrix.jsonl" >&2
     SCORING_RC=1
   fi
   # CLOSE THE ROW HERE, because nothing else will (de-47). no_stale_running FAILs on a
