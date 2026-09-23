@@ -32,7 +32,7 @@ checkpoint — use its N in step 2 and note it in the exp result.
 ## 1. Read the standard HumanEval column and val, then close the exp row
 
 The gate number is the STANDARD (continuation) arm, the metric of
-runs/prereg.jsonl#v41_gate_0911. Greedy 164 on the final ckpt, one card, via harness launch
+runs/prereg.jsonl#v41_gate_0911@amended_11 Greedy 164 on the final ckpt, one card, via harness launch
 (every GPU process goes through it; harness writes its own `he_gate_final` exp row and
 injects CUDA_VISIBLE_DEVICES from `--cards`):
 
@@ -53,7 +53,7 @@ TRAINING exp row (distinct from harness's `he_gate_final` row):
 python3 scripts/exp.py done --name v41_gate_0911 --status ok \
   --result "HumanEval standard greedy pass@1 = N/164 (preds <preds saved path>); final val X" \
   --finding "gate >=30% met / not met at 30B under the standard arm" \
-  --decision "post-gate SFT per runs/prereg.jsonl#v41_sft_0913 regardless; >=30% is the pretrain gate" \
+  --decision "post-gate SFT per runs/prereg.jsonl#v41_sft_0913@amended_1 regardless; >=30% is the pretrain gate" \
   --reading_artifact data/eval/preds_humaneval_ckpt_v41_gate_0911.pt.v41gate_final.jsonl
 ```
 
@@ -110,7 +110,7 @@ launcher manage their own exp row, claim and release trap; the substitute is rea
 script's own `python3 scripts/card_claim.py acquire --name v41_sft_0913 --cards <card2>`
 writes the same persistent claim in runs/claims/ that harness launch does (and its live-claim
 gate refuses on any holder first). The launcher then trains and reads its own ChatML
-by-name HumanEval (runs/prereg.jsonl#v41_sft_0913):
+by-name HumanEval (runs/prereg.jsonl#v41_sft_0913@amended_1):
 
 ```bash
 HYPOTHESIS="ChatML code-instruction SFT moves HumanEval by-name pass@1 above 5/164 from an unseen-prefix 0/164 base" \

@@ -1,0 +1,6 @@
+step,full_pass,full_denom,clean_pass,clean_denom,empty,status
+2000,5,140,,,0,in_progress
+4000,4,164,4,156,0,complete
+6000,6,164,6,156,0,complete
+8000,13,164,13,156,1,complete
+10000,8,164,8,156,0,complete
