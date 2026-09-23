@@ -957,6 +957,30 @@
    "audit": "Same-run rerun on the same tree (35603567150) returned SUCCESS with the gate's own PASS line; combined with the #549 dump showing the round trip bit-exact on every sampled leaf.",
    "refuted_by": "gh run view 35603567150 --log (rerun): 'resume: save/load mid-run bit-identical to control; fresh optim diverges'; facts/v41.json#v41.d17_dump_falsifies_optim_rng_0921",
    "boundary": "Answers 'is the red a property of the code under test' -- no, the same tree both fails and passes. Does NOT answer what makes a runner produce it, and does NOT test the master-weight family, which no artifact from a red run has ever recorded."
+  },
+  {
+   "id": "v41.d17_weight_family_measured_0922",
+   "value": "The master-weight family -- the one family no red had ever recorded -- is now measured, from the first red run carrying #624's instrument (run 35627475751, sha 51a80cac, event=pull_request, artifact gate-resume-dump-35627475751, 436,235,567 bytes). The dump holds the two fp32 master tensors that actually differed (fp32_master.want.bin / .got.bin, 524,288 float32 each; want is the FIRST argument at the _eq call = control, got the second = restart). The gate's signature reproduces exactly from these bytes: n_diff=506533/524288, max|delta|=1.334e-02, first_flat_idx=0, n_nan=0. The SHAPE of the divergence: it is ABSOLUTE, not relative -- mean|delta| is 2.5e-04 in every magnitude band (|w| in [0,1e-3): 2.40e-04; [1e-3,1e-2): 2.47e-04; [1e-2,1e-1): 2.52e-04), corr(|delta|,|w|)=+0.0023, and the relative error falls from 4.8e-01 to 6.4e-03 as |w| grows, i.e. the error does not scale with the value. Signs are symmetric (d>0: 0.4982, d<0: 0.5018). The differing elements are SPREAD, not clustered: first=0, last=524286, mean gap 1.04, longest identical run 5, and 17,755/524,288 elements are exactly equal. Median |delta| = 6.64e-05, which is 0.66% of one lr=1e-2 AdamW step. Neither tensor is bf16-exact and got != bf16(want) for any element, so this is not a bf16 round-trip of the whole tensor. IN THE SAME DUMP the optimizer round trip is BIT-EXACT (worst max|delta| across all leaves = 0.0), rng_atK is identical across all three arms, and ckpt_identity is clean (populated_but_dropped=[], model_missing_keys=[], model_unexpected_keys=[], 228 state_by_name keys). So: optimizer state, RNG and checkpoint identity are all identical, the trees are identical, and the fp32 master AFTER one further training step differs by a small magnitude-independent amount. BIT-LEVEL LOCUS, which rules out the remaining structural explanations: 97.17% of elements keep the same exponent (the difference is mantissa-level), and differing bits are NOT confined to the low mantissa -- the fraction with differing bits above position 24/20/16/12/8/4 is 0.0162/0.1308/0.5156/0.8739/0.9597/0.9657, i.e. the disagreement propagates through the whole mantissa rather than sitting in the bottom few bits. `got` is therefore not bf16_truncate(want) (0.0000), not bf16_round(want) (0.0000), and `want` is not bf16-exact either (0.0000).",
+   "measured": "2026-09-22",
+   "source": "gh run download 35627475751 -n gate-resume-dump-35627475751; fp32_master.want.bin/got.bin read with numpy fromfile float32; optimizer/RNG read with torch.load(weights_only=False)",
+   "config": {
+    "run": "35627475751",
+    "sha": "51a80cac",
+    "event": "pull_request",
+    "carries_pr": 624,
+    "carries_merge": "c13e9d06",
+    "artifact_bytes": 436235567,
+    "files": 73,
+    "tensors": "fp32_master.{want,got}.bin, 524288 float32 each",
+    "want": "control (first _eq arg)",
+    "got": "restart (second _eq arg)",
+    "signature": "n_diff=506533/524288 max|delta|=1.334e-02 first_flat_idx=0 n_nan=0",
+    "readers": "numpy.fromfile, torch.load weights_only=False"
+   },
+   "uncertainty": "The SHAPE is characterized exactly (absolute, symmetric, spread, magnitude-independent, 0.66% of one step). The MECHANISM is not: this is what a small nondeterministic perturbation of the post-step weights looks like, and it is equally consistent with any host-side reduction-order difference in the step's arithmetic. It does NOT show a copy failure, a permutation, a scale error or a bf16 round trip -- all four shapes were tested and ruled out. One run. Structural explanations eliminated by the bit analysis: not a truncation, not a bf16 round trip, not confined to low bits, not exponent-level.",
+   "status": "measured",
+   "boundary": "Answers 'do the fp32 masters differ after resume, and in what shape' -- yes, by a small absolute spread that is not a scale, permutation, copy or bf16 artifact, while the optimizer state, RNG and checkpoint identity are bit-identical. Does NOT answer which runner property produces it; no mechanism is claimed. It also does not decide whether one step's 0.66%-of-a-step difference compounds -- this is a single step K, not a training trajectory."
+
   }
  ]
 }
