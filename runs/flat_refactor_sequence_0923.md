@@ -51,11 +51,26 @@ digest. **Known-answer:** the spy goes red on a mutant that sets `ced_kv=True` o
 layer (the exact defect the CED/decoder wiring exists to prevent) and on a mutant that
 drops the `else`. This step is what makes steps 2-3 falsifiable, so it lands first.
 
-### Step 2 — isolate the flat single-pass branch behind one predicate
+### Step 2 — WITHDRAWN (measured after writing it): the extraction is ceremony
 
-Extract `model.py:3172-3186` into `_body_flat(self, x, cu)` and call it from one place.
-No behaviour change; the byte-identical digest must not move. **Known-answer:** a mutant
-that makes the new predicate always false reds every existing flat-config test.
+I wrote this step to "isolate the flat single-pass branch behind one predicate" before
+checking what it would buy. It buys nothing:
+
+- `_body` has **one caller** (`model.py:3266`, `HybridLM.forward`), so "isolate it behind
+  one call site" is already true.
+- The branch is **15 lines** (`model.py:3172-3186`) and moves nowhere: it is read by all
+  **six** flat launchers, every one of which passes `--no-attn_res` and no `--ced`
+  (`v41_gate_0922.sh`, `v41_gate_0911.sh`, `v41_r3_0914.sh`, `v41_smoke_0920k.sh`,
+  `v41_smoke_0911j.sh`, `v42_textbook_ab.sh` — checked per file). Extracting it into a method
+  pays a diff to relocate code that step 3 then deletes.
+- Its `pkg` slot logic is **duplicated** in the AttnRes branch below (`model.py:3188+` sets
+  `pkg` the same way), so an extraction would have to either copy that too or leave the
+  duplication — a refactor whose only output is a second copy.
+
+Per the same reasoning that made step 1 a test rather than a source change: a step earns its
+place by making something falsifiable or removing something. Step 2 does neither, so step 3
+follows step 1 directly. Kept here rather than deleted so the next reader sees it was
+considered and why it was dropped.
 
 ### Step 3 — delete the flat single-pass branch and the flat-only branches that follow
 
