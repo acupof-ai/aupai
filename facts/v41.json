@@ -144,7 +144,7 @@
    "measured": "2026-09-10",
    "source": "scripts/v41_memcount.py output 2026-09-10 (committed this PR); train.py MasterWeights:1040, build_optimizers:1202, Muon.step momentum zeros_like, run_ddp.sh:136 --fp8 only; fp8 persistence checked on the pod torchao build (Float8Linear.weight dtype bf16)",
    "config": {
-    "counter": "scripts/v41_memcount.py (CPU; asserts 3209.5M / 200.8M elements and the GiB totals)",
+    "counter": "scripts/v41_memcount.py as of 2026-09-10, FLAT stack (3209.5M / 200.8M elements); the flat branch was deleted 2026-09-23 and the script now counts CED -- see v41.ced_memory_budget_0923",
     "moe_param_groups_elements_millions": {
      "muon_expert_3d": 3057.65,
      "muon_dense_2d": 117.18,
@@ -166,6 +166,35 @@
    "uncertainty": "AdamW embed state counted as 8 bytes/el (m,v fp32 fused); allocator fragmentation and NCCL/CUDA context (~0.5-1 GiB) excluded from the formula.",
    "status": "measured",
    "boundary": "Fixed terms at 18.2 GiB leave ~77 GiB for activations on a 95.22 GiB H20: the MoE 3.21B model does NOT need expert sharding on fixed terms alone at the p1 config. The binding constraint today is the eager attention-score materialisation (see v41.attention_score_bytes_0910); revisit sharding only if compiled training activations + experts exceed the residual."
+  },
+  {
+   "id": "v41.ced_memory_budget_0923",
+   "value": "Per-rank fixed memory under DDP for the V4.1 CED gate config v41_ced_0923 (3,221,975,040 params, exact meta-device count; scripts/v41_memcount.py asserts the totals after the flat branch was deleted): bf16 weights 6.00 GiB; bf16 grads 6.00 GiB; Muon Nesterov momentum bf16 5.94 GiB (3,057.65M stacked experts + 129.76M dense 2D matrices, the dense group rose 12.58M vs flat because the six decoder W_KV/W_Z pairs are 2D Muon tensors); AdamW m+v fp32 on embeddings+routers 0.25 GiB; fixed total 18.19 GiB/rank. The dense CED variant (ffn 3072, no MoE) is 213,282,816 params. The only delta from the flat 3,209.5M is the twelve unshared d->d decoder projections (6 layers x W_KV+W_Z x 1024^2 = 12,582,912 params); the encoder, MoE, embeddings and every other group are unchanged.",
+   "measured": "2026-09-23",
+   "source": "torch.device('meta') construction of the exact gate cfg and scripts/v41_memcount.py group_bytes grouping; forward bit-identity to the pre-cut code asserted by scripts/test_flat_cut_bitwise.py",
+   "config": {
+    "counter": "scripts/v41_memcount.py (meta-device CPU; asserts 3221975040 / 213282816 and the GiB totals)",
+    "total_params": 3221975040,
+    "dense_total_params": 213282816,
+    "delta_vs_flat_params": 12582912,
+    "delta_source": "6 decoder layers x (W_KV + W_Z) x 1024 x 1024, unshared",
+    "moe_param_groups_elements_millions": {
+     "muon_expert_3d": 3057.648,
+     "muon_dense_2d": 129.761,
+     "embed_head": 33.554,
+     "arq_3d": 0.393,
+     "moe_router_adamw": 0.59,
+     "scalar_1d": 0.029
+    },
+    "weights_bf16_gib": 6.001,
+    "grads_bf16_gib": 6.001,
+    "muon_momentum_bf16_gib": 5.937,
+    "adamw_embed_router_mv_fp32_gib": 0.254,
+    "fixed_total_gib": 18.194
+   },
+   "uncertainty": "Same grouping and exclusions as v41.per_rank_memory_budget_0910 (allocator fragmentation and NCCL/CUDA context excluded); meta-device numel is exact, the GiB are derived.",
+   "status": "measured",
+   "boundary": "The flat branch and Cfg.ced were deleted 2026-09-23; this is the only architecture the current tree builds. The flat 3,209.5M/18.12 GiB numbers stay valid history for the stopped v41_gate_0922 run."
   },
   {
    "id": "v41.attention_score_bytes_0910",

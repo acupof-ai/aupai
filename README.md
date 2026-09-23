@@ -12,7 +12,7 @@ W_KV/W_Z pair. The mask is causal everywhere.
 | | |
 |---|---|
 | size | **3,221,975,040 total / 355,430,400 active** (exact meta-device count at the gate shape) |
-| CED | `--ced --ced_enc_layers 6` — bottom 6 encoder, top 6 decoder, per-decoder-layer W_KV/W_Z |
+| CED | `--ced_enc_layers 6` — bottom 6 encoder, top 6 decoder, per-decoder-layer W_KV/W_Z (CED is the only architecture; no on/off flag) |
 | attention | CSA2: 8-token learned KV entries, indexer top-k, one softmax over global entries + local SWA keys; first two layers SWA-only, window 128; partial RoPE on the last 64 dims (`--rope_dims 64`); no recurrent state |
 | MoE | 48 experts, top-3 routed + 1 shared, expert_ffn 1728, every block (`--moe_layers 0-11`) |
 | numerics | fp8 Float8Linear fwd+bwd, `torch.compile`, `--csa2_win_flash`, no attention residuals; Muon on 2D weights, AdamW on embeddings and 1D |
