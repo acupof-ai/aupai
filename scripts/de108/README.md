@@ -16,7 +16,7 @@ ragged-gather backward are not yet landed; report at gather-backward parity.
   gradients (se/sw/Ve/Vw) max 4.4e-16. Backward rule: feed each flash branch
   `dout_j=c_j*dout` and `dLSE_j=sum_d(dout_j.o_j)`; flash computes
   `p(dV.dout_j - dLSE_j)`, the exact within-branch score grad.
-- `check_ragged_varlen_flash.py` (pod H20 card 7, flash_attn.cute): a varlen stream
+- `check_ragged_varlen_flash.py` (GPU, flash_attn.cute): a varlen stream
   with one 1-query segment per query and ragged per-segment KV lengths matches the
   reference softmax (bf16 maxdiff 0.0078). This is how OOB selected entries are
   excluded: flash dense `mask_mod` is position-only and `gather_kv_indices` is gated to
@@ -92,7 +92,7 @@ post-gate: measured 2.3-3.2x slower than materialized, and the gate uses the de-
 - `check_default_identical.py <candidate_model.py> --ref <baseline_model.py>` — with
   `csa2_joint` unset the layer is byte-identical to the pre-flag baseline. Hashes both
   trees in one process on the current device and compares; no baked constant (the float64
-  hash is environment-dependent: laptop f84c27ff... vs pod 2d9d97cd... are the same
-  default path). Provide the baseline file directly; on a git box
+  hash is environment-dependent: the same default path hashes differently across machines).
+  Provide the baseline file directly; on a git box
   `git show <pre-flag-sha>:model.py > /tmp/ref.py`.
-- `check_gpu_parity.py` — H20 bf16 parity and B4/B8 peak/tok/s.
+- `check_gpu_parity.py` — bf16 parity and B4/B8 peak/tok/s.
