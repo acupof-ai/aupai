@@ -425,8 +425,10 @@ def gate_resume_equivalent_to_uninterrupted():
     other failure is raised untouched. Retry is ON by default (the red happened on an ordinary
     push, so a default-off switch could never fire where it is needed); RESUME_GATE_NO_RETRY=1
     turns it off to force the strict verdict. See tests/v41f/resume_gate_retry.py for the signature,
-    its measured basis, and the fail-closed rules; a rescue writes a `resume_gate_retry` row to
-    runs/friction.jsonl (union-merged) so each tourniquet is countable in main history.
+    its measured basis, and the fail-closed rules. A rescue appends a `resume_gate_retry` row to
+    runs/friction.jsonl (union-merged), but SEE _write_retry_tickt's docstring for where that row
+    actually survives on each path: in CI it dies with the ephemeral runner, and the step summary
+    is the record; locally the append is what merge_main carries into main.
     """
     import subprocess
 
@@ -513,10 +515,14 @@ def gate_resume_equivalent_to_uninterrupted():
             if _this_dump:
                 try:
                     import json as _json
+                    # `_this_dump` holds [None] in strict mode, and a LIST OF ONE NONE IS
+                    # TRUTHY -- so the old `if _this_dump else` never fell through and
+                    # os.path.join(None, ...) raised TypeError, replacing the "fp32 master
+                    # differs" AssertionError that carries the signature. Test the ELEMENT.
                     for label, t in (("want", wf), ("got", gf)):
                         slug = "".join(c if c.isalnum() else "_" for c in tag.lower()).strip("_")
-                        base = os.path.join(_this_dump[0] if _this_dump else dump_root,
-                                            f"{slug}.{label}")
+                        _d = _this_dump[0] if _this_dump else None
+                        base = os.path.join(_d if _d else dump_root, f"{slug}.{label}")
                         open(base + ".bin", "wb").write(
                             t.detach().cpu().contiguous().numpy().tobytes())
                         _json.dump({"tag": tag, "shape": list(t.shape),
@@ -595,6 +601,10 @@ def gate_resume_equivalent_to_uninterrupted():
             rng_ok = rc is not None and rp is not None and torch.equal(rc, rp)
         except Exception:
             rng_ok = None                       # unreadable -> None -> fail-closed
+        # bf16_failed=False is CORRECT HERE, not an omission: this branch is reachable only
+        # because _eq raised on the MASTER compare, which sits before the bf16 compare, so
+        # the bf16 arm never ran; attempt 2 re-runs it. Flipping this to True would make the
+        # known red unmatchable (the signature requires bf16_failed == False).
         obs = rgr.extract_obs(a1, exc1, False, rng_ok)
         match, reason = rgr.retry_signature_matches(obs)
         dirs = [a1]
@@ -609,17 +619,27 @@ def gate_resume_equivalent_to_uninterrupted():
                 raise AssertionError(
                     f"{exc2}\n[resume-retry] attempt 2 ALSO failed after a signature match; "
                     f"this is NOT the known red. attempt1={a1}")
-            try:
-                _write_retry_tickt(rgr, exc1, obs, dirs)
-            except Exception as e:              # a ledger that cannot be written must not fake a pass
-                print(f"  (resume retry: could not write the tickt: {e})", file=sys.stderr)
+            # NOT WRAPPED IN try/except. The writer's own docstring says it: "a ledger that
+            # cannot be written must not fake a pass". The old wrapper printed and fell through to
+            # _report_gate_dumps, so the ONE case the tourniquet exists for -- a rescue with no
+            # surviving record -- went green silently. Let it raise instead.
+            _write_retry_tickt(rgr, exc1, obs, dirs)
         else:
             raise AssertionError(f"{exc1}\n[resume-retry] NOT retried: {reason}")
     elif exc1:
         raise AssertionError(exc1)
 
     if dump_root:
-        _report_gate_dumps(dump_root, subdir="" if (dump_root and not own_dump) else a1)
+        # WHICH ATTEMPT TO CONFIRM. On a rescue, the green confirmation must read the bytes
+        # attempted 2 produced, not attempt 1's red ones. In the external-GATE_DUMP_DIR layout
+        # attempt 1's workers wrote straight into dump_root, so `subdir=""` pointed the post-check
+        # at the RED run; it happened to pass only because the one allowed signature is
+        # bit-exact in the optimizer triple and RNG, which is a property of today's red rather
+        # than of a green run. Name attempt 2 whenever a retry happened.
+        _sub = "" if (dump_root and not own_dump) else a1
+        if retried:
+            _sub = dirs[-1]
+        _report_gate_dumps(dump_root, subdir=_sub)
     print("  resume: save/load mid-run bit-identical to control; fresh optim diverges"
           + ("  (after one signature-gated retry; see runs/friction.jsonl)" if retried else ""))
     if own_dump:
@@ -645,9 +665,14 @@ def gate_resume_retry_signature():
 def _write_retry_tickt(rgr, exc1, obs, dirs):
     """Append the rescued red to the union-merged ledger, and mirror it to the CI step summary.
 
-    The ledger is the PRIMARY record: it lands in main's history and is greppable there, whereas
-    the step summary dies with the run. Written here by the test process (never by a workflow
-    action pushing a commit), so it reaches main the same way every other ledger row does.
+    WHERE EACH HALF SURVIVES, stated as measured rather than as hoped. In CI the test runs in an
+    ephemeral actions checkout and ci.yml has no commit/push step back to main, so the local
+    append DIES WITH THE RUNNER. On the CI path the surviving record is the GITHUB_STEP_SUMMARY
+    line plus the attempt-1 dump artifact, and the ledger row materializes only if the summary is
+    harvested into runs/friction.jsonl afterwards. For a LOCALLY-run rescue (a session's worktree,
+    which is how every other ledger row gets to main) the append is the record and merge_main
+    carries it. An earlier version of this docstring claimed the row lands in main's history on
+    both paths; the CI half of that was false.
     """
     import json
     row = rgr.tickt_row(exc1, obs, os.environ.get("GITHUB_RUN_ID"), os.environ.get("GITHUB_SHA"),
