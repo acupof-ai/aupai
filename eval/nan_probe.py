@@ -26,10 +26,12 @@ claim_my_cards("nan_probe", note="FP8 NaN probe")
 # depends on activation and gradient magnitudes, so random tokens give a distribution the
 # model never sees and a null on them would not answer the claim.
 #
-# The original inputs -- data/sft/sft_v3.pt and ckpt_k3-mla_2b_step2000.pt -- no longer
-# exist on the pod, and no surviving SFT pack can replace them: every data/sft/*.pt there
-# is vocab 7964216d836954e9 (k5, Aug 28) while every live checkpoint is 0bce3584bc24f255.
-# Running that pair is the defect vocab_id exists to refuse.
+# The original pair cannot be run: data/sft/sft_v3.pt is gone (no /work/aupai/data/sft/ at
+# all), and no surviving SFT pack can replace it -- every data/sft/*.pt there is vocab
+# 7964216d836954e9 (k5, Aug 28) while every live checkpoint is 0bce3584bc24f255, and running
+# that pair is the defect vocab_id exists to refuse. The OTHER input named here,
+# ckpt_k3-mla_2b_step2000.pt, is still on the pod at /data00/ (read 2026-09-23); an earlier
+# version of this comment said both were gone, which was wrong about that one.
 #
 # tokens_sample.pt is a flat int32 token stream, 1,317,522 tokens, stamped 0bce3584bc24f255
 # (verified: SIX caches carry an EMPTY .vocab stamp -- code, en, math, textbook, web_hq,
