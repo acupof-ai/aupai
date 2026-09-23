@@ -322,12 +322,11 @@ def gate_refresh_does_not_touch_alias():
 
 
 def _apply_diag_thread_env():
-    """DIAGNOSTIC-ONLY thread/engine knob for the runner bimodal investigation (#549). It is a
-    strict no-op unless the non-default env is set, so the required gate is unchanged in normal
-    CI. GATE_OMP pins the intra-op pool AND OMP_NUM_THREADS (the subprocess env below reads it,
-    default "2"); GATE_ONEDNN=0 disables the oneDNN/MKLDNN engine before any tensor op. Used to
-    tell a oneDNN code-path selection apart from plain multithreaded reduction under load.
-    Never a production setting: threads=1 / oneDNN-off are diagnostic arms, not a fix."""
+    """Thread/engine knobs. GATE_OMP pins the intra-op pool AND OMP_NUM_THREADS (the subprocess
+    env below reads it; default "1" since 2026-09-23, the required gate's own default after the
+    oneDNN K-reduction flake); GATE_ONEDNN=0 disables the oneDNN/MKLDNN engine before any tensor
+    op and is the verification matrix's revert arm, not a normal-CI setting. Used to tell a
+    oneDNN code-path selection apart from plain multithreaded reduction under load (#549)."""
     omp = os.environ.get("GATE_OMP")
     if omp:
         os.environ["OMP_NUM_THREADS"] = omp
@@ -442,9 +441,21 @@ def gate_resume_equivalent_to_uninterrupted():
     sys.path.insert(0, str(_HERE))
     import resume_gate_retry as rgr
 
-    # default "2" keeps the required gate byte-identical; GATE_OMP lets the #549 diagnostic
-    # arms vary the worker thread count, and GATE_* passes through dict(os.environ).
-    env = dict(os.environ, OMP_NUM_THREADS=os.environ.get("GATE_OMP", "2"))
+    # Worker thread/engine pinning. The required gate defaults to ONE intra-op thread (2026-09-23):
+    # the intermittent red is a runner-persistent oneDNN bf16 brg_matmul OpenMP K-reduction under
+    # 2-thread CPU oversubscription on Intel-class CI hosts (causal matrix: oneDNN-on/t2 red 6/6,
+    # oneDNN-off and t1 0/6; same sha greens on a different runner). One thread removes the
+    # cross-thread combine WITHOUT relaxing the gate -- bit-equality is still required, so any real
+    # save/load defect still reds. GATE_OMP restores the old default for the verification matrix;
+    # MKL/OPENBLAS pin the bundled-GNU-thread BLAS pools and MKL_DYNAMIC=FALSE stops runtime thread
+    # re-decisions (that flag otherwise only fires on the torch.set_num_threads API path).
+    env = dict(
+        os.environ,
+        OMP_NUM_THREADS=os.environ.get("GATE_OMP", "1"),
+        MKL_NUM_THREADS=os.environ.get("GATE_MKL", os.environ.get("GATE_OMP", "1")),
+        OPENBLAS_NUM_THREADS=os.environ.get("GATE_OPENBLAS", os.environ.get("GATE_OMP", "1")),
+        MKL_DYNAMIC=os.environ.get("GATE_MKL_DYNAMIC", "FALSE"),
+    )
     # GATE_DUMP_DIR (set by the CI upload step / a debugger) points the workers at one root and
     # switches on the save/load instrumentation; unset leaves the gate unchanged and cheap.
     dump_root = os.environ.get("GATE_DUMP_DIR")
