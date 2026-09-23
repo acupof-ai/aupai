@@ -113,6 +113,38 @@ def _selftest():
                 fails.append(f"{label}: raised {type(e).__name__} rather than the refusal, so this "
                              f"case proves nothing: {str(e)[:140]}")
 
+        # THE BUILDER'S EXEMPTION, both directions. allow_build=True is how a builder says
+        # "I am constructing this domain for the first time", which is the one legitimate
+        # way to find the leaf absent under a configured dir. It must let the build through
+        # AND it must not weaken the default: the same world with allow_build left False is
+        # the refusal above, asserted again here so the pair cannot drift apart.
+        #
+        # The exemption is a PARAMETER and not a marker file on purpose. A zero-byte leaf
+        # written at the cache path is invisible to the guard's os.path.exists, so it opens
+        # the training path too: measured 2026-09-20, a leaf present made the refusal NOT
+        # fire and the call proceeded to "tokenizing <domain>". That is exactly the
+        # dropped-mount rebuild this file exists to prevent.
+        os.environ["AUPAI_TOKEN_CACHE_DIR"] = os.path.join(d, "builder_dir")
+        os.makedirs(os.path.join(d, "builder_dir"))
+        try:
+            train._domain_seqs(dom, _Tok(), is_main=True, ddp=False, workers=1)
+            fails.append("allow_build DEFAULT: no refusal with a configured dir and an absent "
+                         "leaf -- the exemption leaked into the default path")
+        except RuntimeError as e:
+            if "refusing to retokenize" not in str(e):
+                fails.append(f"allow_build DEFAULT: raised {str(e)[:100]} rather than the refusal")
+        except Exception as e:  # noqa: BLE001
+            fails.append(f"allow_build DEFAULT: raised {type(e).__name__} rather than the refusal: "
+                         f"{str(e)[:100]}")
+        try:
+            train._domain_seqs(dom, _Tok(), is_main=True, ddp=False, workers=1, allow_build=True)
+        except RuntimeError as e:
+            if "refusing to retokenize" in str(e):
+                fails.append("allow_build=True: the refusal still fired, so a builder can never "
+                             "construct a new domain under a configured cache dir")
+        except Exception:
+            pass  # the stub tokenizer, not the refusal -- this case is about the refusal only
+
         # THE NEGATIVE CONTROL. Unset, the same absent cache must proceed to tokenize. The call is
         # allowed to fail LATER on the stub tokenizer -- what matters is that it does not fail with
         # the refusal, which would mean a fresh checkout can never build its first cache.

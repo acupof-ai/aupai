@@ -2787,18 +2787,55 @@ CI_SELFTEST_EXCLUDE = {
 
 
 def _ci_explicit_paths(ci_src):
-    """Repo-relative selftest paths invoked by an explicit `- run:` line in ci.yml.
+    """Repo-relative selftest paths invoked by an explicit step in ci.yml.
 
     These are COVERED in CI by their dedicated step (often heavier: v41f suites,
     harness --selftest). The enumerating driver must not re-run them (double run + timeout);
     they are a subset of covered, never an uncovered fourth bucket.
+
+    NOT pyyaml. It parses YAML correctly and is NOT installed in the CI image (ci.yml:16
+    installs ruff tokenizers numpy pytest scipy detect-secrets transformers; no pyyaml), so
+    `import yaml` would pass on a laptop and turn this check into a traceback on the runner.
+    A textual scan is the right tool here anyway: this reads a file, it does not validate one.
+
+    THE MATCH IS PER-STEP, NOT PER-LINE, and that is the fix (de, 2026-09-19). The version
+    before it required `- run:` on ONE line:
+        re.finditer(r"-\\s*run:\\s*(.+)$", ci_src, re.M)
+    A step written in the multi-key form puts `- name:` first and `run:` LAST, on its own
+    line, so the regex never saw it:
+        - name: train checkpoint gates
+          id: train_ckpt
+          env: {GATE_DUMP_DIR: ...}
+          run: python tests/v41f/test_p1_train_ckpt.py
+    Measured: tests/v41f/test_p1_train_ckpt.py was therefore never in the explicit bucket, so
+    `harness ci-selftests` re-ran it inside the driver for another 222s at the end of every
+    check job -- the single most expensive duplicate in the step, and invisible because the
+    file *looks* like it has a dedicated CI step.
+
+    The docstring always said "invoked by an explicit step"; the implementation said "invoked
+    on a `- run:` line". Those differ exactly when a step has a name, an id or an env, which
+    is when the step is doing something worth keeping -- and ci.yml:49-56 keys the
+    resume-equality dump upload on `steps.train_ckpt.outcome`, so the tempting fix (delete
+    the step, let the driver own it) would have silently removed the diagnostic dump taken
+    when that gate goes red. Fix the predicate, not the artifact.
+
+    Steps are found by the `- ` list marker at a consistent indent, then every line of the
+    step body is scanned, so `run:` may sit at any position within the step.
     """
     explicit = set()
-    for m in re.finditer(r"-\s*run:\s*(.+)$", ci_src, re.M):
-        for cand in re.findall(r"[\w./-]+\.(?:py|sh)", m.group(1)):
-            cand = cand.lstrip("./")
-            if "/" in cand and cand.endswith((".py", ".sh")):
-                explicit.add(cand)
+    # Split on the step marker; each chunk is one step's body. `^\s*- ` also matches the
+    # nesting inside `with:`/`strategy:` lists, but those chunks simply hold no `run:`, so
+    # they contribute nothing rather than a false positive.
+    for chunk in re.split(r"^\s*-\s", ci_src, flags=re.M)[1:]:
+        if not re.search(r"^\s*run:", chunk, re.M):
+            continue
+        for line in chunk.splitlines():
+            if not re.match(r"^\s*run:", line):
+                continue
+            for cand in re.findall(r"[\w./-]+\.(?:py|sh)", line):
+                cand = cand.lstrip("./")
+                if "/" in cand and cand.endswith((".py", ".sh")):
+                    explicit.add(cand)
     return explicit
 
 
@@ -4279,7 +4316,43 @@ def check_main_advances_by_ancestry(root):
                  # recovery, an update-ref, was retracted before anyone acted on it for exactly
                  # the reason this set exists: it is the sideways move the check catches.)
                  ("9066a3349b25757c4388e92dc6daf6b3cdaf112c",
-                  "437374e8d73d1d9492ad65031769a5576ca06f40")}
+                  "437374e8d73d1d9492ad65031769a5576ca06f40"),
+                 # 2026-09-21: controller (bc) authorized it and de executed it -- the FIRST
+                 # time this repo records an update-ref recovery as ordered rather than
+                 # unilateral. de's `merge_main.sh de-review-623` wrote its CAS 3785d78c on the
+                 # local ref and its push was refused non-fast-forward because origin had moved
+                 # when #623 merged, leaving main 8 behind / 2 ahead. The pair below is that
+                 # ref move: 3785d78c -> 99cdb7e0 (origin/main at the time).
+                 # WHERE THE CONTENT SURVIVES, stated exactly: all four local-only commits are
+                 # on origin/de-review-623 and each is confirmed an ancestor of it
+                 # (4a1163fb #624 approval row, 0a7dcbd8 #619 approval row, e320a0db #619
+                 # withdrawal row, 3785d78c the merge CAS), and the merge's second parent
+                 # 269e4f4a IS an ancestor of origin/main, so the discarded side carries only
+                 # that branch's own work returning by re-running merge_main. Relative to the
+                 # merge base the discarded side holds exactly runs/review.jsonl lines.
+                 # THE LEGAL FORM IS EXACTLY ONE, and it is narrow: destination = the current
+                 # value of origin/main, AND every commit being discarded is reachable from a
+                 # NAMED REMOTE BRANCH. Anything else -- a destination that is not origin/main,
+                 # or a discarded commit that exists only in this clone -- is the §245 forced
+                 # ref write and must still FAIL.
+                 # WHY THIS NOTE IS THE WHOLE PROTECTION: de proposed this same recovery on
+                 # 2026-09-18 and retracted it, for exactly the reason this set exists ("it is
+                 # the sideways move the check catches") -- and then proposed it again on
+                 # 2026-09-21 having forgotten the retraction. An exemption whose comment does
+                 # not carry that history lets the third recurrence look like the first.
+                 #
+                 # `git fetch origin main:main` IS NOT AN ALTERNATIVE HERE, and this is measured
+                 # rather than argued: on a genuinely diverged ref the fetch is REJECTED --
+                 # built as a real fixture (local-only commit Y on refs/heads/main, remote Z on
+                 # top of X, refs/heads/main checked out in no worktree), `git fetch origin
+                 # main:main` exits 1 with `! [rejected] main -> main (non-fast-forward)` and
+                 # the ref does not move. It works only for the fast-forward case -- which is
+                 # what the selftest above exercises, and why the selftest does not cover this.
+                 # So the recovery for a DIVERGENCE cannot be a fetch; it can only be a
+                 # controlled ref write, which is why the residual risk is real and why the
+                 # form above is stated as narrowly as it is.
+                 ("3785d78c25a7033dcf6adee663ce98c81156b223",
+                  "99cdb7e03158b2d73dcbdf720bf3724ae672ab1a")}
     jumps = []
     unsigned = []
     for ln in lines:
@@ -14662,9 +14735,27 @@ def _ids_at_every_ref(owner, root=None):
             if not line.strip():
                 continue
             try:
-                rid = json.loads(line).get("id", "")
+                row = json.loads(line)
             except json.JSONDecodeError:
                 continue  # a torn line at some ref is not worth failing an allocation over
+            rid = row.get("id", "")
+            # A bare number is restored by json.loads as an int, and pat.fullmatch then
+            # raises TypeError -- one such row anywhere in the clone (`{"id": 47, "owner":
+            # "de"}` on a departed session's branch) took out `task add/done/reopen/drop`
+            # and `friction add` for EVERY session in EVERY worktree, because this function
+            # is the allocation path and it scans every ref.
+            #
+            # TOLERATED IS NOT IGNORED. Such a row records a real allocation: it must enter
+            # `seen` or the id gets handed out twice. `str(rid)` alone does NOT do that --
+            # "47" matches no `<owner>-(\d+)$`, so it silently drops the id and the fix
+            # becomes the ignore it was meant to avoid. The `owner` field is what makes it
+            # attributable, so an int is counted when its row declares this owner, and
+            # ignored when it does not (another owner's ids are a different namespace).
+            # Every row in the register carries `owner` (723,656 checked, 0 missing).
+            if isinstance(rid, int):
+                if row.get("owner") == owner:
+                    seen.add(rid)
+                continue
             m = pat.fullmatch(rid or "")
             if m:
                 seen.add(int(m.group(1)))
@@ -21868,8 +21959,9 @@ def cmd_monitor(argv):
               f"armed on the wrong run writes that run's end row.", file=sys.stderr)
         return 2
     mine = [r for r in rows if str(r.get("started") or "") == a.started]
-    if any(r.get("status") in ("ok", "fail", "retracted") for r in mine):
-        st = next(r.get("status") for r in mine if r.get("status") in ("ok", "fail", "retracted"))
+    if any(r.get("status") in ("ok", "fail", "retracted", "score-blocked") for r in mine):
+        st = next(r.get("status") for r in mine
+                  if r.get("status") in ("ok", "fail", "retracted", "score-blocked"))
         print(f"REFUSING: {a.attach} started {a.started} already has a terminal row ({st}), so a "
               f"monitor would settle and exit on its first pass.", file=sys.stderr)
         return 2
@@ -25702,9 +25794,31 @@ def _selftest_id_allocation_sees_every_ref():
     g("checkout", "-q", "main")
     assert _ids_at_every_ref("own", root=d) == {7, 8}, "a ref with no register must not break the scan"
 
+    # A BARE-NUMBER id must not kill the scan, and must not be dropped either. Measured
+    # 2026-09-21: `{"id": 47, "owner": "de"}` on a departed session's branch raised
+    # TypeError and took down every session's `task`/`friction`. It is a real allocation,
+    # so it must enter `seen`; `str(rid)` alone would let it match nothing and vanish.
+    # Two rows, because "counted" and "not counted" are the two halves of one criterion:
+    # our own int counts, and another owner's int does not (a different id namespace).
+    _write_tasks(_read_tasks(p) + [
+        {"id": 47, "owner": "own", "state": "open", "task": "our int"},
+        {"id": 99, "owner": "someone-else", "state": "open", "task": "their int"},
+    ], p)
+    g("add", "-A"); g("commit", "-q", "-m", "rows whose ids are bare numbers")
+    ints = _ids_at_every_ref("own", root=d)
+    # THE MUTATIONS for this leg live in the equality, not below it. Two variants do not
+    # raise and lose a real allocation -- `continue` (ignore) and `str(rid or "")` (the
+    # first proposal, which makes "47" match no `<owner>-(\d+)$`): both produce {7, 8}, so
+    # a criterion of "does not raise" would pass them. Only a set equality separates them
+    # from the fix, which is why the assertion above is `==` and not an absence of
+    # exceptions. (genA, 2026-09-21: the first version of this leg followed that line with
+    # `assert 47 not in {7, 8}` -- a constant, true at parse time, judging nothing.)
+    assert ints == {7, 8, 47}, f"an int id of THIS owner must be counted, another's must not: {ints}"
+
     shutil.rmtree(d, ignore_errors=True)
     print("  ids: an unmerged peer allocation at another ref is seen (own-9, not own-8); the "
-          "tree-only max reproduces the collision; a ref with no register is skipped")
+          "tree-only max reproduces the collision; a ref with no register is skipped; a "
+          "bare-number id counts for its own owner and is skipped for another's")
 
 
 def _selftest_auto_resume():
@@ -27292,6 +27406,12 @@ _FROZEN_KEYS = (
     "csa2", "csa2_m", "csa2_top_k", "csa2_n_win", "csa2_indexer_heads", "csa2_indexer_dim",
     "csa2_win_flash",
     "csa2_modes", "rope_dims", "n_swa_only_layers",  # V4.1 flat stack (fb, 2026-09-10)
+    # ARCHITECTURE, user order 2026-09-22: CED replaces where a decoder layer's global KV comes
+    # from and adds a per-decoder-layer W_KV/W_Z, so a resume that disagreed on it would be a
+    # different model under one run's name -- head_mixed's argument exactly. ced_enc_layers is
+    # the magnitude to match: it moves the encoder/decoder SPLIT, so the same layer would be an
+    # encoder in one segment and a decoder in the next, changing which parameters exist at all.
+    "ced", "ced_enc_layers",
     # b0-17: untie_head acts only at __init__ (model.py:359) -- the arm's weights carry the
     # architecture and a resume silently ignores the flag, which is the drift this set catches.
     # head_lr is NOT here: it is the A/B knob that exists to take two values (1e's ruling
@@ -28347,7 +28467,7 @@ def settled():
                 r = json.loads(line)
                 if r.get("name") != name:
                     continue
-                if r.get("status") not in ("ok", "fail", "retracted"):
+                if r.get("status") not in ("ok", "fail", "retracted", "score-blocked"):
                     continue
                 # (name, started), NOT name alone. Names repeat: a relaunch under the same
                 # name is normal, and on 2026-09-05 the relaunched b0_mem_m1's monitor read
