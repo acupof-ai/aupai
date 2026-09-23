@@ -1203,3 +1203,6 @@
 {"name": "v41ced", "step": 5900, "usage_frac": 1.0, "entropy_norm": 0.9895847786816776, "load_gini": 0.14895212650299072, "tokens": 235929600, "window_steps": 600, "ts": "2026-09-23 10:09:23", "n_routed": 48, "top_k": 3}
 {"name": "v41ced", "step": 6000, "usage_frac": 1.0, "entropy_norm": 0.989300551192727, "load_gini": 0.1492769718170166, "tokens": 235929600, "window_steps": 600, "ts": "2026-09-23 10:15:59", "n_routed": 48, "top_k": 3}
 {"name": "v41ced", "step": 6100, "usage_frac": 1.0, "entropy_norm": 0.9907445992823102, "load_gini": 0.14391827583312988, "tokens": 235929600, "window_steps": 600, "ts": "2026-09-23 10:22:15", "n_routed": 48, "top_k": 3}
+{"name": "v41ced", "step": 6200, "usage_frac": 1.0, "entropy_norm": 0.9878691285929021, "load_gini": 0.16044867038726807, "tokens": 235929600, "window_steps": 600, "ts": "2026-09-23 10:28:34", "n_routed": 48, "top_k": 3}
+{"name": "v41ced", "step": 6300, "usage_frac": 1.0, "entropy_norm": 0.9888111133043865, "load_gini": 0.15509963035583496, "tokens": 235929600, "window_steps": 600, "ts": "2026-09-23 10:34:43", "n_routed": 48, "top_k": 3}
+{"name": "v41ced", "step": 6400, "usage_frac": 1.0, "entropy_norm": 0.991798735295502, "load_gini": 0.1315516233444214, "tokens": 235929600, "window_steps": 600, "ts": "2026-09-23 10:41:12", "n_routed": 48, "top_k": 3}
