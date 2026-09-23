@@ -2793,10 +2793,17 @@ def _ci_explicit_paths(ci_src):
     harness --selftest). The enumerating driver must not re-run them (double run + timeout);
     they are a subset of covered, never an uncovered fourth bucket.
 
-    NOT pyyaml. It parses YAML correctly and is NOT installed in the CI image (ci.yml:16
-    installs ruff tokenizers numpy pytest scipy detect-secrets transformers; no pyyaml), so
-    `import yaml` would pass on a laptop and turn this check into a traceback on the runner.
-    A textual scan is the right tool here anyway: this reads a file, it does not validate one.
+    NOT pyyaml. It parses YAML correctly and is NOT installed in the CI image. The check
+    job's install step is the one beginning `pip install ruff tokenizers`, and it carries no
+    pyyaml -- so `import yaml` would pass on a laptop and turn this check into a traceback on
+    the runner. A textual scan is the right tool here anyway: this reads a file, it does not
+    validate one.
+
+    WHERE "THE CI IMAGE" IS AMBIGUOUS, AND WHY THE INSTALL STEP IS NAMED BY CONTENT: this
+    workflow has TWO pip sets. The `check` job installs ruff/tokenizers/numpy/pytest/scipy/
+    detect-secrets/transformers; the `diag-resume` job installs only numpy + torch. A reader
+    coming from diag-resume would conclude pyyaml's absence means nothing here. Cite the step
+    by its command line, never by a line number -- see the note in `_ci_line_number_citations`.
 
     THE MATCH IS PER-STEP, NOT PER-LINE, and that is the fix (de, 2026-09-19). The version
     before it required `- run:` on ONE line:
@@ -2814,10 +2821,10 @@ def _ci_explicit_paths(ci_src):
 
     The docstring always said "invoked by an explicit step"; the implementation said "invoked
     on a `- run:` line". Those differ exactly when a step has a name, an id or an env, which
-    is when the step is doing something worth keeping -- and ci.yml:49-56 keys the
-    resume-equality dump upload on `steps.train_ckpt.outcome`, so the tempting fix (delete
-    the step, let the driver own it) would have silently removed the diagnostic dump taken
-    when that gate goes red. Fix the predicate, not the artifact.
+    is when the step is doing something worth keeping -- and the `upload resume-equality dump
+    on gate failure` step keys the dump upload on `steps.train_ckpt.outcome`, so the tempting
+    fix (delete the step, let the driver own it) would have silently removed the diagnostic
+    dump taken when that gate goes red. Fix the predicate, not the artifact.
 
     Steps are found by the `- ` list marker at a consistent indent, then every line of the
     step body is scanned, so `run:` may sit at any position within the step.
@@ -5619,7 +5626,7 @@ def _broken_launch_line_oom():
 
 
 def _ckpt_names(text):
-    """Concrete checkpoint filenames named in a fact's source/config text.
+    r"""Concrete checkpoint filenames named in a fact's source/config text.
 
     Brace notation `X.pt.step{1500,2000,2500}` is an explicit enumeration and is
     expanded; everything else is exact-match only. A fact that shortens a name
@@ -5666,7 +5673,7 @@ def _ckpt_names(text):
 
 
 def _parse_ckpt_listing(path):
-    """-> (listing_date, keep_set, {candidate: (mtime, section)}).
+    r"""-> (listing_date, keep_set, {candidate: (mtime, section)}).
 
     KEEP lines carry series shorthand (`X.pt.step2000, .pt.step2500`); a
     continuation attaches after the bare core OR after the `.pt` boundary, and
@@ -12394,6 +12401,94 @@ def _doc_data_paths(root):
     return out
 
 
+def check_ci_line_number_citations(root):
+    """No source file cites a ci.yml LOCATION as `ci.yml:<line>`; cite content instead.
+
+    THE DEFECT THIS PREVENTS IS DRIFT, NOT TYPOGRAPHY. Measured 2026-09-21: scripts/harness.py
+    held three citations of the form `ci.yml` + `:` + a line number, and ALL THREE named the
+    wrong line, while ALL THREE were correct when written. Two independent pushes moved them:
+
+        cited line   actual   drifted by   cause
+        16           31       +15          the `concurrency:` block added 2026-09-21
+        49-56        64-71    +15          same block
+        54           139      +85          +70 as CI grew, THEN +15 from that block
+
+    The third is the one that matters: a citation can survive SEVERAL independent drifts, so
+    "check the offset and fix it by that amount" is wrong on the next change. A line number is
+    a coordinate into a file that other work edits; the property the author meant was "the step
+    that installs the check job's deps" or "the step that runs harness --selftest", and that is
+    what an anchor string expresses.
+
+    WHAT THIS CHECK CANNOT SEE: it asserts the FORM, not that an anchor's target still exists.
+    An anchor whose step was renamed rots exactly as a line number did, and nothing here catches
+    it -- only a reader following it would. That is the honest ceiling of a text-level guard, and
+    it is still the right trade: a renamed step is a deliberate act with a diff, while a line
+    number drifts from changes that never mentioned it.
+
+    SCOPE, and why `docs/audits/` is exempt. A LIVE citation must name something a reader can
+    find today, so it is checked. A DATED audit is a record of what was true at its own sha
+    (`deletion_audit_2026-09-02.md` is `status: recorded`, `main 6814a72`) -- its citations are
+    part of the evidence for the ruling it made, and rewriting them to today's line numbers would
+    falsify the record while making it look current. The line number is the correct form THERE.
+    The exemption is the directory, not the frontmatter: `status:` is `measured` on 8 of the 16
+    audits, so it cannot carry this distinction."""
+    pat = re.compile(r"ci\.yml:(\d+(?:-\d+)?)")
+    skip_dirs = {".git", "third_party", "node_modules", os.path.join("docs", "audits")}
+    hits = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if os.path.join(os.path.relpath(dirpath, root), d).lstrip("./") not in skip_dirs and d not in (".git", "third_party", "node_modules")]
+        rel_dir = os.path.relpath(dirpath, root)
+        if rel_dir in skip_dirs:
+            dirnames[:] = []
+            continue
+        for fn in filenames:
+            if not fn.endswith((".py", ".sh", ".md")):
+                continue
+            fp = os.path.join(dirpath, fn)
+            try:
+                src = open(fp, encoding="utf-8").read()
+            except (OSError, UnicodeDecodeError):
+                continue
+            # NO stripping of docstrings or comments: that is where prose citations LIVE. Two
+            # of the three real defects this check was built from sat in docstrings and the third
+            # in a `#` comment, so a stripper makes the check blind to its own target class. The
+            # rule's own documentation therefore names the banned form without writing it --
+            # see the table above, which says "line 16" rather than the full token.
+            for m in pat.finditer(src):
+                line = src[: m.start()].count("\n") + 1
+                rel = os.path.relpath(fp, root)
+                hits.append(f"{rel}:{line} ci.yml:{m.group(1)}")
+    if hits:
+        return FAIL, (
+            f"{len(hits)} live citation(s) name a ci.yml LINE NUMBER, which drifts when the file "
+            f"is edited: {hits[:5]}. Cite the step by its command text instead (e.g. `the step "
+            f"running pip install ruff tokenizers`). dated docs/audits records are exempt."
+        )
+    return PASS, "no ci.yml line-number citations in live files; anchors are content-based"
+
+
+def _broken_ci_line_number_citations():
+    """The REAL scripts/harness.py with one content anchor swapped BACK to a line number --
+    mutated, not hand-written, so the world cannot disagree with the check's own assumptions.
+    Only the one line is changed; the other anchors stay, so a failing world cannot pass by
+    tripping some unrelated rule."""
+    import shutil
+
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "scripts", "harness.py")
+    dst = os.path.join(d, "scripts", "harness.py")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    shutil.copy(src, dst)
+    s = open(dst, encoding="utf-8").read()
+    anchor = "the `upload resume-equality dump\n    on gate failure` step keys the dump upload"
+    assert anchor in s, "real harness.py no longer carries the dump-upload anchor; update _broken_ci_line_number_citations"
+    # COMPOSED, not written literally: a literal here is itself a match, and the check would
+    # then report this builder instead of the world it built.
+    cite = "ci." + "yml:49-56 keys the dump upload"
+    open(dst, "w", encoding="utf-8").write(s.replace(anchor, cite))
+    return d
+
+
 def check_doc_commands(root):
     """Every .sh/.py cited in an AGENTS.md command block exists, and every data/ path
     cited in any doc exists. A documented path that does not resolve is worse than none:
@@ -16905,7 +17000,7 @@ def _broken_train_cite_targets():
 
 
 def _selftest_train_cite_abbreviated_form():
-    """The branch _broken_train_cite_targets cannot reach: the ABBREVIATED `:NNN` citation.
+    r"""The branch _broken_train_cite_targets cannot reach: the ABBREVIATED `:NNN` citation.
 
     Registered separately because one world exercises one branch. The single world strips a
     sha from a QUALIFIED citation, so the abbreviated reader never runs in it -- deleting
@@ -20421,6 +20516,13 @@ CHECKS = [
         _broken_pod_drift,
     ),
     (
+        "ci_line_number_citations",
+        "no source file cites a ci.yml location as `ci.yml:<line>`",
+        "three `ci.yml:<line>` citations in harness.py all named the wrong line while all three were correct when written; one had survived two independent drifts (+70 then +15), so a coordinate that other work can move is not a citation",
+        check_ci_line_number_citations,
+        _broken_ci_line_number_citations,
+    ),
+    (
         "doc_commands_exist",
         "every .sh/.py cited in an AGENTS.md command block exists",
         "a documented command that does not run is worse than none",
@@ -20900,6 +21002,7 @@ EVIDENCE = {
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
     "unreached_files_ruled": "repo", "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo", "doc_flags_parse": "repo",
+    "ci_line_number_citations": "repo",
     "prereg_citations_current": "repo",
     "prereg_amendments_dated": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
@@ -26638,7 +26741,8 @@ def _demo(only=None):
     # all of them unreachable. MEASURED 2026-09-06: f93f99f6 (10:17Z) made fp_filters raise on a
     # missing PIPELINE_FILTERS member; _broken_corpus_filters_fp wrote only pass1_garbage.py, so
     # `corpus_filters_fp raised instead of reporting FAIL` landed in `untested` and aborted here.
-    # CI ran `harness.py --selftest` on every push (ci.yml:54) and was red from that commit until
+    # CI ran `harness.py --selftest` on every push (the `python scripts/harness.py --selftest`
+    # step) and was red from that commit until
     # this one -- the red existed and named the right check, and it hid 39 selftests behind a
     # single line nobody read as "the rest did not run".
     #
