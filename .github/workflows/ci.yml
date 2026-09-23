@@ -237,16 +237,27 @@ jobs:
   # revert the GATE_OMP=1 default and gate with GATE_ONEDNN=0 instead.
   verify-resume-t1:
     runs-on: ubuntu-latest
+    # Its own run-id group with cancel-in-progress false: the experiment is 6-10 SEPARATE
+    # workflow_dispatch runs accumulated on independent runners, and the workflow-level group
+    # cancels an in-progress dispatch when the next one fires. Per-run-id means a dispatch never
+    # cancels and is never cancelled; push/PR runs keep the shared group untouched.
+    concurrency:
+      group: verify-resume-${{ github.run_id }}
+      cancel-in-progress: false
     continue-on-error: true
     if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
         include:
-          # One independent pair per cell per dispatch. The hypothesis: only t2+dnn-on reds.
-          - { arm: "t1_dnn_on",  gate_omp: "1", onednn: "" }
-          - { arm: "t2_dnn_on",  gate_omp: "2", onednn: "" }
-          - { arm: "t1_dnn_off", gate_omp: "1", onednn: "0" }
+          # One independent pair per cell per dispatch. The hypothesis: only OMP t2+dnn-on reds.
+          # mkl is explicit on every cell: an unset GATE_MKL reaches the worker chain as the
+          # empty string, not as "unset", so the pools would be ambiguous instead of pinned.
+          - { arm: "t1_dnn_on",  gate_omp: "1", onednn: "", mkl: "1" }
+          - { arm: "t2_dnn_on",  gate_omp: "2", onednn: "", mkl: "2" }
+          - { arm: "t1_dnn_off", gate_omp: "1", onednn: "0", mkl: "1" }
+          # OMP t2 (oneDNN OpenMP combine stays 2-way) while ONLY the MKL pool is pinned to 1:
+          # a green here says the oneDNN OpenMP combine, not the MKL pool, is the carrier.
           - { arm: "mkl1_t2",    gate_omp: "2", onednn: "", mkl: "1" }
     steps:
       - uses: actions/checkout@v4
@@ -266,8 +277,20 @@ jobs:
           GATE_MKL: "${{ matrix.mkl }}"
           GATE_DUMP_DIR: ${{ runner.temp }}/verify_resume
         run: |
+          set -o pipefail
+          # out is a POSITIONAL arg (diag_resume_bimodal.py argparse), not --out. The python rc
+          # is checked explicitly because gate_once always returns 0 on a red pair (it saves the
+          # signature for the artifact) -- but a CRASH (bad args, import, the gate harness
+          # itself failing) must fail this step, and with pipefail `| tee` cannot hide it.
+          mkdir -p "${{ runner.temp }}/verify_resume"
           set +e
-          python tests/v41f/diag_resume_bimodal.py --gate-once --out "${{ runner.temp }}/verify_resume" | tee gateonce.log
+          python tests/v41f/diag_resume_bimodal.py --gate-once "${{ runner.temp }}/verify_resume" | tee gateonce.log
+          py_rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$py_rc" -ne 0 ]; then
+            echo "gate-once harness crashed rc=$py_rc (a red PAIR returns 0 and writes red_gate_stderr.txt)" >&2
+            exit "$py_rc"
+          fi
           echo "arm=${{ matrix.arm }} run=${{ github.run_id }} sha=${{ github.sha }}" \
             >> "${{ runner.temp }}/verify_resume/cell.txt"
       - name: upload verify-resume result
