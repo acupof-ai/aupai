@@ -2,9 +2,15 @@ name: ci
 on:
   push:
   pull_request:
-  # manual trigger for the diag-resume causal stress matrix (A/B/C/D arms); no inputs needed,
-  # the arms are the job matrix. That job runs on this event ONLY -- push/PR skip it.
+  # manual trigger for the diag-resume causal stress matrix (A/B/C/D arms) and the
+  # verify-resume-t1 independent-runner matrix. verify-resume-t1 takes a pinned CPU wheel index
+  # so a torch bump cannot masquerade as a thread effect across repeated dispatches.
   workflow_dispatch:
+    inputs:
+      torch_cpu_index:
+        description: "pip index URL for the pinned CPU torch wheel (verify-resume-t1)"
+        default: "https://download.pytorch.org/whl/cpu"
+        required: false
 # One in-flight run per (ref, event); a newer run cancels the older one's in-progress jobs.
 # Without this, every push to main queues independently and the backlog grows linearly --
 # measured 2026-09-20: 32 queued / 3 in progress, oldest waiting 48 min, and still growing.
@@ -18,7 +24,14 @@ on:
 # guards it. Measured 2026-09-20: 14 of the last 50 push runs on main already ended
 # `cancelled`, so this is a live state, not a hypothetical one.
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name }}
+  # workflow_dispatch gets run_id in the group so repeated dispatches accumulate independent
+  # runners (the verify-resume-t1 experiment is 6-10 separate dispatches; a later dispatch
+  # cancelling an earlier one would silently drop cells). A job-level group does NOT exempt a
+  # job from this workflow-level group -- measured 2026-09-23 by genB: a job declaring its own
+  # per-run-id group was still cancelled with its sibling when a second run fired. push/PR keep
+  # one group per ref+event, so the latest push cancels the older one and a dispatch on a branch
+  # never touches main's push runs (event_name is in the key).
+  group: ci-${{ github.ref }}-${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 jobs:
   check:
@@ -58,8 +71,23 @@ jobs:
         # gate_resume_equivalent points its workers here when set; only that gate reads it, the
         # other gates in the file ignore it. On a red the per-leaf/opt/RNG/ckpt dump survives
         # for upload below instead of vanishing in a throwaway td_eq_ mkdtemp.
+        #
+        # THREAD PINNING (2026-09-23, de; owner investigation of the intermittent resume red).
+        # GATE_OMP=1 makes the gate workers run one intra-op thread, with MKL/OPENBLAS matched and
+        # MKL_DYNAMIC off. This removes the one nondeterministic source the causal matrix isolated
+        # -- oneDNN bf16 brg_matmul OpenMP K-reduction under 2-thread CPU oversubscription on
+        # Intel-class hosts (oneDNN-on/t2 red 6/6 vs oneDNN-off and t1 0/6; same sha greens on a
+        # different runner). Bit-equality is still required, so the gate is not relaxed: a real
+        # save/load defect reds exactly as before. CHEAP-FIRST, NOT PROVEN: that 6/6 cell was very
+        # likely one correlated VM; the verify-resume-t1 workflow below re-tests t1 vs t2 across
+        # independent fresh runners and is the confirmation (or the trigger to revert to
+        # GATE_ONEDNN=0). Cost is ~30-60 s added to this step.
         env:
           GATE_DUMP_DIR: ${{ runner.temp }}/gate_resume_dump
+          GATE_OMP: "1"
+          GATE_MKL: "1"
+          GATE_OPENBLAS: "1"
+          GATE_MKL_DYNAMIC: "FALSE"
         run: python tests/v41f/test_p1_train_ckpt.py
       - name: upload resume-equality dump on gate failure
         if: failure() && steps.train_ckpt.outcome == 'failure'
@@ -204,3 +232,81 @@ jobs:
           GATE_OMP: "${{ matrix.gate_omp }}"
           GATE_ONEDNN: "${{ matrix.onednn }}"
         run: python tests/v41f/diag_resume_bimodal.py --diag-colocate 6 --stress "${{ matrix.stress }}"
+
+  # VERIFICATION, not a gate (2026-09-23, de). Confirms or overturns the single-thread default
+  # added to train checkpoint gates. Dispatch ONLY. Run it 6-10 times as SEPARATE workflow_dispatch
+  # runs -- each dispatch allocates fresh ephemeral runners, which is the unit of independence.
+  # Do NOT add repeats inside one job: 6 co-located pairs in one VM are one correlated sample (the
+  # flaw in the 0922 A/B/C/D matrix, whose arm-B 6/6 was likely a single runner-VM). Each cell runs
+  # ONE raw first-pair gate (gate_once forces RESUME_GATE_NO_RETRY so the signature tourniquet
+  # cannot mask a runner-red), records the per-runner env fingerprint, and uploads it. Analyze red
+  # rate by (vendor/cpu_model, omp, onednn) across independent runner-jobs. If the t1 cells red,
+  # revert the GATE_OMP=1 default and gate with GATE_ONEDNN=0 instead.
+  verify-resume-t1:
+    runs-on: ubuntu-latest
+    # The workflow-level concurrency group already includes run_id for workflow_dispatch, which
+    # is what makes repeated dispatches independent. The job keeps its own per-run+arm group so
+    # the four matrix cells can never cancel one another within a dispatch (they share run_id at
+    # the workflow level; the arm suffix distinguishes them). cancel-in-progress false both ways.
+    concurrency:
+      group: verify-resume-${{ github.run_id }}-${{ matrix.arm }}
+      cancel-in-progress: false
+    continue-on-error: true
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # One independent pair per cell per dispatch. The hypothesis: only OMP t2+dnn-on reds.
+          # mkl is explicit on every cell: an unset GATE_MKL reaches the worker chain as the
+          # empty string, not as "unset", so the pools would be ambiguous instead of pinned.
+          - { arm: "t1_dnn_on",  gate_omp: "1", onednn: "", mkl: "1" }
+          - { arm: "t2_dnn_on",  gate_omp: "2", onednn: "", mkl: "2" }
+          - { arm: "t1_dnn_off", gate_omp: "1", onednn: "0", mkl: "1" }
+          # OMP t2 (oneDNN OpenMP combine stays 2-way) while ONLY the MKL pool is pinned to 1:
+          # a green here says the oneDNN OpenMP combine, not the MKL pool, is the carrier.
+          - { arm: "mkl1_t2",    gate_omp: "2", onednn: "", mkl: "1" }
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install numpy
+      # Pin the wheel across a matrix sweep so a torch bump cannot masquerade as a thread effect.
+      # Pass a specific CPU wheel index URL/spec at dispatch time; default is the standard cpu index.
+      - run: pip install torch --index-url "${{ inputs.torch_cpu_index || 'https://download.pytorch.org/whl/cpu' }}"
+      - run: python tests/v41f/diag_resume_bimodal.py --diag-selftest
+      - name: "verify arm ${{ matrix.arm }}: one raw pair on a fresh runner"
+        id: g
+        env:
+          GATE_OMP: "${{ matrix.gate_omp }}"
+          GATE_ONEDNN: "${{ matrix.onednn }}"
+          GATE_MKL: "${{ matrix.mkl }}"
+          GATE_DUMP_DIR: ${{ runner.temp }}/verify_resume
+        run: |
+          set -o pipefail
+          # out is a POSITIONAL arg (diag_resume_bimodal.py argparse), not --out. The python rc
+          # is checked explicitly because gate_once always returns 0 on a red pair (it saves the
+          # signature for the artifact) -- but a CRASH (bad args, import, the gate harness
+          # itself failing) must fail this step, and with pipefail `| tee` cannot hide it.
+          mkdir -p "${{ runner.temp }}/verify_resume"
+          set +e
+          python tests/v41f/diag_resume_bimodal.py --gate-once "${{ runner.temp }}/verify_resume" | tee gateonce.log
+          py_rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$py_rc" -ne 0 ]; then
+            echo "gate-once harness crashed rc=$py_rc (a red PAIR returns 0 and writes red_gate_stderr.txt)" >&2
+            exit "$py_rc"
+          fi
+          echo "arm=${{ matrix.arm }} run=${{ github.run_id }} sha=${{ github.sha }}" \
+            >> "${{ runner.temp }}/verify_resume/cell.txt"
+      - name: upload verify-resume result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: "verify-resume-${{ matrix.arm }}-${{ github.run_id }}"
+          path: |
+            ${{ runner.temp }}/verify_resume
+            gateonce.log
+          if-no-files-found: error
+          retention-days: 30
