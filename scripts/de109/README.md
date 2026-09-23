@@ -44,13 +44,14 @@ materialized path. The entries output MUST be this matmul; materializing `pe*vc`
 - `check_default_identical.py <candidate_model.py> --ref <baseline_model.py>` — with
   `csa2_win_flash` unset the layer is byte-identical to the pre-flag baseline. Hashes both
   trees in one process on the current device and compares; no baked constant (the float64
-  hash is environment-dependent, so a laptop value never matches a pod value). Provide the
+  hash is environment-dependent, so two machines need not match). Provide the
   baseline file directly; on a git box `git show <pre-flag-sha>:model.py > /tmp/ref.py`.
-- `check_gpu_parity.py` — H20 bf16 fwd/bwd parity at T=512 B=2 and B4/B8 peak GiB + tok/s
+- `check_gpu_parity.py` — bf16 fwd/bwd parity at T=512 B=2 and B4/B8 peak GiB + tok/s
   of 10 stacked CSA2 layers at T=4096. Measured 2026-09-11:
   fact `facts/v41.json#v41.de109_win_flash_parity_speed_0911`.
 
 ## Gate
 
-`cfg.csa2_win_flash` (default False), CLI `--csa2_win_flash`, in harness `_FROZEN_KEYS`
-and `data/mix_scale_run_config.json`. Default path is the materialized launch line.
+`cfg.csa2_win_flash` (cfg default False), CLI `--csa2_win_flash`, in harness `_FROZEN_KEYS`
+and `data/mix_scale_run_config.json`. The CED gate launch line enables it (adopted after
+the passing smokes, `facts/v41.json#v41.de109_win_flash_parity_speed_0911`).
