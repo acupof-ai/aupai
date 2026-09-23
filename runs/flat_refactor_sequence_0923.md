@@ -81,8 +81,36 @@ must red; the CED digest must be unchanged.
 
 ### Step 4 — off-import-path files, ordinary PRs now
 
-Flat-only launchers (§3b, 6 files) and the five §3c tests. Ordinary PRs, review, no wait.
-These touch nothing the running job imports.
+**ENUMERATED 2026-09-23, and the count is smaller than when this step was written. OPENED
+ONLY AFTER #659 MERGES** (`runs/ced_w8_launch.sh` lands there; deleting the flat launchers
+first would leave the repo with no tracked launcher for any architecture).
+
+Per-file consumer check (the AGENTS deletion rule: grep glob/importlib over the directory,
+plus ledger and AGENTS.md citations, plus whether anything actually INVOKES it):
+
+| path | invocations | AGENTS.md | verdict |
+|---|---|---|---|
+| `runs/v41_gate_0922.sh` | 0 | 0 | deletable |
+| `runs/v41_r3_0914.sh` | 0 | 0 | deletable |
+| `runs/v41_smoke_0911j.sh` | 0 | 0 | deletable |
+| `runs/v41_smoke_0920k.sh` | 0 | 0 | deletable |
+| `runs/v41_gate_0911_resume_w8.sh` | 0 | 0 | deletable |
+| `runs/v41_gate_0911.sh` | **2** | **5** | **NOT deletable without an AGENTS.md edit** — `AGENTS.md`'s entry-point table gives `bash runs/v41_gate_0911.sh` as the gate-launch row, plus a pod launch line at :201 and refs at :8/:159/:178; `scripts/harness.py` names it in a comment |
+| `scripts/launch_30b.sh` | 6 | 1 | **KEEP** — `docs/standards/launch_ready_guards.md` is entirely about `launch_30b.sh --dry`; it is a documented training entry point, not a stale launcher |
+| `scripts/run_ab_speedrun.sh` | 8 | 0 | **KEEP** — 15 rows in `runs/experiments.jsonl`; live A/B infrastructure |
+| `scripts/run_ablation.sh` | 3 | 0 | **KEEP** — cited by `docs/lessons/speedrun_techniques_audit.md` as the A/B shape |
+| `scripts/run_pretrain.sh` | 4 | 0 | KEEP (same family; not separately measured) |
+| `runs/v42_textbook_ab.sh` | — | 0 | **HOLD** — prereg `textbook_continuation_ab_0914` is still `open` |
+
+All five `runs/` experiment rows are closed (`stopped`/`ok`/`error`), so none is live.
+
+**The five §3c tests are NOT in this step.** Measured on `attn_res` per file:
+`test_untie_head` (`c.attn_every, c.attn_res = 2, True`) and `test_arch_L32` (a four-way
+assignment setting `attn_res = True`) DO set it and are AttnRes tests;
+`test_attn_res_fp32_logits` imports `AttnRes` directly; `test_mem_defaults_frozen` and
+`test_table_master_resync` build `ProductKeyMemory`, which the CED body never reaches. All
+five belong to **step 5**. (A first grep used `attn_res\s*=\s*True`, which misses the
+multi-assignment lines and reported all five as non-AttnRes — wrong, corrected here.)
 
 ### Step 5 — AttnRes (in scope, ruled 2026-09-23; a THIRD architecture axis)
 
