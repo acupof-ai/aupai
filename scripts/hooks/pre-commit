@@ -2509,6 +2509,15 @@ def main():
         # continue-on-error CI job, never a production gate. Registered so a selftest-bearing
         # file cannot sit outside the hook map and silently never run.
         "tests/v41f/diag_resume_bimodal.py",
+        # The resume gate's signature-gated retry decision (genB, 2026-09-23). Registered because
+        # this file DECIDES whether a red gets a second chance, and the failure that matters is a
+        # silent one: a band that drifted into mutant space, or a predicate that started returning
+        # True on missing evidence, would turn the gate into a rubber stamp without ever going red.
+        # --selftest is pure (no torch, no model, no dump): one positive world is the measured
+        # 2026-09-22 red, ten negatives are one-predicate near-misses including the smallest real
+        # mutant (so the band cannot widen unnoticed) and an RNG-differed arm (so a pre-save
+        # bifurcation can never be rescued). Also reachable as the gate `gate_resume_retry_signature`.
+        "tests/v41f/resume_gate_retry.py",
         # Engram ON config gate (de, 2026-09-18). Registered because its checks are `test_*`
         # but the defect it guards is a CONFIG-shape one: a bare V41FConfig() has engram ON
         # (engram_layer_ids=(1,)) while both derived fields sit at ()/0, and nothing in the

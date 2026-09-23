@@ -601,7 +601,7 @@ _MANUAL_RULES = {
         "the rule is an operator sequence -- kill, then read the card, then kill what remains. "
         "lane_respected sees the instant, so it catches an orphan that is holding a card NOW, "
         "but nothing in the repo records whether the reader looked after their own kill",
-    "Lanes: world-6 block 0-5 no lane at launch, temporary pre-launch lane":
+    "Lanes: the CED gate is world 8, block 0-7, no lane":
         "the lane/block split is allocation policy; lane_respected checks the instant, not the "
         "policy; allocation_reads_the_grant pins theirs_baseline []",
     "Small jobs queue on the lane card":
@@ -14370,6 +14370,89 @@ def _broken_corpus_fp():
     return d
 
 
+def check_mix_cache_fp(root, mix_rel=None):
+    """Each BUILT domain the GATE run mix names records a fingerprint equal to the source
+    stamp of the token cache training actually loads (`<cache>/tokens_<dom>.pt.srcfp`).
+
+    Targets GATE_RUN_MIX (what the v41/v41f gate run passes via `--mix`), not train.py's
+    historical data/mix_500m default, which names none of the six gate domains.
+
+    corpus_fp_matches covers mix/corpus and nothing covers mix/CACHE: train.py
+    `_assert_mix_domains` reads each corpus dir's own build_corpus_stats.json (not the mix
+    field), and cache reuse compares `.srcfp` to the live `_corpus_fp` -- so a mix whose
+    inline `fingerprint` drifts from the cache is never refused. That is how v41_ced_0923
+    ran on the 0921 L3 rebuild while mix_v41_gate.json still named the 0911 fingerprint
+    (waiver cs.mix_inline_fingerprint_stale_0921). The `.srcfp` stamp is a ~16-byte sidecar,
+    so this reads no torch and no cache payload. SKIP without a token cache dir (CPU CI /
+    dev box), like check_mix_supply; UNBUILT_TODO_* placeholders carry no cache and are not
+    compared."""
+    mix_rel = mix_rel or GATE_RUN_MIX
+    try:
+        with open(os.path.join(root, mix_rel), encoding="utf-8") as f:
+            mix = json.load(f)
+    except TimeoutError:
+        raise  # never swallow the harness SIGALRM deadline into a mix-read FAIL
+    except Exception as e:
+        return FAIL, f"cannot read {mix_rel}: {e}"
+    doms = mix.get("domains") or {}
+    cache_dir = _token_cache_dir()
+    if not os.path.isdir(cache_dir):
+        return SKIP, f"token cache dir {cache_dir} not present"
+    problems, ok, skipped = [], 0, 0
+    for dom, spec in doms.items():
+        named = str(spec.get("fingerprint") or "").strip()
+        if not named or named.startswith("UNBUILT") or not re.fullmatch(r"[0-9a-f]{16}", named):
+            skipped += 1
+            continue
+        stamp_path = os.path.join(cache_dir, f"tokens_{dom}.pt.srcfp")
+        if not os.path.exists(stamp_path):
+            problems.append(f"{dom}: no cache stamp tokens_{dom}.pt.srcfp for a built mix domain")
+            continue
+        with open(stamp_path, encoding="utf-8") as f:
+            cache_fp = f.read().strip().split("|", 1)[0].strip()
+        if cache_fp != named:
+            problems.append(f"{dom}: mix fingerprint {named} != cache .srcfp {cache_fp}")
+        else:
+            ok += 1
+    if problems:
+        return FAIL, f"{ok} match, {skipped} unbuilt; " + "; ".join(problems[:3])
+    if not ok:
+        return SKIP, f"no built mix domain has a cache in {cache_dir} ({skipped} unbuilt)"
+    return PASS, (f"{ok}/{ok + skipped} gate-mix domain fingerprints match their cache .srcfp "
+                  f"in {cache_dir}")
+
+
+def _broken_mix_cache_fp():
+    """The REAL gate mix copied into the broken world and MUTATED: one built domain's
+    inline fingerprint is changed, while a fixture token cache carries every domain's
+    original (correct) .srcfp -- so exactly one mix fp != cache and the check must FAIL.
+    The cache is sidecar stamps only (no .pt payload), which is all the check reads."""
+    import shutil
+
+    d = _tmp_repo()
+    mix_rel = GATE_RUN_MIX
+    dst = os.path.join(d, mix_rel)
+    shutil.copy(os.path.join(ROOT, mix_rel), dst)
+    with open(dst, encoding="utf-8") as f:
+        mix = json.load(f)
+    target = next(name for name, spec in mix["domains"].items()
+                  if re.fullmatch(r"[0-9a-f]{16}", str(spec.get("fingerprint") or "")))
+    cache_dir = os.path.join(d, "fake_caches")
+    os.makedirs(cache_dir)
+    # Stamp EVERY built domain with its correct (real-mix) fp, so after the one-line
+    # corruption below target is the SOLE mismatch -- not missing/other stamps.
+    for name, s in mix["domains"].items():
+        fp = str(s.get("fingerprint") or "")
+        if re.fullmatch(r"[0-9a-f]{16}", fp):
+            with open(os.path.join(cache_dir, f"tokens_{name}.pt.srcfp"), "w", encoding="utf-8") as f:
+                f.write(fp)
+    mix["domains"][target]["fingerprint"] = "deadbeefdeadbeef"
+    with open(dst, "w", encoding="utf-8") as f:
+        json.dump(mix, f, ensure_ascii=False)
+    os.environ["HARNESS_TOKEN_CACHE_DIR"] = cache_dir
+    return d
+
+
 # Every third-party module this repo imports, and the pip name that supplies it. The
 # container's image already carries most of them; a restart keeps /work but drops the
 # writable layer, so only the hand-installed ones vanish -- and which ones those are is
@@ -20509,6 +20592,13 @@ CHECKS = [
         _broken_corpus_fp,
     ),
     (
+        "mix_cache_fp_matches",
+        "every built domain the gate-run mix names records the fingerprint carried by the token cache's .srcfp that training loads; a mismatch is FAIL, no cache dir is SKIP",
+        "v41_ced_0923 trained on the 0921 L3 rebuild (cache .srcfp c40de52d) while mix_v41_gate.json still named the 0911 fingerprint 63a3b0e6 -- corpus_fp_matches only compares mix/corpus and cache reuse compares cache/corpus, so nothing compared mix/cache and the drift was silent (waiver cs.mix_inline_fingerprint_stale_0921)",
+        check_mix_cache_fp,
+        _broken_mix_cache_fp,
+    ),
+    (
         "pod_drift",
         "pod files match the committed manifest; in CI, the manifest matches HEAD",
         "the pod ran 142 files behind HEAD and its harness had never run the full check set -- training happened under rules the repo no longer had",
@@ -20962,6 +21052,7 @@ EVIDENCE = {
     # to catch elsewhere -- so its verdict is only meaningful where the corpus is.
     "tokens_status_honest": "pod",
     "ladder_config_frozen": "pod", "ladder_cfg_consistent": "pod", "mix_supply": "pod",
+    "mix_cache_fp_matches": "pod",
     "milestone_ckpt_pinned": "pod", "env_fp_present": "pod", "opt_state_present": "pod",
     "card_held_without_claim": "pod", "lane_respected": "pod", "no_foreground_pod_training": "pod", "root_durable": "pod",
     # repo: the two card-source files are both tracked, so this answers the same anywhere
@@ -26510,6 +26601,7 @@ def _demo(only=None):
             os.environ.pop("HARNESS_POD_PS", None)  # its world is a temp ps capture
             os.environ.pop("HARNESS_POD_LEDGERS", None)  # same: a temp dir of pod ledgers
             os.environ.pop("HARNESS_POD_STAMP", None)  # same: a temp pod sync stamp
+            os.environ.pop("HARNESS_TOKEN_CACHE_DIR", None)  # mix_supply / mix_cache_fp fixture cache dir
     # HARNESS_GPU_PRESENT is set once before the loop and needed by several broken
     # worlds (mix_shards_present, lane_respected); clean up after the whole loop.
     os.environ.pop("HARNESS_GPU_PRESENT", None)
