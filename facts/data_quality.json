@@ -1412,11 +1412,11 @@
   },
   {
    "id": "dq.fineweb_edu.official_classifier_locked_0916",
-   "value": "official FineWeb-Edu 340M classifier is NOT usable on our locked sets: zh web_labels ROC-AUC 0.5725 (95% CI 0.474-0.677, crosses 0.5), 0/180 docs score >=3 (edu recall 0%, not-edu kill 100%); code OSS-100 false-kill 100% at cut>=3 (scores -0.07..1.42 median 0.52); cci3 locked-400 median 0.97, only 2% >=3",
+   "value": "official FineWeb-Edu 340M classifier NOT usable on locked sets: zh web_labels AUC 0.5725 (CI .474-.677, chance), 0/180 >=3; zh cci3 locked-400 (121 junk/279 keep, labels joined by id from cci3_audit_400_labels.jsonl) AUC[score predicts not-junk]=0.4220 (CI .359-.483 ENTIRELY BELOW .5 -- inversely oriented, junk scores higher), not-rewrite AUC 0.556; code OSS-100 false-kill 100% at >=3 (median 0.52)",
    "measured": "2026-09-16",
    "source": "laptop CPU offline inference, scripts/score_fineweb_edu_locked.py; model HuggingFaceFW/fineweb-edu-classifier model.safetensors sha256[:32] 27fbfe65ce71c3fc50df7b71246c83fe (437,955,572 B); raw runs/fwe_locked_scores.json; analysis docs/lessons/fineweb_edu_classifier_locked.md",
    "config": {
-    "sets": "web_labels 180 zh rows (33 y=1 educational/147 y=0) in data/corpus/sample/web_labels.jsonl; code_sample_100 real OSS sources in runs/code_rp1t_markup_handread.json (should-keep proxy); cci3_audit_400 400 zh rows distribution-only (per-row hand labels were session-only, not in repo)",
+    "sets": "web_labels 180 zh rows (33 y=1 educational/147 y=0) in data/corpus/sample/web_labels.jsonl; code_sample_100 real OSS sources in runs/code_rp1t_markup_handread.json (should-keep proxy); cci3_audit_400 400 zh rows with per-row junk/rewrite labels in data/corpus/sample/cci3_audit_400_labels.jsonl (joined by id, 400/400); per-doc scores in runs/fwe_locked400_perdoc.jsonl",
     "score_semantics": "raw regression logit 0-5 per official model card, NOT sigmoid, no prompt prefix; int_score=round(clamp(s,0,5)); official curation cut >=3; max_length 512 (BERT position cap)",
     "auc": "sklearn roc_auc_score raw logit vs y; 2000-row paired bootstrap seed 0",
     "auc_zh": 0.5725,
@@ -1428,9 +1428,19 @@
     "code_false_kill_at3": 1.0,
     "code_false_kill_below0": 0.02,
     "cci3_frac_ge3": 0.02,
-    "runtime": "680 docs CPU in ~42s, no GPU"
+    "runtime": "680 docs CPU in ~42s, no GPU",
+    "cci3_auc_not_junk": 0.422,
+    "cci3_auc_not_junk_ci95": [
+     0.3585,
+     0.4834
+    ],
+    "cci3_auc_not_rewrite": 0.5563,
+    "cci3_median_score_junk": 1.0409,
+    "cci3_median_score_keep": 0.9246,
+    "cci3_labels": "data/corpus/sample/cci3_audit_400_labels.jsonl joined by id (121 junk/32 rewrite)",
+    "perdoc_scores": "runs/fwe_locked400_perdoc.jsonl (400 rows {id,score,junk,rewrite}); re-derive both AUCs without the model via roc_auc_score(score, ~junk)/roc_auc_score(score, ~rewrite). Regenerate with python3 scripts/score_fineweb_edu_locked.py (writes that file), weights gitignored under models/, re-downloaded from HuggingFaceFW/fineweb-edu-classifier (model.safetensors sha256[:32] 27fbfe65ce71c3fc50df7b71246c83fe, 437,955,572 B)"
    },
-   "uncertainty": "web_labels n=180 gives a wide CI that crosses 0.5 (point estimate near chance); conclusion rests on three independent agreeing signals -- AUC~0.57, the entire score range compressed to 0-1.6, and 0% reaching the official >=3 cut -- so a larger n is not needed to reject an official-cut filter that already rejects all Chinese. Code false-kill uses a 100-doc should-keep proxy, not a labelled confusion matrix; a precise code FP rate needs fresh human code-usability labels. CCI3-400 reports distribution only because its per-row labels are not in the repo.",
+   "uncertainty": "web_labels n=180 wide CI crosses .5; cci3-400 is the sharper result: not-junk AUC 0.42 with a CI fully below .5 (score is ANTI-correlated with keep -- junk reads as more 'educational'), direction confirmed by junk median 1.04 > keep 0.92. Code false-kill is a 100-doc should-keep proxy, not a labelled confusion matrix.",
    "status": "measured",
    "guard_phrases": [],
    "retracted_value": []

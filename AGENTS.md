@@ -1,20 +1,26 @@
-# aupai — V4.1 coding/math model: flat CSA2 + SWA MoE, target HumanEval pass@1 ≥ 30%
+# aupai — V4.1 coding/math model: CED (6 encoder / 6 decoder) CSA2 + SWA MoE, target HumanEval pass@1 ≥ 30%
 
-**Pivot 2026-09-10, user order.** Target is DeepSeek-V4.1-Flash
-(`docs/standards/v41_pivot.md`): a small coding/math model that clears HumanEval pass@1 ≥ 30%
-at ~350M-active on the UltraData gate mix (`data/mix_v41_gate.json`, 30B tokens). The
-acceptance gate is unchanged from the p1 recipe (`docs/standards/p1_data_recipe.md:256`).
-V2/KDA work is stopped. The gate runs single-node at seq 4096; the launch line is
-`runs/v41_gate_0911.sh` and the stop rules are `runs/prereg.jsonl#v41_gate_0911`.
+**Pivot 2026-09-10, user order; architecture pivot to CED 2026-09-22, user order.**
+Target is DeepSeek-V4.1-Flash (`docs/standards/v41_pivot.md`): a small coding/math model
+that clears HumanEval pass@1 ≥ 30% at ~355M-active on the UltraData gate mix
+(`data/mix_v41_gate.json`, 30B tokens). The acceptance gate is unchanged from the p1 recipe
+(`docs/standards/p1_data_recipe.md:256`). V2/KDA work is stopped. The gate runs single-node
+at seq 4096; the launch line is `runs/ced_w8_launch.sh` and the stop rules are
+`runs/prereg.jsonl#v41_ced_0923`.
 
-Architecture, in the terms the code uses. The gate stack is a flat 12-layer model at
-d=1024/H=8; every fact below is read from `docs/standards/v41_pivot.md`, `facts/v41.json`
-and `model.py`.
+Architecture, in the terms the code uses. The gate stack is a 12-layer CED at d=1024/H=8 —
+the bottom 6 layers are the encoder, the top 6 the decoder (`--ced --ced_enc_layers 6`);
+every fact below is read from `runs/prereg.jsonl#v41_ced_0923`, `facts/v41.json` and
+`model.py`.
 
+- **Causal encoder-decoder (CED)** (`model.py`, `--ced`): layers 0-5 encode causally and
+  expose their boundary state H_6. Each decoder layer 6-11 projects its OWN global KV
+  entries from H_6 through an unshared d→d `W_KV`/`W_Z` pair (MEAN-pooled per m-token doc
+  block, then projected); no encoder layer carries the pair. The mask is causal everywhere.
 - **CSA2 — Compressed Sparse Attention 2** (`model.py`, `--csa2`): learned non-overlapping
   8-token KV entries; a lightweight indexer selects top-k entries; one concatenated softmax
-  over [selected global entries ; local SWA keys]. Full/Reuse modes thread a cross-layer KV
-  package.
+  over [selected global entries ; local SWA keys]. In a decoder the global entries are the
+  CED projection above; Full/Reuse modes thread a cross-layer KV package.
 - **PureSWA sliding window** (`class PureSWA` in `model.py`): the first two layers are
   SWA-only (`--n_swa_only_layers 2`), every other layer carries a local SWA branch, window
   128, flash-attn varlen (`window_size=(n_win-1,0)`).
@@ -22,22 +28,29 @@ and `model.py`.
   recurrent state and no KDA.
 - **MoE in every block** (`class MoEFFN` in `model.py`): 48 experts, top-3 routed + 1
   shared, `expert_ffn` 1728, fp32 softmax router with selection-only expert_bias, grouped
-  via `torch._grouped_mm`. 3,209.5M total / ~342.9M active params at the smoke shape.
-- fp8 Float8Linear, `torch.compile`, no attention residuals (`--no-attn_res`).
+  via `torch._grouped_mm`. **3,221,975,040 total / 355,430,400 active params (S0 exact
+  meta-device count at the gate shape).**
+- fp8 Float8Linear, `torch.compile`, `--csa2_win_flash`, no attention residuals
+  (`--no-attn_res`).
 
-The smoke ladder that sized the gate launch: compiled+flash B8 OOMs at 94.6 GiB pre-step,
-B4/accum4 measured 72.64 GiB/rank across 381 steps with no NaN
-(`facts/v41.json#v41.smoke_compiled_flash_h_i_0911`). The gate recipe is B4/accum8 on
-world 6: 786,432 tokens/step, 38.1K steps over 30B; peak stays at the measured 72.6 GiB
-(accum and world do not move per-rank peak).
+The ladder that sized the gate launch: S0 `train.py --build_only` gives the exact param
+count above; S2 the single-card smoke v41_ced_smoke_0922 ran 300 steps B4/accum6 with 0 NaN,
+val monotonic 5.706→4.062 over six points, peak 43.14 GiB; S3 the world-8 smoke
+v41_ced_w8smoke_0923 stepped 8 ranks together, 0 NaN, peak 43.14 GiB, ~21K tok/s/gpu in
+warmup. The gate recipe is B4/accum6 on world 8: 786,432 tokens/step, 38,146 steps over
+30B. The fp8 backward M%16 alignment fix for the CED projection is PR #648.
 
-`--csa2_win_flash` (de-109, default off until the smoke passes) keeps the CSA2 entry
-branch materialized and runs only the local SWA window on flash-attn; it matches the
-all-materialized softmax to the bf16 kernel floor, is 3.2-3.3x faster on attention and
-2.9x lighter at T=4096 B4, and makes B8 fit
-(`facts/v41.json#v41.de109_win_flash_parity_speed_0911`). The gate line gains the flag
-only on a passing csa2_win_flash smoke; without it the released DeepSeek kernels remain
-unusable for SM90 training (`facts/v41.json#v41.dk_kernel_training_feasibility_0911`).
+`--csa2_win_flash` (de-109) keeps the CSA2 entry branch materialized and runs only the
+local SWA window on flash-attn; it matches the all-materialized softmax to the bf16 kernel
+floor, is 3.2-3.3x faster on attention and 2.9x lighter at T=4096 B4
+(`facts/v41.json#v41.de109_win_flash_parity_speed_0911`). It is adopted in the CED gate
+line after the passing smokes; without it the released DeepSeek kernels remain unusable for
+SM90 training (`facts/v41.json#v41.dk_kernel_training_feasibility_0911`).
+
+**Retired 2026-09-22, user order: the flat 12-layer CSA2 stack (v41_gate_0922).** The flat
+run was stopped at step ~8196/38,146 (val 2.001), all eight cards released; the user order
+is CED only, single arm, so the two-arm `ced_vs_flat_0910` prereg runs no flat control.
+This PR documents the pivot; deleting the flat code follows the deletion process separately.
 
 **Retired 2026-09-10: the 0830v1 KDA + gated-MLA hybrid.** That line stacked Kimi Delta
 linear attention (`fla.ops.kda.chunk_kda`, recurrent state carries position, NoPE) with
@@ -72,7 +85,7 @@ each date is history only, readable in git log; nothing is kept "just in case".
 | `algorithms/` | RL |
 | `mathbank/` | synthetic math generators |
 | `data/corpus/*` | corpus bytes (gitignored except `sample/`) |
-| `data/mix_v41_gate.json` | the V4.1 gate mix, 30B over 8 UltraData/math/code domains |
+| `data/mix_v41_gate.json` | the V4.1 gate mix, 30B over the decontaminated domains the file names (six after the 2026-09-20 rebalance) |
 | `data/mix_scale_*.json` | the retired 0830v1 ladder mixes |
 | `data/tokenizer.json` | the gate vocabulary, rebuilt 2026-09-10 (32,768 slots; not tracked, copy from the pod) |
 | `docs/lessons/` | research, with frontmatter |
@@ -88,31 +101,24 @@ the old 32,773-slot vocab is preserved on the pod as `data/tokenizer_frozen_0829
 rebuild is allowed only under the three unfreeze conditions and invalidates every checkpoint
 trained on the old vocabulary.
 - **Vocabulary identity.** Score every checkpoint with the vocabulary it was trained on; checkpoints and packs carry `vocab_id`, and a mismatch refuses. For an older checkpoint pass `--tokenizer`.
-- **GPUs. Gate-run allocation, user ruling 2026-09-11 (latest; `runs/card_assignment.json`
-is the record).** The evening 2026-09-11 order (formal run on 8 cards) supersedes the morning
-gate-run split: the v41_gate_0911 **world-8 resume trains on block 0-7 with no lane**, and
-**cards 6 and 7 are aupai's outright for the run** — tilerl-a3 handed both back (0 MiB, no
-claim) and is off all H20s. The standing-order list for lend expiry is **theirs_baseline []**,
+- **GPUs. Gate-run allocation, user ruling 2026-09-23 (latest; `runs/card_assignment.json`
+is the record).** The CED gate run v41_ced_0923 trains on **block 0-7, world 8, no lane**
+(`launch_block_granted: true`, `block_cards: "0-7"`, `lane_card: null`), all eight cards
+aupai's for the run. The standing-order list for lend expiry is **theirs_baseline []**,
 empty under that order; the expiry mechanism stays in place for a card a future order adds
-back. Before the evening order: world 6 block 0-5, cards 6,7 tileRL's, card 5 a temporary
-pre-launch lane — all history. `harness launch` reads the grant and refuses a card outside
-the current allocation. The controller allocates; ask before starting a GPU process. Kill by
-exact PID, never `pkill -f`. A process the controller cannot account for gets killed.
-(History: the 2026-09-06 "0,6 tileRL" order, the 2026-09-10 "all eight to V4.1" order, and
-the morning 2026-09-11 world-6 split are all superseded by the evening 2026-09-11 order.)
+back. `harness launch` reads the grant and refuses a card outside the current allocation.
+The controller allocates; ask before starting a GPU process. Kill by exact PID, never
+`pkill -f`. A process the controller cannot account for gets killed. (History: the 2026-09-06
+"0,6 tileRL" order, the 2026-09-10 "all eight to V4.1" order, the 2026-09-11 world-6 block
+0-5 split and its evening world-8 resume, and the 2026-09-22 CED single-card smoke lane
+1-6/0 are all superseded by the 2026-09-23 world-8 order.)
 - **A kill is not finished until `nvidia-smi` says the card is free.** Killing what you launched does not kill what it launched. 2026-09-01: after the milestone watcher's chain was killed by exact PID, `eval/run_eval.py` (pid 313429) still held GPU7 at 5.7 GB / 95% — a grandchild reparented to init whose pgid still named the dead leader, so `ps` by pgid could not see it as an orphan and only the card showed it. It would have contended with the next job on the lane. After any kill of a GPU job: read `nvidia-smi --query-compute-apps=pid,used_memory --format=csv,noheader`, and kill by exact PID whatever still holds memory. A killed process can stay in the process table as a zombie: `kill -0 <pid>` returns 0 and `ps -p <pid>` prints a row for it, so neither says whether the kill worked. Read `ps -o stat= -p <pid>`: `Z` is dead (e1, 2026-09-03: three scan pids read as surviving `kill` and `kill -9` for ten minutes while the card had been free since the first signal). Killing the local wrapper (a `~/bin/pod` call, a timed-out foreground command) does not kill the process it started in the container: read the container's `ps` after every local kill and kill by exact PID there (e1, 2026-09-03: a CPU scoring run of 10,421 items kept running on the pod after its local wrapper was killed).
-- **Lanes: a world-6 gate block 0-5 with no lane at launch, and a temporary pre-launch
-lane.** At launch the run needs all six cards 0-5 *at once*, so there is no lane and one
-probe on a block card stops occupancy, not just speed. **Before launch, card 5 is the
-temporary lane** for one single-card job at a time (de-108 steps run there by controller
-assignment); on the one-hour launch notice the block returns to 0-5 and the lane ends.
-Two rules follow:
-  - **Small jobs queue on the temporary lane card 5; they never spill into the block, not
-even onto a card that is idle at that instant.** Concurrent probes serialize rather than
-each taking a card.
-  - Card 0 is tileRL-usable only until aupai's one-hour launch notice; cards 6,7 are
-tileRL's for the gate run. Idle is not free: a card's owner is the script still running or
-the job the controller has queued, never the instantaneous `nvidia-smi` row.
+- **Lanes: the CED gate is world 8, block 0-7, no lane.** At launch the run needs all
+eight cards *at once*, so one probe on a block card stops occupancy, not just speed. A
+future controller order that grants a lane makes that card the one place small jobs queue;
+they never spill into the block, not even onto an idle card, and concurrent probes
+serialize. Idle is not free: a card's owner is the script still running or the job the
+controller has queued, never the instantaneous `nvidia-smi` row.
   - **When there is no lane card at all, co-residency is judged by host IO and seconds, not
 by metric class.** Measured against the 30B run's own control — `--save_every 500`, and steps 500/1000/1500/2000 all read 7K
 tok/s/gpu with **no eval running**, because a 2.1 GB `torch.save` plus a val pass costs 78 s
@@ -145,7 +151,7 @@ every dip in the measured 30B window: 10.3 min of 6.04 h, 2.8%
 | task | command |
 |---|---|
 | Launch any GPU or corpus job | `python scripts/harness.py launch <name> [--training] [--hypothesis "..."] -- <cmd>` — exp row first, card allocation from controller config, startup gate for training, monitor on process-gone/log-silent. Returns once the job holds a device (poll, 90 s), or reports that it claimed nothing |
-| Pretrain | `./run_ddp.sh [train.py flags]` — wraps `torchrun ... train.py --fp8` on NGPU cards (the gate launch sets NGPU=6; run_ddp defaults to 8) |
+| Pretrain | `./run_ddp.sh [train.py flags]` — wraps `torchrun ... train.py --fp8` on NGPU cards (the CED gate launch sets NGPU=8; run_ddp defaults to 8) |
 | SFT | `scripts/run_sft.sh <name> <resume_ckpt> <sft_pt> [sft_math.py args]` |
 | Eval, one metric | `eval/eval_hard.sh <ckpt> [ngpu]` |
 | Eval, full matrix | `eval/eval_all.sh <ckpt> [tokenizer]` — math-hard, math-500, MC suite, digit head |
@@ -155,9 +161,9 @@ every dip in the measured 30B window: 10.3 min of 6.04 h, 2.8%
 | Is it safe to overwrite a RUNNING .sh | `python3 scripts/pod_sh_offset.py --check <rel>` — reads each live shell's script offset from `/proc/<pid>/fdinfo` on the pod and exits 2 unless every differing byte is at or after the earliest of them. `pod_push.sh` calls it, so `POD_PUSH_ALLOW_RUNNING_SH=1` is now checked rather than trusted: the safety is a property of the diff, not of the flag |
 | Measure everything unscored | `python scripts/harness.py measure` |
 | pass@k gate for RL | `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` — needs pass@8 − pass@1 ≥ 15pt |
-| Launch the V4.1 gate run | `bash runs/v41_gate_0911.sh` (pod) — world 6, block 0-5 at launch (no lane; temporary pre-launch lane is card 5), B4/accum8, `data/mix_v41_gate.json`; committed DRAFT, it runs only on the controller's explicit go and the `runs/prereg.jsonl#v41_gate_0911` checklist (mix caches present, de-108 merged or waived, cards 0-5 cleared on the one-hour notice). The script is also the pod-side launch file: place it on the pod (pod_push skips `runs/`) before the go |
-| V4.1 smoke launch shape | the gate line is proven at smoke scale (B4/accum4, 381 steps, 72.6 GiB/rank): see `facts/v41.json#v41.smoke_compiled_flash_h_i_0911`; the smoke launcher lived only on the pod and the tracked gate launcher `runs/v41_gate_0911.sh` carries the same architecture flags — `--csa2 --rope_dims 64 --n_swa_only_layers 2 --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11` |
-| Decontaminate the six non-ultra gate domains | `python scripts/filter_gate_domains.py --domains <comma-list>` — 13-gram overlap removal against HumanEval/MBPP, writes a `_dc` domain + summary (facts in `facts/contamination.json`). The overlap engine is the library `filters/decontam_ngram.py` (CLI runs only with `--selftest`); this script is NOT the ultra path — code_ultra_l2_dc and code_ultra_l3_noexec_dc decontaminate inside `datagen/ultradata_shards.py --aggregate` |
+| Launch the V4.1 gate run | `bash runs/ced_w8_launch.sh` (pod) — world 8, block 0-7 (no lane), B4/accum6, CED 6/6, `data/mix_v41_gate.json`; committed launcher, it runs on the controller's explicit go and the `runs/prereg.jsonl#v41_ced_0923` checklist. It is also the pod-side launch file (pod_push skips `runs/`), sha256 4c7b3a37… at the pod |
+| V4.1 smoke ladder | S0 exact param count via `--build_only`; S2 single-card v41_ced_smoke_0922 (300 steps, B4/accum6, 0 NaN, val 5.706→4.062, 43.14 GiB); S3 world-8 v41_ced_w8smoke_0923 (8-rank NCCL/MoE/CSA2 start+step, 0 NaN, ~21K tok/s/gpu warmup). The committed launcher carries the flags — `--ced --ced_enc_layers 6 --csa2 --csa2_win_flash --rope_dims 64 --n_swa_only_layers 2 --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11` |
+| Decontaminate the non-ultra gate domains | `python scripts/filter_gate_domains.py --domains <comma-list>` — 13-gram overlap removal against HumanEval/MBPP, writes a `_dc` domain + summary (facts in `facts/contamination.json`). The overlap engine is the library `filters/decontam_ngram.py` (CLI runs only with `--selftest`); this script is NOT the ultra path — code_ultra_l2_dc and code_ultra_l3_noexec_dc decontaminate inside `datagen/ultradata_shards.py --aggregate` |
 | Corpus | `python datagen/build_corpus.py --domain X --source Y --target_tokens 6e9`; `--dry --limit N` prints the rejects histogram. Math generators: `mathbank/vet_programs.py` is the registry root that reaches `math_programs_l*`. UltraData L2/L3 keep rules: 0e's filters (`#237`) |
 | AttnRes A/B | retired with the KDA/MLA line; the ablation script stays in history but nothing launches it |
 | FP8 NaN probe | `COMPILE=1 GC=0 BS=8 MUON=1 STEPS=60 python eval/nan_probe.py` (pod) |
@@ -175,22 +181,23 @@ every dip in the measured 30B window: 10.3 min of 6.04 h, 2.8%
 
 ## Run pretraining
 
-The committed gate line is `runs/v41_gate_0911.sh`; the direct shape is:
+The committed gate line is `runs/ced_w8_launch.sh`; the direct shape it runs is:
 
 ```bash
-./run_ddp.sh --mix data/mix_v41_gate.json --name v41_gate_0911 \
-  --dim 1024 --layers 12 --heads 8 --ffn_hidden 6912 --batch 4 --accum 8 \
+NGPU=8 ./run_ddp.sh --mix data/mix_v41_gate.json --name v41_ced_0923 \
+  --dim 1024 --layers 12 --heads 8 --ffn_hidden 6912 --batch 4 --accum 6 \
   --lr_scale 1.0 --warmdown 0.65 --anneal_frac 0.10 --warmup 500 --save_every 2000 --no-grad_ckpt \
-  --attn_every 1 --csa --csa2 --rope_dims 64 --n_swa_only_layers 2 --no-attn_res \
-  --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11 --moe_arm v41gate
+  --attn_every 1 --csa --csa2 --csa2_win_flash --rope_dims 64 --n_swa_only_layers 2 --no-attn_res \
+  --ced --ced_enc_layers 6 \
+  --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11 --moe_arm v41ced
 ```
 
 Any `--flag` in `train.py`'s parser overrides `Cfg.<flag>` — a fixed whitelist
 (seq/batch/accum/vocab/seed/attn_every/attn_res_blocks/val_*/warmup + the boolean flags),
 not a reflection over `Cfg`; a `Cfg` field without a parser entry cannot be set from the
-CLI. The gate recipe (controller ruling, prereg amendment 1): 30B tokens, B4/accum8 on
-world 6 = 786,432 tokens/step, 38.1K steps; warmup 500 absolute steps, warmdown 0.65,
-anneal_frac 0.10; B4×accum8 fixed — de-109 `csa2_win_flash` (adopted, `facts/v41.json#v41.de109_win_flash_parity_speed_0911`) takes attention peak 72.6→43.5 GiB and that headroom goes to wall-clock, never to batch; de-108 joint flash is post-gate (2.3-3.2x slower eager, `facts/v41.json#v41.de108_joint_flash_parity_speed_0911`). The retired
+CLI. The gate recipe (`runs/prereg.jsonl#v41_ced_0923`): 30B tokens, B4/accum6 on world 8 =
+786,432 tokens/step, 38,146 steps; warmup 500 absolute steps, warmdown 0.65, anneal_frac
+0.10. `csa2_win_flash` holds the per-rank peak at the measured 43.14 GiB. The retired
 0830v1 budget points were six geometric mixes, `mix_scale_{0.2b,0.3b,0.4b,0.8b,1.6b,3.24b}.json`.
 Checkpoints save as `ckpt_{name}.pt`; naming convention `ckpt_{arch}_{tokens}_{date}.pt`.
 
@@ -198,7 +205,7 @@ On the pod, launch through a pod-side script file (pod refuses a `cd ... &` stri
 detach it:
 
 ```bash
-pod "cd /work/aupai && setsid nohup bash runs/v41_gate_0911.sh > runs/v41_gate_0911.launch.log 2>&1 </dev/null &"
+pod "cd /work/aupai && setsid nohup bash runs/ced_w8_launch.sh > runs/ced_w8_launch.run.log 2>&1 </dev/null &"
 ```
 
 ## Record a run
@@ -302,31 +309,21 @@ Cite a fact as `facts/<file>.json#<id>`; the id must exist. Numeric conclusions 
 
 Per-domain weight, epoch cap, anneal weight. `train.py` builds the schedule and consumes it in order, so `Cfg.epochs` is forced to 1. **It is the only data path** — a named-but-missing mix raises. The flat-corpus fallback was deleted: it once trained on 244KB in silence. `data/mix_sample.json` is the 2,000-document sample a checkout ships.
 
-The V4.1 gate mix is `data/mix_v41_gate.json` (ae; decontaminated domain names landed in
-#254, the L3 noexec rename in #261): `total_tokens` 30.0B is the **budget, not
-supply** — shape code 86% / math 8% / English 4.5% / CoT 1.5%, **weights are TARGET
-composition, not supply shares**, and `anneal` is a separate late-training composition
-(6 of 8 domains' anneal differs from their main weight). All domains run one epoch except
-`cot`, which repeats 3× against its small measured supply. The launch mix names eight
-13-gram-decontaminated `_dc` directories: `code_ultra_l2_dc` (natural code) and
-`code_ultra_l3_noexec_dc` (L3 static aggregate — dedup + nontriviality + decontam, with
-NO sandbox solution-exec filter, user order 2026-09-11; the exec-filtered `code_ultra_l3_dc`
-arm is retained for a later A/B, it is not in the mix) from openbmb/UltraData-Code python
-under 0e's keep rules (#237), plus `code_py_starcoder_dc`, `math_owm_stage2_dc`,
-`code_keep_p1_dc` (the 2.8116B classifier keep set, assembled flat by
-`scripts/assemble_keep_p1.py`), `en_c4_stage2_dc`, `cot_dc`, `code_py_rp1t_dc`.
-**Every gate code domain is decontaminated against HumanEval/MBPP before it enters the mix**
-— the six non-ultra domains via `scripts/filter_gate_domains.py --domains ...` (engine: the
-`filters/decontam_ngram.py` library, not a CLI), the two ultra domains inside 0e's
-aggregate; this is a launch prerequisite, with dropped fractions and packed token counts in
-`facts/contamination.json` (cont.gate_dc_*) and
-`facts/corpus_supply.json#cs.gate_domains_dc_packed_0911` — the six surviving
-`_dc` supplies are measured packed tokens (vocab f1f860970d15d623), including the two
-ultra domains, whose 0e aggregates landed 2026-09-11 (15.34B L2 / 26.70B L3-noexec,
-measured not estimated). Every domain's token cache must exist in `/data00` in
-the gate vocabulary before launch (the prereg checklist names which remain on 0e). The old
-ladder mixes (`mix_scale_*`) and teacher synthesis (textbooks/exercises, stopped by the
-pivot) are the retired data plan.
+The V4.1 gate mix is `data/mix_v41_gate.json`: `total_tokens` 30.0B is the **budget, not
+supply**, the per-domain weights are TARGET composition rather than supply shares, and
+`anneal` is a separate late-training composition. **The domain set is read from the mix
+file, which is the one place it is kept** — the gate mix has had six decontaminated `_dc`
+domains since the 2026-09-20 rebalance (ae), and an earlier revision had eight
+(`code_keep_p1_dc`, `code_py_rp1t_dc` dropped in that rebalance); do not re-enumerate the
+names here, every prose list rots on the next rebalance. **Every gate code domain is
+13-gram-decontaminated against HumanEval/MBPP before it enters the mix** — non-ultra
+domains via `scripts/filter_gate_domains.py --domains ...` (engine: the
+`filters/decontam_ngram.py` library, not a CLI), ultra domains inside the aggregate;
+dropped fractions and packed token counts live in `facts/contamination.json`
+(cont.gate_dc_*) and `facts/corpus_supply.json`. Every domain's token cache must exist in
+`/data00` in the gate vocabulary before launch (the prereg checklist names which remain on
+0e). The old ladder mixes (`mix_scale_*`) and teacher synthesis (textbooks/exercises,
+stopped by the pivot) are the retired data plan.
 
 ### Chat format
 
@@ -377,14 +374,6 @@ rebuild used.**
 Facts (fingerprint, sizes, gate values, frontier, sweeps): `facts/tokenizer.json`.
 
 ## Pod
-
-> **⚠️ 2026-09-16 — POD DESTROYED, 8×H20 OFFLINE. The `sglang-test` static pod and its `/work`
-> emptyDir were deleted and the 8 H20 cards were decommissioned. No `pod`/`tn`/launch/eval
-> command in this section is executable until a fresh node is provisioned and the data is
-> rebuilt. Do not run any of the steps below from memory against a missing tunnel. Follow
-> `docs/standards/infra_persistent_rebuild_0916.md` (node/infra) and
-> `docs/standards/data_pipeline_rebuild_0916.md` (corpus/checkpoints) before doing anything on
-> a pod. The bullets below are retained as the post-rebuild operating rules.**
 
 - **The wrappers are `scripts/pod` and `scripts/podput`, tracked in this repo since 2026-09-04.** They used to live only in `~/bin`, untracked, while every session and five tracked scripts depended on them — a tree that does not contain its own entry points cannot be split, and that is the reason they were vendored ahead of the `aupai-infra` cut. One-time per laptop: `ln -sf "$PWD/scripts/pod" ~/bin/pod && ln -sf "$PWD/scripts/podput" ~/bin/podput`. Both carry the `infra-layer:` header and move to `aupai-infra` at the split; `scripts/test_pod_wrappers.sh` is their gate (8 refuse, 14 accept, 2 flag, with two negative controls in opposite directions: restoring the old end-of-string predicate must fail exactly the five `&`-not-at-end cases, and removing the quote/escape strip must fail the hard negatives such as `2>&1`). It runs on the LAPTOP only: `scripts/pod` has no file extension, so pod_drift's `*.py`/`*.sh` SCOPE never matched it, and the wrappers are the transport TO the pod -- a container that ran them would be calling `tn exec` into itself. The test is in SCOPE and its subject is not, so on the pod it fails by construction (`No such file or directory` for scripts/pod, measured 2026-09-05); that is a validator separated from what it validates, §182's shape.
 - `pod` refuses a `cd … &` shape: the `cd` does not reach the backgrounded half, so a relative path resolves under the container default and the redirect silently does not run — no log file at all, not an empty one (shape 166). Write the command to a file on the pod and `setsid bash runs/<name>.sh > runs/<name>.log 2>&1 &` (`scripts/launch_30b.sh:141`). `POD_ALLOW_BG_CD=1` overrides. **It does not catch a command with no `cd` in it at all** — the two 17-hour loops live on 2026-09-04 are that shape, and nothing in the command string reveals a `cd` that was never typed. Those are caught at runtime by the sweep, not at launch.
@@ -445,7 +434,7 @@ Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; 
 | What happened only on the pod did not happen; bring it back to the repo the same day | 2 | §2 §116 |
 | A predicate set answers the question it enumerates, not the one it is named for; assert its population against the filesystem, never against a list; to measure a correction for an instrument, call the instrument; fix the criterion before widening the population | 6 | §275 §276 §277 §278 §289 §290 |
 | A green line whose result is anti-correlated with its own name; assert the property, not a message that accompanies it, never a line that can pass by not running, and make every mutation run name the assertion that died | 1 | §279 |
-| Information already present, but not in a form that can be treated as a conclusion: a measured conclusion in a comment, a weak criterion wearing a strong one's clothes, a half-correct sentence, a number correct under a different question | 2 | §280 §281 |
+| Information already present, but not in a form that can be treated as a conclusion: a measured conclusion in a comment, a weak criterion wearing a strong one's clothes, a half-correct sentence, a number correct under a different question | 3 | §280 §281 §303 |
 | An instrument searching a space that contains its own text; signature is the tool's own source appearing as a source in its own output, or its own executing path matching its own deletion glob | 2 | §282 §293 |
 | A discrimination must rest on a property the two sides do not share; of a cmdline the first field is identity, the flags after it are not; cross-namespace, ps absence and presence are both non-evidence | 1 | §294 |
 | A criterion made more precise can move its residual error from the lax side to the dangerous side; ask which side the residual lands on before asking whether the new criterion is more accurate | 1 | §295 |
@@ -474,7 +463,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Vocabulary identity | `vocab_id_on_load_path` |
 | GPUs (9) | manual: card ownership is a controller decision, not a file state |
 | A kill is not finished until `nvidia-smi` says the card is free (4) | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
-| Lanes: world-6 block 0-5 no lane at launch, temporary pre-launch lane | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy; allocation_reads_the_grant pins theirs_baseline [] |
+| Lanes: the CED gate is world 8, block 0-7, no lane | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy; allocation_reads_the_grant pins theirs_baseline [] |
 | Small jobs queue on the lane card. They never spill into the block, not even o (3) | manual: queueing is operator behaviour over time; lane_respected catches the instantaneous violation |
 | When there is no lane card at all — `NGPU=8`, as p500m_ | `coresident_cache_refusal` |
 | Judge the cost in seconds against what the run already (2) | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |
