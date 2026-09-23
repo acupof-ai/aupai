@@ -69,9 +69,55 @@ must red; the CED digest must be unchanged.
 Flat-only launchers (§3b, 6 files) and the five §3c tests. Ordinary PRs, review, no wait.
 These touch nothing the running job imports.
 
+### Step 5 — AttnRes (in scope, ruled 2026-09-23; a THIRD architecture axis)
+
+Ruled in scope: the user's order is 删除其他架构只保留 ced 架构, and AttnRes belongs to the
+0830v1 line already retired in CLAUDE.md, so it is "another architecture". Same method as
+steps 1-3, plus the checkpoint evidence below. Touches the import path → draft until the run
+ends.
+
+**The load surfaces (three, enumerated from the source):**
+
+| # | surface | what it does for AttnRes |
+|---|---|---|
+| 1 | `scripts/loader.py:90` `cfg = SimpleNamespace(**ck["cfg"])` | rebuilds the model from the ckpt's own cfg, so a ckpt with `attn_res=True` gets AttnRes; `:92` backfills `attn_res` from the live Cfg when the key is ABSENT |
+| 2 | `model.py:3053-3062` `HybridLM.load_state_dict` | if the model has AttnRes and the ckpt has no `final_ar.` key, prints and disables AttnRes, then loads strict |
+| 3 | `infer_local.py:236-256` | a SECOND, independent AttnRes reimplementation (plus `AttnRes` imported from `model.py:14` and `scripts/test_arch_L32.py`) |
+
+**Checkpoint evidence (read-only listing, requested before deleting the loader path):**
+
+Every checkpoint reachable on the pod, via `scripts/ckpt_info.py` (mmap, read-only) and a
+state_dict key scan — **13 files, and not one needs AttnRes:**
+
+| checkpoint(s) | cfg.attn_res | AttnRes param keys | KDA keys |
+|---|---|---|---|
+| 12 files: `ckpt_v41_ced_smoke_0922.pt` (+`.ep1`), `ckpt_v41_ced_w8smoke_0923.pt` (+`.ep1`), `ckpt_v41_peak_0920.pt` (+`.ep1`), `ckpt_v41_smoke_0920k.pt` (+`.ep1`), `ckpt_v41_gate_0922.pt.{step4000,step6000,step8000,interrupt.step8196}` | `false` | 0 | 0 |
+| `/data00/ckpt_k3-mla_2b_step2000.pt` | **ABSENT** | **0** | 0 (but `mixer.A_log`, `dt_bias`, `short_conv`, legacy `gate_proj`/`beta_proj` → KDA line) |
+
+The K3 file is the only ckpt whose cfg lacks `attn_res`. `loader.py:92` backfills it to the
+live `Cfg.attn_res = True`, so surface 2 is what saves it — and surface 2 works: its
+state_dict has **zero** `final_ar.`/`ar1.`/`ar2.` keys (153 keys total: `tok`, `blocks`,
+`norm`, `head`), so AttnRes is disabled at load. **Nothing on the pod exercises AttnRes;
+surface 2 is the only thing that would, and only for that one K3 file.**
+
+Two notes for the record:
+
+- **No backup exists.** `/mnt/data02` does not exist on the pod (`mount | grep data02` empty,
+  `ls /mnt/data02/aupai_backup/` → No such file or directory). So `AGENTS.md`'s pod-deletion
+  backup step is currently unrunnable, and this evidence cannot be cross-checked against one.
+- **A doc disagrees with the pod.** `facts/efficiency.json:3415` states the inputs
+  `data/sft/sft_v3.pt` and `ckpt_k3-mla_2b_step2000.pt` "no longer exist on the pod". The K3
+  checkpoint **does** exist there today (479,293,133 B, mtime 2026-08-25). Current disk wins;
+  the fact's boundary sentence is stale. Reported, not corrected here.
+
+**What step 5 must not break:** surface 2 is the compatibility branch, and it is the only
+thing standing between the K3 line and a strict-load failure. Its known-answer test is that
+exact file. If step 5 removes AttnRes, surface 2 has to be re-expressed as a refusal that
+names the ckpt, not deleted silently.
+
 ## Explicitly not scheduled
 
-- **AttnRes removal** — separate axis, separate evidence, not implied by this sequence.
+- **AttnRes** — moved INTO scope as step 5 (above).
 - **`entries_per_doc` deletion** — it is the encoder. Name/docstring only.
 - **HCA removal** — reachable under `attn_hybrid`; a recipe decision, not a refactor step.
 - **`v41f/`** — third architecture with its own live preregs.
