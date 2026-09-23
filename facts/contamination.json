@@ -1905,6 +1905,40 @@
    "uncertainty": "idiom vs real-copy adjudication is by example shared gram and subject/row-multiplicity, not per-gram exhaustive hand-read; the conservative direction (exclude the uncertain MMLU/arc question) is taken, so retained denominators (code/math 500) only stay when every hit collapses to a few generic idioms with 0 CJK",
    "status": "measured",
    "artifact_sha256": "d190959183ab5d86057dd93dfb159a6e32224f0a370cab30080cb767a949d068"
+  },
+  {
+   "id": "cont.decontam_base_byte_rebuild_0921",
+   "value": {
+    "humaneval_164_sha1_old": "95af0d86fac5e937e23d880780081765e81afc01",
+    "humaneval_164_sha1_new": "ee3a74711c43ea4f4a5d8187364fefd539240499",
+    "mbpp_holdouts_974_sha1_old": "2ecb41e8ef475f509a7ccc2f606d075d4c38a3e0",
+    "mbpp_holdouts_974_sha1_new": "c0bb8355ddc670dd61c71a826fddef0532c98a76",
+    "humaneval_rows": 164,
+    "mbpp_rows": 974,
+    "content_non_equivalence": "none",
+    "file_grams_subset_of_field_grams": true,
+    "file_gram_count": 35843,
+    "file_only_grams": 0
+   },
+   "measured": "2026-09-21",
+   "source": "scripts/rebuild_eval_bases.py --verify (run on digest; pod cannot reach github), 13-gram engine filters/decontam_ngram.py, stamp producer scripts/filter_gate_domains.py",
+   "config": {
+    "why_rebuilt": "pod data/eval/ is pod-only/gitignored and held neither gate file after the 2026-09-16 pod loss; pod cannot reach github (rc28 direct and via proxy), so rebuilt on digest which can.",
+    "upstream_provenance": "HumanEval data/HumanEval.jsonl.gz last changed 2021-07-07 (clone git-log single commit; downloaded gz sha1 identical to repo); MBPP mbpp/mbpp.jsonl cloned from google-research/google-research, byte-identical to downloaded and rebuilt files (563743 B, 974 rows).",
+    "why_gate_is_content_not_bytes": "decontam_ngram.from_benchmarks() builds 13-grams from the parsed named fields (HE prompt/canonical_solution/test; MBPP text/code), never from file bytes, so JSON serialization differences (key order/whitespace/escaping) cannot change a hit by construction.",
+    "evidence_subset": "all 35,843 grams built from the rebuilt files are a subset of grams built from normalized field text (file-only grams = 0; +84 field-side grams are test_list/test_setup_code the engine does not shingle).",
+    "verify": "rebuild --verify: HE 164/164 prompts and MBPP 974/974 texts sha1-hash into the tracked data/eval/holdout_hashes registry; MBPP ids 1..974 key text (the train set, not mbpp_sanitized_427).",
+    "old_bytes_unrecoverable": "searched laptop + all 4 digest worktrees: every surviving copy has the new sha1; pod copy destroyed. 12 JSON reserialization variants of the same HE rows reproduce none of the old pin, so the 0904 file was different bytes, not the same questions re-encoded. Option (2) exact-byte recovery had no source.",
+    "fingerprint_effect": "this is a byte-identity break, not a content break. Each _dc domain's decontam_fp (filter_gate_domains.py decontam_fp(HUMANEVAL_REL, MBPP_REL)) will report the new fp loudly; that is the intended derived-artifact-carries-producer-fingerprint behavior, not a defect. REGISTRY_SHA1 in datagen/holdout.py is a 16-entry holdout-registry pin table that includes these two gate files; its humaneval_164 and mbpp_holdouts_974 entries were re-pinned to the rebuilt sha1 (ee3a7471..., c0bb8355...) in 6eab3c66 on main, the same commit that lands a rebuilt-byte change per the table's update rule. The byte break therefore propagates into both decontam_fp and the registry.",
+    "humaneval_upstream_url": "https://raw.githubusercontent.com/openai/human-eval/master/data/HumanEval.jsonl.gz",
+    "mbpp_upstream_url": "https://raw.githubusercontent.com/google-research/google-research/master/mbpp/mbpp.jsonl"
+   },
+   "status": "measured",
+   "uncertainty": "Conclusion that the 13-gram hit set is unchanged rests on (a) --verify row-hash membership in holdout_hashes for every gated prompt/text and (b) the structural fact that from_benchmarks reads parsed fields; the subset measurement (file-only=0) is corroborating, not a second independent corpus re-run. The exact 0904 bytes were not recovered, so byte-level equality to that file is not claimed -- only that no hit can differ.",
+   "artifact_sha256": {
+    "humaneval_164.jsonl": "1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2",
+    "mbpp_holdouts.jsonl": "ccf64ceae9c5403bf50a044cb6d505bfd2a2963ee58338ba268fd65beab92a9f"
+   }
   }
  ]
 }
