@@ -46,6 +46,25 @@ from eval.shard import runs_full_control  # noqa: E402
 from eval.shard import validate as shard_validate  # noqa: E402
 
 
+def hits_real_stop(text, entry_point):
+    """True if `text` ends on a STOP that is not the function re-declaring itself.
+
+    This is the sampled arm's equivalent of humaneval_gen.truncate's 66-14 exemption,
+    applied to the every-16-token in-loop check so generation is not stopped early on a
+    `\\ndef <entry_point>(` self-hit. A naive `any(st in text)` -- the old sampled-arm test
+    -- treats the re-declaration as a stop, which the greedy path explicitly does not.
+    Mirrors truncate()'s scan, including re-scanning after a skipped self occurrence."""
+    for st in STOPS:
+        i = text.find(st)
+        while i != -1:
+            if (st == "\ndef "
+                    and text[i:i + 12 + len(entry_point)].startswith(f"\ndef {entry_point}(")):
+                i = text.find(st, i + 1)
+                continue
+            return True
+    return False
+
+
 def nucleus(logits, temperature, top_p):
     """logits: [1, V] -> [1, 1] sampled id. Standard nucleus: sort, keep the
     smallest set whose cumulative mass reaches top_p (always keeping rank 0)."""
@@ -136,6 +155,38 @@ def merge_shards(paths, args):
     return 0
 
 
+def _selftest():
+    """Known answers for the sampled arm's stop/truncate handling. Cardless, no model.
+
+    The red world: the sampled gen() used to (a) call truncate() with NO entry_point and
+    (b) test stops with a naive substring check, so a completion that re-declares the
+    function it was asked to write -- a normal completion-style answer -- was cut to empty
+    and scored differently from the greedy arm on the identical string. These cases pin both
+    the final truncation and the every-16-token in-loop stop to the entry_point-aware form
+    the greedy path (humaneval_gen) uses."""
+    # A self re-declaration carrying a real body. truncate WITHOUT entry_point (the old
+    # sampled call) empties it; WITH entry_point the body survives -- this is the assertion
+    # that reddens the old version.
+    ep = "truncate_number"
+    redecl = "\ndef truncate_number(number: float) -> float:\n    return number - int(number)\n\nx = 1"
+    kept = truncate(redecl, ep)
+    assert "return number - int(number)" in kept, (
+        f"truncate cut the function's own re-declared def to {kept!r}; the sampled pass@1 "
+        "would read a valid body as empty and disagree with the greedy scorer")
+    legacy_empty = truncate(redecl)
+    assert legacy_empty == "", "truncate(entry_point=None) must preserve the legacy verbatim cut"
+    # The in-loop stop helper must NOT fire on the self-hit (even before the body is emitted,
+    # at the "\ndef truncate_number(" prefix), but MUST fire on a DIFFERENT top-level def.
+    assert not hits_real_stop("\ndef truncate_number(", ep), "self re-declaration read as a stop"
+    assert hits_real_stop("\ndef other_function(", ep), "a different top-level def must stop"
+    assert hits_real_stop("\nclass X:", ep), "a column-0 class must stop"
+    # After the real body, a SECOND distinct def still cuts.
+    assert hits_real_stop(kept + "\ndef other(", ep), "a later distinct def must stop"
+    print("humaneval_sample selftest OK: self re-declared def keeps its body (truncate + "
+          "in-loop stop entry_point-aware); a different top-level def still cuts")
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt")
@@ -153,6 +204,12 @@ def main():
     ap.add_argument("--temp", type=float, default=0.2)
     ap.add_argument("--top_p", type=float, default=0.95)
     ap.add_argument("--no-greedy", action="store_true", help="skip the greedy arm (reproduced separately)")
+    ap.add_argument("--rstrip_nl", action="store_true",
+                    help="strip the prompt's trailing newline(s) before generation -- the v41_ced_0923 "
+                         "GATE protocol (prereg amendment_1, user ruling 2026-09-23); matches what "
+                         "bigcode/DeepSeek feed base models. Without it the bare column-0 newline is "
+                         "fed as-is and a re-declared column-0 def is cut to empty. judge still sees "
+                         "the stripped text the model was given")
     ap.add_argument("--no-sample", action="store_true",
                     help="greedy arm only -- the mid-run CPU trend read (stop rule 4); no n-sample "
                          "arm and no sampled control, which need the post-training GPU shards")
@@ -171,7 +228,11 @@ def main():
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--run", default=None)
     ap.add_argument("--seed", type=int, default=1337)
+    ap.add_argument("--selftest", action="store_true", help="known answers for the entry_point truncate path; cardless")
     args = ap.parse_args()
+
+    if args.selftest:
+        return _selftest()
 
     import glob as _glob
 
@@ -217,10 +278,18 @@ def main():
     tok = Tokenizer.from_file(TOK_PATH)
     torch.manual_seed(args.seed)
 
-    def gen(prompt, temperature):
+    def gen(prompt, temperature, entry_point):
         """The greedy loop with argmax replaced by nucleus sampling at
-        temperature > 0. Everything else verbatim from humaneval_gen.gen."""
-        ids = tok.encode(prompt).ids
+        temperature > 0. Everything else verbatim from humaneval_gen.gen.
+
+        entry_point is REQUIRED: truncate must exempt the model's own
+        "\\ndef <entry_point>(" re-declaration (humaneval_gen.truncate's 66-14
+        exception). The sampled arm used to call truncate() with no entry_point,
+        so a re-declared same-named def -- a valid, common completion-style answer
+        -- was cut to empty and scored differently from the greedy path on the
+        identical string. The in-loop stop check applies the same exemption so
+        generation is not ended 16 tokens early on the self-hit."""
+        ids = tok.encode(prompt.rstrip("\n") if args.rstrip_nl else prompt).ids
         x = torch.tensor([ids], device=args.device)
         new = []
         # CPU runs fp32 with no autocast, same as humaneval_gen: bf16 autocast is a cuda-only
@@ -235,14 +304,14 @@ def main():
                     break
                 new.append(tid)
                 x = torch.cat([x, nxt], 1)
-                if step % 16 == 15:
-                    if any(st in tok.decode(new) for st in STOPS):
-                        break
-        return truncate(tok.decode(new))
+                if step % 16 == 15 and hits_real_stop(tok.decode(new), entry_point):
+                    break
+        return truncate(tok.decode(new), entry_point)
 
     preds_path = args.preds or os.path.join(
         ROOT, "data", "eval",
         f"preds_humaneval_sample_{os.path.basename(str(args.ckpt).rstrip('/'))}"
+        + (".rstripnl" if args.rstrip_nl else "")
         + (f".limit{args.limit}" if args.shard_n is None and args.limit is not None else "")
         + shard_label(args.shard_i, args.shard_n) + ".jsonl")
     t0 = time.time()
@@ -272,6 +341,7 @@ def main():
             "n": args.n, "temp": args.temp, "top_p": args.top_p, "seed": args.seed,
             "max_new": args.max_new, "stops": STOPS, "n_problems": len(probs),
             "shard_i": args.shard_i, "shard_n": args.shard_n,
+            "rstrip_nl": args.rstrip_nl,
             "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, ensure_ascii=False) + "\n")
 
@@ -280,8 +350,11 @@ def main():
         # arm runs (a fresh pretrain ckpt has no canonical greedy answer to reproduce).
         if not args.no_greedy:
             for i, p in enumerate(probs, 1):
-                g = gen(p["prompt"], 0.0)
-                ok = judge(p, g)
+                g = gen(p["prompt"], 0.0, p["entry_point"])
+                # Judge the same bytes the model was fed: on the rstrip arm that is the
+                # stripped prompt, else exec would reintroduce the removed newline.
+                _jprompt = p["prompt"].rstrip("\n") if args.rstrip_nl else None
+                ok = judge(p, g, _jprompt)
                 empty = not g.strip()
                 greedy_pass += int(ok)
                 greedy_empty += int(empty)
@@ -312,8 +385,9 @@ def main():
             for i, p in enumerate(probs, 1):
                 samples = []
                 for _ in range(args.n):
-                    c = gen(p["prompt"], args.temp)
-                    samples.append({"gen": c, "ok": judge(p, c)})
+                    c = gen(p["prompt"], args.temp, p["entry_point"])
+                    _jprompt = p["prompt"].rstrip("\n") if args.rstrip_nl else None
+                    samples.append({"gen": c, "ok": judge(p, c, _jprompt)})
                 c = sum(s["ok"] for s in samples)
                 sample_pass += c / args.n
                 ctrl_pass += int(judge(p, p["canonical_solution"]))

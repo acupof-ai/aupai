@@ -1396,6 +1396,11 @@ def main():
         # conversion, the byte divisor, the prompt-carries-no-loss split, and the refusal to
         # truncate a solution. All four verified red on their broken worlds.
         "eval/humaneval_bpb.py",
+        # humaneval sampled pass@1 (the CED 30% read point): its selftest is pure strings --
+        # a re-declared same-named def must keep its body via entry_point-aware truncate and
+        # in-loop stop. The old truncate()/naive-substring pair cut that valid body to empty,
+        # so the sampled scorer disagreed with greedy on the identical completion; red verified.
+        "eval/humaneval_sample.py",
         # b0-23's per-BLOCK paired SE. Pure arithmetic over two JSONL score records -- no
         # tokenizer, no model, no card -- so it runs on every commit. Its fixture is
         # deliberately non-uniform (10/90/400 tokens) because row-weighting and
