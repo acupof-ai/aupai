@@ -93,15 +93,43 @@ def _cgroup_cpu_quota():
     return None
 
 
-def _cpu_model():
+def _cpuinfo_first(prefix):
+    """First value for a /proc/cpuinfo key, or None on a non-Linux box.
+
+    Only the FIRST processor block is read: every core on a VM shares vendor/features,
+    and the gate needs vendor + capability flags, not per-core topology.
+    """
     try:
         with open("/proc/cpuinfo") as f:
             for line in f:
-                if line.startswith("model name"):
+                if line.startswith(prefix):
                     return line.split(":", 1)[1].strip()
     except OSError:
-        pass
-    return platform.processor() or "unknown"
+        return None
+    return None
+
+
+# ISA features that change which fp32<->bf16 path oneDNN/MKL JIT-selects. The gate red is
+# a ~2.5e-4 absolute, 96.6%-element, sign-symmetric spread consistent with ONE bf16 rounding
+# whose mode (RNE vs truncation) can differ between the training cast and the save/load cast
+# on SOME ISAs -- so the fingerprint must distinguish AVX2-only hosts from AVX512/AMX hosts and
+# Intel from the AMD EPYC hosts mixed into the GitHub runner fleet.
+_ISA_FEATURES = ("avx2", "avx512f", "avx512_bf16", "avx512_fp16", "amx_bf16", "amx_tile",
+                 "fma", "f16c")
+
+
+def _cpu_features():
+    """The subset of _ISA_FEATURES present on this VM's first core, or None off Linux."""
+    feats = _cpuinfo_first("flags")
+    if feats is None:
+        return None
+    have = set(feats.split())
+    return {f: (f in have) for f in _ISA_FEATURES}
+
+
+def _cpu_model():
+    m = _cpuinfo_first("model name")
+    return m if m else (platform.processor() or "unknown")
 
 
 def env_header():
@@ -116,16 +144,29 @@ def env_header():
         interop = str(torch.get_num_interop_threads())
     except RuntimeError:
         interop = "err-before-init"
+    # oneDNN/MKL runtime version and the two env knobs that can pin kernel/ISA selection:
+    # absent they are "auto" (CPUID-selected), which is the hypothesis under test.
+    onednn_version = None
+    onednn_max_cpu_isa = os.environ.get("ONEDNN_MAX_CPU_ISA") or os.environ.get("DNNL_MAX_CPU_ISA")
+    try:
+        onednn_version = torch.backends.mkldnn.version()  # e.g. "Intel(R) oneDNN 3.x.0"
+    except Exception:
+        onednn_version = None
     return {
         "torch": torch.__version__,
         "platform": platform.platform(),
+        "vendor_id": _cpuinfo_first("vendor_id"),
         "cpu_model": _cpu_model(),
+        "cpu_features": _cpu_features(),
         "intra_op_threads": torch.get_num_threads(),
         "interop_threads": interop,
         "cpu_count": os.cpu_count(),
         "affinity_cpus": aff,
         "cgroup_cpu_quota_cores": _cgroup_cpu_quota(),
         "mkldnn_available": bool(torch.backends.mkldnn.is_available()),
+        "mkldnn_version": onednn_version,
+        "ONEDNN_MAX_CPU_ISA": onednn_max_cpu_isa,
+        "MKL_CBWR": os.environ.get("MKL_CBWR"),
         "mkldnn_enabled": bool(getattr(torch.backends.mkldnn, "enabled", None)),
         "OMP_NUM_THREADS": os.environ.get("OMP_NUM_THREADS"),
         "MKL_NUM_THREADS": os.environ.get("MKL_NUM_THREADS"),
@@ -715,6 +756,15 @@ def selftest():
     env = env_header()
     assert env["torch"] and env["platform"] and env["intra_op_threads"] is not None
     assert "cgroup_cpu_quota_cores" in env and "affinity_cpus" in env
+    # resume-gate flake fingerprint: vendor/model/ISA + the two ISA-pinning knobs must always
+    # be PRESENT (None off Linux is an honest value, a missing key would make a red artifact
+    # unreadable). _cpu_features reports every feature the cast-rounding hypothesis names.
+    for key in ("vendor_id", "cpu_model", "cpu_features", "mkldnn_version",
+                "ONEDNN_MAX_CPU_ISA", "MKL_CBWR"):
+        assert key in env, f"fingerprint key missing: {key}"
+    feats = env["cpu_features"]
+    assert feats is None or set(feats) == set(_ISA_FEATURES), feats
+    assert env["cpu_model"] and env["cpu_model"] != "unknown" or not sys.platform.startswith("linux")
 
     x = torch.arange(8, dtype=torch.float32) / 4.0
 
