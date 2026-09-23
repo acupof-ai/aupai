@@ -1,107 +1,60 @@
 # aupai
 
-A coding/math LLM model: targeting **HumanEval pass@1 ≥ 30% at ~350M-active**, on the
-DeepSeek-V4.1-Flash flat architecture (CSA2 + sliding-window attention, MoE). Pivoted
-2026-09-10 by user order (`docs/standards/v41_pivot.md`); the earlier KDA/MLA line and its
-0830v1 gates are retired. Working rules, layout, and the run book are in `AGENTS.md`; this
-file is the short version.
-
-> **⚠️ 2026-09-16 — the `sglang-test` pod and its `/work` emptyDir were destroyed and the
-> 8×H20 cards were decommissioned. All pod/`tn`/launch instructions below are suspended until
-> the node is reprovisioned and data rebuilt; see
-> `docs/standards/infra_persistent_rebuild_0916.md` and
-> `docs/standards/data_pipeline_rebuild_0916.md`. The architecture facts below remain valid.**
+aupai is the V4.1 coding/math model: a small CED transformer targeting
+**HumanEval pass@1 ≥ 30% at ~355M active params**, from scratch on a 30B-token UltraData
+gate mix. Full rules are in `AGENTS.md`.
 
 ## Model
-
-> The table below is the **r3 / `v41` gate architecture** (3,209.5M total / ~342.9M active)
-> — retained for the r3 run-book and runbook-final, not the active build. The model line
-> pivoted 2026-09-16 to the faithful **v41f** DeepSeek-V4.1-Flash reproduction (small-scale
-> 8×H20 trainable); its measured size is **0.9046 B total / 210.95 M active** from
-> `scripts/v41f_param_count.py`, design in `docs/standards/v41_faithful_repro.md`. The r3
-> facts (CSA2/MoE/FP8 below) remain true for that checkpoint and the rebuild run-books.
+CED — causal encoder-decoder, 12 layers d=1024 / H=8. Layers 0-5 encode causally; each
+decoder layer 6-11 projects its own global KV from the encoder boundary state via an unshared
+W_KV/W_Z pair. The mask is causal everywhere.
 
 | | |
 |---|---|
-| layers | 12 flat blocks, d=1024 / H=8; 3,209.5M total, ~342.9M active |
-| attention | CSA2 (learned 8-token entries + indexer top-k, one softmax over global entries + local SWA keys); first two layers SWA-only, window 128, flash-attn varlen |
-| position | partial RoPE on the last 64 dims (`--rope_dims 64`); no recurrent state |
-| MoE | 48 experts, top-3 routed + 1 shared, expert_ffn 1728 (`--moe_layers 0-11`) |
-| extras | FP8 (e4m3 fwd+bwd) Float8Linear; `torch.compile`; no attention residuals |
-| vocabulary | 32,768 slots rebuilt 2026-09-10, `<eos>=1`, `[NUM]=32767`; `data/tokenizer.json` is not in git — copy it from the pod; the pre-rebuild vocab is `data/tokenizer_frozen_0829.json` on the pod |
-| optimizer | Muon for 2D weights, AdamW for embeddings and 1D |
+| size | **3,221,975,040 total / 355,430,400 active** (exact meta-device count at the gate shape) |
+| CED | `--ced --ced_enc_layers 6` — bottom 6 encoder, top 6 decoder, per-decoder-layer W_KV/W_Z |
+| attention | CSA2: 8-token learned KV entries, indexer top-k, one softmax over global entries + local SWA keys; first two layers SWA-only, window 128; partial RoPE on the last 64 dims (`--rope_dims 64`); no recurrent state |
+| MoE | 48 experts, top-3 routed + 1 shared, expert_ffn 1728, every block (`--moe_layers 0-11`) |
+| numerics | fp8 Float8Linear fwd+bwd, `torch.compile`, `--csa2_win_flash`, no attention residuals; Muon on 2D weights, AdamW on embeddings and 1D |
+| vocabulary | 32,768 slots, `<eos>=1`, `[NUM]=32767`; not tracked, build with `python scripts/build_gate_tokenizer.py` |
 
-Measured smoke ceiling (compiled + flash, facts/v41.json): B8 OOMs at 94.6 GiB pre-step;
-B4/accum4 ran 381 steps at 72.64 GiB/rank with no NaN. The gate recipe is B4/accum8 on
-world 6 (block 0-5) = 786,432 tokens/step, 38.1K steps over the 30B gate mix; per-rank
-peak is the measured 72.6 GiB.
-
-Correctness never depends on which attention package is installed: without flash-attn the
-SDPA fallback builds the document mask from `cu_seqlens`.
-
-Interactive parameter/memory calculator: <https://acupof-ai.github.io/aupai/>.
+Code: `model.py`; facts: `facts/v41.json`. Gate run **v41_ced_0923** — 30B tokens, world 8,
+B4/accum6, seq 4096 = 786,432 tokens/step, 38,146 steps; flags, stop rules, read-point
+protocol are at `runs/prereg.jsonl#v41_ced_0923`.
 
 ## Quick start
-
 ```bash
 uv sync
-python scripts/harness.py install-hooks        # pre-commit: ruff E9/F, blob guard, harness check
-python scripts/test_arch_compat.py             # CPU: fwd/bwd, checkpoint round-trip, doc-mask known answers
-python scripts/harness.py check                # repo invariants; CI runs the same
+python scripts/harness.py install-hooks   # ruff E9/F, blob guard, harness check
+python scripts/test_arch_compat.py        # CPU fwd/bwd, checkpoint round-trip, doc-mask
+python scripts/harness.py check           # repo invariants; CI runs the same
 ```
+A 2,000-document sample (`data/corpus/sample/`, `data/mix_sample.json`) exercises the pipeline.
+## Data
+The mix file is the **only data path**: `data/mix_v41_gate.json` gives each domain its
+target weight, epoch cap, and anneal weight; a missing domain errors, no fallback. Build with
+`python datagen/build_corpus.py --domain <d> --source <s>`, decontaminate HumanEval/MBPP via
+`python scripts/filter_gate_domains.py --domains <list>` (engine `filters/decontam_ngram.py`,
+13-gram), pretokenize with `python scripts/pretokenize_domains.py <domain>`.
 
-The checkout ships a 2,000-document sample corpus (`data/corpus/sample/`, `data/mix_sample.json`)
-that exercises the pipeline end to end. The real gate corpus is built by
-`python datagen/build_corpus.py --domain <d> --source <s>` into `data/corpus/<domain>/`,
-decontaminated with `python scripts/filter_gate_domains.py --domains <list>` (13-gram
-overlap via the filters/decontam_ngram.py library) against HumanEval/MBPP, and
-pretokenized CPU-side with `python scripts/pretokenize_domains.py <domain>` into `/data00`.
-The mix file (`data/mix_v41_gate.json`) is the only data path: per-domain weight, epoch cap,
-anneal weight. A missing mix is an error, not a fallback.
+## Train and evaluate
+Pretraining is `run_ddp.sh` wrapping `torchrun train.py`; gate line and stop rules are in
+`runs/prereg.jsonl#v41_ced_0923`. Every GPU or corpus job goes through
+`python scripts/harness.py launch <name> -- <cmd>` (experiment row first, process monitor);
+SFT is `scripts/run_sft.sh <name> <resume_ckpt> <sft.pt>`.
 
-## Run
+The gate number is HumanEval pass@1 (n=164) from `eval/humaneval_sample.py`, with the
+prompt's trailing newline stripped before generation (v41_ced_0923 amendment; unstripped arm
+beside it). Broader metrics: `python eval/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl`;
+record runs with `scripts/exp.py start` / `done`. Numbers in `runs/score_matrix.jsonl` and
+`facts/*.json` carry their measurement config.
 
-Every GPU or corpus job starts through one launcher — it writes the experiment row first,
-takes its cards from the controller's allocation, detaches with `setsid`, verifies the startup
-gate in the worker log before the job counts as started, and arms a monitor:
-
-> **Historical card map (pre-2026-09-16, awaiting reprovisioning).** The allocation below
-> described the now-destroyed `sglang-test` node: world-6 block 0-5 for gate training with no
-> lane at launch; card 5 was the temporary pre-launch lane; cards 6-7 stayed tileRL through the
-> run. It is retained as the shape a new node must reproduce, not a live allocation — confirm
-> the controller's current card map before any launch after rebuild.
-
-```bash
-python scripts/harness.py launch <name> --training --hypothesis "..." -- ./run_ddp.sh --mix data/mix_v41_gate.json --name <name>
-python scripts/harness.py launch <name> -- python3 eval/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl
-```
-
-The committed gate line is `runs/v41_gate_0911.sh` (draft; launches only on the
-controller's explicit go) and its stop rules are `runs/prereg.jsonl#v41_gate_0911`.
-SFT: `scripts/run_sft.sh <name> <resume_ckpt> <sft.pt>`. Numbers land in
-`runs/score_matrix.jsonl` and `facts/*.json`, each with its measurement config; the gate
-number is HumanEval pass@1 via `eval/humaneval_sample.py`.
-
-## Commit workflow — one path
-
-1. Work in your own worktree on your own branch; stage by path (`git add <file>`), never
-   `-A`/`-a`. One concern per commit, message in English, subject ending in `(session)`.
-2. Code goes through a GitHub PR (`gh pr create`, `--merge` only), second reader approves
-   with an `artifact:`/`case:` comment and a `runs/review.jsonl` row; ledger-only commits
-   (`runs/*.jsonl`, `EXPERIMENTS.md`) keep `scripts/merge_main.sh <branch>`. The pre-commit
-   hook runs ruff E9/F, the blob guard, and `harness check`. A red hook is a red commit.
-3. For code, the PR merger pushes the pod in the merge step (`scripts/pod_push.sh`
-   `<files>`) and stamps main's sha; for ledger commits the committer pushes. `train.py`
-   refuses to start on a drifted pod.
-4. CI on push: ruff, `py_compile`, `test_arch_compat`, `eqcheck`, `holdout`, `harness check`
-   and `--selftest`.
-5. Record every run: `scripts/exp.py start` before, `done` after; tasks live in
-   `runs/tasks.jsonl` (`harness task add|done|list`). Status is read from artifacts, never
-   from a message.
-
-## Numbers — `--fone`
-
-BPE splits numbers by frequency (1640 → `16|40`). `--fone` gives each number one `[NUM]`
-token with a Fourier-encoded value and decodes digits ten-way. The flag changes the data
-format everywhere: pack with `datagen/prepare_sft_math.py --fone`; a checkpoint whose flag disagrees
-with the pack refuses. `probes/fone_digit_acc.py --ckpt X` scores the digit head.
+## Commit workflow
+1. Own worktree and branch; stage by path, never `git add -A`; one concern per commit,
+   English message, subject ending in `(session)`.
+2. Code via GitHub PR (`gh pr create`, `--merge` only, never `--squash`), after a second
+   reader's `artifact:`/`case:` comment, a `runs/review.jsonl` row, and a green
+   `python3 scripts/pr_merge_gate.py <pr>`. Ledger-only commits (`runs/*.jsonl`,
+   `EXPERIMENTS.md`) merge without a PR via `scripts/merge_main.sh <branch>`.
+3. CI gates every push: ruff, py_compile, `test_arch_compat`, `eqcheck`, `holdout`,
+   `harness check` and its `--selftest`.
