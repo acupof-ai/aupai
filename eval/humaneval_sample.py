@@ -17,6 +17,7 @@ pass@1 estimator: c/n per problem -- for k=1 the unbiased estimator
 """
 
 import argparse
+import contextlib
 import json
 import os
 import sys
@@ -60,7 +61,14 @@ def main():
     ap.add_argument("--ckpt")
     ap.add_argument("--data", default=DATA_PATH)
     ap.add_argument("--max_new", type=int, default=280)
-    ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--device", default="cuda:0", help="cuda:0 (default) or cpu (cardless; set CUDA_VISIBLE_DEVICES=)")
+    ap.add_argument("--threads", type=int, default=None, help="torch threads when --device cpu")
+    ap.add_argument("--limit", type=int, default=None, help="first N problems (chain dry-run)")
+    ap.add_argument("--expect-greedy", default=None,
+                    help="optional 'passes,empties' reproduction gate for a SPECIFIC prior ckpt; "
+                         "default reports the greedy numbers and never exits on them. The only "
+                         "value that was ever meaningful here was 3,72 (format_sft_0909); a "
+                         "from-scratch pretrain ckpt has no fixed expected greedy answer")
     ap.add_argument("--n", type=int, default=20, help="samples per problem (SmolLM published 24 at this setting)")
     ap.add_argument("--temp", type=float, default=0.2)
     ap.add_argument("--top_p", type=float, default=0.95)
@@ -72,15 +80,27 @@ def main():
     args = ap.parse_args()
 
     probs = [json.loads(l) for l in open(args.data, encoding="utf-8") if l.strip()]
+    if args.limit is not None:
+        probs = probs[: args.limit]
     print(f"HumanEval sampled: {len(probs)} problems, n={args.n}, temp={args.temp}, top_p={args.top_p}", flush=True)
     run_control(probs)
     if args.control:
         return
     if not args.ckpt:
         ap.error("--ckpt required (unless --control)")
-    if not os.environ.get("CUDA_VISIBLE_DEVICES"):
+    is_cpu = str(args.device).startswith("cpu")
+    if is_cpu:
+        if args.threads:
+            torch.set_num_threads(args.threads)
+        if os.environ.get("CUDA_VISIBLE_DEVICES") is None:
+            # Cardless is the point of --device cpu; the env must be EMPTY explicitly so a
+            # default change can never silently put a "cpu" run on physical GPU 0.
+            sys.exit("REFUSING: --device cpu but CUDA_VISIBLE_DEVICES is unset -- set it empty "
+                     "(CUDA_VISIBLE_DEVICES=) to run cardless.")
+    elif not os.environ.get("CUDA_VISIBLE_DEVICES"):
         sys.exit("REFUSING: CUDA_VISIBLE_DEVICES is unset, so cuda:0 is physical "
-                 "GPU 0 -- tileRL's card. Set it to your granted card.")
+                 "GPU 0 -- tileRL's card. Set it to your granted card, or pass --device cpu "
+                 "with CUDA_VISIBLE_DEVICES= to run cardless.")
 
     from scripts.loader import load_checkpoint
     from tokenizers import Tokenizer
@@ -95,7 +115,10 @@ def main():
         ids = tok.encode(prompt).ids
         x = torch.tensor([ids], device=args.device)
         new = []
-        with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        # CPU runs fp32 with no autocast, same as humaneval_gen: bf16 autocast is a cuda-only
+        # context and the chain must run cardless on a checkpoint dry-run.
+        ctx = torch.autocast(device_type="cuda", dtype=torch.bfloat16) if not is_cpu else contextlib.nullcontext()
+        with torch.no_grad(), ctx:
             for step in range(args.max_new):
                 lg = model(x[:, -cfg.seq:])[0][:, -1]
                 nxt = lg.argmax(-1, keepdim=True) if temperature <= 0 else nucleus(lg, temperature, args.top_p)
@@ -111,13 +134,22 @@ def main():
 
     preds_path = os.path.join(
         ROOT, "data", "eval",
-        f"preds_humaneval_sample_{os.path.basename(str(args.ckpt).rstrip('/'))}.jsonl")
+        f"preds_humaneval_sample_{os.path.basename(str(args.ckpt).rstrip('/'))}"
+        + (f".limit{args.limit}" if args.limit is not None else "") + ".jsonl")
     t0 = time.time()
-    # The format_sft result this run must reproduce (docs/standards/p1_data_recipe.md:
-    # "moved it to 3/164 with the empty rate at 72/164"). Greedy is deterministic, so
-    # the match must be exact; a miss says the shared judge/STOPS/truncate diverged
-    # from humaneval_gen and the sampled arm would be meaningless (4c, 2026-09-09).
-    GREEDY_EXPECTED_PASS, GREEDY_EXPECTED_EMPTY = 3, 72
+    # The greedy reproduction gate is OPTIONAL and ckpt-specific. 3/72 was the measured
+    # format_sft_0909 answer: that checkpoint, that scorer. A from-scratch pretrain ckpt
+    # (the CED run's read point) has no fixed expected greedy pass/empty pair, so gating it
+    # on 3/72 aborts the sampled arm on every such ckpt before the sampled read point runs.
+    # --expect-greedy opts into the gate for a rerun that must reproduce a specific prior
+    # number; the default reports the greedy numbers and proceeds.
+    expected = None
+    if args.expect_greedy:
+        try:
+            _ep, _ee = (int(v) for v in args.expect_greedy.split(","))
+            expected = (_ep, _ee)
+        except ValueError:
+            ap.error("--expect-greedy must be 'passes,empties', e.g. 3,72")
     greedy_pass = greedy_empty = 0
     sample_pass = 0.0
     ctrl_pass = 0
@@ -133,7 +165,9 @@ def main():
             "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, ensure_ascii=False) + "\n")
 
-        # Phase 1: greedy, all 164 problems. Gate the sampled arm on reproduction.
+        # Phase 1: greedy. With --expect-greedy the sampled arm is gated on the specific
+        # prior ckpt's reproduction; without it the numbers are reported and the sampled
+        # arm runs (a fresh pretrain ckpt has no canonical greedy answer to reproduce).
         if not args.no_greedy:
             for i, p in enumerate(probs, 1):
                 g = gen(p["prompt"], 0.0)
@@ -150,13 +184,14 @@ def main():
                           f"empty {greedy_empty}/{i}  ({time.time() - t0:.0f}s)", flush=True)
             print(f"\nHUMANEVAL pass@1 (greedy) = {greedy_pass}/{len(probs)} = "
                   f"{100 * greedy_pass / len(probs):.2f}%  empty {greedy_empty}/{len(probs)}", flush=True)
-            if (greedy_pass, greedy_empty) != (GREEDY_EXPECTED_PASS, GREEDY_EXPECTED_EMPTY):
+            if expected is not None and (greedy_pass, greedy_empty) != expected:
                 sys.exit(
                     f"GREEDY REPRODUCTION FAILED: {greedy_pass}/{len(probs)} pass, "
                     f"{greedy_empty}/{len(probs)} empty "
-                    f"(expected {GREEDY_EXPECTED_PASS}/{GREEDY_EXPECTED_EMPTY}). The shared "
+                    f"(expected {expected[0]}/{expected[1]}). The shared "
                     "judge/STOPS/truncate diverged from humaneval_gen; NOT running the sampled arm.")
-            print("greedy reproduction OK -- running sampled arm", flush=True)
+            if expected is not None:
+                print("greedy reproduction OK -- running sampled arm", flush=True)
 
         # Phase 2: n samples per problem.
         for i, p in enumerate(probs, 1):
