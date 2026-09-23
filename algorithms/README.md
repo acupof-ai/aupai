@@ -1,6 +1,6 @@
 # algorithms/
 
-RL training loops and verifiable-reward utilities for the 200M Chinese LLM.
+RL training loops and verifiable-reward utilities.
 
 ## Layout
 
@@ -9,9 +9,8 @@ RL training loops and verifiable-reward utilities for the 200M Chinese LLM.
 | `rlvr_reward.py` | `\boxed{}` extraction, answer normalization, 0/1 reward | No (stdlib only) |
 | `rlvr_generate.py` | Batched top-p autoregressive sampling | No (lazy on call) |
 | `rlvr_trainer.py` | RLVR GSPO loop: fp32 master weights, FP8 train + bf16 gen copies, DDP | No (lazy) |
-| `rlvr_data.py` | Build/load `data/rl/rlvr_math.jsonl` from raw math datasets | No (stdlib only) |
+| `rlvr_data.py` | Build/load `data/rl/rlvr_math.jsonl` from raw math datasets; script entry -> `main()` | No (stdlib only) |
 | `rlvr.py` | Entry point -> `rlvr_trainer.main()` | — |
-| `prepare_rlvr.py` | Entry point -> `rlvr_data.main()` | — |
 
 All paths resolve from the project root (`os.path.dirname` of this directory),
 so scripts run from anywhere. Heavy deps (torch, tokenizers, `train`/`sft`
@@ -22,7 +21,7 @@ CPU-only box; torch is only loaded when a training/generation function runs.
 
 ```bash
 # Prepare RLVR data (school_math_r1_zh + gsm8k_zh -> data/rl/rlvr_math.jsonl)
-python algorithms/prepare_rlvr.py
+python algorithms/rlvr_data.py
 
 # RLVR training (single GPU or DDP)
 torchrun --nproc_per_node=8 algorithms/rlvr.py --resume ckpt_sft.pt
