@@ -980,7 +980,40 @@
    "uncertainty": "The SHAPE is characterized exactly (absolute, symmetric, spread, magnitude-independent, 0.66% of one step). The MECHANISM is not: this is what a small nondeterministic perturbation of the post-step weights looks like, and it is equally consistent with any host-side reduction-order difference in the step's arithmetic. It does NOT show a copy failure, a permutation, a scale error or a bf16 round trip -- all four shapes were tested and ruled out. One run. Structural explanations eliminated by the bit analysis: not a truncation, not a bf16 round trip, not confined to low bits, not exponent-level.",
    "status": "measured",
    "boundary": "Answers 'do the fp32 masters differ after resume, and in what shape' -- yes, by a small absolute spread that is not a scale, permutation, copy or bf16 artifact, while the optimizer state, RNG and checkpoint identity are bit-identical. Does NOT answer which runner property produces it; no mechanism is claimed. It also does not decide whether one step's 0.66%-of-a-step difference compounds -- this is a single step K, not a training trajectory."
-
+  },
+  {
+   "id": "v41.ced_divergence_step12640_rca_0924",
+   "value": "Resumed from ckpt_v41_ced_0923.pt.step12000 (healthy; interrupt.step13210 is post-divergence and not trained from). v41_ced_0923 diverged step ~12640 (~9.94B tok 33%, constant-LR; warmdown ~13352): gnorm 2.31@12630 -> 239@12640 -> 1184@12650 -> 2.9e5@12700 -> 1e7-1e8@13100s; train loss 1.08->3.97->6.20->8.31; val 1.948@12000 -> 8.474@13000; no NaN/Inf, zero skips/rollbacks, throughput/peak unchanged. Precursors gnorm 1.63@12390, 2.31@12630. Deterministic resume from healthy step12000 stayed healthy across 12000-12720: replay gnorm 0.62@12640 (vs original 239) and 0.68@12650 (vs 1184), gnorm median 0.63 over 12600-12700, no >10x spike. But the resume is not bit-identical to the uninterrupted run pre-divergence (12610 gnorm 0.79 vs 0.56; the 12630 2.31 precursor absent).",
+   "measured": "2026-09-24",
+   "source": "experiments row v41_ced_0923 in runs/experiments.jsonl (killed step13210; interrupt ckpt step13210 on pod/host backup); replay experiment row v41_ced_diverge_probe_0924 and its per-module grad artifact runs only on the pod (not tracked); owner de, relayed by aupai-1e/3b; code paths model.HybridLM/MoEFFN and Muon.muon_update unit-Frobenius normalization in train.py",
+   "config": {
+    "test": "resume healthy step12000, identical row_cursor (full_plan_prefix seed42, 6 domains byte-equal 1087317/169105/184467/103556/34611/724944), same flags/world8, replay steps 12000-12720",
+    "replay_result": "STAYED HEALTHY every step; gnorm 0.5-0.9 (12640=0.62 vs orig 239, 12650=0.68 vs orig 1184); per-module max grad elem 0.59, zero >10x spikes",
+    "replay_not_bit_faithful": "pre-divergence gnorm differs at identical steps vs uninterrupted run (12610 0.79 vs 0.56; 12630 precursor 2.31 absent) even with identical weights+cursor",
+    "forward_determinism": "no dropout; MoE routing deterministic topk; fp8 per-forward scales (no persistent amax); plan deterministic from seed+cursor",
+    "conclusion": "NOT a fixed poison batch; run-specific execution/numeric accumulation on a near-marginal regime that resume resets; live onset module never observed (run dead), needs a fresh run that re-enters the marginal regime",
+    "fix_options_considered": [
+     "clip 1.0->0.5 (cheapest, recommended+from-scratch A/B)",
+     "QK-norm or attention logit cap (attn-core dominates grad)",
+     "lower lr (flat 0911/0922 same lr did not diverge, so not sufficient)",
+     "skip-batch on gnorm spike (reactive, masks not prevents)"
+    ],
+    "cursor_full_plan_prefix_seed": 42,
+    "cursor_rows": {
+     "code_ultra_l2_dc": 1087317,
+     "code_py_starcoder_dc": 169105,
+     "math_owm_stage2_dc": 184467,
+     "en_c4_stage2_dc": 103556,
+     "cot_dc": 34611,
+     "code_ultra_l3_noexec_dc": 724944
+    },
+    "world": 8,
+    "flags": "dim1024 L12 H8 ffn6912 B4 accum6 csa+csa2 csa2_win_flash rope64 n_swa2 no-attn_res ced ced_enc_layers6 moe48 top3 shared1 expert_ffn1728, compiled fp8, muon lr1e-2 embed1e-1 scalar0.15 clip1.0",
+    "resume_base": "step12000 healthy checkpoint; post-divergence step13210 interrupt not trained from (checkpoint filenames in value)"
+   },
+   "uncertainty": "the specific first tensor/module of the onset is unmeasured (the diverged run was killed; resume does not re-enter the state). Whether attention logits saturate before the spike is unverified -- add logit-max to the next from-scratch probe. Resume-reset state that carried the trigger (RNG? DDP atomics/compile?) is not isolated.",
+   "status": "measured",
+   "boundary": "The onset tensor/module was NOT captured (the diverged run was killed; the resume never re-enters the state). A two-independent-resume bit comparison (same step12000 ckpt+cursor, fresh processes) is PENDING to separate flash-attn-backward/grouped_mm atomic nondeterminism from a resume-state-loss bug: identical resumes => deterministic kernels => lost-state resume bug to investigate; differing resumes => kernel nondeterminism explains the ULP split, no resume bug. Tightening grad clip cannot arrest the runaway: Muon normalizes to unit Frobenius norm after Nesterov momentum (the Muon muon_update kernel (unit-Frobenius X/X.norm normalization before Newton-Schulz, train.py)) and AdamW by v^0.5, so per-step displacement is ~lr, not clip. Recipe decision reserved for the user; levers are QK-norm/logit-cap/z-loss and lr. Flat v41_gate runs at the same lr did not diverge."
   }
  ]
 }
