@@ -2880,56 +2880,37 @@ class HybridLM(nn.Module):
         )
         self.attn_kinds = kind
         self.csa2_modes = csa2_modes
-        # CED (user order 2026-09-22). ced_enc_layers is the SPLIT: layers [0, split) are the
-        # encoder and every layer at or above it is a decoder that reads H_{L/2}, the encoder's
-        # final hidden state, instead of its own K/V (Eq.1, per-layer unshared W_KV/W_Z).
-        #
-        # VALIDATED HERE, not in the forward: a split that leaves no encoder, no decoder, or a
-        # decoder that is not an attention layer is a configuration error, and naming it at
-        # construction is what keeps it out of a 155 GiB cache load.
-        self.ced = int(getattr(cfg, "ced", 0) or 0)
+        # CED is the only architecture (user order 2026-09-23: "删其他架构，不用 flag"; the flat
+        # line v41_gate_0922 stopped at step ~8196). There is no on/off flag: every
+        # non-AttnRes body is the two-pass encoder/decoder. ced_enc_layers is the SPLIT --
+        # layers [0, split) encoder, [split, layers) decoder; 0 means L//2, the gate line passes
+        # 6 explicitly. The AttnRes construction branch is removed separately (step 5,
+        # scripts/test_attnres_load_contract.py), so while it exists it skips CED setup and keeps
+        # running its own body unchanged.
         self.ced_enc_layers = int(getattr(cfg, "ced_enc_layers", 0) or 0)
-        if self.ced:
-            if not 0 < self.ced_enc_layers < cfg.layers:
+        if not getattr(cfg, "attn_res", False):
+            if self.ced_enc_layers < 0 or self.ced_enc_layers >= cfg.layers:
                 raise ValueError(
-                    f"ced={self.ced} needs 0 < ced_enc_layers < layers, got "
-                    f"ced_enc_layers={self.ced_enc_layers} with layers={cfg.layers}: the split "
-                    f"must leave a nonempty encoder below it and a nonempty decoder above it")
-            # ced WANTS THE TWO-PASS BODY, and that body is gated on `not self.attn_res`. With
-            # attn_res left at its default True the model CONSTRUCTS cleanly and dies at the
-            # first forward with "no H_{L/2} stashed" -- measured, and it would be the next
-            # person's construction that pays for it (every current launcher passes
-            # --no-attn_res, so no current recipe is affected). Refused HERE, where the split
-            # checks are and where the message can name both flags. Merging the two paths is a
-            # separate decision: AttnRes does not cross the CED boundary (v41_pivot:85), so
-            # "CED with depth attention" is unimplemented rather than merely untested.
-            if getattr(cfg, "attn_res", False):
-                raise ValueError(
-                    f"ced={self.ced} needs attn_res OFF (the CED body is a two-pass encoder/"
-                    f"decoder forward and runs only on the non-AttnRes path). Pass --no-attn_res. "
-                    f"AttnRes does not carry across the CED boundary (v41_pivot.md:85), so this "
-                    f"combination is unimplemented, not untested")
-            _dec = [i for i in range(self.ced_enc_layers, cfg.layers)
+                    f"ced_enc_layers={self.ced_enc_layers} must be 0 (meaning L//2) or in "
+                    f"[1, {cfg.layers - 1}]: the split must leave a nonempty encoder and a "
+                    f"nonempty decoder")
+            split = self.ced_enc_layers if self.ced_enc_layers else cfg.layers // 2
+            self.ced_enc_layers = split
+            _dec = [i for i in range(split, cfg.layers)
                     if i % cfg.attn_every == cfg.attn_every - 1]
-            if not _dec:
-                raise ValueError(
-                    f"ced={self.ced} with ced_enc_layers={self.ced_enc_layers}: no attention "
-                    f"layer in the decoder half (attn_every={cfg.attn_every}), so nothing would "
-                    f"project the global KV and the split would be inert")
             # PER-LAYER, UNSHARED (v41_pivot:10-12 says so in those words). Sharing one pair
             # across the decoders would cost the same state_dict shape at 1/6 the parameters and
-            # would silently be a different architecture.
+            # would silently be a different architecture. The global-KV projection belongs to
+            # the CSA2 gate stack; a decoder block without a csa2 CompressedSparseAttention
+            # (small CPU configs, or a legacy csa-only arm) has nothing to project and is left
+            # alone -- the two-pass body then runs as two sequential halves with no layer
+            # reading the stash, numerically the old single pass.
             for i in _dec:
-                _mx = self.blocks[i].mixer
-                _csa = getattr(_mx, "csa", None)
-                if not isinstance(_csa, CompressedSparseAttention):
-                    raise ValueError(
-                        f"CED decoder layer {i} has CSA module {type(_csa).__name__}, not "
-                        f"CompressedSparseAttention; only that module runs the global-KV branch "
-                        f"that W_KV/W_Z feed")
-                _csa.ced_kv = True
-                _csa.w_kv = nn.Linear(cfg.d, cfg.d, bias=False)
-                _csa.w_z = nn.Linear(cfg.d, cfg.d, bias=False)
+                _csa = getattr(self.blocks[i].mixer, "csa", None)
+                if getattr(cfg, "csa2", False) and isinstance(_csa, CompressedSparseAttention):
+                    _csa.ced_kv = True
+                    _csa.w_kv = nn.Linear(cfg.d, cfg.d, bias=False)
+                    _csa.w_z = nn.Linear(cfg.d, cfg.d, bias=False)
         self.norm = RMSNorm(cfg.d)
         # A/B (4): ONE shared value-embedding table for every MLA layer, or None when off.
         #
@@ -3147,10 +3128,12 @@ class HybridLM(nn.Module):
 
     def _body(self, x, cu=None):
         ckpt = self.grad_ckpt and self.training
-        # CED (user order 2026-09-22): the encoder half runs first, its final hidden state is
-        # stashed on every decoder layer, and the decoder half then runs against it. TWO PASSES,
-        # not one: a decoder layer's global KV is a function of H_{L/2}, which does not exist
-        # until the encoder has finished.
+        # CED only (flat removed 2026-09-23): the encoder half runs first, its final hidden
+        # state is stashed on every decoder layer that projects global KV, and the decoder half
+        # then runs against it. TWO PASSES, not one: a decoder layer's global KV is a function
+        # of H_{split}, which does not exist until the encoder has finished. Layers without a
+        # CompressedSparseAttention never read the stash, so for such configs the two passes are
+        # one sequential pass numerically.
         #
         # GRADIENT: h_enc is NOT detached. "teacher-forced" (prereg#ced_vs_flat_0910) constrains
         # WHAT the decoder reads -- h_enc comes from the normal causal forward over the true
@@ -3158,26 +3141,29 @@ class HybridLM(nn.Module):
         # gradient flows back into the encoder. Cutting it would freeze the encoder against its
         # own decoder's signal and would be a second unmeasured choice on top of the one this
         # feature tests (the same reasoning as the MEAN pool in _ced_kv_from_enc).
-        if self.ced and not self.attn_res:
-            for b in self.blocks[: self.ced_enc_layers]:
+        if not self.attn_res:
+            split = self.ced_enc_layers
+            pkg = None
+            for b in self.blocks[:split]:
+                # CSA2 package slot, threaded the same way the legacy single pass did.
+                if isinstance(b.mixer, GatedMLA):
+                    b.mixer._pkg = pkg
                 x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+                if isinstance(b.mixer, GatedMLA):
+                    pkg = b.mixer._pkg
             h_enc = x
-            for b in self.blocks[self.ced_enc_layers:]:
+            # The package CHAIN CROSSES THE SPLIT: a csa2 Reuse layer in the decoder half (only
+            # buildable under attn_hybrid with R modes; the gate stack has none -- its decoders
+            # are Full modules with ced_kv) consumes the encoder boundary Full's package, which
+            # is encoder-produced global KV, the same direction ced_kv Full decoders read. A
+            # decoder half with no Full layer and an R layer first raises in CSA2Reuse.forward,
+            # exactly as the single pass did.
+            for b in self.blocks[split:]:
+                if isinstance(b.mixer, GatedMLA):
+                    b.mixer._pkg = pkg
                 _csa = getattr(b.mixer, "csa", None)
                 if getattr(_csa, "ced_kv", False):
                     _csa._h_enc = h_enc
-                x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
-            self._clear_pkg()
-            return x
-        if not self.attn_res:
-            pkg = None
-            for b in self.blocks:
-                # CSA2 package slot (3b-20): SWA/non-GatedMLA blocks ignore it, a Full
-                # layer replaces it, a Reuse layer consumes it. Stashed on the mixer
-                # rather than threaded through Block.forward/sublayers so the AttnRes
-                # path and every checkpoint boundary stay untouched -- the _ve precedent.
-                if isinstance(b.mixer, GatedMLA):
-                    b.mixer._pkg = pkg
                 x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
                 if isinstance(b.mixer, GatedMLA):
                     pkg = b.mixer._pkg

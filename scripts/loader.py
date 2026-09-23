@@ -105,6 +105,19 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True, claim=True):
         cfg.conv_doc_isolated = False
     cfg.grad_ckpt = False
     cfg.vocab_id = ck.get("vocab_id")  # pre-2026-08-29 ckpts have none -> None
+    # FLAT ARCHITECTURE REMOVED (user order 2026-09-23): the only model this tree builds is CED,
+    # whose decoder CSA modules carry per-layer w_kv/w_z. A csa2 checkpoint without those keys is
+    # a flat v41_gate_* run; strict load would reject it anyway ("Missing key(s)...w_kv"), but a
+    # torch traceback names the symptom, not that the architecture was deleted. Refuse by name.
+    # Pre-csa2 checkpoints (KDA/MLA/AttnRes era, csa2 absent/False) are a different population:
+    # they have no decoder w_kv either, and the legacy load contract still serves them.
+    if ck.get("model") and getattr(cfg, "csa2", False) and not any(
+            ".w_kv." in k or ".w_z." in k for k in ck["model"]):
+        raise RuntimeError(
+            f"{path} is a FLAT-architecture checkpoint (csa2 with no CED decoder w_kv/w_z). "
+            "The flat line was stopped and deleted by user order 2026-09-23; CED-only tree, no "
+            "read-only flat path. Read its numbers from the artifacts written when it ran; do "
+            "not load it into this model.")
     # A caller without a FoNE encode/decode path reads every number as zero and scores
     # garbage without raising.
     if getattr(cfg, "fone", False) and not fone_ok:
