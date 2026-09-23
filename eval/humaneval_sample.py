@@ -40,6 +40,10 @@ from eval.humaneval_gen import (  # noqa: E402
     run_control,
     truncate,
 )
+from eval.shard import label as shard_label  # noqa: E402
+from eval.shard import select as shard_select  # noqa: E402
+from eval.shard import runs_full_control  # noqa: E402
+from eval.shard import validate as shard_validate  # noqa: E402
 
 
 def nucleus(logits, temperature, top_p):
@@ -54,6 +58,82 @@ def nucleus(logits, temperature, top_p):
     sp = sp * keep
     sp = sp / sp.sum(dim=-1, keepdim=True)
     return si.gather(-1, torch.multinomial(sp, 1))
+
+
+def merge_shards(paths, args):
+    """Cardless merge of N shard preds into the one read point.
+
+    Verifies the partition before any number: the headers' shard ids are exactly 0..k, and
+    across them every problem appears in exactly one shard (eval/shard.py's fixed-position
+    partition is what makes that exact). Refuses a gap or duplicate. Scores greedy and the
+    n-sample pass@1 over the union; samples are independent draws, so per-problem c/n and
+    its mean over problems combine from the rows each shard already judged.
+    """
+    if not paths:
+        sys.exit(f"no shard files match {args.merge_glob!r}")
+    headers, greedy, samples = {}, {}, {}
+    n = None
+    for path in paths:
+        hdr = None
+        for line in open(path, encoding="utf-8"):
+            line = line.strip()
+            if not line:
+                continue
+            r = json.loads(line)
+            ph = r.get("phase")
+            if r.get("_header"):
+                hdr = r
+                continue
+            if ph == "greedy":
+                key = ("g", r["task_id"])
+            elif ph == "sample":
+                key = ("s", r["task_id"])
+            else:
+                continue  # sample_summary is a per-shard number; recomputed over the union
+            if key in greedy or key in samples:
+                sys.exit(f"duplicate {key} across shards in {path} -- refuse to double-count")
+            if key[0] == "g":
+                greedy[r["task_id"]] = r
+            else:
+                samples[r["task_id"]] = r
+        if not hdr or not hdr.get("shard_n"):
+            sys.exit(f"{path} is not a shard artifact (no shard_n in header)")
+        si, sn, n = hdr["shard_i"], hdr["shard_n"], hdr["n"]
+        if si in headers:
+            sys.exit(f"shard {si} present in two files")
+        headers[si] = hdr
+    got = set(headers)
+    if got != set(range(max(got) + 1)):
+        sys.exit(f"shard set {sorted(got)} is not contiguous 0..k -- refuse to score a gap")
+    sn = max(got) + 1
+    # Every shard must carry the SAME problem set that shard_select assigns it. Greedy and
+    # sampled must cover the same problems.
+    if set(greedy) != set(samples):
+        sys.exit("greedy and sample rows cover different problem sets across the shards")
+    nprob = len(samples)
+    # The union must be exactly eval/shard's partition over the full dataset: every problem
+    # appears in exactly one of the contiguous shards.
+    probs_all = [json.loads(l) for l in open(args.data, encoding="utf-8") if l.strip()]
+    want = {probs_all[i]["task_id"] for i in range(len(probs_all))}
+    if set(samples) != want:
+        miss = sorted(want - set(samples))[:3]
+        extra = sorted(set(samples) - want)[:3]
+        sys.exit(f"shards cover {nprob} problems, dataset has {len(want)} "
+                 f"(missing e.g. {miss}, extra e.g. {extra})")
+    gp = sum(int(r["ok"]) for r in greedy.values())
+    ge = sum(int(r.get("empty")) for r in greedy.values())
+    sp = sum(int(r["c"]) / n for r in samples.values())
+    n_samples = nprob * n
+    se = sum(1 for r in samples.values() for s in r["samples"] if not s["gen"].strip())
+    print(f"merged {sn} shards, {nprob} problems, n={n}\n", flush=True)
+    print(f"HUMANEVAL pass@1 (greedy) = {gp}/{nprob} = {100 * gp / nprob:.2f}%  "
+          f"empty {ge}/{nprob}", flush=True)
+    print(f"HUMANEVAL pass@1 (n={n}, temp={headers[0]['temp']}, top_p={headers[0]['top_p']}) = "
+          f"{sp}/{nprob} = {100 * sp / nprob:.2f}%", flush=True)
+    print(f"sampled empty completions = {se}/{n_samples} = {100 * se / n_samples:.1f}%", flush=True)
+    print("(canonical control: shard 0 ran the full-set gate pre-generation; each shard's own "
+          "sample_summary held its in-shard control)", flush=True)
+    return 0
 
 
 def main():
@@ -73,21 +153,43 @@ def main():
     ap.add_argument("--temp", type=float, default=0.2)
     ap.add_argument("--top_p", type=float, default=0.95)
     ap.add_argument("--no-greedy", action="store_true", help="skip the greedy arm (reproduced separately)")
+    ap.add_argument("--shard_i", type=int, default=None,
+                    help="multi-card shard: generate only fixed-order problem indices i with "
+                         "i %% --shard_n == shard_i. Pair with --shard_n; N cards cover every "
+                         "problem exactly once (eval/shard.py, same partition as humaneval_gen).")
+    ap.add_argument("--shard_n", type=int, default=None, help="total number of shards")
+    ap.add_argument("--merge-glob", default=None,
+                    help="cardless: glob of shard preds files to merge into one read and score, "
+                         "then exit. Verifies exact problem coverage 0..N-1 and contiguous shards.")
     ap.add_argument("--control", action="store_true", help="run the known-answer controls only, no model (CPU)")
     ap.add_argument("--force", action="store_true")
     ap.add_argument("--run", default=None)
     ap.add_argument("--seed", type=int, default=1337)
     args = ap.parse_args()
 
-    probs = [json.loads(l) for l in open(args.data, encoding="utf-8") if l.strip()]
-    if args.limit is not None:
-        probs = probs[: args.limit]
-    print(f"HumanEval sampled: {len(probs)} problems, n={args.n}, temp={args.temp}, top_p={args.top_p}", flush=True)
-    run_control(probs)
+    import glob as _glob
+
+    if args.merge_glob is not None:
+        return merge_shards(sorted(_glob.glob(args.merge_glob)), args)
+
+    probs_all = [json.loads(l) for l in open(args.data, encoding="utf-8") if l.strip()]
+    shard_validate(args.shard_i, args.shard_n)
+    if not runs_full_control(args.shard_i, args.shard_n):
+        print(f"CONTROL skipped on shard {args.shard_i}/{args.shard_n} "
+              "(full-set canonical gate runs on shard 0 only)", flush=True)
+    else:
+        print(f"HumanEval sampled: n={args.n}, temp={args.temp}, top_p={args.top_p}", flush=True)
+        run_control(probs_all)
     if args.control:
         return
+    if args.shard_n is None and args.limit is not None:
+        probs_all = probs_all[: args.limit]
+    probs = [p for _, p in shard_select(probs_all, args.shard_i, args.shard_n)]
+    print(f"HumanEval sampled: {len(probs)}/{len(probs_all)} problems, n={args.n}, "
+          f"temp={args.temp}, top_p={args.top_p}"
+          + (f" shard {args.shard_i}/{args.shard_n}" if args.shard_n is not None else ""), flush=True)
     if not args.ckpt:
-        ap.error("--ckpt required (unless --control)")
+        ap.error("--ckpt required (unless --control or --merge-glob)")
     is_cpu = str(args.device).startswith("cpu")
     if is_cpu:
         if args.threads:
@@ -135,7 +237,8 @@ def main():
     preds_path = os.path.join(
         ROOT, "data", "eval",
         f"preds_humaneval_sample_{os.path.basename(str(args.ckpt).rstrip('/'))}"
-        + (f".limit{args.limit}" if args.limit is not None else "") + ".jsonl")
+        + (f".limit{args.limit}" if args.shard_n is None and args.limit is not None else "")
+        + shard_label(args.shard_i, args.shard_n) + ".jsonl")
     t0 = time.time()
     # The greedy reproduction gate is OPTIONAL and ckpt-specific. 3/72 was the measured
     # format_sft_0909 answer: that checkpoint, that scorer. A from-scratch pretrain ckpt
@@ -162,6 +265,7 @@ def main():
             "data": os.path.basename(args.data),
             "n": args.n, "temp": args.temp, "top_p": args.top_p, "seed": args.seed,
             "max_new": args.max_new, "stops": STOPS, "n_problems": len(probs),
+            "shard_i": args.shard_i, "shard_n": args.shard_n,
             "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, ensure_ascii=False) + "\n")
 
