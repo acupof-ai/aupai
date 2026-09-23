@@ -1,4 +1,4 @@
-"""Per-rank fixed memory of the V4.1 flat stack under DDP (no sharding).
+"""Per-rank fixed memory of the V4.1 CED stack under DDP (no sharding).
 
 Element groups are counted by instantiating HybridLM at the exact smoke configs, so the
 optimizer grouping matches train.py build_optimizers rather than a hand-maintained table.
@@ -90,8 +90,10 @@ def budget(tag, over):
 
 
 if __name__ == "__main__":
-    moe_el, moe_fixed = budget("MoE-48 flat v41smoke", V41_MOE)
-    dense_el, dense_fixed = budget("dense ffn3072 (runs e/f)", V41_DENSE)
-    assert abs(moe_el - 3_209_500_000) < 5e6, moe_el
-    assert abs(dense_el - 200_800_000) < 5e5, dense_el
+    moe_el, moe_fixed = budget("MoE-48 CED v41_ced_0923", V41_MOE)
+    dense_el, dense_fixed = budget("dense ffn3072 CED", V41_DENSE)
+    # CED counts (flat deleted 2026-09-23): both csa2 stacks now carry the six unshared
+    # decoder W_KV/W_Z pairs, +12,482,816 over the flat 3,209.5M/200.8M. Exact meta-device.
+    assert moe_el == 3_221_975_040, moe_el
+    assert dense_el == 213_282_816, dense_el
     assert abs(moe_fixed / GIB - 18.2) < 0.3, moe_fixed / GIB

@@ -1788,6 +1788,10 @@ def main():
         "scripts/test_sft_holdout_gate.py",
         "scripts/test_sft_lr_provenance.py",
         "scripts/test_split_bitwise.py",
+        # Flat-branch cut acceptance (2026-09-23): builds the gate-shaped CED config from the
+        # pre-cut model.py (git c26daf67) and today's in one process and requires params,
+        # state_dict keys, inference logits and every gradient torch.equal. ~7s CPU.
+        "scripts/test_flat_cut_bitwise.py",
         # A mid-run SFT checkpoint must carry optimizer state. It writes a checkpoint from a
         # 2-layer 2-step toy model on CPU and READS IT BACK, because every source-level
         # criterion for the defect it guards was already true of the broken code: the snapshot
@@ -2946,11 +2950,12 @@ def main():
         "datagen/corpus_fingerprint.py": {"datagen/build_s_inject.py"},      # ~0.6s
         "datagen/build_corpus.py": {"datagen/build_s_inject.py"},            # ~0.6s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
+                     "scripts/test_flat_cut_bitwise.py",
                      "scripts/test_value_embed.py",
                      "scripts/test_mem_defaults_frozen.py",
                      "scripts/test_moe_defaults_frozen.py",
                      "scripts/test_moe_latent.py",
-                     "scripts/test_moe_module.py"},                          # 48.9s
+                     "scripts/test_moe_module.py"},                          # 55s
         "scripts/loader.py": {"scripts/test_arch_compat.py", "scripts/test_sft_pack.py",
                               "scripts/test_eval_base_prompt_format.py",
                               "scripts/test_serve_history.py"},              # 22.0s

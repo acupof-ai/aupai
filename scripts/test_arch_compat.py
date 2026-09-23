@@ -2176,7 +2176,7 @@ print("CSA2Reuse: source-change propagates (kc/vc/topk_idx); neighbour-change in
 #     -> mutating the encoder state must move it, which is what makes this CED and not flat
 class _CfgCed(_CfgCsa2On):
     d, heads = 64, 4
-    ced, ced_enc_layers = 1, 2
+    ced_enc_layers = 2
 
 
 torch.manual_seed(21)
@@ -2271,7 +2271,7 @@ class _CfgCedStack(_CfgPaDense):
     layers, attn_every = 4, 1
     n_swa_only_layers, rope_dims = 2, 8  # rope_dims>0 lifts the zero-KDA refusal on all-attn
     attn_res = False                     # the CED body runs only off the AttnRes path
-    ced, ced_enc_layers = 1, 2
+    ced_enc_layers = 2
     csa, csa2 = True, True
     csa2_m, csa2_top_k, csa2_n_win = 4, 2, 8
     csa2_indexer_heads, csa2_indexer_dim = 2, 8
@@ -2287,22 +2287,21 @@ assert _dec_csa[0].w_kv.weight.data_ptr() != _dec_csa[1].w_kv.weight.data_ptr(),
 assert not any(getattr(_cedm.blocks[i].mixer.csa, "ced_kv", False) for i in range(0, 2)), (
     "an ENCODER layer was given a W_KV/W_Z pair; only decoders project from H_{L/2}")
 
-# 8. CONSTRUCTION-TIME REFUSALS. ced needs the two-pass body, which runs only off the AttnRes
-#    path; left at its default True the model used to CONSTRUCT and die at the first forward.
+# 8. The attn_res construction refusal is GONE with the flat cut: the non-AttnRes body IS the
+#    CED two-pass body now, so there is no "ced on a single-pass body" combination left to
+#    refuse. attn_res=True still builds its own depth-attention body (its removal and its load
+#    contract are the separate step 5, scripts/test_attnres_load_contract.py); a CED setup is
+#    simply not attached to it, which is numerically the legacy AttnRes stack.
 class _CfgCedAttnRes(_CfgCedStack):
     attn_res = True
 
 
-try:
-    model.HybridLM(_CfgCedAttnRes)
-except ValueError as _e:
-    assert "attn_res" in str(_e), f"the ced/attn_res refusal does not name the flag: {_e}"
-else:
-    raise AssertionError("ced=1 with attn_res left on constructed -- it dies at first forward")
+_ar_m = model.HybridLM(_CfgCedAttnRes)
+assert _ar_m.final_ar is not None, "attn_res config must keep building its depth-attention body"
 
 
 class _CfgCedBadSplit(_CfgCedStack):
-    ced_enc_layers = 0
+    ced_enc_layers = 4  # == layers: no decoder left
 
 
 try:
@@ -2310,7 +2309,11 @@ try:
 except ValueError as _e:
     assert "ced_enc_layers" in str(_e), f"the split refusal does not name the field: {_e}"
 else:
-    raise AssertionError("ced=1 with ced_enc_layers=0 constructed (no encoder left)")
+    raise AssertionError("ced_enc_layers=layers (no decoder) constructed")
+# ced_enc_layers=0 is VALID now: it means L//2, not "flat off".
+_CfgHalfSplit = type("_CfgHalfSplit", (_CfgCedStack,), {"ced_enc_layers": 0})
+assert model.HybridLM(_CfgHalfSplit).ced_enc_layers == _CfgHalfSplit.layers // 2, (
+    "ced_enc_layers=0 must resolve to L//2")
 
 # 9. FP8 M-AXIS PADDING (smoke v41_ced_smoke_0922, 2026-09-22). torchao Float8Linear flattens a
 #    >2-D input to (B*NB, d) and its backward grad_weight = grad_out^T @ input contracts over
@@ -2428,10 +2431,10 @@ assert _spy_red == 3 and _spy_green == 1, (
     f"the pad fixed-point lost discrimination (red={_spy_red} green={_spy_green}, want 3/1) -- "
     f"without this the fix could be deleted and the test would stay green")
 
-print("CED: global entries from H_{L/2} (moves on a visible encoder mutation, not on an "
+print("CED: global entries from H_{split} (moves on a visible encoder mutation, not on an "
       "invisible one); window branch still reads own k/v (asserted both directions); W_KV and "
-      "W_Z both read; missing H_{L/2} refuses; decoders hold per-layer unshared pairs, encoders "
-      "hold none; attn_res-on and a degenerate split refuse at construction")
+      "W_Z both read; missing H_{split} refuses; decoders hold per-layer unshared pairs, "
+      "encoders hold none (a no-decoder split refuses; 0 resolves to L//2)")
 
 # ── PureSWA (V4.1 Step 3, task 0e-2): CSA's window branch, alone ──────────────
 # Same perturbation discipline as the CSA cases above: a masked position must be EXACTLY
@@ -2627,7 +2630,6 @@ class _CfgCedPassStack(Cfg):
     moe_experts = 0
     moe_layers = ""
     rope_dims = 32
-    ced = 1
     ced_enc_layers = 6
 
 
