@@ -368,6 +368,13 @@ def _one_run(kind):
         import diag_resume_bimodal as diag
         leaves = diag._pick_leaves(st)
         _json.dump(leaves, open(os.path.join(dk, "leaves.json"), "w"))
+        # Per-ARM host/engine fingerprint. control and restart are sibling processes in ONE VM,
+        # so vendor/ISA/threads MUST match here; the upload is to test the runner-instance
+        # correlation (a red VM vs a green VM) and the cast-path hypothesis, not to compare the
+        # two arms' hosts. Written for every arm so the artifact is complete on a red regardless
+        # of which arm's bytes the gate reports on.
+        _json.dump({"arm": kind, **diag.env_header()},
+                   open(os.path.join(dk, "env.json"), "w"), indent=2, sort_keys=True)
 
     ctrl_present = []
     for i, ids in enumerate(batches):
