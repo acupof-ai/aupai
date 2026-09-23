@@ -60,6 +60,64 @@ def retry_signature_matches(obs):
     return True, f"KNOWN SIGNATURE: rel_l2={rel_l2:.6g} frac={frac:.4f} n_nan=0 rng-equal"
 
 
+# Attempt-2 verdicts. The gate calls the retry ONLY after attempt 1 matched, so a1_obs is the
+# already-confirmed known signature; this function decides what a SECOND failure in the same VM
+# means.
+VM_PERSISTENT = "vm_persistent"      # attempt 2 matches the SAME known signature -> runner-persistent
+NEW_FAILURE = "new_failure"          # attempt 2 fails with a DIFFERENT signature -> genuinely new
+UNREADABLE = "unreadable_evidence"  # attempt 2 evidence missing/None -> fail-closed, treat as new
+
+
+def classify_attempt_two(exc1_text, a1_obs, exc2_text, a2_obs):
+    """Pure decision for the message the gate prints after a signature-matched attempt 1 fails
+    again on attempt 2 (both run in the SAME VM).
+
+    Returns (verdict, reason). Inputs are plain data, so it is testable with no torch, no dumps
+    and no model -- the same discipline as retry_signature_matches.
+
+    - VM_PERSISTENT: attempt 2's measured evidence matches the known signature too. The red is a
+      stable property of this runner (measured: same sha greens on a different ephemeral runner);
+      re-running in place cannot clear it. The caller must still FAIL -- this labels the cause and
+      points at a cross-runner job rerun, it never authorizes a pass.
+    - NEW_FAILURE: attempt 2 has parseable evidence that does NOT match -- a real new failure that
+      must not be conflated with the known red.
+    - UNREADABLE: attempt 2 raised but left no usable evidence; fail closed as a new/unknown
+      failure rather than assuming the known red.
+    """
+    if not exc2_text:
+        # No second failure: the rescue worked. The caller handles that (writes the tickt, passes);
+        # classify_attempt_two is only consulted when attempt 2 failed.
+        raise ValueError("classify_attempt_two called without an attempt-2 failure")
+    if a2_obs is None:
+        return UNREADABLE, "attempt 2 raised but its signature evidence is absent"
+    same, why2 = retry_signature_matches(a2_obs)
+    if same:
+        return VM_PERSISTENT, f"both attempts match the known signature ({why2})"
+    return NEW_FAILURE, f"attempt 2 signature does not match: {why2}"
+
+
+def attempt_two_message(verdict, reason, a1, a2):
+    """The exact AssertionError suffix the gate raises for each verdict. Pure so the wording the
+    tests assert is the wording the gate emits (no re-stringing at the call site)."""
+    if verdict == VM_PERSISTENT:
+        return (
+            f"[resume-retry] KNOWN VM-CORRELATED RED, persistent on this runner: {reason}. "
+            "Re-running inside this VM cannot clear it (measured: the same sha greens on a "
+            "different ephemeral runner). The gate stays FAIL on these bytes; the remedy is to "
+            "re-run the failed JOB so it lands on a different runner, NOT a third in-place "
+            f"attempt. attempt1={a1} attempt2={a2}")
+    if verdict == UNREADABLE:
+        return (
+            f"[resume-retry] attempt 2 failed and its signature evidence cannot be read "
+            f"({reason}); failing closed rather than assuming the known red. "
+            f"attempt1={a1} attempt2={a2}")
+    return (
+        f"[resume-retry] attempt 2 failed with a DIFFERENT signature after the known red matched "
+        f"on attempt 1 -- this is a NEW failure, not rescued. {reason}. "
+        f"attempt1={a1} attempt2={a2}")
+
+
+
 def extract_obs(dump_dir, exc_text, bf16_failed, rng_boundary_equal):
     """Measure the signature off the dump the gate wrote on mismatch. Torch kept to one read.
 
@@ -172,6 +230,95 @@ def selftest(quiet=False):
 
     o = _good(); del o["frac_diff"]
     expect(False, o, "missing field")
+
+    # ---- attempt-two classification: three worlds + mutations -------------------------------
+    # genB's review point: the two new messages had no test. The classifier must discriminate the
+    # runner-persistent red (same signature) from a genuinely new failure and from missing
+    # evidence, and a swapped branch / swapped a1,a2 must turn the world red.
+    exc1 = "fp32 master differs after save/load resume: max|delta|=1.334e-02 n_diff=506533/524288"
+    a1_obs = _good()
+
+    def classify(a2_text, a2_obs):
+        v, _r = classify_attempt_two(exc1, a1_obs, a2_text, a2_obs)
+        return v
+
+    # World 1: attempt 2 byte-identical signature -> VM-persistent known red.
+    v = classify(exc1, _good())
+    ok = v == VM_PERSISTENT
+    counts["pos" if ok else "neg"] += 1
+    if not quiet:
+        print(("  ok   " if ok else "  FAIL ") + f"attempt2 same signature -> {v}")
+    if not ok:
+        fails.append(f"same-signature attempt2: expected {VM_PERSISTENT} got {v}")
+
+    # World 2: attempt 2 fails with a different signature (a real mutant) -> NEW.
+    o2 = _good(); o2["rel_l2"] = 0.1779
+    v = classify(exc1, o2)
+    ok = v == NEW_FAILURE
+    counts["neg"] += 1
+    if not quiet:
+        print(("  ok   " if ok else "  FAIL ") + f"attempt2 mutant signature -> {v}")
+    if not ok:
+        fails.append(f"mutant attempt2: expected {NEW_FAILURE} got {v}")
+
+    # World 3: attempt 2 raised but left no readable evidence -> UNREADABLE (fail closed).
+    v = classify(exc1, None)
+    ok = v == UNREADABLE
+    counts["neg"] += 1
+    if not quiet:
+        print(("  ok   " if ok else "  FAIL ") + f"attempt2 no evidence -> {v}")
+    if not ok:
+        fails.append(f"unreadable attempt2: expected {UNREADABLE} got {v}")
+
+    # Calling with NO attempt-2 failure is a caller bug, not a verdict.
+    raised = False
+    try:
+        classify_attempt_two(exc1, a1_obs, "", _good())
+    except ValueError:
+        raised = True
+    ok = raised
+    counts["neg"] += 1
+    if not quiet:
+        print(("  ok   " if ok else "  FAIL ") + "no attempt2 failure -> ValueError")
+    if not ok:
+        fails.append("classify with empty exc2_text must raise ValueError")
+
+    # MUTATION 1: invert the predicate INSIDE the real classifier by monkeypatching
+    # retry_signature_matches. With the branch swapped, the same-signature world must come back
+    # NEW_FAILURE and the mutant world VM_PERSISTENT -- if swapping the branch does not move the
+    # verdict, the test is not discriminating the branch it claims to guard.
+    real_rsm = retry_signature_matches
+    try:
+        def _inverted(obs):
+            m, r = real_rsm(obs)
+            return (not m), r
+        globals()["retry_signature_matches"] = _inverted
+        got_same = classify(exc1, _good())
+        got_mutant = classify(exc1, o2)
+    finally:
+        globals()["retry_signature_matches"] = real_rsm
+    ok = got_same == NEW_FAILURE and got_mutant == VM_PERSISTENT
+    counts["neg"] += 1
+    if not quiet:
+        print(("  ok   " if ok else "  FAIL ")
+              + f"branch-swap mutant flips same->{got_same}, mutant->{got_mutant}")
+    if not ok:
+        fails.append("inverting the match predicate inside classify_attempt_two did not swap the "
+                     f"verdicts (same->{got_same}, mutant->{got_mutant})")
+
+    # MUTATION 2: read a1 where a2 is intended. Feed (a2=mutant) -- the classifier must say NEW;
+    # a buggy version that consulted a1 (the known obs) would call this VM-persistent and rescue a
+    # real regression. Conversely (a2=known) must be VM-persistent regardless of a1.
+    if classify_attempt_two(exc1, o2, exc1, _good())[0] != VM_PERSISTENT:
+        fails.append("classifier must read a2_obs for the attempt-2 verdict (a2 known -> persistent)")
+    if classify_attempt_two(exc1, _good(), exc1, o2)[0] != NEW_FAILURE:
+        fails.append("classifier reading a1 instead of a2 would mislabel a mutant (guard absent)")
+
+    # Every verdict must map to a distinct message carrying the attempt paths.
+    for ver in (VM_PERSISTENT, NEW_FAILURE, UNREADABLE):
+        msg = attempt_two_message(ver, "r", "/a1", "/a2")
+        if "/a1" not in msg or "/a2" not in msg:
+            fails.append(f"{ver} message dropped an attempt path")
 
     if not quiet:
         print(f"  {counts['pos']} positive allowed, {counts['neg']} negatives refused, "
