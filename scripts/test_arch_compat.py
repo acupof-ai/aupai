@@ -2156,6 +2156,283 @@ print("CSA2Reuse: source-change propagates (kc/vc/topk_idx); neighbour-change in
       "zero global-branch params (6 keys dropped); causal+doc masking exact; stream mismatch, "
       "no-package, Reuse-first and grad_ckpt refuse; F,R body threads the package and clears the slot")
 
+# ── CED (user order 2026-09-22): decoder global KV from H_{L/2} ───────────────
+# The property that separates CED from the flat stack is WHERE a decoder's global KV comes
+# from. Flat: a layer's entries are a function of its own K/V (entries_per_doc). CED: they come
+# from the encoder's final hidden state, through that layer's OWN W_KV/W_Z.
+#
+# THE GLOBAL ENTRY PATH IS NOT THE WHOLE LAYER. The layer-local SWA window still reads the
+# layer's OWN k/v -- v41_pivot:14 says "Decoder layers keep their own Q and their own local SWA
+# KV". So "the decoder is invariant to its own k/v" is FALSE as a blanket claim, and an assertion
+# that merely mutates the layer's own k/v somewhere will pass or fail for reasons that have
+# nothing to do with CED (measured: a first version perturbed position 3 and passed because the
+# window happened not to reach the query it was compared against). The contract is therefore
+# asserted in BOTH directions, at positions chosen so the window and the entry path are
+# separable:
+#   position 15 is outside query 12's window (5..12) and outside its visible entries
+#     (block 3 has blk_last=15 > 12) -> mutating it must move NOTHING
+#   position 8 is inside query 12's window                                          -> must move it
+#   position 8 is also inside block 2 (blk_last=11 <= 12), so H_{L/2} at that block is visible
+#     -> mutating the encoder state must move it, which is what makes this CED and not flat
+class _CfgCed(_CfgCsa2On):
+    d, heads = 64, 4
+    ced, ced_enc_layers = 1, 2
+
+
+torch.manual_seed(21)
+_TE = 16
+_qe, _ke, _ve = (torch.randn(1, _TE, 4, 16, dtype=torch.double) for _ in range(3))
+_xe = torch.randn(1, _TE, 64, dtype=torch.double)
+_cue = torch.tensor([0, _TE], dtype=torch.int32)
+_csa_ced = model.CompressedSparseAttention(_CfgCed, 4, 16).double()
+_csa_ced.ced_kv = True
+_csa_ced.w_kv = torch.nn.Linear(64, 64, bias=False).double()
+_csa_ced.w_z = torch.nn.Linear(64, 64, bias=False).double()
+_h_enc = torch.randn(1, _TE, 64, dtype=torch.double)
+_csa_ced._h_enc = _h_enc
+_ye = _csa_ced(_qe, _ke, _ve, cu=_cue, x=_xe)
+assert torch.isfinite(_ye).all(), "CED decoder produced non-finite output"
+_Q = 12  # the query every assertion below is read at
+
+
+def _ced_at(qidx, k, v, h):
+    _csa_ced._h_enc = h
+    return _csa_ced(_qe, k, v, cu=_cue, x=_xe)[:, qidx]
+
+
+# 1. A POSITION THE QUERY CANNOT SEE BY EITHER PATH MOVES NOTHING. This is the assertion a flat
+#    layer would FAIL if it reverted to entries_per_doc over its own k/v (pos 15 is in a block
+#    that is not yet visible), and it is the one that catches "still reading own K/V".
+_ke2, _ve2 = _ke.clone(), _ve.clone()
+_ke2[0, 15] += 7.0
+_ve2[0, 15] += 7.0
+_d = (_ced_at(_Q, _ke2, _ve2, _h_enc) - _ye[:, _Q]).abs().max().item()
+assert _d == 0.0, (
+    f"query {_Q} moved ({_d:.3e}) when a position outside both its window and its visible "
+    f"entries was mutated -- the layer is reading its OWN k/v for the global entries")
+
+# 2. A POSITION INSIDE THE WINDOW DOES MOVE IT. Without this, assertion 1 passes trivially on a
+#    dead layer -- invariance that holds because nothing is read is not the property claimed.
+_ke3, _ve3 = _ke.clone(), _ve.clone()
+_ve3[0, 8] += 7.0
+_d = (_ced_at(_Q, _ke3, _ve3, _h_enc) - _ye[:, _Q]).abs().max().item()
+assert _d > 1e-6, (
+    f"query {_Q} did NOT move ({_d:.3e}) when a position inside its SWA window was mutated -- "
+    f"the window branch is dead, so assertion 1 was asserting over nothing")
+
+# 3. THE ENCODER STATE IS THE GLOBAL SOURCE. Block 2 (positions 8..11, blk_last=11) is visible to
+#    query 12, so mutating H_{L/2} inside it must move the query. This is the CED-specific
+#    direction: a flat layer has no H_{L/2} to read at all.
+_h2 = _h_enc.clone()
+_h2[0, 8] += 7.0
+_d = (_ced_at(_Q, _ke, _ve, _h2) - _ye[:, _Q]).abs().max().item()
+assert _d > 1e-6, (
+    f"query {_Q} unchanged ({_d:.3e}) by an H_{{L/2}} mutation in a block it can see -- the "
+    f"global entries are not coming from the encoder state")
+
+# 4. AN H_{L/2} POSITION THE QUERY CANNOT SEE MOVES NOTHING. Block 3 (15) is invisible to q12, so
+#    this is the causality half for the projection: it shows the encoder state is masked by the
+#    same block rule, not read wholesale.
+_h3 = _h_enc.clone()
+_h3[0, 15] += 7.0
+assert (_ced_at(_Q, _ke, _ve, _h3) - _ye[:, _Q]).abs().max().item() == 0.0, (
+    f"H_{{L/2}} at a NOT-YET-VISIBLE position moved query {_Q} -- the projection is bypassing "
+    f"the block visibility rule")
+_csa_ced._h_enc = _h_enc
+
+# 5. W_KV AND W_Z ARE BOTH READ.
+for _nm in ("w_kv", "w_z"):
+    _saved = getattr(_csa_ced, _nm)
+    _alt = torch.nn.Linear(64, 64, bias=False).double()
+    with torch.no_grad():
+        _alt.weight.copy_(_saved.weight)
+        _alt.weight[0, 0] += 0.5
+    setattr(_csa_ced, _nm, _alt)
+    _d = (_csa_ced(_qe, _ke, _ve, cu=_cue, x=_xe) - _ye).abs().max().item()
+    assert _d > 1e-6, f"CED decoder output blind to {_nm} ({_d:.2e})"
+    setattr(_csa_ced, _nm, _saved)
+
+# 6. NO STASHED H_{L/2} REFUSES, rather than silently falling back to the layer's own K/V.
+_csa_ced._h_enc = None
+try:
+    _csa_ced(_qe, _ke, _ve, cu=_cue, x=_xe)
+except ValueError as _e:
+    assert "H_{L/2}" in str(_e), f"the no-H_enc refusal does not name the cause: {_e}"
+else:
+    raise AssertionError("a CED decoder forwards with no H_{L/2} stashed")
+_csa_ced._h_enc = _h_enc
+
+
+# 7. PER-LAYER UNSHARED, end to end through the stack. Rebased on the REAL Cfg via _CfgPaDense
+#    (_CfgReuseStack's pattern): HybridLM reads fields off cfg directly, so a bare class here
+#    dies at `cfg.grad_ckpt` before any CED assertion runs. n_swa_only_layers=2 at layers=4 puts
+#    the two CSA2 layers at 2 and 3, which is exactly the encoder/decoder split being asserted.
+class _CfgCedStack(_CfgPaDense):
+    layers, attn_every = 4, 1
+    n_swa_only_layers, rope_dims = 2, 8  # rope_dims>0 lifts the zero-KDA refusal on all-attn
+    attn_res = False                     # the CED body runs only off the AttnRes path
+    ced, ced_enc_layers = 1, 2
+    csa, csa2 = True, True
+    csa2_m, csa2_top_k, csa2_n_win = 4, 2, 8
+    csa2_indexer_heads, csa2_indexer_dim = 2, 8
+
+
+_cedm = model.HybridLM(_CfgCedStack)
+_dec_csa = [_cedm.blocks[i].mixer.csa for i in range(2, 4)]
+assert all(getattr(c, "ced_kv", False) for c in _dec_csa), (
+    "a decoder layer did not get ced_kv assigned")
+assert _dec_csa[0].w_kv is not _dec_csa[1].w_kv, "the two decoders SHARE one W_KV"
+assert _dec_csa[0].w_kv.weight.data_ptr() != _dec_csa[1].w_kv.weight.data_ptr(), (
+    "the two decoders' W_KV are the same storage -- per-layer unshared was the spec")
+assert not any(getattr(_cedm.blocks[i].mixer.csa, "ced_kv", False) for i in range(0, 2)), (
+    "an ENCODER layer was given a W_KV/W_Z pair; only decoders project from H_{L/2}")
+
+# 8. CONSTRUCTION-TIME REFUSALS. ced needs the two-pass body, which runs only off the AttnRes
+#    path; left at its default True the model used to CONSTRUCT and die at the first forward.
+class _CfgCedAttnRes(_CfgCedStack):
+    attn_res = True
+
+
+try:
+    model.HybridLM(_CfgCedAttnRes)
+except ValueError as _e:
+    assert "attn_res" in str(_e), f"the ced/attn_res refusal does not name the flag: {_e}"
+else:
+    raise AssertionError("ced=1 with attn_res left on constructed -- it dies at first forward")
+
+
+class _CfgCedBadSplit(_CfgCedStack):
+    ced_enc_layers = 0
+
+
+try:
+    model.HybridLM(_CfgCedBadSplit)
+except ValueError as _e:
+    assert "ced_enc_layers" in str(_e), f"the split refusal does not name the field: {_e}"
+else:
+    raise AssertionError("ced=1 with ced_enc_layers=0 constructed (no encoder left)")
+
+# 9. FP8 M-AXIS PADDING (smoke v41_ced_smoke_0922, 2026-09-22). torchao Float8Linear flattens a
+#    >2-D input to (B*NB, d) and its backward grad_weight = grad_out^T @ input contracts over
+#    that flattened M; fp8 scaled_mm requires M%16==0. CED projects d->d BEFORE the head split
+#    (so M=B*NB carries no H factor -- flat was accidentally 16-aligned by B*H*NB), and an odd
+#    NB (518 at B=4) gives M=2072%16=8. _fp8_linear_entries pads M (NOT d) to 16 and slices the
+#    pad rows off the output. These checks cover everything that is dtype-independent on CPU;
+#    the "real fp8 kernel no longer raises divisible-by-16" half is the GPU smoke itself.
+#    SHAPE ORDER IS LOAD-BEARING: pad AFTER flattening. Padding `pad` rows onto each of B
+#    batches then flattening gives B*(NB+pad), which is NOT aligned in general (measured
+#    B=4 NB=518: 4*526=2104 still 8 mod 16).
+for _B, _NB in ((4, 518), (1, 518), (4, 517), (8, 518)):
+    _M = _B * _NB
+    _pad = (-_M) % 16
+    _d, _H, _hd = 64, 4, 16
+    torch.manual_seed(9)
+    _lin = torch.nn.Linear(_d, _d, bias=False).double()
+    _hb = torch.randn(_B, _NB, _d, dtype=torch.double, requires_grad=True)
+    _out = model._fp8_linear_entries(_lin, _hb, _B, _NB, _H, _hd)
+    assert tuple(_out.shape) == (_B, _H, _NB, _hd), (
+        f"pad helper changed the output shape at B={_B} NB={_NB}: {tuple(_out.shape)}")
+    # reference: the SAME linear over only the real M rows, unflattened identically
+    _ref = _lin(_hb.reshape(_M, _d))[:_M].view(_B, _NB, _H, _hd).transpose(1, 2).contiguous()
+    if _pad:
+        # cat-zero adds rows then the GEMM retiles the contraction, so floating-point
+        # association order shifts by a few fp64 ULPs (measured 5e-16 on Linux, 0 on macOS);
+        # the pad rows are still exact zeros, so their contribution is mathematically nil.
+        # allclose at 1e-12 is 10^3 above that noise and 10^9 below any real signal -- tight
+        # enough to fail if a pad row actually leaked nonzero content. (In bf16/fp8, where the
+        # fix runs, 5e-16 is far below one ULP.)
+        assert torch.allclose(_out, _ref, rtol=1e-12, atol=1e-12), (
+            f"padding changed the result beyond FP-association noise at B={_B} NB={_NB} "
+            f"(max d {(_out - _ref).abs().max().item():.3e})")
+    else:
+        # the production (world-8 aligned) path pads 0 and must be byte-identical
+        assert torch.equal(_out, _ref), (
+            f"the pad=0 path drifted from the original expression at B={_B} NB={_NB}")
+    # PAD ROWS CONTRIBUTE ZERO GRADIENT. A zero input row adds 0 to grad_weight = g^T @ input.
+    _out.float().sum().backward()
+    _gw = _lin.weight.grad
+    assert torch.isfinite(_gw).all(), f"non-finite weight grad at B={_B} NB={_NB}"
+    if _pad:
+        # recompute reference grad using only the unpadded M rows, must match within the same
+        # FP-association tolerance (same GEMM-retile effect on the reduction)
+        _lin.zero_grad()
+        _ref.sum().backward()
+        _gref = _lin.weight.grad.clone()
+        assert torch.allclose(_gw, _gref, rtol=1e-12, atol=1e-12), (
+            f"the {_pad} pad rows changed weight grad beyond association noise at B={_B} "
+            f"NB={_NB} (max d {(_gw - _gref).abs().max().item():.3e}) -- a zero input row must "
+            f"add nothing to grad_weight")
+    # aligned world-8-like shape pads by 0
+    if _B == 8 and _NB % 2 == 0 and _M % 16 == 0:
+        assert _pad == 0, f"expected an already-aligned M, got pad={_pad}"
+
+# the original failure input really was unaligned: this is the 2072 case
+assert (- (4 * 518)) % 16 == 8 and (4 * 518 + ((- (4 * 518)) % 16)) % 16 == 0, (
+    "the pad arithmetic no longer reproduces the 2072 -> 2080 alignment the smoke required")
+
+
+# 9b. THE M MUST REACH THE FP8 GEMM 16-ALIGNED. The numeric checks above are satisfied by BOTH
+#     the pad and a no-pad implementation (a CPU nn.Linear has no divisibility precondition), so
+#     they cannot guard the one thing this fix exists for. Mirror torchao's flatten: a Float8-
+#     Linear sees the >2-D input as (-1, d), and scaled_mm requires that flattened M % 16 == 0.
+#     A spy that recomputes M exactly as torchao does and enforces the precondition is the
+#     discriminating fixed point: deleting the pad turns cases 1-3 RED, case 4 stays GREEN
+#     (8*518=4144 is aligned without padding -- that shape genuinely needs no pad).
+class _SpyAlignedLinear(torch.nn.Module):
+    def __init__(self, d):
+        super().__init__()
+        self.lin = torch.nn.Linear(d, d, bias=False).double()
+        self.seen_ms = []
+
+    def forward(self, x):
+        m = x.numel() // x.shape[-1]   # torchao's input.reshape(-1, in_features).shape[0]
+        self.seen_ms.append(m)
+        assert m % model.FP8_MM_ALIGN == 0, (
+            f"fp8 scaled_mm precondition violated: flattened M={m} not divisible by "
+            f"{model.FP8_MM_ALIGN} (this is the 2072 smoke failure)")
+        return self.lin(x)
+
+
+for _B, _NB in ((4, 518), (1, 518), (4, 517), (8, 518)):
+    _spy = _SpyAlignedLinear(64)
+    _hb = torch.randn(_B, _NB, 64, dtype=torch.double)
+    _o = model._fp8_linear_entries(_spy, _hb, _B, _NB, 4, 16)
+    assert torch.isfinite(_o).all()
+    _M = _B * _NB
+    _expect_pad = (-_M) % model.FP8_MM_ALIGN
+    assert _spy.seen_ms and all(m % model.FP8_MM_ALIGN == 0 for m in _spy.seen_ms), (
+        f"an unaligned M reached the GEMM at B={_B} NB={_NB}: {_spy.seen_ms}")
+    assert _spy.seen_ms[0] == _M + _expect_pad, (
+        f"spy saw M={_spy.seen_ms[0]}, expected the padded {_M + _expect_pad} at B={_B} NB={_NB}")
+
+# MUTANT GUARD (run standalone): a helper that does NOT pad must fail the spy on the three
+# unaligned shapes and only pass the naturally-aligned one. This asserts the test above is a
+# real guard, not an invariant both implementations satisfy.
+def _no_pad_entries(lin, hb, B, NB, H, hd):
+    m = B * NB
+    return lin(hb.reshape(m, hb.shape[-1]))[:m].view(B, NB, H, hd).transpose(1, 2).contiguous()
+
+
+_spy_red, _spy_green = 0, 0
+for _B, _NB in ((4, 518), (1, 518), (4, 517), (8, 518)):
+    _s = _SpyAlignedLinear(64)
+    try:
+        _no_pad_entries(_s, torch.randn(_B, _NB, 64, dtype=torch.double), _B, _NB, 4, 16)
+        _naturally_aligned = ((_B * _NB) % model.FP8_MM_ALIGN == 0)
+        assert _naturally_aligned, f"no-pad unexpectedly passed an unaligned shape B={_B} NB={_NB}"
+        _spy_green += 1
+    except AssertionError:
+        assert (_B * _NB) % model.FP8_MM_ALIGN != 0, f"aligned shape B={_B} NB={_NB} should not RED"
+        _spy_red += 1
+assert _spy_red == 3 and _spy_green == 1, (
+    f"the pad fixed-point lost discrimination (red={_spy_red} green={_spy_green}, want 3/1) -- "
+    f"without this the fix could be deleted and the test would stay green")
+
+print("CED: global entries from H_{L/2} (moves on a visible encoder mutation, not on an "
+      "invisible one); window branch still reads own k/v (asserted both directions); W_KV and "
+      "W_Z both read; missing H_{L/2} refuses; decoders hold per-layer unshared pairs, encoders "
+      "hold none; attn_res-on and a degenerate split refuse at construction")
+
 # ── PureSWA (V4.1 Step 3, task 0e-2): CSA's window branch, alone ──────────────
 # Same perturbation discipline as the CSA cases above: a masked position must be EXACTLY
 # invisible (its softmax weight is exactly 0), and the perturbation must be visible where
