@@ -15,7 +15,7 @@
    "anneal": 0.115,
    "fingerprint": "117f8fcbbefef881",
    "epochs_pool_measured": true,
-   "epochs_pool_source": "full-load of tokens_code_py_starcoder_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=7948954333"
+   "epochs_pool_source": "full-load of tokens_code_py_starcoder_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=7948954333 [provenance: /data00/tokens_code_py_starcoder_dc.pt.srcfp read 2026-09-23T07:18:53Z]"
   },
   "math_owm_stage2_dc": {
    "weight": 0.08,
@@ -23,7 +23,7 @@
    "anneal": 0.08,
    "fingerprint": "6201b92bf4ca4e1c",
    "epochs_pool_measured": true,
-   "epochs_pool_source": "full-load of tokens_math_owm_stage2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=9465200772"
+   "epochs_pool_source": "full-load of tokens_math_owm_stage2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=9465200772 [provenance: /data00/tokens_math_owm_stage2_dc.pt.srcfp read 2026-09-23T07:18:53Z]"
   },
   "code_keep_p1_dc": {
    "weight": 0.03,
@@ -39,7 +39,7 @@
    "anneal": 0.03,
    "fingerprint": "15caa8587b64e20f",
    "epochs_pool_measured": true,
-   "epochs_pool_source": "full-load of tokens_en_c4_stage2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=5783726706"
+   "epochs_pool_source": "full-load of tokens_en_c4_stage2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=5783726706 [provenance: /data00/tokens_en_c4_stage2_dc.pt.srcfp read 2026-09-23T07:18:53Z]"
   },
   "cot_dc": {
    "weight": 0.04,
@@ -47,7 +47,7 @@
    "anneal": 0.039,
    "fingerprint": "22c9a8274155111e",
    "epochs_pool_measured": true,
-   "epochs_pool_source": "full-load of tokens_cot_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=399973722. DRAFT CONSTRAINT (ae-8): 5% main weight was requested but is infeasible at the epochs<=3 cap -- main draw alone is 0.05*27B=1.35B > 3*0.39999B=1.20B cap; required epochs = ceil((0.05*27 + anneal*3)/0.39999) = 4 even at anneal 0. This draft uses 4% main + 0.039 anneal = 1.08B + 0.117B = 1.197B <= the 1.19998B 3-epoch pool (anneal 0.04 would over-draw the exact cap by 15,849 tokens and trigger silent capping in build_mix, so it is 0.039). Raising cot to 5% needs epochs 4 (forbidden by the cap ruling) or >=0.15B additional decontaminated CoT supply."
+   "epochs_pool_source": "full-load of tokens_cot_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=399973722. DRAFT CONSTRAINT (ae-8): 5% main weight was requested but is infeasible at the epochs<=3 cap -- main draw alone is 0.05*27B=1.35B > 3*0.39999B=1.20B cap; required epochs = ceil((0.05*27 + anneal*3)/0.39999) = 4 even at anneal 0. This draft uses 4% main + 0.039 anneal = 1.08B + 0.117B = 1.197B <= the 1.19998B 3-epoch pool (anneal 0.04 would over-draw the exact cap by 15,849 tokens and trigger silent capping in build_mix, so it is 0.039). Raising cot to 5% needs epochs 4 (forbidden by the cap ruling) or >=0.15B additional decontaminated CoT supply. [provenance: /data00/tokens_cot_dc.pt.srcfp read 2026-09-23T07:18:53Z]"
   },
   "code_py_rp1t_dc": {
    "weight": 0.01,
