@@ -322,12 +322,11 @@ def gate_refresh_does_not_touch_alias():
 
 
 def _apply_diag_thread_env():
-    """DIAGNOSTIC-ONLY thread/engine knob for the runner bimodal investigation (#549). It is a
-    strict no-op unless the non-default env is set, so the required gate is unchanged in normal
-    CI. GATE_OMP pins the intra-op pool AND OMP_NUM_THREADS (the subprocess env below reads it,
-    default "2"); GATE_ONEDNN=0 disables the oneDNN/MKLDNN engine before any tensor op. Used to
-    tell a oneDNN code-path selection apart from plain multithreaded reduction under load.
-    Never a production setting: threads=1 / oneDNN-off are diagnostic arms, not a fix."""
+    """Thread/engine knobs. GATE_OMP pins the intra-op pool AND OMP_NUM_THREADS (the subprocess
+    env below reads it; default "1" since 2026-09-23, the required gate's own default after the
+    oneDNN K-reduction flake); GATE_ONEDNN=0 disables the oneDNN/MKLDNN engine before any tensor
+    op and is the verification matrix's revert arm, not a normal-CI setting. Used to tell a
+    oneDNN code-path selection apart from plain multithreaded reduction under load (#549)."""
     omp = os.environ.get("GATE_OMP")
     if omp:
         os.environ["OMP_NUM_THREADS"] = omp
