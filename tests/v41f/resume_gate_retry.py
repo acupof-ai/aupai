@@ -1,13 +1,13 @@
 """Signature-gated retry for the resume gate's known red (see RETRY_* below).
 
 WHY THIS MODULE IS PURE. The retry decision must be a function of measured fields alone, so its
-known-answer test needs no torch, no model and no multi-GB dump: one positive world and ten negative
-worlds run in milliseconds instead of an hour. The torch-dependent part is one thin extractor,
+known-answer test needs no torch, no model and no multi-GB dump: every world runs in milliseconds
+instead of an hour. The torch-dependent part is one thin extractor,
 `extract_obs`, which reads the dump the gate already writes on a mismatch.
 
 FAIL-CLOSED IS THE WHOLE DESIGN. A field that is absent, None, or non-numeric is NOT a match. The
 only path to a retry is every predicate explicitly satisfied; a caller that cannot read its evidence
-reads NO. Ten of the eleven known-answer worlds below are refusals, and two of them are the ones that
+reads NO. Almost every known-answer world below is a refusal, and two of them are the ones that
 matter most: the smallest real mutant (so the band cannot drift into mutant space) and an arm whose
 RNG differed before the save (so a pre-save bifurcation can never be rescued).
 
@@ -182,10 +182,13 @@ def _good():
 
 
 def selftest(quiet=False):
-    """One positive world (the measured red) and ten negatives, each a one-predicate near-miss.
+    """Known-answer worlds, each a one-predicate near-miss, plus the attempt-two classifications.
 
     Run by the gate list (`gate_resume_retry_signature`), so it is exercised on every CI run
-    without a new job. Returns a list of failures; empty means every world behaved.
+    without a new job. Returns `(failures, counts)`; `failures` empty means every world behaved,
+    and `counts` is `{"pos": n, "neg": m}` for the caller to render. The counts are RETURNED rather
+    than stated here so neither this docstring nor a caller can carry a number that a later world
+    invalidates.
     """
     fails = []
     counts = {"pos": 0, "neg": 0}
@@ -323,12 +326,17 @@ def selftest(quiet=False):
     if not quiet:
         print(f"  {counts['pos']} positive allowed, {counts['neg']} negatives refused, "
               "fail-closed on missing evidence")
-    return fails
+    # (failures, counts). The counts are RETURNED, not left in a print, because the gate that
+    # calls this prints its own one-line summary and used to hardcode "1 positive, 10 refusals" --
+    # a literal that goes stale the moment a world is added (it did: #668 took the worlds from
+    # 11 to 16 and the gate's line kept saying 10). A caller rendering a count must derive it
+    # from the run, or the next added world reproduces the same rot.
+    return fails, counts
 
 
 if __name__ == "__main__":
     import sys
-    _f = selftest()
+    _f, _c = selftest()
     if _f:
         print(f"resume_gate_retry selftest FAILED: {len(_f)}")
         for x in _f:
