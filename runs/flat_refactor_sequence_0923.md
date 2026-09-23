@@ -95,7 +95,7 @@ plus ledger and AGENTS.md citations, plus whether anything actually INVOKES it):
 | `runs/v41_smoke_0911j.sh` | 0 | 0 | deletable |
 | `runs/v41_smoke_0920k.sh` | 0 | 0 | deletable |
 | `runs/v41_gate_0911_resume_w8.sh` | 0 | 0 | deletable |
-| `runs/v41_gate_0911.sh` | **2** | **5** | **NOT deletable without an AGENTS.md edit** — `AGENTS.md`'s entry-point table gives `bash runs/v41_gate_0911.sh` as the gate-launch row, plus a pod launch line at :201 and refs at :8/:159/:178; `scripts/harness.py` names it in a comment |
+| `runs/v41_gate_0911.sh` | **2 tracked** | **0** | **HOLD, not deletable on today's evidence** — `AGENTS.md` no longer cites it (the CED pivot #659 `034166b4` rewrote §8 and the entry-point gate row to `runs/ced_w8_launch.sh`; measured 2026-09-23 at `390c80b1`: `git grep v41_gate_0911 -- AGENTS.md` = 0), so the reason this row gave is gone. But it is **not** down to historical documents: measured at `390c80b1`, 38 files cite the string and the *launcher* `.sh` is named by `README.md:79` (a live row: "The committed gate line is `runs/v41_gate_0911.sh`"), by `docs/standards/v41_pivot.md:121` (the gate-run recipe), and by `scripts/harness.py:10412` (the comment saying `check_corpus_filters_fp` must verify the mix this launcher selects — and that check reads `data/mix_v41_gate.json`, not the `.sh` itself). Only the `ckpt_v41_gate_0911.pt` name is history (`facts/*.json`, `EXPERIMENTS.md`, the `runs/*.jsonl` ledgers). So deletion needs the README row retargeted and the harness comment repointed first; open it as its own PR, not as part of a flat-only sweep |
 | `scripts/launch_30b.sh` | 6 | 1 | **KEEP** — `docs/standards/launch_ready_guards.md` is entirely about `launch_30b.sh --dry`; it is a documented training entry point, not a stale launcher |
 | `scripts/run_ab_speedrun.sh` | 8 | 0 | **KEEP** — 15 rows in `runs/experiments.jsonl`; live A/B infrastructure |
 | `scripts/run_ablation.sh` | 3 | 0 | **KEEP** — cited by `docs/lessons/speedrun_techniques_audit.md` as the A/B shape |
@@ -123,9 +123,9 @@ ends.
 
 | # | surface | what it does for AttnRes |
 |---|---|---|
-| 1 | `scripts/loader.py:90` `cfg = SimpleNamespace(**ck["cfg"])` | rebuilds the model from the ckpt's own cfg, so a ckpt with `attn_res=True` gets AttnRes; `:94` backfills `attn_res` from the live Cfg when the key is ABSENT |
-| 2 | `model.py:3053-3062` `HybridLM.load_state_dict` | if the model has AttnRes and the ckpt has no `final_ar.` key, prints and disables AttnRes, then loads strict |
-| 3 | `infer_local.py:236-256` | a SECOND, independent AttnRes reimplementation (plus `AttnRes`, defined at `model.py:1649`, and `scripts/test_arch_L32.py`) |
+| 1 | `scripts/loader.py` `cfg = SimpleNamespace(**ck["cfg"])` | rebuilds the model from the ckpt's own cfg, so a ckpt with `attn_res=True` gets AttnRes; the `for _k in vars(Cfg): ... setattr(cfg, _k, getattr(Cfg, _k))` loop below it backfills any key the ckpt lacks from the live `Cfg` |
+| 2 | `model.py` `HybridLM.load_state_dict` — the `if self.attn_res and not any(k.startswith("final_ar.") for k in sd):` branch | if the model has AttnRes and the ckpt has no `final_ar.` key, prints and disables AttnRes, then loads strict |
+| 3 | `infer_local.py` `self.attn_res = getattr(cfg, "attn_res", False)` and its use below | a SECOND, independent AttnRes reimplementation (plus `AttnRes`, the `class AttnRes(nn.Module)` in `model.py`, and `scripts/test_arch_L32.py`) |
 
 **Checkpoint evidence (read-only listing, requested before deleting the loader path):**
 
@@ -137,7 +137,7 @@ state_dict key scan — **13 files, and not one needs AttnRes:**
 | 12 files: `ckpt_v41_ced_smoke_0922.pt` (+`.ep1`), `ckpt_v41_ced_w8smoke_0923.pt` (+`.ep1`), `ckpt_v41_peak_0920.pt` (+`.ep1`), `ckpt_v41_smoke_0920k.pt` (+`.ep1`), `ckpt_v41_gate_0922.pt.{step4000,step6000,step8000,interrupt.step8196}` | `false` | 0 | 0 |
 | `/data00/ckpt_k3-mla_2b_step2000.pt` | **ABSENT** | **0** | 0 (but `mixer.A_log`, `dt_bias`, `short_conv`, legacy `gate_proj`/`beta_proj` → KDA line) |
 
-The K3 file is the only ckpt whose cfg lacks `attn_res`. `scripts/loader.py:94` backfills it to the
+The K3 file is the only ckpt whose cfg lacks `attn_res`. the `for _k in vars(Cfg)` backfill loop in `scripts/loader.py` sets it to the
 live `Cfg.attn_res = True`, so surface 2 is what saves it — and surface 2 works: its
 state_dict has **zero** `final_ar.`/`ar1.`/`ar2.` keys (153 keys total: `tok`, `blocks`,
 `norm`, `head`), so AttnRes is disabled at load. **Nothing on the pod exercises AttnRes;
@@ -148,12 +148,13 @@ Two notes for the record:
 - **No backup exists.** `/mnt/data02` does not exist on the pod (`mount | grep data02` empty,
   `ls /mnt/data02/aupai_backup/` → No such file or directory). So `AGENTS.md`'s pod-deletion
   backup step is currently unrunnable, and this evidence cannot be cross-checked against one.
-- **A doc disagrees with the pod.** `facts/efficiency.json:3415` states the inputs
+- **A doc disagrees with the pod.** the `eff.fp8_nan_without_grad_ckpt_unreproduced` entry's `boundary` in `facts/efficiency.json` states the inputs
   `data/sft/sft_v3.pt` and `ckpt_k3-mla_2b_step2000.pt` "no longer exist on the pod". The K3
   checkpoint **does** exist there today (479,293,133 B, mtime 2026-08-25). Current disk wins;
   the fact's boundary sentence is stale. Reported, not corrected here.
 
-**What step 5 must not break, and the coverage that already exists.** `CLAUDE.md:48` states
+**What step 5 must not break, and the coverage that already exists.** `CLAUDE.md` (a symlink to `AGENTS.md`) states, in the paragraph beginning
+"AttnRes does not cross the future CED boundary",
 the contract the AttnRes code is serving: "Old checkpoints still load via `_cfg`
 (`scripts/loader.py`)". Two facts bound step 5:
 
@@ -162,7 +163,7 @@ the contract the AttnRes code is serving: "Old checkpoints still load via `_cfg`
   on a synthetic legacy state_dict with no `final_ar.` keys. So step 5 must keep that
   assertion's *effect*: whatever replaces surface 2 has to produce "this ckpt is AttnRes-era,
   here is what happens" rather than a strict-load traceback.
-- `Cfg.attn_res` still defaults **True** (`train.py:309`, since `b3cad874` "arch(0830v1): full
+- `Cfg.attn_res` still defaults **True** (the `attn_res = True` field in `train.py`'s `Cfg`, since `b3cad874` "arch(0830v1): full
   causal MLA, AttnRes on by default"). With flat gone the flag still has a job: it is not
   refused under `ced=0`, so `Cfg.ced = 1` becomes the thing that selects CED and `attn_res`
   becomes dead-by-configuration rather than dead-by-code. Flipping the default is a **separate
