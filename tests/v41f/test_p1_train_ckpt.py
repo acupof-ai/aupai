@@ -644,19 +644,8 @@ def gate_resume_equivalent_to_uninterrupted():
                 except Exception:
                     _rng2 = None
                 obs2 = rgr.extract_obs(a2, exc2, False, _rng2)
-                match2, reason2 = rgr.retry_signature_matches(obs2)
-                if match2:
-                    raise AssertionError(
-                        f"{exc2}\n[resume-retry] KNOWN VM-CORRELATED RED, persistent on this "
-                        f"runner: both attempt 1 and attempt 2 match the same signature ({reason2}). "
-                        f"Re-running inside this VM cannot clear it (measured: the same sha greens "
-                        f"on a different ephemeral runner). The gate stays FAIL on these bytes; the "
-                        f"remedy is to re-run the failed JOB so it lands on a different runner, NOT "
-                        f"a third in-place attempt. attempt1={a1} attempt2={a2}")
-                raise AssertionError(
-                    f"{exc2}\n[resume-retry] attempt 2 failed with a DIFFERENT signature after "
-                    f"the known red matched on attempt 1 -- this is a NEW failure, not rescued. "
-                    f"attempt2 signature: {reason2}. attempt1={a1} attempt2={a2}")
+                verdict, vreason = rgr.classify_attempt_two(exc1, obs, exc2, obs2)
+                raise AssertionError(f"{exc2}\n" + rgr.attempt_two_message(verdict, vreason, a1, a2))
             # NOT WRAPPED IN try/except. The writer's own docstring says it: "a ledger that
             # cannot be written must not fake a pass". The old wrapper printed and fell through to
             # _report_gate_dumps, so the ONE case the tourniquet exists for -- a rescue with no
