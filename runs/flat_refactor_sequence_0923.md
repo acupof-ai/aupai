@@ -15,8 +15,8 @@ Files off the import path go through ordinary PRs now.
 | config | branch taken |
 |---|---|
 | `ced=1 attn_res=0` — the live run | CED two-pass (`model.py:3161-3171`) |
-| `ced=0 attn_res=0` | FLAT single-pass (`model.py:3172-3186`) |
-| `ced=0 attn_res=1` — the legacy 30B line | AttnRes body (`model.py:3188-3226`) |
+| `ced=0 attn_res=0` | FLAT single-pass (`model.py:3172-3185`) |
+| `ced=0 attn_res=1` — the legacy 30B line | AttnRes body (`model.py:3186-3226`) |
 | `ced=1 attn_res=1` | REFUSED (`model.py:2906`) |
 
 So "remove flat" removes branch 2 and nothing else. **AttnRes is a separate axis** and is not
@@ -58,12 +58,12 @@ checking what it would buy. It buys nothing:
 
 - `_body` has **one caller** (`model.py:3266`, `HybridLM.forward`), so "isolate it behind
   one call site" is already true.
-- The branch is **15 lines** (`model.py:3172-3186`) and moves nowhere: it is read by all
+- The branch is **14 lines** (`model.py:3172-3185`) and moves nowhere: it is read by all
   **six** flat launchers, every one of which passes `--no-attn_res` and no `--ced`
   (`v41_gate_0922.sh`, `v41_gate_0911.sh`, `v41_r3_0914.sh`, `v41_smoke_0920k.sh`,
   `v41_smoke_0911j.sh`, `v42_textbook_ab.sh` — checked per file). Extracting it into a method
   pays a diff to relocate code that step 3 then deletes.
-- Its `pkg` slot logic is **duplicated** in the AttnRes branch below (`model.py:3188+` sets
+- Its `pkg` slot logic is **duplicated** in the AttnRes branch below (`model.py:3186+` sets
   `pkg` the same way), so an extraction would have to either copy that too or leave the
   duplication — a refactor whose only output is a second copy.
 
@@ -74,7 +74,7 @@ considered and why it was dropped.
 
 ### Step 3 — delete the flat single-pass branch and the flat-only branches that follow
 
-`model.py:3172-3186` goes; `_forward_csa2`'s `else` **stays** (encoder). The flat launchers
+`model.py:3172-3185` goes; `_forward_csa2`'s `else` **stays** (encoder). The flat launchers
 (§3b) and the tests whose subject CED refuses at construction (§3c) go in the same PR or a
 sibling one, listed in the body. **Known-answer:** a mutant that restores the flat branch
 must red; the CED digest must be unchanged.
@@ -123,9 +123,9 @@ ends.
 
 | # | surface | what it does for AttnRes |
 |---|---|---|
-| 1 | `scripts/loader.py:90` `cfg = SimpleNamespace(**ck["cfg"])` | rebuilds the model from the ckpt's own cfg, so a ckpt with `attn_res=True` gets AttnRes; `:92` backfills `attn_res` from the live Cfg when the key is ABSENT |
+| 1 | `scripts/loader.py:90` `cfg = SimpleNamespace(**ck["cfg"])` | rebuilds the model from the ckpt's own cfg, so a ckpt with `attn_res=True` gets AttnRes; `:94` backfills `attn_res` from the live Cfg when the key is ABSENT |
 | 2 | `model.py:3053-3062` `HybridLM.load_state_dict` | if the model has AttnRes and the ckpt has no `final_ar.` key, prints and disables AttnRes, then loads strict |
-| 3 | `infer_local.py:236-256` | a SECOND, independent AttnRes reimplementation (plus `AttnRes` imported from `model.py:14` and `scripts/test_arch_L32.py`) |
+| 3 | `infer_local.py:236-256` | a SECOND, independent AttnRes reimplementation (plus `AttnRes`, defined at `model.py:1649`, and `scripts/test_arch_L32.py`) |
 
 **Checkpoint evidence (read-only listing, requested before deleting the loader path):**
 
@@ -137,7 +137,7 @@ state_dict key scan — **13 files, and not one needs AttnRes:**
 | 12 files: `ckpt_v41_ced_smoke_0922.pt` (+`.ep1`), `ckpt_v41_ced_w8smoke_0923.pt` (+`.ep1`), `ckpt_v41_peak_0920.pt` (+`.ep1`), `ckpt_v41_smoke_0920k.pt` (+`.ep1`), `ckpt_v41_gate_0922.pt.{step4000,step6000,step8000,interrupt.step8196}` | `false` | 0 | 0 |
 | `/data00/ckpt_k3-mla_2b_step2000.pt` | **ABSENT** | **0** | 0 (but `mixer.A_log`, `dt_bias`, `short_conv`, legacy `gate_proj`/`beta_proj` → KDA line) |
 
-The K3 file is the only ckpt whose cfg lacks `attn_res`. `loader.py:92` backfills it to the
+The K3 file is the only ckpt whose cfg lacks `attn_res`. `scripts/loader.py:94` backfills it to the
 live `Cfg.attn_res = True`, so surface 2 is what saves it — and surface 2 works: its
 state_dict has **zero** `final_ar.`/`ar1.`/`ar2.` keys (153 keys total: `tok`, `blocks`,
 `norm`, `head`), so AttnRes is disabled at load. **Nothing on the pod exercises AttnRes;

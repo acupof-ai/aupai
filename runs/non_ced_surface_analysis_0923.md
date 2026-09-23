@@ -9,7 +9,7 @@ Baseline: `origin/main` = `f11fbb65` (`git rev-parse origin/main`, read 2026-09-
 ## 0. The task as stated cannot be executed, and the repo has a check that says why
 
 **The broadcast-list mechanism does not apply to this surface.** AGENTS.md §255, enforced by
-`harness.check_deletion_list_no_tracked` (`scripts/harness.py:3396`, registered at `:20619`,
+`harness.check_deletion_list_no_tracked` (`scripts/harness.py:3403`, registered at `:20721`,
 `auth=repo`, added in `316580a0`):
 
 > a deletion list may not name tracked content; strike the target or the rm removes what a
@@ -35,7 +35,7 @@ on it are §3's four pod-only rows.
   cleanup) and `docs/audits/deletion_audit_2026-09-02.md`. This analysis is built from the
   task text. If a specific file was meant, name it and it gets rebuilt against it.
 - **There is no `--flat` flag, and flat is not a separable surface.** `Cfg.ced = 0`
-  (`train.py:385`) *is* the flat architecture; `--ced` (`train.py:3121`) selects CED.
+  (`train.py:385`) *is* the flat architecture; `--ced` (`train.py:3121` is its help entry; the flag is registered by the loop at `:3124`) selects CED.
   `--moe_arm` gates no architecture — it is a ledger row label
   (`train.py:265,3127,3322,4482`). "Delete flat" is three runtime `if` branches inside
   `model.py`/`train.py`, both of which the running job imports.
