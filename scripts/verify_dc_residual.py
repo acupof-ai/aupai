@@ -123,11 +123,33 @@ def _selftest(root=None):
                 fh.write(json.dumps({"content": c, "source": "x", "url": "y"}) + "\n")
         return _scan_shard((p, root), decon)
 
-    # (1) the read path flags an injected hit, at the right row, and only that row
+    # (1) the field CONTRACT: _scan_shard must hand hit() the row's `content`
+    # value. Tested with a recording decon, because the return tuple cannot tell
+    # this apart from "found the hit but did not count it" -- both mutations yield
+    # exactly (3, 0, []) -- so no assertion on rows/hits/sample can separate them.
+    # Only observing the call separates them, and this is the boundary that
+    # matters: a scanner reading the wrong field returns a clean zero over any
+    # corpus, which is indistinguishable from a decontaminated one.
+    class _Spy:
+        def __init__(self, inner):
+            self.inner, self.seen = inner, []
+
+        def hit(self, c):
+            self.seen.append(c)
+            return self.inner.hit(c)
+
     tmp = tempfile.mkdtemp()
-    rows, hits, sample = fresh(tmp, "knownanswer_000.jsonl", [clean, injected, prose], synth)
+    contents = [clean, injected, prose]
+    spy = _Spy(synth)
+    rows, hits, sample = fresh(tmp, "knownanswer_000.jsonl", contents, spy)
+    assert spy.seen == contents, (
+        f"hit() must be handed each row's `content` value in order; got {[c[:24] for c in spy.seen]}"
+    )
     assert rows == 3, f"expected 3 rows, read {rows}"
+
+    # (1b) and a found hit is COUNTED and sampled
     assert hits == 1, f"expected exactly the injected hit, got {hits}"
+    assert sample, "a counted hit must produce a sample entry"
     assert sample[0]["row"] == 2, f"hit must be on row 2, got {sample[0]['row']}"
     assert sample[0]["problem"] == "synth:fib" and sample[0]["part"] == "solution", sample[0]
 
@@ -146,7 +168,26 @@ def _selftest(root=None):
         fh.write(json.dumps({"source": "x"}) + "\n")
     assert _scan_shard((p4, root), synth)[:2] == (1, 0)
 
-    # (5) the REAL gate, where the benchmark files exist (pod only)
+    # (5) the shard enumeration returns EVERY shard, not a prefix. N is the whole
+    # content of the claim "0 hits over N shards": a main() that scanned one shard
+    # per domain would report the same clean zero with nothing objecting. Checked
+    # against a synthetic domain dir rather than the real corpus, so it runs in CI.
+    droot = tempfile.mkdtemp()
+    dd = os.path.join(droot, "data", "corpus", "synth_dc")
+    os.makedirs(dd)
+    names = [f"synth_{i:03d}.jsonl" for i in range(7)]
+    for n in names:
+        with open(os.path.join(dd, n), "w", encoding="utf-8") as fh:
+            fh.write("{}\n")
+    # a non-shard file in the same directory must not enter the population
+    with open(os.path.join(dd, "build_corpus_stats.json"), "w", encoding="utf-8") as fh:
+        fh.write("{}")
+    got = domain_shards(droot, "synth_dc")
+    assert len(got) == len(names), f"enumeration must return all {len(names)} shards, got {len(got)}"
+    assert [os.path.basename(g) for g in got] == names, "enumeration must be sorted and complete"
+    assert all(g.endswith(".jsonl") for g in got), "non-shard files must not be scanned"
+
+    # (6) the REAL gate, where the benchmark files exist (pod only)
     if os.path.exists(os.path.join(root, "data/eval/humaneval/humaneval_164.jsonl")):
         real = Decontaminator.load_default(root)
         with open(os.path.join(root, "data/eval/humaneval/humaneval_164.jsonl")) as fh:
@@ -156,9 +197,21 @@ def _selftest(root=None):
         r, h, s = fresh(tmp2, "he_000.jsonl", [clean, he["canonical_solution"]], real)
         assert (r, h) == (2, 1), f"real gate: expected (2,1), got {(r, h)}"
         assert s[0]["problem"].startswith("humaneval:"), s[0]
-        print("selftest: 5 cases pass (synthetic read path + REAL gate end-to-end)")
+        print("selftest: 7 cases pass (synthetic read path, enumeration, + REAL gate end-to-end)")
     else:
-        print("selftest: 4 cases pass (synthetic only; benchmark files absent)")
+        print("selftest: 6 cases pass (synthetic only; benchmark files absent)")
+
+
+def domain_shards(root, dom):
+    """Every .jsonl in the domain directory, sorted. The rescan's N.
+
+    Extracted from main() because N is the whole content of the claim: "0 hits
+    over N shards" says nothing if N is a truncated population, and nothing else
+    asserts it. A main() that scanned only the first shard would report a clean
+    zero with no assertion objecting.
+    """
+    d = os.path.join(root, "data/corpus", dom)
+    return sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".jsonl"))
 
 
 def main():
@@ -188,8 +241,7 @@ def main():
 
     out = {"measured": "2026-09-24", "gate": gate, "per_domain": {}}
     for dom in a.domains.split(","):
-        d = os.path.join(a.root, "data/corpus", dom)
-        shards = sorted(os.path.join(d, f) for f in os.listdir(d) if f.endswith(".jsonl"))
+        shards = domain_shards(a.root, dom)
         with ProcessPoolExecutor(a.workers) as ex:
             res = list(ex.map(_scan_shard, [(p, a.root) for p in shards]))
         rows = sum(r for r, _, _ in res)
