@@ -1939,6 +1939,99 @@
     "humaneval_164.jsonl": "1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2",
     "mbpp_holdouts.jsonl": "ccf64ceae9c5403bf50a044cb6d505bfd2a2963ee58338ba268fd65beab92a9f"
    }
+  },
+  {
+   "id": "cont.gate_provenance_chain_0923",
+   "value": {
+    "question": "Does every domain in data/mix_v41_gate.json close: mix fingerprint -> cont.gate_dc_* fact -> HumanEval/MBPP 13-gram removal ratio -> holdout pin (ee3a7471/c0bb8355 post-#620)?",
+    "headline": "ALL 6 TRAINING DOMAINS WERE DECONTAMINATED AGAINST THE CURRENT-PIN GATE. None is un-decontaminated: each pod build_corpus_stats.json stamps decontam_fp=302aa793f7067462, which equals decontam_fp(module filters/decontam_ngram.py + data/eval/humaneval/humaneval_164.jsonl + data/eval/mbpp_holdouts.jsonl) recomputed locally against sha1 ee3a7471.../c0bb8355... (module sha256 943c19ad... identical laptop and pod container). But the NAMED chain the question asks about does not close link-by-link for all six: the mix inline fingerprint link breaks on 6/6, and 3 domains have no cont.gate_dc_* fact for the current build.",
+    "fp_decoding": "decontam_fp = sha256(module bytes + the two gate files)[:16] (filters/decontam_ngram.py:171). Two distinct identifiers are involved: the module's COMMIT is d4233e64 (2026-09-13, stopped stripping comment/heading lines in normalise(); 3801fdc8 is the 0911 original), and the module FILE's blob sha256 under that commit is 943c19ad30d2ac7d3c419b49c6a936d813b4165bbe2b90cf3dbeca218f272559 (identical on origin/main, this branch, and d4233e64, and byte-identical laptop vs pod container). The decontam_fp hashes the blob, not the commit id. 86e19705b05c4b42 = 0911 build (3801fdc8 blob + pre-rebuild gate bytes). 302aa793f7067462 = the 943c19ad module blob + rebuilt gate bytes (HumanEval ee3a7471..., MBPP c0bb8355...). The fp change has TWO legs, both content-relevant: the 0913 normaliser change plus the 0921 gate-byte rebuild; a 0911-dfp corpus is a weaker filter than a 302aa793 corpus.",
+    "domains": [
+     {
+      "domain": "code_ultra_l2_dc",
+      "mix_inline_fp": "adf2ff20698dae8a (data/mix_v41_gate.json:8)",
+      "pod_stamp_fp": "fefdc1fec54808e0",
+      "inline_matches_stamp": false,
+      "decontam_fp": "302aa793f7067462",
+      "removed": "47,338 / 44,996,752 ngram-input rows = 0.1052% (stamp decontam_ngram block, 563 distinct gate problems)",
+      "fact_evidence": "cs.code_ultra_l2_dc_rebuilt_0921 (dfp 302aa793); NO cont.gate_dc_* entry",
+      "link_verdict": "decontam-against-current-pin CLOSES via pod stamp + dfp decode; named cont.gate_dc_* link ABSENT; inline-fp link BROKEN"
+     },
+     {
+      "domain": "code_py_starcoder_dc",
+      "mix_inline_fp": "390a13a56b6472b3 (:16)",
+      "pod_stamp_fp": "117f8fcbbefef881",
+      "inline_matches_stamp": false,
+      "decontam_fp": "302aa793f7067462",
+      "removed": "1,518 / 6,180,174 = 0.0246% (stamp rows_dropped/rows_scanned)",
+      "fact_evidence": "cont.gate_dc_code_py_starcoder (facts/contamination.json:1498) but its 1,554/6,180,175 numbers describe the OLD 86e19705 0911 build; current build evidence is cs.code_py_starcoder_dc_landed_0921 (dfp 302aa793, 1,518 drops)",
+      "link_verdict": "CLOSES against current pins via 0921 fact + pod stamp; the cont.gate_dc_* fact is STALE (old gate, superseded numbers); inline-fp link BROKEN"
+     },
+     {
+      "domain": "math_owm_stage2_dc",
+      "mix_inline_fp": "4b1469bfe4667706 (:24)",
+      "pod_stamp_fp": "6201b92bf4ca4e1c",
+      "inline_matches_stamp": false,
+      "decontam_fp": "302aa793f7067462",
+      "removed": "4,995 / 6,681,408 = 0.0748%",
+      "fact_evidence": "cont.gate_dc_math_owm_stage2 (:1621) is the OLD build (3,100/4,135,793, 206 shards, dfp 86e19705); the current 333-shard build has NO landed fact -- only the pod stamp read 2026-09-23",
+      "link_verdict": "decontam CLOSES via pod stamp + dfp decode; named fact link is STALE/ABSENT for the current build; inline-fp link BROKEN"
+     },
+     {
+      "domain": "en_c4_stage2_dc",
+      "mix_inline_fp": "c59c2e4227d875ec (:32)",
+      "pod_stamp_fp": "15caa8587b64e20f",
+      "inline_matches_stamp": false,
+      "decontam_fp": "302aa793f7067462",
+      "removed": "18 / 11,309,622 = 0.00016%",
+      "fact_evidence": "cont.gate_dc_en_c4_stage2 (:1663) is OLD (7/3,887,759, 83 shards, 86e19705); current build: cs.en_c4_stage2_dc_landed_0921 (242 shards, 18 drops, dfp 302aa793)",
+      "link_verdict": "CLOSES via 0921 fact + pod stamp; cont.gate_dc_* STALE; inline-fp link BROKEN"
+     },
+     {
+      "domain": "cot_dc",
+      "mix_inline_fp": "0d9f495913438657 (:40)",
+      "pod_stamp_fp": "22c9a8274155111e",
+      "inline_matches_stamp": false,
+      "decontam_fp": "302aa793f7067462",
+      "removed": "304 / 851,929 = 0.0357%",
+      "fact_evidence": "cont.gate_dc_cot (:1582) is the 0911 build (304/851,965, dfp 86e19705); current stamp has the same 304 drops but 851,929 scanned and dfp 302aa793 and NO current-build fact",
+      "link_verdict": "decontam CLOSES via pod stamp; fact evidence for the CURRENT build ABSENT (the named fact predates it); inline-fp link BROKEN"
+     },
+     {
+      "domain": "code_ultra_l3_noexec_dc",
+      "mix_inline_fp": "63a3b0e64b97e589 (:48)",
+      "pod_stamp_fp": "c40de52da40ffd2e",
+      "inline_matches_stamp": false,
+      "decontam_fp": "302aa793f7067462",
+      "removed": "109,551 / 15,419,384 ngram-input rows = 0.7105% (158 distinct gate problems)",
+      "fact_evidence": "cs.ultra_l3_noexec_dc_landed_0911 carries the OLD dfp 86e19705 and 111,071 drops; cs.code_ultra_l3_noexec_aggregate_identity_0922 proves the sidecar re-aggregate is byte-identical but does not re-state a current-build gate fact; NO cont.gate_dc_* entry",
+      "link_verdict": "decontam CLOSES via pod stamp + dfp decode; named gate fact ABSENT for the current build; inline-fp link BROKEN"
+     }
+    ],
+    "breaks": [
+     "INLINE FINGERPRINT LINK 6/6 BROKEN (data/mix_v41_gate.json:8,16,24,32,40,48): every inline fingerprint differs from the domain's live build_corpus_stats.json fingerprint on the pod 2026-09-23. Already recorded and explicitly WAIVED for the gate launch: cs.mix_inline_fingerprint_stale_0921 in facts/corpus_supply.json; train.py _assert_mix_domains compares the stamp's own fingerprint to live fp_dir and never reads the inline field; the launch_gate.py gate_corpora reader is waived by runs/prereg.jsonl v41_gate_0911 amendment_7. 6/6 NOW STANDS ON A SECOND SOURCE: cs.mix_inline_fingerprint_stale_0921 could compare only 3/6 (l2/l3/keep_p1 had no dir on either machine then); runs/prereg.jsonl v41_gate_0911 amendment_11 (66, 2026-09-21T18:29Z) CITES an independent pod read dated 2026-09-22 by bc (live l2 fefdc1fe, starcoder 117f8fcb, math 6201b92bf4ca4e1c, en_c4 15caa858, cot 22c9a827, l3 c40de52d), which makes l2 and l3 comparable and confirms all six inline fields stale; that cited set equals this fact's own six pod_stamp_fp reads (2026-09-23) byte-for-byte, so the staleness of all six now has two independent readings 24h apart.",
+     "NO LOAD-TIME ENFORCEMENT OF decontam_fp: no reader of build_corpus_stats decontam_fp in train.py, scripts/pretokenize_domains.py, scripts/launch_gate.py, scripts/pod_drift.py (grep 2026-09-23). The fp is recorded evidence a builder stamps (datagen/ultradata_shards.py:497; scripts/filter_gate_domains.py:178), not a gate the run enforces. This provenance check is evidence, not an automatic guarantee.",
+     "RESIDUAL ZERO-HIT WAS PROVEN ONLY AGAINST THE 0911 GATE: cont.gate_dc_residual_0911 (facts/contamination.json:1743) re-hashed every kept row and found 0 residual hits, but its gate sha256 (b2adeeae.../1d19fb22...) is the pre-rebuild gate with dfp 86e19705. No equivalent output-side full rescan exists against the rebuilt ee3a7471/c0bb8355 gate. The rebuilt gate is field-content-identical (cont.decontam_base_byte_rebuild_0921: file-only 13-grams = 0 of 35,843), so the hit set cannot have grown, but the output-side rescans on the current bytes were not recorded.",
+     "3/6 DOMAINS LACK A CURRENT-BUILD NAMED FACT: math_owm_stage2_dc, cot_dc, code_ultra_l3_noexec_dc current (dfp 302aa793) builds are attested only by the pod stamp read in this fact, not by a dedicated landed fact; L2 additionally has cs.code_ultra_l2_dc_rebuilt_0921. The cont.gate_dc_* entries for math/cot/en_c4/starcoder record the superseded 0911 build."
+    ],
+    "pin_anchors": "datagen/holdout.py:335 humaneval_164=ee3a74711c43ea4f4a5d8187364fefd539240499; :337 mbpp_holdouts_974=c0bb8355ddc670dd61c71a826fddef0532c98a76 (REGISTRY_SHA1 table at :330, 16 entries); pod container holdout.py grep and sha1sum of the two gate files return the identical values 2026-09-23.",
+    "verdict": "The final-result contamination claim is SUPPORTED for all six training domains -- every corpus the v41_ced_0923 run draws was 13-gram DROP-filtered against a gate whose bytes are sha1-identical to the current pinned HumanEval/MBPP, with nonzero recorded removal on every domain. It is supported by stamped + byte-verified evidence, not by the six mix inline fingerprints (all stale/waived), not by a complete current-build fact set (3 domains missing), and not by a current-gate output-side residual rescan (0 domains)."
+   },
+   "measured": "2026-09-23",
+   "source": "pod container (via ~/bin/pod exec, not host view) reads of /work/aupai/data/corpus/<6 domains>/build_corpus_stats.json and sha1sum /work/aupai/data/eval/{humaneval/humaneval_164.jsonl,mbpp_holdouts.jsonl} and sha256sum /work/aupai/filters/decontam_ngram.py, 2026-09-23; local recompute filters.decontam_ngram.decontam_fp over the rebuilt gate files (sha256 1d49078b.../ccf64cea...) = 302aa793f7067462; facts/contamination.json cont.gate_dc_* and facts/corpus_supply.json cs.* 0911/0921/0922 entries; data/mix_v41_gate.json inline fields; datagen/holdout.py REGISTRY_SHA1.",
+   "config": {
+    "method": "for each of the six domains read the pod build stamp corpus fingerprint and decontam_fp, compute removal ratio from the stamp's own rows_scanned/rows_dropped (or decontam_ngram.rows_in/rows_dropped for ultra aggregates), independently recompute decontam_fp from current module + rebuilt gate bytes, compare to the holdout REGISTRY_SHA1 pins, and trace each named cont.gate_dc_* fact to whether it describes the current build or the superseded 0911 build.",
+    "read_only": "no GPU, no writes to pod mix domains, no cache reads; pod commands were grep/sha1sum/json reads only.",
+    "module_history": "filters/decontam_ngram.py changed once after the 0911 filter release: d4233e64 (2026-09-13) stopped stripping full-line comment/heading text in normalise(); 3801fdc8 is the 0911 original.",
+    "gate_content_equivalence": "cont.decontam_base_byte_rebuild_0921 (merged #620): rebuilt gate bytes differ from the 0904 pins but the 13-gram engine reads parsed fields, and all 35,843 file grams are a subset of field-text grams (file-only=0).",
+    "rescan_ruling_0923": "Full output-side residual rescan of all six current-build _dc corpora against the rebuilt ee3a7471/c0bb8355 gate is REQUIRED but DEFERRED (user ruling 2026-09-23, relayed by aupai-1e): it reads hundreds of GB on the pod and would contend for I/O with the v41_ced_0923 run holding all 8 cards. It is on the final-evaluation checklist, to run AFTER v41_ced_0923 training ends and BEFORE HumanEval is scored; owner ae. Until it runs, the zero-residual claim for the current gate rests on the structural file-only-gram=0 argument, and the HumanEval >=30% result must not be quoted as contamination-clean on the current gate without it."
+   },
+   "status": "measured",
+   "uncertainty": "The claim that no hit can differ rests structurally on from_benchmarks parsing named prompt/solution/test/text/code fields (filters/decontam_ngram.py:95-127) plus the file-only-gram=0 measurement; no full output-side residual rescan was run on the rebuilt gate for any of the six current builds, so kept-row zero-residual on current bytes is asserted by construction and by the nonzero drop tallies, not directly measured. Pod stamps are producer-written and were not independently recomputed from corpus shards in this check. Ratios for the two ultra domains use the aggregate decontam_ngram rows_in (post per-group conversion cuts), not total raw parquet rows.",
+   "artifact_sha256": {
+    "humaneval_164.jsonl": "1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2",
+    "mbpp_holdouts.jsonl": "ccf64ceae9c5403bf50a044cb6d505bfd2a2963ee58338ba268fd65beab92a9f"
+   }
   }
  ]
 }
