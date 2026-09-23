@@ -2011,7 +2011,7 @@
     "breaks": [
      "INLINE FINGERPRINT LINK 6/6 BROKEN (data/mix_v41_gate.json:8,16,24,32,40,48): every inline fingerprint differs from the domain's live build_corpus_stats.json fingerprint on the pod 2026-09-23. Already recorded and explicitly WAIVED for the gate launch: cs.mix_inline_fingerprint_stale_0921 in facts/corpus_supply.json; train.py _assert_mix_domains compares the stamp's own fingerprint to live fp_dir and never reads the inline field; the launch_gate.py gate_corpora reader is waived by runs/prereg.jsonl v41_gate_0911 amendment_7. 6/6 NOW STANDS ON A SECOND SOURCE: cs.mix_inline_fingerprint_stale_0921 could compare only 3/6 (l2/l3/keep_p1 had no dir on either machine then); runs/prereg.jsonl v41_gate_0911 amendment_11 (66, 2026-09-21T18:29Z) CITES an independent pod read dated 2026-09-22 by bc (live l2 fefdc1fe, starcoder 117f8fcb, math 6201b92bf4ca4e1c, en_c4 15caa858, cot 22c9a827, l3 c40de52d), which makes l2 and l3 comparable and confirms all six inline fields stale; that cited set equals this fact's own six pod_stamp_fp reads (2026-09-23) byte-for-byte, so the staleness of all six now has two independent readings 24h apart.",
      "NO LOAD-TIME ENFORCEMENT OF decontam_fp: no reader of build_corpus_stats decontam_fp in train.py, scripts/pretokenize_domains.py, scripts/launch_gate.py, scripts/pod_drift.py (grep 2026-09-23). The fp is recorded evidence a builder stamps (datagen/ultradata_shards.py:497; scripts/filter_gate_domains.py:178), not a gate the run enforces. This provenance check is evidence, not an automatic guarantee.",
-     "RESIDUAL ZERO-HIT WAS PROVEN ONLY AGAINST THE 0911 GATE: cont.gate_dc_residual_0911 (facts/contamination.json:1743) re-hashed every kept row and found 0 residual hits, but its gate sha256 (b2adeeae.../1d19fb22...) is the pre-rebuild gate with dfp 86e19705. No equivalent output-side full rescan exists against the rebuilt ee3a7471/c0bb8355 gate. The rebuilt gate is field-content-identical (cont.decontam_base_byte_rebuild_0921: file-only 13-grams = 0 of 35,843), so the hit set cannot have grown, but the output-side rescans on the current bytes were not recorded.",
+     "RESIDUAL ZERO-HIT: CLOSED 2026-09-24. The only prior output-side rescan (cont.gate_dc_residual_0911) was against the SUPERSEDED gate (sha256 b2adeeae.../1d19fb22..., dfp 86e19705), so it could not speak for the rebuilt ee3a7471/c0bb8355 gate. A full rescan on the CURRENT gate bytes has now run over all six current-build _dc corpora: 3,115 shards / 79,344,695 kept rows / 0 residual hits, per-domain shard and row counts equal to each domain's own build_corpus_stats.json (cont.gate_dc_residual_current_0924, runs/dc_residual_current.json). Unlike the 0911 pass, its instrument carries a known-answer control: the scanner's read path was shown to flag an injected gate solution exactly once at the right row while a clean shard reads as zero, mutation-verified in five directions. The two producer scripts the 0911 pass named were untracked and are gone from both machines, so this pass used a rewritten tracked scanner (scripts/verify_dc_residual.py, PR #681) routing through the same Decontaminator.load_default entry both writers use.",
      "3/6 DOMAINS LACK A CURRENT-BUILD NAMED FACT: math_owm_stage2_dc, cot_dc, code_ultra_l3_noexec_dc current (dfp 302aa793) builds are attested only by the pod stamp read in this fact, not by a dedicated landed fact; L2 additionally has cs.code_ultra_l2_dc_rebuilt_0921. The cont.gate_dc_* entries for math/cot/en_c4/starcoder record the superseded 0911 build."
     ],
     "pin_anchors": "datagen/holdout.py:335 humaneval_164=ee3a74711c43ea4f4a5d8187364fefd539240499; :337 mbpp_holdouts_974=c0bb8355ddc670dd61c71a826fddef0532c98a76 (REGISTRY_SHA1 table at :330, 16 entries); pod container holdout.py grep and sha1sum of the two gate files return the identical values 2026-09-23.",
@@ -2024,7 +2024,7 @@
     "read_only": "no GPU, no writes to pod mix domains, no cache reads; pod commands were grep/sha1sum/json reads only.",
     "module_history": "filters/decontam_ngram.py changed once after the 0911 filter release: d4233e64 (2026-09-13) stopped stripping full-line comment/heading text in normalise(); 3801fdc8 is the 0911 original.",
     "gate_content_equivalence": "cont.decontam_base_byte_rebuild_0921 (merged #620): rebuilt gate bytes differ from the 0904 pins but the 13-gram engine reads parsed fields, and all 35,843 file grams are a subset of field-text grams (file-only=0).",
-    "rescan_ruling_0923": "Full output-side residual rescan of all six current-build _dc corpora against the rebuilt ee3a7471/c0bb8355 gate is REQUIRED but DEFERRED (user ruling 2026-09-23, relayed by aupai-1e): it reads hundreds of GB on the pod and would contend for I/O with the v41_ced_0923 run holding all 8 cards. It is on the final-evaluation checklist, to run AFTER v41_ced_0923 training ends and BEFORE HumanEval is scored; owner ae. Until it runs, the zero-residual claim for the current gate rests on the structural file-only-gram=0 argument, and the HumanEval >=30% result must not be quoted as contamination-clean on the current gate without it."
+    "rescan_ruling_0923": "Full output-side residual rescan of all six current-build _dc corpora against the rebuilt ee3a7471/c0bb8355 gate: REQUIRED by user ruling 2026-09-23, DEFERRED until the v41_ced_0923 run stopped (it reads hundreds of GB on the pod and would contend for I/O with a run holding the cards), and COMPLETED 2026-09-24. Owner 3b (taken over from ae, who was decommissioned before the pass ran; the deferral named ae). Result: 3,115 shards / 79,344,695 kept rows / 0 residual hits, every domain's shard and row counts equal to its own build stamp -- recorded in cont.gate_dc_residual_current_0924 and runs/dc_residual_current.json. The check ran AFTER training stopped and BEFORE any HumanEval scoring, which is the sequence the ruling required. The zero-residual claim for the current gate therefore no longer rests on the structural file-only-gram=0 argument alone; it now has a direct output-side measurement on the current gate bytes."
    },
    "status": "measured",
    "uncertainty": "The claim that no hit can differ rests structurally on from_benchmarks parsing named prompt/solution/test/text/code fields (filters/decontam_ngram.py:95-127) plus the file-only-gram=0 measurement; no full output-side residual rescan was run on the rebuilt gate for any of the six current builds, so kept-row zero-residual on current bytes is asserted by construction and by the nonzero drop tallies, not directly measured. Pod stamps are producer-written and were not independently recomputed from corpus shards in this check. Ratios for the two ultra domains use the aggregate decontam_ngram rows_in (post per-group conversion cuts), not total raw parquet rows.",
@@ -2032,6 +2032,72 @@
     "humaneval_164.jsonl": "1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2",
     "mbpp_holdouts.jsonl": "ccf64ceae9c5403bf50a044cb6d505bfd2a2963ee58338ba268fd65beab92a9f"
    }
+  },
+  {
+   "id": "cont.gate_dc_residual_current_0924",
+   "value": {
+    "question": "Does any KEPT row in any of the six current-build gate _dc domains still carry a HumanEval/MBPP 13-gram, judged against a gate whose bytes are the CURRENT pins?",
+    "headline": "ZERO residual hits across all six current-build _dc domains: 3,115 shards, 79,344,695 kept rows, 0 hits. This closes the gap cont.gate_provenance_chain_0923 named ('0 domains' had an output-side rescan against the rebuilt gate); the only prior pass, cont.gate_dc_residual_0911, was against the superseded 86e19705 gate.",
+    "gate": {
+     "decontam_fp": "302aa793f7067462",
+     "humaneval_164.jsonl": "1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2",
+     "mbpp_holdouts.jsonl": "ccf64ceae9c5403bf50a044cb6d505bfd2a2963ee58338ba268fd65beab92a9f",
+     "module_sha256": "943c19ad30d2ac7d3c419b49c6a936d813b4165bbe2b90cf3dbeca218f272559",
+     "note": "decontam_fp recomputed on the pod from these same three files and printed by the run; it equals the 302aa793 value every current-build stamp carries, and the two gate files' sha1 equal the holdout REGISTRY_SHA1 pins."
+    },
+    "per_domain": {
+     "code_ultra_l2_dc": {
+      "shards": 1304,
+      "rows": 39018564,
+      "hits": 0
+     },
+     "code_ultra_l3_noexec_dc": {
+      "shards": 940,
+      "rows": 15309833,
+      "hits": 0
+     },
+     "code_py_starcoder_dc": {
+      "shards": 283,
+      "rows": 6178656,
+      "hits": 0
+     },
+     "math_owm_stage2_dc": {
+      "shards": 333,
+      "rows": 6676413,
+      "hits": 0
+     },
+     "en_c4_stage2_dc": {
+      "shards": 242,
+      "rows": 11309604,
+      "hits": 0
+     },
+     "cot_dc": {
+      "shards": 13,
+      "rows": 851625,
+      "hits": 0
+     }
+    },
+    "totals": {
+     "shards_rescanned": 3115,
+     "rows_rescanned": 79344695,
+     "residual_hits_total": 0
+    },
+    "denominator_cross_check": "Every domain's shard count and row count equal that domain's own build_corpus_stats.json (n_shards and kept), checked programmatically after the run, not transcribed: l2 1304/39018564, l3_noexec 940/15309833, starcoder 283/6178656, math_owm 333/6676413, en_c4 242/11309604, cot 13/851625. The rescan therefore scanned exactly the kept output rather than a prefix or a superset, which is what makes a zero interpretable.",
+    "instrument_validity": "The zeros are informative only because the instrument was shown able to fail. Before the corpus pass, the scanner's own read path was driven with a synthetic gate and an injected gate solution: it is flagged exactly once, at the right row, and a clean shard reads as zero. Mutation-verified in five directions (not counting a found hit, reading the wrong field, counting blank lines, truncating the shard enumeration to a prefix, dropping the sort), each failing a distinct assertion. The 0911 pass left no such control, which is why its zeros could only be taken on trust.",
+    "provenance": "The 0911 producer is gone: runs/verify_dc_residual.py, runs/verify_starcoder_par.py and runs/verify_dc_par.py were untracked and are absent from both the laptop and the pod container (checked 2026-09-24 via ~/bin/pod). This pass used scripts/verify_dc_residual.py, newly tracked (PR #681), which loads the gate through Decontaminator.load_default(root) -- the entry both writers use (scripts/filter_gate_domains.py:58, datagen/ultradata_shards.py:253)."
+   },
+   "measured": "2026-09-24",
+   "source": "independent post-filter rescan on the pod, run 2026-09-24 by the tracked scanner scripts/verify_dc_residual.py (PR #681); evidence committed in runs/dc_residual_current.json (per-domain shard counts, row counts and zero residual hits, with the gate identity the run computed). The gate files and the corpus shards it read are pod-only (both gitignored); the per-domain counts it produced are cross-checked against each domain's own build stamp, not transcribed from the pod.",
+   "config": {
+    "method": "filters/decontam_ngram.py Decontaminator.load_default('/work/aupai'), hit() on the `content` field of every kept row in every shard of the six current-build _dc domains; 32-worker ProcessPoolExecutor; the same one-normaliser 13-word-token containment the two writers apply.",
+    "read_only": "no GPU, no writes to any pod mix domain, no token-cache reads; pod commands were file reads only.",
+    "workers": "32 of 180 host cores, taskset 8-39, nice 19, ionice -c3 (co-residency discipline while v41_ced_0923 was stopped and a resume was pending).",
+    "duration": "approx 2h wall for 304 GB of corpus read.",
+    "running": "python3 scripts/verify_dc_residual.py --root /work/aupai --workers 32 --out runs/dc_residual_current.json"
+   },
+   "status": "measured",
+   "uncertainty": "Zero residual is a statement about the _dc bytes as they stood on 2026-09-24; a later rewrite of a _dc directory would need a rescan (its build_corpus_stats fingerprint would change and the launch guard would refuse). The rescan re-derived each domain's shard and row counts from the filesystem and they equal the producer's own stamps, but the stamps themselves were not recomputed from the source parquet, so this measures the kept output, not the conversion that produced it. The gate files are read on the pod; their sha1 were compared against datagen/holdout.py's REGISTRY_SHA1 pins rather than re-derived.",
+   "boundary": "This is an output-side check on the six training corpora. It says nothing about the eval-side surfaces, nothing about any domain outside these six, and nothing about near-duplication or semantic leakage below the 13-word-token exact-match criterion."
   }
  ]
 }
