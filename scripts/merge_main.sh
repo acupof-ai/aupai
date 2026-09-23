@@ -424,52 +424,150 @@ _merge_failure_kind() {
 #
 # Prints the run id and the sha it names, because "main is red" without them sends the reader to
 # `gh run list` to find out which commit, which is the step that did not happen last time.
-_main_ci_is_red() {   # 0 = red (refuse), 1 = green or unknown (proceed)
+# THE TIP THE VERDICT MUST BE ABOUT (3b, 2026-09-23). `--limit 1`, then rows[0], was trusted for
+# the newest run on main and the ORDER is not stable: on three measured occasions gh returned an
+# ANCESTOR's run instead -- c369cdd3 17 days old (friction 568), d1da342f 10 days old (569) and
+# 9d92e306 two days old (581/582, cited twice with the identical run id minutes apart). Each
+# carried conclusion=failure or cancelled while main's OWN tip run was in_progress, so the gate
+# refused on a tree that does not exist and the operator's only recourse was a retry. Three
+# sessions paid one. It gets worse than a nuisance: the refusal advertises AUPAI_CONTROLLER=1,
+# which is the same override that skips a GENUINE red, so every spurious refusal is pressure
+# toward the one escape hatch that must stay rare.
+#
+# So the sha is resolved here and every row is judged against it, rather than by position. Prints
+# "<sha> <epoch>", or nothing when no ref resolves -- and nothing is not fatal: an unresolvable
+# tip falls back to the newest row by createdAt, which is still strictly better than rows[0].
+# MERGE_MAIN_TIP overrides it, because --selftest drives this from a scratch dir where the repo's
+# own refs are live and nondeterministic (the same reason MAIN is injected per world).
+_main_ci_tip() {
+  if [ -n "${MERGE_MAIN_TIP:-}" ]; then printf '%s' "$MERGE_MAIN_TIP"; return 0; fi
+  _t=$(git -C "$MAIN" rev-parse --verify -q origin/main 2>/dev/null) || _t=""
+  [ -n "$_t" ] || _t=$(git -C "$MAIN" rev-parse --verify -q main 2>/dev/null) || _t=""
+  [ -n "$_t" ] || return 1
+  _te=$(git -C "$MAIN" show -s --format=%ct "$_t" 2>/dev/null) || _te=""
+  printf '%s %s' "$_t" "$_te"
+}
+
+_main_ci_is_red() {   # 0 = red (refuse), 1 = green, 2 = UNDETERMINED (proceed, but say so)
   command -v gh >/dev/null 2>&1 || {
-    echo "merge_main: WARNING -- gh is not on PATH, so main's CI state is unknown; proceeding." >&2
-    return 1
+    echo "merge_main: MAIN CI STATUS UNDETERMINED -- gh is not on PATH; merging WITHOUT" >&2
+    echo "  confirming main's own CI. Recorded in friction." >&2
+    return 2
   }
-  _mc=$(gh run list --branch main --event push --limit 1 \
-        --json headSha,conclusion,status,databaseId 2>/dev/null) || _mc=""
-  if [ -z "$_mc" ]; then
-    echo "merge_main: WARNING -- could not read main's CI state (gh unreachable or rate-limited);" >&2
-    echo "  proceeding. Unknown is not red: refusing here would block every merge on a timeout." >&2
-    return 1
-  fi
-  # python3, not a grep: the fields are JSON and a regex over it is §262's shape. Prints
-  # "<conclusion> <sha> <runid>" or nothing at all.
-  #
-  # NO f-STRING HERE. A backslash inside an f-string expression is a SyntaxError, and the whole
-  # block is single-quoted shell so every inner quote would need escaping -- which is how the first
-  # version of this failed: `2>/dev/null` ate the SyntaxError, the function printed nothing, and
-  # all five worlds took the "no run to read" branch. Four of them WANT proceed, so they passed
-  # while testing nothing; only the red case and the names-the-run case went red. Plain
-  # concatenation with double quotes outside, single inside.
-  _mcp=$(printf '%s' "$_mc" | python3 -c "
+  _citipinfo=$(_main_ci_tip 2>/dev/null) || _citipinfo=""
+  set -- $_citipinfo
+  _citip=${1:-}; _citipe=${2:-0}
+  # ASK FOR A PAGE, NOT ONE ROW. A stale read that hands back an old row is a wrong VERDICT with
+  # --limit 1 and a recoverable one with a page, because the tip's own row is then somewhere in it.
+  _mc=""; _mcp=""; _mcollect=""; _matt=0
+  while [ "$_matt" -lt 3 ]; do
+    _matt=$((_matt + 1))
+    # `|| _mc=""` UNDER set -e, as everywhere else in this file: a gh failure is an expected
+    # outcome that takes the warn-and-continue branch, not an abort.
+    _mc=$(gh run list --branch main --event push --limit 20 \
+          --json headSha,conclusion,status,databaseId,createdAt 2>/dev/null) || _mc=""
+    [ -n "$_mc" ] || break
+    # python3, not a grep: the fields are JSON and a regex over it is §262's shape.
+    #
+    # NO f-STRING HERE. A backslash inside an f-string expression is a SyntaxError, and the whole
+    # block is single-quoted shell so every inner quote would need escaping -- which is how the
+    # first version of this failed: `2>/dev/null` ate the SyntaxError, the function printed
+    # nothing, and all five worlds took the "no run to read" branch. Four of them WANT proceed, so
+    # they passed while testing nothing. Plain concatenation, double quotes outside, single in.
+    #
+    # A ROW IS ACCEPTED WHEN ITS SHA IS THE TIP, or when it was CREATED after the tip's commit --
+    # the second clause is the mirror of the first and rescues the one asymmetry it introduces: if
+    # this tree's own origin/main ref lags, gh knows a commit we do not, and that row IS the tip.
+    # Without it the fix would trade a false refusal for a MISSED red whenever the local ref is
+    # behind, which is the dangerous direction. Rows are sorted by createdAt first so the answer
+    # cannot depend on gh's ordering at all.
+    _mcp=$(printf '%s' "$_mc" | python3 -c "
+import calendar, json, sys, time
+tip = (sys.argv[1] if len(sys.argv) > 1 else '').strip()
+tipe = 0
+try:
+    tipe = int(sys.argv[2])
+except Exception:
+    tipe = 0
+try:
+    rows = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if not isinstance(rows, list) or not rows:
+    sys.exit(0)
+def ep(s):
+    try:
+        return calendar.timegm(time.strptime(s[:19], '%Y-%m-%dT%H:%M:%S'))
+    except Exception:
+        return 0
+rows = sorted(rows, key=lambda r: r.get('createdAt') or '', reverse=True)
+for r in rows:
+    sha = r.get('headSha') or ''
+    if tip and sha != tip and ep(r.get('createdAt') or '') <= tipe:
+        continue
+    state = r.get('conclusion') or r.get('status') or '?'
+    print((state + ' ' + sha[:8] + ' ' + str(r.get('databaseId') or '?')))
+    print(json.dumps(r, sort_keys=True, separators=(',', ':')))
+    sys.exit(0)
+sys.exit(0)
+" "$_citip" "$_citipe" 2>/dev/null) || _mcp=""
+    [ -n "$_mcp" ] && break
+    # Nothing acceptable in that page. Keep the newest row we saw so the give-up message can name
+    # what gh actually said instead of a bare "unknown" -- the reader's next step is to read it.
+    _mcollect=$(printf '%s' "$_mc" | python3 -c "
 import json, sys
 try:
     rows = json.load(sys.stdin)
 except Exception:
     sys.exit(0)
-if not rows:
+if not isinstance(rows, list) or not rows:
     sys.exit(0)
+rows = sorted(rows, key=lambda r: r.get('createdAt') or '', reverse=True)
 r = rows[0]
-state = r.get('conclusion') or r.get('status') or '?'
-sha = (r.get('headSha') or '?')[:8]
-print(state + ' ' + sha + ' ' + str(r.get('databaseId') or '?'))
-" 2>/dev/null) || _mcp=""
-  [ -n "$_mcp" ] || {
-    echo "merge_main: WARNING -- main has no push CI run to read; proceeding." >&2
-    return 1
-  }
-  set -- $_mcp
+print((r.get('conclusion') or r.get('status') or '?') + ' ' + (r.get('headSha') or '?')[:8]
+      + ' ' + str(r.get('databaseId') or '?'))
+" 2>/dev/null) || _mcollect=""
+  done
+  if [ -z "$_mcp" ]; then
+    # BOTH UNDETERMINABLE PATHS ANNOUNCE THEMSELVES (1e, 2026-09-23). The asymmetry -- unknown is
+    # not red -- is the design and stays, but a merge that proceeds without having confirmed main's
+    # CI must SAY SO in a form that does not get lost in the middle of a merge's log. These two
+    # lines are the answer to "what did this run not check", and they are greppable for the same
+    # reason the refusal is: the filter people actually use is a grep.
+    echo "merge_main: MAIN CI STATUS UNDETERMINED -- merging WITHOUT confirming main's own CI." >&2
+    if [ -n "$_mc" ]; then
+      echo "  main's push CI runs do not include ${_citip:0:8} (the tip), so today's verdict" >&2
+      echo "  cannot be read from them. Newest row gh returned:" >&2
+      echo "    ${_mcollect:-none}   (asked 3 times)" >&2
+      echo "  This is the stale-read shape of 2026-09-21/23: gh can hand back an ancestor's run" >&2
+      echo "  while main's own tip run is pending. Proceeding is the same asymmetry as an" >&2
+      echo "  unreachable gh -- unknown is not red. No override is needed for this, and the merge" >&2
+      echo "  is recorded in friction as having run without a CI verdict." >&2
+    else
+      echo "  Could not read main's CI state (gh unreachable or rate-limited). Refusing here" >&2
+      echo "  would block every merge in the tree on a timeout, so this proceeds -- and is" >&2
+      echo "  recorded in friction as having run without a CI verdict." >&2
+    fi
+    return 2
+  fi
+  # PARAMETER EXPANSION, NOT `| head -1`: under `set -o pipefail` a `head` that exits early can
+  # SIGPIPE the printf feeding it and take the whole command substitution down with it.
+  _mcp1=${_mcp%%$'\n'*}
+  _mcraw=${_mcp#*$'\n'}
+  [ "$_mcraw" = "$_mcp" ] && _mcraw=""
+  set -- $_mcp1
   case "$1" in
     failure|cancelled|timed_out)
       echo "REFUSING: main's own CI is $1 at ${2} (run $3)." >&2
       echo "  Every branch starts from that tree, so a merge now inherits a base that does not" >&2
       echo "  build, and the next PR's failure will name code it never touched (§265)." >&2
       echo "  Read it: gh run view $3 --log-failed" >&2
-      echo "  Fix main first, or override: AUPAI_CONTROLLER=1 (logged to friction)." >&2
+      # THE RAW ROW (1e, 2026-09-23). Everything above is this script's SUMMARY of one JSON object
+      # and the summary is what has been wrong three times; the row itself is short and is the only
+      # thing the reader can check without re-running gh. No override is named here on purpose:
+      # AUPAI_CONTROLLER=1 also skips a genuine red, so advertising it at a refusal whose premises
+      # have just been shown to be unreliable is advice with a known failure mode.
+      echo "  The row this verdict came from: ${_mcraw:-unavailable}" >&2
       return 0 ;;
     # in_progress/queued are NOT red. A merge held until CI finishes is a merge held for three
     # minutes on every commit, and the pending run says nothing about the tree yet.
@@ -552,6 +650,46 @@ _push_origin_main() {
   esac
   return 1
 }
+
+# THE ORIGIN RE-INTEGRATION (friction 566, 1e's ruling 2026-09-23). Defined HERE, above the
+# --selftest dispatch, for the same reason as _push_origin_main: a function defined after the
+# selftest exits is unreachable from it, which is how a test ends up asserting against a
+# reimplementation instead of the subject (§231). #623 and #665 were both cleared by a hand
+# update-ref, which is the §245 shape this replaces.
+_recover_nonff() {   # $1 = MAIN (integration tree), $2 = the caller's worktree, $3 = branch
+    git -C "$1" fetch origin main >/dev/null 2>&1 || return 1
+    # RE-READ BOTH SIDES from the integration tree, which is where the CAS writes.
+    _rbh=$(git -C "$1" rev-parse HEAD 2>/dev/null) || return 1
+    _rbo=$(git -C "$1" rev-parse origin/main 2>/dev/null) || return 1
+    # Origin already contained: nothing to integrate, so the refusal came from an EXTERNAL cause
+    # (push protection, auth) and _push_origin_main's other branch is the correct advice.
+    git -C "$1" merge-base --is-ancestor "$_rbo" "$_rbh" 2>/dev/null && return 1
+    # MERGE THE SHA THIS JUST RESOLVED, not the string `origin/main`. Measured 2026-09-23:
+    # worktrees SHARE remote-tracking refs, so the fetch above updates the ref $2 sees too and the
+    # two forms are EQUIVALENT here -- reverting to the ref survives every W6 assertion, and that
+    # mutant is equivalent rather than untested. The sha form is kept for one narrower property it
+    # does have: it binds the merge to the exact commit `merge-base --is-ancestor` just tested. The
+    # ref form re-resolves at merge time, so a `git fetch` landing in that window (any process, not
+    # just a peer's merge_main) would integrate a commit the ancestry check never saw.
+    git -C "$2" merge --no-edit -q "$_rbo" -m "merge origin/main into $3 ($3)" >/dev/null 2>&1 \
+      || return 1
+    _rbm=$(git -C "$2" rev-parse HEAD 2>/dev/null) || return 1
+    git -C "$1" update-ref -m "merge_main: $3 (origin re-integration)" \
+      refs/heads/main "$_rbm" "$_rbh" 2>/dev/null || return 1
+    # ADVANCE THE INTEGRATION TREE'S WORKING FILES, for the reason the main CAS path does it: the
+    # tree is DETACHED, and .git/hooks/pre-commit -- which every worktree executes -- is a symlink
+    # into that tree's checkout. A CAS that moves the ref without re-detaching leaves every session
+    # running the pre-recovery hook, which is the stale-hook defect measured 2026-09-06 (48). The
+    # cleanliness guard is the same one: nobody commits in that tree, so a clean tree loses nothing
+    # and a dirty one is somebody's misplaced work. A failure is a WARNING, not a refusal -- the
+    # push is what this function exists to enable and it would still succeed.
+    if [ -z "$(git -C "$1" status --porcelain 2>/dev/null)" ]; then
+      git -C "$1" checkout --detach "$_rbm" -q 2>/dev/null \
+        || echo "merge_main: WARNING -- the integration tree is still at ${_rbh:0:8}; advance it by hand: git -C $1 checkout --detach main" >&2
+    fi
+    echo "merge_main: main ${_rbh:0:8} -> ${_rbm:0:8} (re-integrated origin/main)" >&2
+    return 0
+  }
 
 # THE STAGED-INDEX CARRY (tilerl-31), as two functions so --selftest drives the REAL code in a
 # scratch repo rather than a reimplementation of it. A reimplemented predicate shares the
@@ -1552,6 +1690,174 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
                               _fails=$((_fails + 1)) ;;
     *) echo "  ok   push W3 does not print the always-rejected retry-push-alone advice" ;;
   esac
+
+  # W6 THE ORIGIN RE-INTEGRATION (friction 566, 1e's ruling 2026-09-23) -- the REAL recovery, in a
+  # real three-repo world, because the thing under test is whether a moved origin can be repaired
+  # WITHOUT the hand update-ref that §245 forbids and that two sessions actually used.
+  #
+  # THE WORLD IS BUILT SO THE FETCH IS THE ONLY CURE. `repo` is the integration tree -- a clone
+  # whose origin/main REF is stale, because nothing fetches after b advances the bare origin --
+  # and `w` is the caller's worktree, ADDED FROM IT. A worktree, not a second clone, and that is
+  # load-bearing: a second CLONE has its own object store, so the CAS onto w's commit fails with
+  # "nonexistent object" and the fixture dies at rc 128 before any assertion runs.
+  # NOTE what this world does NOT discriminate: worktrees also SHARE remote-tracking refs, so
+  # _recover_nonff merging the resolved sha and merging the string `origin/main` are equivalent
+  # here (measured 2026-09-23; that mutation survives). The assertion below reads whether origin's
+  # advanced commit ends up an ancestor, which is the property the incident was about.
+  _w6=$(mktemp -d 2>/dev/null || mktemp -t mmrec)
+  git init -q --bare -b main "$_w6/origin.git" >/dev/null 2>&1
+  git clone -q "$_w6/origin.git" "$_w6/seed" >/dev/null 2>&1
+  ( cd "$_w6/seed" && git config user.email t@t && git config user.name T \
+    && git symbolic-ref HEAD refs/heads/main \
+    && echo a > f.txt && git add f.txt && git commit -qm base && git push -q origin main ) >/dev/null 2>&1
+  git clone -q --branch main "$_w6/origin.git" "$_w6/repo" >/dev/null 2>&1
+  ( cd "$_w6/repo" && git config user.email t@t && git config user.name T \
+    && git checkout -q --detach main ) >/dev/null 2>&1
+  git -C "$_w6/repo" worktree add -q "$_w6/w" -b w main >/dev/null 2>&1
+  ( cd "$_w6/w" && git config user.email t@t && git config user.name T \
+    && echo from-w > f2.txt && git add f2.txt && git commit -qm "w: the landed merge" ) >/dev/null 2>&1
+  # the CAS: local main (repo) advances to w's merge, which origin does not hold yet.
+  _w6m=$(git -C "$_w6/w" rev-parse HEAD)
+  git -C "$_w6/repo" update-ref refs/heads/main "$_w6m" 2>/dev/null
+  # DETACH repo AT THE NEW MAIN, WHICH THE REAL CAS DOES IMMEDIATELY AFTERWARDS. _recover_nonff
+  # reads the integration tree's HEAD, not its `main` ref, and in production the two are equal at
+  # this point -- the CAS step ends with `checkout --detach $_new`. A fixture that leaves HEAD on
+  # the base commit makes the CAS in the recovery compare against the wrong old value, so it fails
+  # for a reason that cannot occur in production.
+  git -C "$_w6/repo" checkout -q --detach "$_w6m" 2>/dev/null
+  # b advances the BARE ORIGIN, and NOTHING fetches afterwards: repo's origin/main ref is now
+  # stale while the commit behind it is what a push would be rejected against.
+  ( cd "$_w6/seed" && echo from-b >> f.txt && git commit -qam "b advances origin" && git push -q origin main ) >/dev/null 2>&1
+  _w6ob=$(git -C "$_w6/seed" rev-parse HEAD)
+  # SANITY: the world must really be non-fast-forward, or W6 tests nothing.
+  if git -C "$_w6/repo" push -q origin main 2>/dev/null; then
+    echo "  FAIL push W6-control: the world was NOT non-fast-forward, so the recovery is untested" >&2
+    _fails=$((_fails + 1))
+  else
+    echo "  ok   push W6-control: the world is a real non-fast-forward before the recovery"
+  fi
+  # THE SUBJECT, exactly as the merge path invokes it.
+  if _recover_nonff "$_w6/repo" "$_w6/w" w >/dev/null 2>&1; then
+    echo "  ok   push W6 the recovery re-integrates a moved origin -> 0"
+  else
+    echo "  FAIL push W6: the recovery returned nonzero on a bona fide moved origin" >&2
+    _fails=$((_fails + 1))
+  fi
+  # (a) THE CAS MOVED MAIN, and it was a CAS: the new value must descend from the old one.
+  _w6n=$(git -C "$_w6/repo" rev-parse main)
+  if [ "$_w6n" != "$_w6m" ] && git -C "$_w6/repo" merge-base --is-ancestor "$_w6m" "$_w6n" 2>/dev/null; then
+    echo "  ok   push W6 the CAS advanced main to a descendant of the value it replaced"
+  else
+    echo "  FAIL push W6: main did not advance by a legal compare-and-swap ($_w6m -> $_w6n)" >&2
+    _fails=$((_fails + 1))
+  fi
+  # (b) B'S COMMIT IS NOW AN ANCESTOR. This is the assertion that kills the merge-the-stale-ref
+  # mutant: that version still produces a descendant of the OLD main, so (a) alone passes it, and
+  # only this one reads whether the commit that caused the refusal is actually in the tree.
+  if git -C "$_w6/repo" merge-base --is-ancestor "$_w6ob" "$_w6n" 2>/dev/null; then
+    echo "  ok   push W6 origin's advanced commit is an ancestor of the new main"
+  else
+    echo "  FAIL push W6: origin's commit $_w6ob is NOT an ancestor -- the stale ref was merged" >&2
+    _fails=$((_fails + 1))
+  fi
+  # (c) THE PUSH NOW SUCCEEDS, which is the whole point: a fast-forward, no force, no hand ref write.
+  if git -C "$_w6/repo" push -q origin main 2>/dev/null; then
+    echo "  ok   push W6 the push succeeds afterwards (fast-forward, no force needed)"
+  else
+    echo "  FAIL push W6: the push is still refused after the recovery" >&2
+    _fails=$((_fails + 1))
+  fi
+  # (d) NO FORCE, NO HAND REF WRITE. The CAS is the only writer, and its reflog message is the
+  # signature that distinguishes it from a bare update-ref (the two are otherwise identical).
+  case "$(git -C "$_w6/repo" reflog -1 main 2>/dev/null)" in
+    *"merge_main: w (origin re-integration)"*)
+      echo "  ok   push W6 the ref move is signed as merge_main's CAS, not a bare update-ref" ;;
+    *) echo "  FAIL push W6: the ref move carries no merge_main signature -- indistinguishable from §245's hand write" >&2
+       _fails=$((_fails + 1)) ;;
+  esac
+  # (e) THE INTEGRATION TREE WAS ADVANCED WITH THE CAS. Its HEAD is what every worktree's pre-commit
+  # hook resolves through, so a CAS that moves the ref and leaves the tree behind runs the
+  # pre-recovery hook everywhere -- the stale-hook defect measured 2026-09-06. Without this
+  # assertion, deleting the advance survives the whole block (measured).
+  if [ "$(git -C "$_w6/repo" rev-parse HEAD)" = "$_w6n" ]; then
+    echo "  ok   push W6 the integration tree was advanced to the new main (the hook everyone runs)"
+  else
+    echo "  FAIL push W6: the integration tree is at $(git -C "$_w6/repo" rev-parse --short HEAD) while main is ${_w6n:0:8} -- every worktree would run a stale hook" >&2
+    _fails=$((_fails + 1))
+  fi
+  # W6-CONTROL: origin already contained (nothing to integrate) must NOT be treated as recoverable,
+  # or the recovery would rewrite local main for a push that failed for an EXTERNAL reason (a
+  # secret, auth) and the correct advice for those is "retry the push alone".
+  if _recover_nonff "$_w6/repo" "$_w6/w" w >/dev/null 2>&1; then
+    echo "  FAIL push W6-control: a push that failed with origin already contained still 'recovered'" >&2
+    _fails=$((_fails + 1))
+  else
+    echo "  ok   push W6-control: origin already contained -> not a recovery case"
+  fi
+  # W6-CONTROL 2: a DIRTY caller worktree must refuse, because `git merge` would abort and the CAS
+  # must not advance main onto a commit that was never created.
+  #
+  # ORIGIN IS ADVANCED FROM `seed`, WHICH MUST RE-SYNC FIRST. The W6 test above pushed repo's merge
+  # to origin, so seed's own commit and that merge now diverge: a plain commit-and-push here is
+  # itself non-fast-forward and fails the subshell -- which under `set -e` takes the whole selftest
+  # down with it, silently skipping every assertion after this one. Aligning seed on origin/main
+  # first makes its new commit a descendant again, so this block advances origin and nothing else.
+  ( cd "$_w6/seed" && git fetch -q origin main && git checkout -q -B main origin/main \
+    && echo more >> f.txt && git commit -qam "b advances again" && git push -q origin main ) >/dev/null 2>&1
+  ( cd "$_w6/w" && echo dirty >> f.txt )
+  if _recover_nonff "$_w6/repo" "$_w6/w" w >/dev/null 2>&1; then
+    echo "  FAIL push W6-control2: recovered with a dirty worktree, so main can move onto a non-existent commit" >&2
+    _fails=$((_fails + 1))
+  else
+    echo "  ok   push W6-control2: a dirty worktree refuses the recovery"
+  fi
+  rm -rf "$_w6"
+
+  # W6-WIRING: THE RECOVERY MUST BE CALLED FROM THE MERGE PATH. W6 above drives _recover_nonff
+  # directly, so it tests the function and NOT its connection -- deleting the call site leaves every
+  # W6 assertion green (measured: that mutant survived the first sweep). This is the same shape as
+  # `behind W5` and `mainred the gate is called on both branches`, and it needs the same care:
+  # count only the PRODUCTION body, because this test's own text names the string. The post-selftest
+  # body starts after the banner's line.
+  _rb_start=$(grep -n '^  echo "merge_main selftest OK' "$0" | head -1 | cut -d: -f1)
+  _rbody=$(awk -v n="${_rb_start:-0}" 'NR>n' "$0")
+  # MATCH THE CALL, NOT THE WHOLE LINE. The first version anchored on the full `if _recover_i -lt
+  # ... ; then`, so ANY edit to that line went red -- including a change to the retry bound, which
+  # is a different property and gets its own assertion below. That made this one pass for the wrong
+  # reason the moment someone touched the condition.
+  _n=$(printf '%s\n' "$_rbody" | grep -c '_recover_nonff "\$MAIN" "\$_wt_self" "\$1"' || true)
+  if [ "${_n:-0}" -eq 1 ]; then
+    echo "  ok   push W6 the merge path invokes the origin re-integration exactly once (source-level)"
+  else
+    echo "  FAIL push W6-wiring: the recovery is defined but not wired into the merge path (got $_n) -- a moved origin is unrecoverable again" >&2
+    _fails=$((_fails + 1))
+  fi
+  # THE RETRY IS BOUNDED (1e's ruling: 最多 3 次). Asserted AT THE SOURCE, and the reason is worth
+  # stating: with a single remote the bound is UNREACHABLE, because a successful re-integration
+  # makes origin/main an ancestor of local main, so the next attempt returns at the ancestor guard
+  # without merging. The bound therefore only ever fires when a peer pushes inside the window
+  # between our re-integration and our retry -- a real race, and one no scratch world can schedule
+  # deterministically. A world here would prove nothing; the property being asserted is that the
+  # loop CANNOT be unbounded, which is exactly a source property.
+  _nb=$(printf '%s\n' "$_rbody" | grep -c 'if _recover_i -lt "\$_recover_attempts" && _recover_nonff' || true)
+  _ns=$(printf '%s\n' "$_rbody" | grep -c '^    _recover_attempts=3$' || true)
+  if [ "${_nb:-0}" -eq 1 ] && [ "${_ns:-0}" -eq 1 ]; then
+    echo "  ok   push W6 the recovery loop is bounded by a named attempt cap (source-level)"
+  else
+    echo "  FAIL push W6-wiring: the recovery loop is not bounded by _recover_attempts=3 (guard $_nb, cap $_ns) -- an unbounded retry loop" >&2
+    _fails=$((_fails + 1))
+  fi
+
+  # EACH ATTEMPT IS RECORDED (1e's ruling: 每次都记录下来). Source-level for the same reason as the
+  # bound: this line is only reached inside a real merge whose push was refused, so no scratch world
+  # executes it, and its absence is exactly what a silent retry loop looks like from outside.
+  _nr=$(printf '%s\n' "$_rbody" | grep -c 'echo "merge_main: attempt \$_recover_i of \$_recover_attempts' || true)
+  if [ "${_nr:-0}" -eq 1 ]; then
+    echo "  ok   push W6 each recovery attempt is recorded as it happens (source-level)"
+  else
+    echo "  FAIL push W6-wiring: attempts are not recorded individually (got $_nr) -- a run that recovered on attempt 3 leaves nothing naming attempts 1-2" >&2
+    _fails=$((_fails + 1))
+  fi
   rm -rf "$_n"
 
   # W4 BEHIND-MAIN AUTO FAST-FORWARD (de-80 evolved 2026-09-18). The integration tree is a
@@ -1695,25 +2001,72 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
     fi
     chmod +x "$_g/gh"
   }
-  _rcase() {  # $1=name $2=want red|proceed  $3=the gh payload
+  _rcase() {  # $1=name $2=want red|proceed|undetermined  $3=the gh payload
     _mkgh "$3"
-    if ( PATH="$_g:$PATH"; _main_ci_is_red ) >/dev/null 2>&1; then _rgot=red; else _rgot=proceed; fi
+    # THE THREE-WAY rc IS CAPTURED, not collapsed to a boolean. red=0, green=1, undetermined=2 --
+    # and 1 vs 2 is exactly the distinction the friction row hangs on, so a helper that flattened
+    # them could not tell "confirmed green" from "never checked" (measured: the first version of
+    # the undetermined assertions passed with the old binary `if` for precisely that reason).
+    _rrc=0; ( PATH="$_g:$PATH"; MERGE_MAIN_TIP="$_TIP" _main_ci_is_red ) >/dev/null 2>&1 || _rrc=$?
+    case "$_rrc" in 0) _rgot=red ;; 1) _rgot=proceed ;; 2) _rgot=undetermined ;; *) _rgot="rc$_rrc" ;; esac
     if [ "$_rgot" != "$2" ]; then
       echo "  FAIL mainred $1: want $2, got $_rgot" >&2; _fails=$((_fails + 1))
     else
       echo "  ok   mainred $1 -> $_rgot"
     fi
   }
+  # THE TIP IS INJECTED, NOT READ FROM THIS REPO (MERGE_MAIN_TIP, see _main_ci_tip). The subject is
+  # how the function JUDGES rows against the tip; letting it resolve the live origin/main would make
+  # every world depend on this checkout's state and its reflog. T2 = 2026-09-24T12:00Z.
+  _TIP="cafebabe00000000000000000000000000000000 1790251200"
+  # THE SHA IS THE TIP IN EVERY WORLD BELOW, and that is load-bearing: the rows are filtered to the
+  # tip now (T1), so an old-sha fixture would be skipped as stale and every world would take the
+  # proceed branch -- passing all five while testing only the give-up path. T1's fixture uses the
+  # OLD shape (no createdAt) on purpose: gh absent here for `--limit 20`, so the timestamp is
+  # missing and rule (b) must accept it on the sha alone. A world that fires only with createdAt
+  # present would be a rule that never runs against a gh that omits it.
   _rcase "a failing main push run refuses" red \
-    '[{"headSha":"deadbeefcafe","conclusion":"failure","status":"completed","databaseId":34095366465}]'
-  _rcase "a green main push run proceeds" proceed \
-    '[{"headSha":"deadbeefcafe","conclusion":"success","status":"completed","databaseId":1}]'
+    '[{"headSha":"cafebabe00000000000000000000000000000000","conclusion":"failure","status":"completed","databaseId":34095366465}]'
+  _rcase "a green main push run is a CONFIRMED GREEN (rc 1, no friction row)" proceed \
+    '[{"headSha":"cafebabe00000000000000000000000000000000","conclusion":"success","status":"completed","databaseId":1}]'
   # IN PROGRESS IS NOT RED. Without this case the gate could refuse for the three minutes after
   # every commit, which is a gate people would turn off.
   _rcase "an in-progress run proceeds" proceed \
-    '[{"headSha":"deadbeefcafe","conclusion":null,"status":"in_progress","databaseId":2}]'
-  _rcase "gh exiting nonzero proceeds (unknown is not red)" proceed FAIL
-  _rcase "an empty run list proceeds" proceed '[]'
+    '[{"headSha":"cafebabe00000000000000000000000000000000","conclusion":null,"status":"in_progress","databaseId":2}]'
+  # rc 2, NOT 1: "could not read gh" is UNDETERMINED, and the friction row depends on telling it
+  # apart from a confirmed green. Asserting the exact rc is what keeps that distinction real.
+  _rcase "gh exiting nonzero is UNDETERMINED (proceeds, recorded)" undetermined FAIL
+  _rcase "an empty run list is UNDETERMINED (proceeds, recorded)" undetermined '[]'
+  # T1/T2/T3 THE STALE-READ WORLDS (3b, 2026-09-23). The incident: gh returns an ANCESTOR's run
+  # (failure/cancelled) while main's own tip run is pending, and the old code took rows[0] and
+  # refused on a tree that does not exist. Three shas, ten and seventeen days old, each cost a
+  # session a retry. T2 asserts the fix; T1 is the PRE-FIX SHAPE and is the mutation's target:
+  # under the old code it is RED, under the fixed code it is PROCEED. T3 is the negative control
+  # that keeps the fix from swallowing a genuine red -- a failure row ON the tip still refuses, so
+  # the filter cannot pass by refusing nothing.
+  _r_oldfail='{"headSha":"deadbeefcafe0000000000000000000000000000dead","conclusion":"failure","status":"completed","databaseId":33924170979,"createdAt":"2026-09-04T22:07:00Z"}'
+  _r_newpend='{"headSha":"cafebabe00000000000000000000000000000000","conclusion":null,"status":"in_progress","databaseId":35849593282,"createdAt":"2026-09-24T11:59:00Z"}'
+  _rcase "T1 an ANCIENT completed failure with the tip pending PROCEEDS (the 2026-09-21 stale read)" proceed \
+    "[$_r_oldfail,$_r_newpend]"
+  _rcase "T2 an ancestor's CANCELLED run with the tip pending is UNDETERMINED, not red (2026-09-23)" undetermined \
+    '[{"headSha":"9d92e30600000000000000000000000000000abc","conclusion":"cancelled","status":"completed","databaseId":35641903699,"createdAt":"2026-09-22T18:58:00Z"},{"headSha":"4901542e00000000000000000000000000000000","conclusion":null,"status":"in_progress","databaseId":35849593282,"createdAt":"2026-09-23T10:50:00Z"}]'
+  _rcase "T3 a failure ON the tip still refuses (the filter must not swallow a genuine red)" red \
+    '[{"headSha":"cafebabe00000000000000000000000000000000","conclusion":"failure","status":"completed","databaseId":7,"createdAt":"2026-09-24T11:59:00Z"}]'
+  # T4: delivery order is not chronological. The stale row is FIRST and the tip's row is LAST, so
+  # the fix must sort by createdAt rather than scan position. Without the sort, a "newest first"
+  # assumption would still pick the stale one here and T5 would be the only writer that noticed.
+  _rcase "T4 the tip's row LAST in delivery order is still found (sort by createdAt, not position)" red \
+    '[{"headSha":"deadbeefcafe0000000000000000000000000000dead","conclusion":"cancelled","status":"completed","databaseId":11,"createdAt":"2026-09-20T00:00:00Z"},{"headSha":"cafebabe00000000000000000000000000000000","conclusion":"failure","status":"completed","databaseId":12,"createdAt":"2026-09-24T11:59:00Z"}]'
+  # T5: the LOCAL REF LAGS. Every row was created after the tip commit, so none matches the tip's
+  # sha -- rule (b) accepts them anyway. This is the one asymmetry the sha-equality rule would have
+  # introduced, and it lands on the DANGEROUS side: a missed red, not a false refusal.
+  _rcase "T5 a run created AFTER the tip commit is the tip even when no sha matches (a lagging ref)" red \
+    '[{"headSha":"1111111111111111111111111111111111111111","conclusion":"failure","status":"completed","databaseId":13,"createdAt":"2026-09-24T12:30:00Z"}]'
+  # T6: gh hands back only the stale row, three times. Accepting it would refuse a tree that does
+  # not exist; the honest answer is that the verdict cannot be determined, which proceeds with a
+  # WARNING. The warning must name the raw row, because that is what the reader checks.
+  _rcase "T6 nothing but a stale row after 3 tries is UNDETERMINED (proceeds, recorded)" undetermined \
+    '[{"headSha":"9d92e30600000000000000000000000000000abc","conclusion":"cancelled","status":"completed","databaseId":35641903699,"createdAt":"2026-09-22T18:58:00Z"}]'
   # THE REFUSAL MUST NAME THE RUN AND THE SHA, because "main is red" without them sends the reader
   # to `gh run list` to find out which commit -- the step that did not happen on 2026-09-07.
   #
@@ -1722,8 +2075,8 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
   # happens to precede it -- and the `gh run view $3` line repeats the run id, so dropping the id
   # from the REFUSING line still matched on the sha. Measured: that mutant survived. An `and` of two
   # conditions has to be written as two conditions.
-  _mkgh '[{"headSha":"deadbeefcafe","conclusion":"failure","status":"completed","databaseId":34095366465}]'
-  _rout=$( PATH="$_g:$PATH"; _main_ci_is_red 2>&1 ) || true
+  _mkgh '[{"headSha":"cafebabe00000000000000000000000000000000","conclusion":"failure","status":"completed","databaseId":34095366465}]'
+  _rout=$( PATH="$_g:$PATH"; MERGE_MAIN_TIP="$_TIP" _main_ci_is_red 2>&1 ) || true
   _rline=$(printf '%s\n' "$_rout" | grep REFUSING || true)
   case "$_rline" in
     *34095366465*) echo "  ok   mainred the REFUSING line names the run id" ;;
@@ -1731,7 +2084,7 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
        _fails=$((_fails + 1)) ;;
   esac
   case "$_rline" in
-    *deadbeef*) echo "  ok   mainred the REFUSING line names the sha" ;;
+    *cafebabe*) echo "  ok   mainred the REFUSING line names the sha" ;;
     *) echo "  FAIL mainred: the REFUSING line does not name the sha ($_rline)" >&2
        _fails=$((_fails + 1)) ;;
   esac
@@ -1739,6 +2092,61 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
     *REFUSING*) echo "  ok   mainred the refusal is greppable as REFUSING" ;;
     *) echo "  FAIL mainred: no REFUSING line" >&2; _fails=$((_fails + 1)) ;;
   esac
+  # THE RAW ROW (1e, 2026-09-23). The summary line has been wrong three times; the row is what the
+  # reader can check without re-running gh. Asserted on the JSON KEY `"headSha"`, which the summary
+  # never prints (it prints the 8-char sha alone), so the match cannot come from the summary -- and
+  # unlike a specific field's value it holds for any payload, including one gh returned without the
+  # optional createdAt.
+  case "$_rout" in
+    *'"headSha"'*) echo "  ok   mainred the refusal prints the raw gh row" ;;
+    *) echo "  FAIL mainred: the refusal does not print the raw row, so the reader cannot check it" >&2
+       _fails=$((_fails + 1)) ;;
+  esac
+  # NO OVERRIDE IS ADVERTISED AT THIS REFUSAL, and this is asserted rather than left to prose: the
+  # old text said "Fix main first, or override: AUPAI_CONTROLLER=1", and that flag also skips a
+  # GENUINE red. Advertising it beside a verdict whose premises were just shown unreliable is
+  # advice with a known failure mode, and it is the specific pressure friction 568/581 name.
+  case "$_rout" in
+    *AUPAI_CONTROLLER*) echo "  FAIL mainred: the refusal advertises AUPAI_CONTROLLER=1, the same override that skips a real red" >&2
+                        _fails=$((_fails + 1)) ;;
+    *) echo "  ok   mainred the refusal does not advertise the AUPAI_CONTROLLER=1 override" ;;
+  esac
+  # T6's warning must ALSO not advertise the override: proceeding needs no exemption at all.
+  _mkgh '[{"headSha":"9d92e30600000000000000000000000000000abc","conclusion":"cancelled","status":"completed","databaseId":35641903699,"createdAt":"2026-09-22T18:58:00Z"}]'
+  _t6out=$( PATH="$_g:$PATH"; MERGE_MAIN_TIP="$_TIP" _main_ci_is_red 2>&1 ) || true
+  case "$_t6out" in
+    *AUPAI_CONTROLLER*) echo "  FAIL mainred T6: the undeterminable warning advertises the override" >&2
+                        _fails=$((_fails + 1)) ;;
+    *9d92e306*) echo "  ok   mainred T6 the warning names the row gh actually returned" ;;
+    *) echo "  FAIL mainred T6: the warning does not name the stale row it received" >&2
+       _fails=$((_fails + 1)) ;;
+  esac
+  # W5-NO-LIMIT-1: the stale read came from asking gh for ONE row. A source-level assertion, because
+  # the difference between `--limit 1` and `--limit 20` is invisible to every world above (each
+  # supplies its own payload). IT READS THE FUNCTION BODY, NOT A LINE RANGE: the function is defined
+  # at ~:427, above every NR-based window used elsewhere in this selftest, so `awk 'NR>N'` would
+  # exclude the very subject -- and a bare grep over the whole file matches the selftest's own text,
+  # passing with the subject reverted.
+  _cibody=$(awk '/^_main_ci_is_red\(\) \{/,/^\}/' "$0")
+  _n=$(printf '%s\n' "$_cibody" | grep -c 'gh run list --branch main --event push --limit 20' || true)
+  _n1=$(printf '%s\n' "$_cibody" | grep -c 'gh run list --branch main --event push --limit 1 ' || true)
+  if [ "${_n:-0}" -eq 1 ] && [ "${_n1:-0}" -eq 0 ]; then
+    echo "  ok   mainred the CI query asks for a page, not one row (source-level)"
+  else
+    echo "  FAIL mainred: the CI query is not --limit 20 exactly once with no --limit 1 (got $_n / $_n1) -- a one-row query is the stale read itself" >&2
+    _fails=$((_fails + 1))
+  fi
+  # AND IT JUDGES AGAINST THE TIP. `_main_ci_tip` must exist AND be called, because the filter is
+  # what makes a stale row recoverable rather than decisive: a version that resolves the tip but
+  # never passes it to the filter would pass all six payload worlds (they are built to be answered
+  # by the filter alone) and silently restore rows[0] behaviour in production.
+  _nt=$(printf '%s\n' "$_cibody" | grep -c '_main_ci_tip' || true)
+  if [ "${_nt:-0}" -ge 1 ] && grep -q '^_main_ci_tip() {' "$0"; then
+    echo "  ok   mainred the verdict is keyed on the resolved tip (source-level)"
+  else
+    echo "  FAIL mainred: _main_ci_is_red does not consult _main_ci_tip (got $_nt) -- rows[0] behaviour is restored" >&2
+    _fails=$((_fails + 1))
+  fi
   rm -rf "$_g"
 
   # THE GATE IS CALLED ON BOTH BRANCHES. Source-level, with the same ceiling as push W3: reaching
@@ -1750,11 +2158,26 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
   # line and passes with the real call site deleted. Measured -- both source-level mutants survived
   # a sweep with the assertion written that way, which is a check that verifies itself. Requiring
   # two occurrences (the assertion's own, plus the subject's) fails when the subject goes.
-  _n=$(grep -c '! _main_ci_is_red || exit 1' "$0" || true)
-  if [ "${_n:-0}" -ge 2 ]; then
-    echo "  ok   mainred the merge path refuses when main is red (source-level)"
+  # THE CALL SITE CAPTURES THE rc AND EXITS ON A RED MAIN. The previous form grepped for
+  # `! _main_ci_is_red || exit 1`, which was the whole contract while 1 and 2 were one outcome;
+  # now that 2 exists and must NOT exit, the assertion has to read the rc, or it would demand the
+  # very shape the friction row requires be removed. Counted at >=2 for the same self-match reason
+  # as before: the pattern is itself an occurrence.
+  _n=$(grep -c '_main_ci_is_red || _cir=' "$0" || true)
+  _ne=$(grep -c '^        0) exit 1 ;;$' "$0" || true)
+  if [ "${_n:-0}" -ge 2 ] && [ "${_ne:-0}" -ge 1 ]; then
+    echo "  ok   mainred the merge path captures the rc and exits on a red main (source-level)"
   else
-    echo "  FAIL mainred: no call site exits on a red main -- the gate is defined and never used" >&2
+    echo "  FAIL mainred: the rc is not captured with a red-main exit (calls $_n, exits $_ne) -- the gate is defined and never used" >&2
+    _fails=$((_fails + 1))
+  fi
+  # AND rc 2 WRITES A FRICTION ROW. This is 1e's requirement, and it is source-level for the same
+  # reason: reaching it needs a whole merge with an unreachable gh.
+  _n2=$(grep -c 'main.s own CI status UNDETERMINED (not confirmed green)' "$0" || true)
+  if [ "${_n2:-0}" -ge 2 ]; then
+    echo "  ok   mainred both merge paths record an undetermined CI status in friction (source-level)"
+  else
+    echo "  FAIL mainred: an undetermined CI status is not recorded in friction (got $_n2)" >&2
     _fails=$((_fails + 1))
   fi
   _n=$(grep -c 'main-is-red gate OVERRIDDEN by AUPAI_CONTROLLER=1' "$0" || true)
@@ -1869,19 +2292,43 @@ for _ in $(seq 1 120); do
       fi
       # MAIN-IS-RED, OVERRIDABLE THE SAME WAY. A controller fixing a red main is exactly the case
       # that must not be blocked by main being red.
-      if _main_ci_is_red; then
+      _cir=0; _main_ci_is_red || _cir=$?
+      if [ "$_cir" -eq 0 ]; then
         python3 "$(git rev-parse --show-toplevel)/scripts/harness.py" friction add \
           --kind override --who "$1" \
           --blocked "merge $1 while main's own push CI is failing" \
           --cause "AUPAI_CONTROLLER=1 used to bypass the main-is-red refusal" \
           --commit || true
         echo "merge_main: main-is-red gate OVERRIDDEN by AUPAI_CONTROLLER=1; logged to friction." >&2
+      elif [ "$_cir" -eq 2 ]; then
+        # rc 2 IS NOT A BYPASS, so it must not be silent here either: this merge proceeds on an
+        # unconfirmed CI state, and that is the same fact the non-override branch records.
+        python3 "$(git rev-parse --show-toplevel)/scripts/harness.py" friction add \
+          --kind merge --who "$1" \
+          --blocked "merge $1 with main's own CI status UNDETERMINED (not confirmed green)" \
+          --cause "_main_ci_is_red returned 2 under AUPAI_CONTROLLER=1: gh could not be read, or no returned run was about the resolved tip of main. The merge proceeded on the unknown-is-not-red asymmetry; this row records that no CI verdict was obtained." \
+          --commit || true
+        echo "merge_main: merging with main's CI status UNDETERMINED; logged to friction." >&2
       fi
     else
       _review_gate "$1" || exit 1
       _code_pr_gate "$1" || exit 1
       # BEFORE THE MERGE, not after: the point is to not build on a base that does not build.
-      ! _main_ci_is_red || exit 1
+      #
+      # rc IS READ, NOT DISCARDED (1e, 2026-09-23): 2 means the verdict could not be determined and
+      # the merge proceeds anyway. `! _main_ci_is_red` collapsed 1 and 2 into one outcome, so a
+      # merge that ran with NO CI verdict left nothing behind but two stderr lines in a log nobody
+      # keeps. The row is deferred, not committed, for the same reason _push_origin_main's is: a
+      # commit here would land after the CAS has been read (the c12576ea ordering defect).
+      _cir=0; _main_ci_is_red || _cir=$?
+      case "$_cir" in
+        0) exit 1 ;;
+        2) python3 "$(git rev-parse --show-toplevel)/scripts/harness.py" friction add \
+             --kind merge --who "$1" \
+             --blocked "merge $1 with main's own CI status UNDETERMINED (not confirmed green)" \
+             --cause "_main_ci_is_red returned 2: gh could not be read, or no returned run was about the resolved tip of main. The merge proceeded on the unknown-is-not-red asymmetry -- refusing would block every merge on a laptop timeout -- so this row is the record that no CI verdict was obtained. The two stderr lines naming the raw gh row are above this in the merge's log." \
+             --defer >/dev/null 2>&1 || true ;;
+      esac
     fi
     # WHERE THE MERGE HAPPENS, and this is the whole rebuild. It used to run `git merge` HERE,
     # inside the shared integration tree, which made integrating a four-step non-atomic write
@@ -2210,10 +2657,52 @@ EOF
     # "landed locally, not delivered", which is what happened. No script reads this exit code
     # (measured 2026-09-07: every merge_main invocation in the tree is prose in AGENTS.md or a
     # ledger row, none is a scripted call), so the only consumer is a human and a shell's `&&`.
-    if _push_origin_main; then
-      _push_failed=0
-    else
+    # THE AUTO-RECOVERY FOR A MOVED ORIGIN (friction 566, 1e's ruling 2026-09-23). _push_origin_main
+    # already DIAGNOSES a non-fast-forward correctly; what it could not do is ACT, and the recovery
+    # it prints -- "re-run merge_main" -- is the one action that no longer works: by this point the
+    # CAS has advanced LOCAL main, so a re-run fetches origin/main, finds the two refs diverged and
+    # refuses with rc 1 (DIVERGED). Measured on #623, which left main 8 behind / 2 ahead and was
+    # cleared only by a hand update-ref, the exact §245 shape; genB hit the same wall on #665.
+    #
+    # The move is small and entirely legal: integrate origin/main into the branch IN THE CALLER'S
+    # WORKTREE, giving a commit that descends from BOTH the current local main and origin/main by
+    # construction, CAS local main forward onto it, then push -- now a fast-forward. No force, no
+    # bare update-ref, and the CAS keeps its compare-and-swap property, because the old value is
+    # still the value this PATH advanced to.
+    #
+    # Returns 0 when it re-integrated (the caller retries the push), 1 when it did not: origin is
+    # no longer ahead, the merge conflicts or the worktree is dirty, or the fetch failed. Each of
+    # those leaves _push_origin_main's own diagnosis standing and the attempt sequence in the
+    # friction row, so a recovery that never fires is visible rather than silent.
+
+    # NAMED, so the friction row and the give-up text can both state how many attempts were made
+    # rather than leaving the reader to infer it from a stderr they no longer have.
+    _recover_attempts=3
+    _recover_i=0
+    _new_pushed=""
+    while :; do
+      if _push_origin_main; then
+        _push_failed=0
+        break
+      fi
+      if _recover_i -lt "$_recover_attempts" && _recover_nonff "$MAIN" "$_wt_self" "$1"; then
+        _recover_i=$((_recover_i + 1))
+        # EACH ATTEMPT IS RECORDED AS IT HAPPENS (1e's ruling: "最多重试 3 次，每次都记录下来").
+        # The friction row states the total, but a row is only written when the loop GIVES UP, so
+        # without this line a run that recovered on attempt 3 leaves nothing naming attempts 1-2.
+        echo "merge_main: attempt $_recover_i of $_recover_attempts: re-integrated origin/main, retrying the push" >&2
+        _new_pushed=${_new_pushed:-$_new}
+        # RE-READ THE CANDIDATE: the recovery moved HEAD, and everything downstream (the tree
+        # advance, the pod-push scope diff, the friction row) must name the commit that is now
+        # main rather than the one that failed to deliver.
+        _new=$(git rev-parse HEAD)
+        continue
+      fi
       _push_failed=1
+      _new_pushed=${_new_pushed:-$_new}
+      break
+    done
+    if [ "$_push_failed" -ne 0 ]; then
       # Recovery advice is printed by _push_origin_main and branched on the cause (non-fast-forward
       # vs an external delivery failure); do not echo a second, unconditional "retry the push
       # alone" here -- that is exactly the de-80 wrong-advice path for a moved origin.
@@ -2222,9 +2711,11 @@ EOF
       # ordering defect documented on the queue drain above (c12576ea landed one commit behind
       # main and never reached it). Deferring costs a delay and loses nothing.
       python3 "$_wt_self/scripts/harness.py" friction add --kind merge --who "$1" \
-        --blocked "origin/main push after a landed merge to ${_new:0:8}" \
-        --cause "git push origin main exited nonzero; main advanced locally and origin did not. Reason is on the REFUSING line in that run's stderr" \
+        --blocked "origin/main push after a landed merge to ${_new_pushed:0:8}" \
+        --cause "git push origin main exited nonzero; main advanced locally and origin did not. $_recover_i of $_recover_attempts automatic origin re-integration attempt(s) were made and the push was still refused. Reason is on the REFUSING line in that run's stderr" \
         --defer >/dev/null 2>&1 || true
+    elif [ "$_recover_i" -gt 0 ]; then
+      echo "merge_main: recovered from a moved origin in $_recover_i attempt(s); origin/main pushed at ${_new:0:8}" >&2
     fi
     # THE POD PUSH ONLY PRINTS. pod_push.sh refuses any file differing from main and stamps
     # main's sha, but it also carries a running-.sh refusal and an emptyDir path for large files,
