@@ -24,7 +24,14 @@ on:
 # guards it. Measured 2026-09-20: 14 of the last 50 push runs on main already ended
 # `cancelled`, so this is a live state, not a hypothetical one.
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name }}
+  # workflow_dispatch gets run_id in the group so repeated dispatches accumulate independent
+  # runners (the verify-resume-t1 experiment is 6-10 separate dispatches; a later dispatch
+  # cancelling an earlier one would silently drop cells). A job-level group does NOT exempt a
+  # job from this workflow-level group -- measured 2026-09-23 by genB: a job declaring its own
+  # per-run-id group was still cancelled with its sibling when a second run fired. push/PR keep
+  # one group per ref+event, so the latest push cancels the older one and a dispatch on a branch
+  # never touches main's push runs (event_name is in the key).
+  group: ci-${{ github.ref }}-${{ github.event_name }}${{ github.event_name == 'workflow_dispatch' && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: true
 jobs:
   check:
@@ -237,12 +244,10 @@ jobs:
   # revert the GATE_OMP=1 default and gate with GATE_ONEDNN=0 instead.
   verify-resume-t1:
     runs-on: ubuntu-latest
-    # Its own per-cell, per-run group with cancel-in-progress false: the experiment is 6-10
-    # SEPARATE workflow_dispatch runs accumulated on independent runners. The key MUST include
-    # matrix.arm -- a group keyed by run_id alone is shared by all 4 cells, so they cancel each
-    # other within one dispatch (measured: the two first-started cells were cancelled one second
-    # in, 2026-09-23). Keyed on run_id+arm, a dispatch never cancels and is never cancelled by
-    # another dispatch; push/PR runs keep the workflow-level group untouched.
+    # The workflow-level concurrency group already includes run_id for workflow_dispatch, which
+    # is what makes repeated dispatches independent. The job keeps its own per-run+arm group so
+    # the four matrix cells can never cancel one another within a dispatch (they share run_id at
+    # the workflow level; the arm suffix distinguishes them). cancel-in-progress false both ways.
     concurrency:
       group: verify-resume-${{ github.run_id }}-${{ matrix.arm }}
       cancel-in-progress: false
