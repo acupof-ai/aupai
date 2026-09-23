@@ -1099,6 +1099,15 @@ def main():
         # The selftest asserts the exit code for a .part leftover, a torn tail and a
         # content-length mismatch.
         "scripts/verify_fetch.py",
+        # Output-side residual rescan of the six gate _dc domains against the current
+        # gate. Registered because its answer is a ZERO over ~300GB, and a zero from an
+        # instrument that cannot see a hit is uninformative: the 0911 pass over these
+        # domains left no known-answer case behind, so its zeros had to be taken on
+        # trust. The selftest drives the scanner's own read path with a synthetic gate
+        # (so it runs in CI, where the benchmark files are gitignored) and asserts an
+        # injected gate solution is flagged exactly once, at the right row, while a
+        # clean shard reads as zero. On the pod the real gate is checked end to end.
+        "scripts/verify_dc_residual.py",
         # Enumerates the driver red list and reconciles it against the issue->PR map (3b).
         # Registered because the parser reported "0 red(s)" against a driver that had failed 7:
         # it matched a lowercase marker and treated TIMEOUT, which is not a FAIL line, as green.
