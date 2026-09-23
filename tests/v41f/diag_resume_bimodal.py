@@ -535,12 +535,22 @@ def gate_once(out):
     """Single real-gate sample for cross-run tracking (one independent run = one sample; within
     a job repeats are correlated, proven by the 8/8 and 24/24 same-color jobs). Prints the env
     header, runs the REAL gate, and on red prints the FULL signature/stderr. Always exits 0;
-    on red the raw gate output is also saved under `out` for the actions artifact upload."""
+    on red the raw gate output is also saved under `out` for the actions artifact upload.
+
+    RESUME_GATE_NO_RETRY is forced on here: the verification matrix must measure the RAW first-pair
+    red/green per runner, not the signature-gated in-place retry (which would mask the very
+    VM-persistence the matrix is quantifying)."""
     os.makedirs(out, exist_ok=True)
     env = dict(os.environ)
-    env["OMP_NUM_THREADS"] = os.environ.get("GATE_OMP", "2")
+    env["OMP_NUM_THREADS"] = os.environ.get("GATE_OMP", "1")
     if os.environ.get("GATE_MKL"):
         env["MKL_NUM_THREADS"] = os.environ["GATE_MKL"]
+    if os.environ.get("GATE_OPENBLAS"):
+        env["OPENBLAS_NUM_THREADS"] = os.environ["GATE_OPENBLAS"]
+    if os.environ.get("GATE_MKL_DYNAMIC"):
+        env["MKL_DYNAMIC"] = os.environ["GATE_MKL_DYNAMIC"]
+    # Raw outcome: never let the tourniquet retry turn a runner-red into an in-place green here.
+    env["RESUME_GATE_NO_RETRY"] = "1"
     hdr = env_header()
     print("GATEONCE ENV " + json.dumps(hdr))
     g = subprocess.run(
