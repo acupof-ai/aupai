@@ -615,13 +615,48 @@ def gate_resume_equivalent_to_uninterrupted():
             print(f"  resume retry: signature MATCHED ({reason}) -- retrying the pair ONCE")
             # Attempt 2 always gets its own dir: reusing a1 would overwrite the bytes just judged.
             exc2 = _attempt("attempt2")
-            dirs.append(_this_dump[0])
+            a2 = _this_dump[0]
+            dirs.append(a2)
             retried = True
             if exc2:
-                # A second failure is never rescued, whatever its signature.
+                # Classify attempt 2 by ITS OWN measured signature -- "it failed again" alone does
+                # not say whether it is the same red. This distinction is the whole point:
+                #
+                # Measured 2026-09-23 (run 35852302926): attempt 1 matched, attempt 2 in the SAME
+                # VM produced the byte-identical signature (1.334e-2 / 506533/524288), and the
+                # cross-runner stats show a given sha reds on one ephemeral runner and greens on
+                # another. So a red that re-appears with the same signature inside one VM is a
+                # VM-CORRELATED, runner-persistent red: re-running in place can never clear it,
+                # because the cause rides along with the runner, not with the invocation. Calling
+                # it "NOT the known red" was wrong -- it IS the known red; the single in-place
+                # retry is simply the wrong remedy for a runner-persistent cause.
+                #
+                # DECISION: still FAIL (the bytes differ on this runner; passing would be a rubber
+                # stamp), but with the accurate label and the correct remedy -- rerun on a DIFFERENT
+                # runner (the gate owner re-runs the failed job; GitHub schedules a new VM), not a
+                # third in-place attempt. Only a DIFFERENT signature on attempt 2 is a genuinely new
+                # failure. Fail-closed: if attempt 2's evidence cannot be read, call it new/unknown.
+                try:
+                    import diag_resume_bimodal as _diag2
+                    _rc2 = _diag2._load(os.path.join(a2, "control"), "rng_atK")
+                    _rp2 = _diag2._load(os.path.join(a2, "restart"), "rng_preSave")
+                    _rng2 = _rc2 is not None and _rp2 is not None and torch.equal(_rc2, _rp2)
+                except Exception:
+                    _rng2 = None
+                obs2 = rgr.extract_obs(a2, exc2, False, _rng2)
+                match2, reason2 = rgr.retry_signature_matches(obs2)
+                if match2:
+                    raise AssertionError(
+                        f"{exc2}\n[resume-retry] KNOWN VM-CORRELATED RED, persistent on this "
+                        f"runner: both attempt 1 and attempt 2 match the same signature ({reason2}). "
+                        f"Re-running inside this VM cannot clear it (measured: the same sha greens "
+                        f"on a different ephemeral runner). The gate stays FAIL on these bytes; the "
+                        f"remedy is to re-run the failed JOB so it lands on a different runner, NOT "
+                        f"a third in-place attempt. attempt1={a1} attempt2={a2}")
                 raise AssertionError(
-                    f"{exc2}\n[resume-retry] attempt 2 ALSO failed after a signature match; "
-                    f"this is NOT the known red. attempt1={a1}")
+                    f"{exc2}\n[resume-retry] attempt 2 failed with a DIFFERENT signature after "
+                    f"the known red matched on attempt 1 -- this is a NEW failure, not rescued. "
+                    f"attempt2 signature: {reason2}. attempt1={a1} attempt2={a2}")
             # NOT WRAPPED IN try/except. The writer's own docstring says it: "a ledger that
             # cannot be written must not fake a pass". The old wrapper printed and fell through to
             # _report_gate_dumps, so the ONE case the tourniquet exists for -- a rescue with no
