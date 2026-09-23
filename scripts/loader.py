@@ -105,6 +105,24 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True, claim=True):
         cfg.conv_doc_isolated = False
     cfg.grad_ckpt = False
     cfg.vocab_id = ck.get("vocab_id")  # pre-2026-08-29 ckpts have none -> None
+    # FLAT ARCHITECTURE REMOVED (user order "删其他架构，不用 flag", 2026-09-23; the flat line
+    # v41_gate_0922 stopped at step ~8196): the only model this tree builds is CED, whose decoder
+    # CSA modules carry per-layer w_kv/w_z. A csa2 checkpoint without those keys is a flat
+    # v41_gate_* run. NO READ-ONLY FLAT PATH -- keeping the deleted forward as an inference-only
+    # branch would leave an unmaintained parallel architecture, which is what the order forbids.
+    # Strict load would reject these anyway ("Missing key(s)...w_kv"); this names the cause and
+    # the recovery instead of showing torch's traceback. Pre-csa2 checkpoints (KDA/MLA/AttnRes
+    # era, csa2 absent/False) are a different population: they have no decoder w_kv either, and
+    # the legacy cfg-backfill load contract still serves them.
+    if ck.get("model") and getattr(cfg, "csa2", False) and not any(
+            ".w_kv." in k or ".w_z." in k for k in ck["model"]):
+        raise RuntimeError(
+            f"{path} is a FLAT-architecture checkpoint (csa2=True with no CED decoder "
+            "w_kv/w_z). The flat branch and its flag were deleted by PR #673 (merged after "
+            "2026-09-23; last commit that builds flat is c26daf67). This tree is CED-only and "
+            "keeps no read-only flat forward. To inspect or score this checkpoint, "
+            "`git checkout c26daf67` in a separate worktree; its run-time numbers are in the "
+            "artifacts written when it trained (runs/experiments.jsonl, facts/, score_matrix).")
     # A caller without a FoNE encode/decode path reads every number as zero and scores
     # garbage without raising.
     if getattr(cfg, "fone", False) and not fone_ok:
