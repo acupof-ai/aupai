@@ -101,10 +101,24 @@ Dependency order; each step verifies before the next starts. No step launches tr
    there was recoverable from git. On the new node make the root a real checkout on the
    durable disk. `[ON-MAIN]`
 4. **Python/uv environment.** `uv sync` inside the container (python 3.12, torch cu129 per
-   the old image; verify on the new image). Provisioning is otherwise driven by
-   `scripts/bootstrap_pod.sh`, idempotent one stage at a time: verify → fetch → build →
-   vocab → check → caches (`scripts/bootstrap_pod.sh:8-16`). The `caches` stage re-attaches
-   the NVMe mount host-side and verifies by read. `[ON-MAIN]`
+   the old image; verify on the new image). Container provisioning is driven by
+   `scripts/bootstrap_pod.sh`, idempotent one stage at a time: **image → deps → cuda →
+   caches** (`scripts/bootstrap_pod.sh:13-17`). `image` asserts the image-baked flash-attn 4
+   kernel, `deps` installs the pinned training surface, `cuda` verifies the +cu torch build,
+   and `caches` re-attaches the NVMe mount host-side and verifies by read. `[ON-MAIN]`
+
+   **The five pre-V4.1 data stages were REMOVED from `bootstrap_pod.sh` on 2026-09-21** —
+   it now makes a container runnable, it does not rebuild data. Their real disposition, so a
+   rebuild command copied from an old note resolves instead of silently no-op'ing (an unknown
+   stage now exits nonzero):
+
+   | old stage | disposition after the V4.1 gate-domain switch |
+   |---|---|
+   | `fetch` | renamed — raw fetch is **`datagen/fetch_corpus.py --source <name>`** into `data/raw/`, documented in `data_pipeline_rebuild_0916.md` §2a (lines 59-79). The old frozen-tier copy out of `$ARCHIVE` is gone. |
+   | `build` | renamed — raw→corpus is **`datagen/build_corpus.py`** (en cell) / **`datagen/build_starcoder_py.py`** (starcoder cell) then decontamination, §2b (line 114) and §2c. It is NOT the old `datagen/build_domains.sh` `code/en/math/chat/web` pass. |
+   | `vocab` | renamed and inverted — the gate 32k tokenizer is **recovered from the surviving copy and gate-checked, not retrained**, §1 (lines 34-46). |
+   | `verify` | no V4.1 equivalent — it ran `datagen/data_verify.py` against `data/MANIFEST.tsv`, the frozen/eval-tier inventory of the retired 500m pipeline. It is not a gate-domain rebuild step and has no new home. |
+   | `check` | no V4.1 equivalent — it dry-ran `datagen/check_mix.py` against the retired default `mix_500m.json`. The gate mix is validated by its own gates, not a bootstrap dry-run. |
 5. **Confirm hard rules from inside the container before data work:** root is not under
    `/work`-as-emptyDir (`scripts/harness.py check` → `root_durable` PASS, not --force),
    `mountpoint /mnt/data02` holds, one backup round-trip verified.
