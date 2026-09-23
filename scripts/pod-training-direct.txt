@@ -1,0 +1,26 @@
+# Direct training/eval surface for a pod container. Transitive versions are pinned
+# by scripts/pod-constraints.txt (the pod pip freeze); torch/torchao resolve to
+# +cu129 from download.pytorch.org/whl/cu129 in bootstrap_pod.sh.
+#
+# Deliberately NOT here, each with a reason (2026-09-20 pod audit):
+#   flask               serve.py only; inference is served by the image's sglang,
+#                       and flask is not installed on the training pod.
+#   flash-linear-attn / fla, flash-attn   KDA is pre-V4.1; fla is absent. flash-attn
+#                       4 (flash_attn.cute) is IMAGE-BAKED, no pip source -- enforced
+#                       by bootstrap's image gate, cannot be installed from here.
+#   opencc, zstandard, scikit-learn        datagen-only (t2s/zh build, synth/score);
+#                       they belong to the data-rebuild recipe, not container-ready.
+#   trackio             optional logger, imported only when track=True.
+#   flashinfer*, deep_ep, flash_mla, sglang*  serving stack, not imported by train/eval.
+torch
+torchao
+triton
+liger-kernel
+numpy
+scipy
+tokenizers
+transformers
+datasets
+huggingface_hub
+pyarrow
+matplotlib

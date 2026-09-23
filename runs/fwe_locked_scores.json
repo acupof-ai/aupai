@@ -49,18 +49,38 @@
   "at_cut3_educational_recall_kept": 0.0,
   "at_cut3_notedu_kill_rate": 1.0
  },
- "zh_cci3_locked400_distribution_only": {
+ "zh_cci3_locked400": {
   "n": 400,
-  "mean": 1.067,
-  "median": 0.9674,
-  "p10": 0.636,
-  "p25": 0.788,
-  "p75": 1.19,
-  "p90": 1.469,
-  "min": 0.29,
-  "max": 4.234,
-  "frac_ge3": 0.02,
-  "frac_ge0": 1.0
+  "n_junk": 121,
+  "n_keep": 279,
+  "n_rewrite": 32,
+  "auc_score_predicts_not_junk": 0.422,
+  "auc_not_junk_ci95": [
+   0.3585,
+   0.4834
+  ],
+  "auc_score_predicts_not_rewrite": 0.5563,
+  "auc_not_rewrite_ci95": [
+   0.4488,
+   0.6698
+  ],
+  "median_score_junk": 1.0409,
+  "median_score_keep": 0.9246,
+  "frac_ge3_junk": 0.0413,
+  "frac_ge3_keep": 0.0108,
+  "all": {
+   "n": 400,
+   "mean": 1.067,
+   "median": 0.9674,
+   "p10": 0.636,
+   "p25": 0.788,
+   "p75": 1.19,
+   "p90": 1.469,
+   "min": 0.29,
+   "max": 4.234,
+   "frac_ge3": 0.02,
+   "frac_ge0": 1.0
+  }
  },
  "code_oss100_should_keep": {
   "n": 100,
