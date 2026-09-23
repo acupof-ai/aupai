@@ -5,12 +5,18 @@ Unified runner: `run_eval.py`. Every benchmark module also runs standalone
 
 ## The two that decide anything
 
-The English suite below tracks general ability. Neither of these is in it, and
-these are the ones the experiment ledger reports.
+The MC suite below tracks general ability; it is not the acceptance gate. The
+V4.1 gate is coding: HumanEval pass@1, 164 problems
+
+    python eval/humaneval_gen.py --ckpt <ckpt> --rstrip_nl
+
+(base checkpoint: the `--rstrip_nl` continuation protocol; post-SFT: `--chatml`)
+and MBPP (`python eval/mbpp_gen.py --ckpt <ckpt>`), per
+`runs/prereg.jsonl#v41_ced_0923`.
 
 | Script | Data | Role |
 |---|---|---|
-| `math_hard.py` | `data/synthetic/math_hard_eval_1k.jsonl`, 1032 rows | **Metric of record.** `eval/eval_hard.sh <ckpt> [ngpu]` shards it. |
+| `math_hard.py` | `data/synthetic/math_hard_eval_1k.jsonl`, 1032 rows | Continuity only. v1 is retired as metric of record (own-generator contamination); `eval/eval_hard.sh <ckpt> [ngpu]` shards it. |
 | `math_zh.py` | `data/eval/math_test_500.jsonl`, 500 rows | math-500, saturated at 32.2 / 26.8 / 32.0 / 31.0 — never conclude from it alone. |
 
 math-hard resolves to about ±1 point at a 2–3% pass rate, so test significance
@@ -51,7 +57,7 @@ last number in the output, compare against `#### N`.
 A generative eval's predictions are the only copy of what a checkpoint produced, so
 `scripts/eval_artifacts.open_artifact` refuses to overwrite an existing one and leaves the reason in
 a sidecar **beside the artifact** — `data/eval/<name>.jsonl.REFUSED`, never under `runs/`. Looking
-for them in `runs/` returns nothing and proves nothing; six exist under `data/eval/` on the pod. The
+for them in `runs/` returns nothing and proves nothing; they live under `data/eval/`. The
 sidecar is named after the artifact, so several refusals on one artifact name share one file, and a
 successful write clears it.
 
@@ -85,7 +91,7 @@ re-feeds the full sequence. It dominates wall time by an order of magnitude.
 
 ## Expected iteration time
 
-On the training GPU (H20): **all 8 multiple-choice benchmarks together
+On the training GPU: **all 8 multiple-choice benchmarks together
 < 30 s** (one-time dataset download excluded). GSM8K adds roughly 5–10 min
 depending on output lengths — generation, not scoring, is the bottleneck.
 
