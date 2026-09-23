@@ -448,10 +448,11 @@ _main_ci_tip() {
   printf '%s %s' "$_t" "$_te"
 }
 
-_main_ci_is_red() {   # 0 = red (refuse), 1 = green or unknown (proceed)
+_main_ci_is_red() {   # 0 = red (refuse), 1 = green, 2 = UNDETERMINED (proceed, but say so)
   command -v gh >/dev/null 2>&1 || {
-    echo "merge_main: WARNING -- gh is not on PATH, so main's CI state is unknown; proceeding." >&2
-    return 1
+    echo "merge_main: MAIN CI STATUS UNDETERMINED -- gh is not on PATH; merging WITHOUT" >&2
+    echo "  confirming main's own CI. Recorded in friction." >&2
+    return 2
   }
   _citipinfo=$(_main_ci_tip 2>/dev/null) || _citipinfo=""
   set -- $_citipinfo
@@ -528,18 +529,26 @@ print((r.get('conclusion') or r.get('status') or '?') + ' ' + (r.get('headSha') 
 " 2>/dev/null) || _mcollect=""
   done
   if [ -z "$_mcp" ]; then
+    # BOTH UNDETERMINABLE PATHS ANNOUNCE THEMSELVES (1e, 2026-09-23). The asymmetry -- unknown is
+    # not red -- is the design and stays, but a merge that proceeds without having confirmed main's
+    # CI must SAY SO in a form that does not get lost in the middle of a merge's log. These two
+    # lines are the answer to "what did this run not check", and they are greppable for the same
+    # reason the refusal is: the filter people actually use is a grep.
+    echo "merge_main: MAIN CI STATUS UNDETERMINED -- merging WITHOUT confirming main's own CI." >&2
     if [ -n "$_mc" ]; then
-      echo "merge_main: WARNING -- main's push CI runs do not include ${_citip:0:8} (the tip), so" >&2
-      echo "  today's verdict cannot be read from them; proceeding. Newest row gh returned:" >&2
+      echo "  main's push CI runs do not include ${_citip:0:8} (the tip), so today's verdict" >&2
+      echo "  cannot be read from them. Newest row gh returned:" >&2
       echo "    ${_mcollect:-none}   (asked 3 times)" >&2
       echo "  This is the stale-read shape of 2026-09-21/23: gh can hand back an ancestor's run" >&2
       echo "  while main's own tip run is pending. Proceeding is the same asymmetry as an" >&2
-      echo "  unreachable gh -- unknown is not red. No override is needed for this." >&2
+      echo "  unreachable gh -- unknown is not red. No override is needed for this, and the merge" >&2
+      echo "  is recorded in friction as having run without a CI verdict." >&2
     else
-      echo "merge_main: WARNING -- could not read main's CI state (gh unreachable or rate-limited);" >&2
-      echo "  proceeding. Unknown is not red: refusing here would block every merge on a timeout." >&2
+      echo "  Could not read main's CI state (gh unreachable or rate-limited). Refusing here" >&2
+      echo "  would block every merge in the tree on a timeout, so this proceeds -- and is" >&2
+      echo "  recorded in friction as having run without a CI verdict." >&2
     fi
-    return 1
+    return 2
   fi
   # PARAMETER EXPANSION, NOT `| head -1`: under `set -o pipefail` a `head` that exits early can
   # SIGPIPE the printf feeding it and take the whole command substitution down with it.
@@ -1992,9 +2001,14 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
     fi
     chmod +x "$_g/gh"
   }
-  _rcase() {  # $1=name $2=want red|proceed  $3=the gh payload
+  _rcase() {  # $1=name $2=want red|proceed|undetermined  $3=the gh payload
     _mkgh "$3"
-    if ( PATH="$_g:$PATH"; MERGE_MAIN_TIP="$_TIP" _main_ci_is_red ) >/dev/null 2>&1; then _rgot=red; else _rgot=proceed; fi
+    # THE THREE-WAY rc IS CAPTURED, not collapsed to a boolean. red=0, green=1, undetermined=2 --
+    # and 1 vs 2 is exactly the distinction the friction row hangs on, so a helper that flattened
+    # them could not tell "confirmed green" from "never checked" (measured: the first version of
+    # the undetermined assertions passed with the old binary `if` for precisely that reason).
+    _rrc=0; ( PATH="$_g:$PATH"; MERGE_MAIN_TIP="$_TIP" _main_ci_is_red ) >/dev/null 2>&1 || _rrc=$?
+    case "$_rrc" in 0) _rgot=red ;; 1) _rgot=proceed ;; 2) _rgot=undetermined ;; *) _rgot="rc$_rrc" ;; esac
     if [ "$_rgot" != "$2" ]; then
       echo "  FAIL mainred $1: want $2, got $_rgot" >&2; _fails=$((_fails + 1))
     else
@@ -2013,14 +2027,16 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
   # present would be a rule that never runs against a gh that omits it.
   _rcase "a failing main push run refuses" red \
     '[{"headSha":"cafebabe00000000000000000000000000000000","conclusion":"failure","status":"completed","databaseId":34095366465}]'
-  _rcase "a green main push run proceeds" proceed \
+  _rcase "a green main push run is a CONFIRMED GREEN (rc 1, no friction row)" proceed \
     '[{"headSha":"cafebabe00000000000000000000000000000000","conclusion":"success","status":"completed","databaseId":1}]'
   # IN PROGRESS IS NOT RED. Without this case the gate could refuse for the three minutes after
   # every commit, which is a gate people would turn off.
   _rcase "an in-progress run proceeds" proceed \
     '[{"headSha":"cafebabe00000000000000000000000000000000","conclusion":null,"status":"in_progress","databaseId":2}]'
-  _rcase "gh exiting nonzero proceeds (unknown is not red)" proceed FAIL
-  _rcase "an empty run list proceeds" proceed '[]'
+  # rc 2, NOT 1: "could not read gh" is UNDETERMINED, and the friction row depends on telling it
+  # apart from a confirmed green. Asserting the exact rc is what keeps that distinction real.
+  _rcase "gh exiting nonzero is UNDETERMINED (proceeds, recorded)" undetermined FAIL
+  _rcase "an empty run list is UNDETERMINED (proceeds, recorded)" undetermined '[]'
   # T1/T2/T3 THE STALE-READ WORLDS (3b, 2026-09-23). The incident: gh returns an ANCESTOR's run
   # (failure/cancelled) while main's own tip run is pending, and the old code took rows[0] and
   # refused on a tree that does not exist. Three shas, ten and seventeen days old, each cost a
@@ -2032,7 +2048,7 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
   _r_newpend='{"headSha":"cafebabe00000000000000000000000000000000","conclusion":null,"status":"in_progress","databaseId":35849593282,"createdAt":"2026-09-24T11:59:00Z"}'
   _rcase "T1 an ANCIENT completed failure with the tip pending PROCEEDS (the 2026-09-21 stale read)" proceed \
     "[$_r_oldfail,$_r_newpend]"
-  _rcase "T2 an ancestor's CANCELLED run with the tip pending proceeds (2026-09-23, twice with one run id)" proceed \
+  _rcase "T2 an ancestor's CANCELLED run with the tip pending is UNDETERMINED, not red (2026-09-23)" undetermined \
     '[{"headSha":"9d92e30600000000000000000000000000000abc","conclusion":"cancelled","status":"completed","databaseId":35641903699,"createdAt":"2026-09-22T18:58:00Z"},{"headSha":"4901542e00000000000000000000000000000000","conclusion":null,"status":"in_progress","databaseId":35849593282,"createdAt":"2026-09-23T10:50:00Z"}]'
   _rcase "T3 a failure ON the tip still refuses (the filter must not swallow a genuine red)" red \
     '[{"headSha":"cafebabe00000000000000000000000000000000","conclusion":"failure","status":"completed","databaseId":7,"createdAt":"2026-09-24T11:59:00Z"}]'
@@ -2049,7 +2065,7 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
   # T6: gh hands back only the stale row, three times. Accepting it would refuse a tree that does
   # not exist; the honest answer is that the verdict cannot be determined, which proceeds with a
   # WARNING. The warning must name the raw row, because that is what the reader checks.
-  _rcase "T6 nothing but a stale row after 3 tries proceeds on an undeterminable verdict" proceed \
+  _rcase "T6 nothing but a stale row after 3 tries is UNDETERMINED (proceeds, recorded)" undetermined \
     '[{"headSha":"9d92e30600000000000000000000000000000abc","conclusion":"cancelled","status":"completed","databaseId":35641903699,"createdAt":"2026-09-22T18:58:00Z"}]'
   # THE REFUSAL MUST NAME THE RUN AND THE SHA, because "main is red" without them sends the reader
   # to `gh run list` to find out which commit -- the step that did not happen on 2026-09-07.
@@ -2142,11 +2158,26 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
   # line and passes with the real call site deleted. Measured -- both source-level mutants survived
   # a sweep with the assertion written that way, which is a check that verifies itself. Requiring
   # two occurrences (the assertion's own, plus the subject's) fails when the subject goes.
-  _n=$(grep -c '! _main_ci_is_red || exit 1' "$0" || true)
-  if [ "${_n:-0}" -ge 2 ]; then
-    echo "  ok   mainred the merge path refuses when main is red (source-level)"
+  # THE CALL SITE CAPTURES THE rc AND EXITS ON A RED MAIN. The previous form grepped for
+  # `! _main_ci_is_red || exit 1`, which was the whole contract while 1 and 2 were one outcome;
+  # now that 2 exists and must NOT exit, the assertion has to read the rc, or it would demand the
+  # very shape the friction row requires be removed. Counted at >=2 for the same self-match reason
+  # as before: the pattern is itself an occurrence.
+  _n=$(grep -c '_main_ci_is_red || _cir=' "$0" || true)
+  _ne=$(grep -c '^        0) exit 1 ;;$' "$0" || true)
+  if [ "${_n:-0}" -ge 2 ] && [ "${_ne:-0}" -ge 1 ]; then
+    echo "  ok   mainred the merge path captures the rc and exits on a red main (source-level)"
   else
-    echo "  FAIL mainred: no call site exits on a red main -- the gate is defined and never used" >&2
+    echo "  FAIL mainred: the rc is not captured with a red-main exit (calls $_n, exits $_ne) -- the gate is defined and never used" >&2
+    _fails=$((_fails + 1))
+  fi
+  # AND rc 2 WRITES A FRICTION ROW. This is 1e's requirement, and it is source-level for the same
+  # reason: reaching it needs a whole merge with an unreachable gh.
+  _n2=$(grep -c 'main.s own CI status UNDETERMINED (not confirmed green)' "$0" || true)
+  if [ "${_n2:-0}" -ge 2 ]; then
+    echo "  ok   mainred both merge paths record an undetermined CI status in friction (source-level)"
+  else
+    echo "  FAIL mainred: an undetermined CI status is not recorded in friction (got $_n2)" >&2
     _fails=$((_fails + 1))
   fi
   _n=$(grep -c 'main-is-red gate OVERRIDDEN by AUPAI_CONTROLLER=1' "$0" || true)
@@ -2261,19 +2292,43 @@ for _ in $(seq 1 120); do
       fi
       # MAIN-IS-RED, OVERRIDABLE THE SAME WAY. A controller fixing a red main is exactly the case
       # that must not be blocked by main being red.
-      if _main_ci_is_red; then
+      _cir=0; _main_ci_is_red || _cir=$?
+      if [ "$_cir" -eq 0 ]; then
         python3 "$(git rev-parse --show-toplevel)/scripts/harness.py" friction add \
           --kind override --who "$1" \
           --blocked "merge $1 while main's own push CI is failing" \
           --cause "AUPAI_CONTROLLER=1 used to bypass the main-is-red refusal" \
           --commit || true
         echo "merge_main: main-is-red gate OVERRIDDEN by AUPAI_CONTROLLER=1; logged to friction." >&2
+      elif [ "$_cir" -eq 2 ]; then
+        # rc 2 IS NOT A BYPASS, so it must not be silent here either: this merge proceeds on an
+        # unconfirmed CI state, and that is the same fact the non-override branch records.
+        python3 "$(git rev-parse --show-toplevel)/scripts/harness.py" friction add \
+          --kind merge --who "$1" \
+          --blocked "merge $1 with main's own CI status UNDETERMINED (not confirmed green)" \
+          --cause "_main_ci_is_red returned 2 under AUPAI_CONTROLLER=1: gh could not be read, or no returned run was about the resolved tip of main. The merge proceeded on the unknown-is-not-red asymmetry; this row records that no CI verdict was obtained." \
+          --commit || true
+        echo "merge_main: merging with main's CI status UNDETERMINED; logged to friction." >&2
       fi
     else
       _review_gate "$1" || exit 1
       _code_pr_gate "$1" || exit 1
       # BEFORE THE MERGE, not after: the point is to not build on a base that does not build.
-      ! _main_ci_is_red || exit 1
+      #
+      # rc IS READ, NOT DISCARDED (1e, 2026-09-23): 2 means the verdict could not be determined and
+      # the merge proceeds anyway. `! _main_ci_is_red` collapsed 1 and 2 into one outcome, so a
+      # merge that ran with NO CI verdict left nothing behind but two stderr lines in a log nobody
+      # keeps. The row is deferred, not committed, for the same reason _push_origin_main's is: a
+      # commit here would land after the CAS has been read (the c12576ea ordering defect).
+      _cir=0; _main_ci_is_red || _cir=$?
+      case "$_cir" in
+        0) exit 1 ;;
+        2) python3 "$(git rev-parse --show-toplevel)/scripts/harness.py" friction add \
+             --kind merge --who "$1" \
+             --blocked "merge $1 with main's own CI status UNDETERMINED (not confirmed green)" \
+             --cause "_main_ci_is_red returned 2: gh could not be read, or no returned run was about the resolved tip of main. The merge proceeded on the unknown-is-not-red asymmetry -- refusing would block every merge on a laptop timeout -- so this row is the record that no CI verdict was obtained. The two stderr lines naming the raw gh row are above this in the merge's log." \
+             --defer >/dev/null 2>&1 || true ;;
+      esac
     fi
     # WHERE THE MERGE HAPPENS, and this is the whole rebuild. It used to run `git merge` HERE,
     # inside the shared integration tree, which made integrating a four-step non-atomic write
