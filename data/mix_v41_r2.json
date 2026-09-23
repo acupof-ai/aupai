@@ -5,25 +5,25 @@
    "weight": 0.5,
    "epochs": 1,
    "anneal": 0.3,
-   "fingerprint": "adf2ff20698dae8a",
+   "fingerprint": "fefdc1fec54808e0",
    "epochs_pool_measured": true,
-   "epochs_pool_source": "full-load of tokens_code_ultra_l2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=15340876449"
+   "epochs_pool_source": "full-load of tokens_code_ultra_l2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=36161203608"
   },
   "code_py_starcoder_dc": {
    "weight": 0.13,
    "epochs": 1,
    "anneal": 0.115,
-   "fingerprint": "390a13a56b6472b3",
+   "fingerprint": "117f8fcbbefef881",
    "epochs_pool_measured": true,
-   "epochs_pool_source": "full-load of tokens_code_py_starcoder_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=7948925654"
+   "epochs_pool_source": "full-load of tokens_code_py_starcoder_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=7948954333"
   },
   "math_owm_stage2_dc": {
    "weight": 0.08,
    "epochs": 1,
    "anneal": 0.08,
-   "fingerprint": "4b1469bfe4667706",
+   "fingerprint": "6201b92bf4ca4e1c",
    "epochs_pool_measured": true,
-   "epochs_pool_source": "full-load of tokens_math_owm_stage2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=5857969755"
+   "epochs_pool_source": "full-load of tokens_math_owm_stage2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=9465200772"
   },
   "code_keep_p1_dc": {
    "weight": 0.03,
@@ -37,17 +37,17 @@
    "weight": 0.045,
    "epochs": 1,
    "anneal": 0.03,
-   "fingerprint": "c59c2e4227d875ec",
+   "fingerprint": "15caa8587b64e20f",
    "epochs_pool_measured": true,
-   "epochs_pool_source": "full-load of tokens_en_c4_stage2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=1985211248"
+   "epochs_pool_source": "full-load of tokens_en_c4_stage2_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=5783726706"
   },
   "cot_dc": {
    "weight": 0.04,
    "epochs": 3,
    "anneal": 0.039,
-   "fingerprint": "0d9f495913438657",
+   "fingerprint": "22c9a8274155111e",
    "epochs_pool_measured": true,
-   "epochs_pool_source": "full-load of tokens_cot_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=399994717. DRAFT CONSTRAINT (ae-8): 5% main weight was requested but is infeasible at the epochs<=3 cap -- main draw alone is 0.05*27B=1.35B > 3*0.39999B=1.20B cap; required epochs = ceil((0.05*27 + anneal*3)/0.39999) = 4 even at anneal 0. This draft uses 4% main + 0.039 anneal = 1.08B + 0.117B = 1.197B <= the 1.19998B 3-epoch pool (anneal 0.04 would over-draw the exact cap by 15,849 tokens and trigger silent capping in build_mix, so it is 0.039). Raising cot to 5% needs epochs 4 (forbidden by the cap ruling) or >=0.15B additional decontaminated CoT supply."
+   "epochs_pool_source": "full-load of tokens_cot_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint); measured_pool_tokens=399973722. DRAFT CONSTRAINT (ae-8): 5% main weight was requested but is infeasible at the epochs<=3 cap -- main draw alone is 0.05*27B=1.35B > 3*0.39999B=1.20B cap; required epochs = ceil((0.05*27 + anneal*3)/0.39999) = 4 even at anneal 0. This draft uses 4% main + 0.039 anneal = 1.08B + 0.117B = 1.197B <= the 1.19998B 3-epoch pool (anneal 0.04 would over-draw the exact cap by 15,849 tokens and trigger silent capping in build_mix, so it is 0.039). Raising cot to 5% needs epochs 4 (forbidden by the cap ruling) or >=0.15B additional decontaminated CoT supply."
   },
   "code_py_rp1t_dc": {
    "weight": 0.01,
@@ -61,9 +61,9 @@
    "weight": 0.12,
    "epochs": 1,
    "anneal": 0.20,
-   "fingerprint": "63a3b0e64b97e589",
+   "fingerprint": "c40de52da40ffd2e",
    "epochs_pool_measured": true,
-   "epochs_pool_source": "full-load of tokens_code_ultra_l3_noexec_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint 63a3b0e64b97e589); measured_pool_tokens=26697332099"
+   "epochs_pool_source": "full-load of tokens_code_ultra_l3_noexec_dc.pt on the pod (vocab f1f860970d15d623, .srcfp==build_corpus_stats fingerprint c40de52da40ffd2e); measured_pool_tokens=26699251757"
   },
   "code_ultra_l3_stub_dc": {
    "weight": 0.04,
