@@ -601,7 +601,7 @@ _MANUAL_RULES = {
         "the rule is an operator sequence -- kill, then read the card, then kill what remains. "
         "lane_respected sees the instant, so it catches an orphan that is holding a card NOW, "
         "but nothing in the repo records whether the reader looked after their own kill",
-    "Lanes: world-6 block 0-5 no lane at launch, temporary pre-launch lane":
+    "Lanes: the CED gate is world 8, block 0-7, no lane":
         "the lane/block split is allocation policy; lane_respected checks the instant, not the "
         "policy; allocation_reads_the_grant pins theirs_baseline []",
     "Small jobs queue on the lane card":
