@@ -53,6 +53,8 @@
   "csa2_indexer_heads": 4,
   "csa2_indexer_dim": 64,
   "csa2_modes": "F,R,R,R,X,R,R,R,R,R",
+  "ced": 0,
+  "ced_enc_layers": 6,
   "rope_dims": 0,
   "n_swa_only_layers": 2
 }

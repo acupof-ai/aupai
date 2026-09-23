@@ -372,6 +372,18 @@ class Cfg:
     # map). F=Full (emits the KV package), R=Reuse (consumes it, 5d^2 params),
     # X=Reindex (deferred; shares the Reuse path until its own indexer lands).
     csa2_modes = "F,R,R,R,X,R,R,R,R,R"
+    # CED, CAUSAL ENCODER-DECODER (user order 2026-09-22; spec = runs/prereg.jsonl#ced_vs_flat_0910
+    # + docs/standards/v41_pivot.md:9-15). The bottom `ced_enc_layers` layers are the encoder; every
+    # layer above them is a decoder whose global KV entries C^l and compression weights Z^l are
+    # projected from the encoder's FINAL hidden state H_{L/2} by that layer's OWN W_KV/W_Z (Eq.1,
+    # per-layer UNSHARED), instead of from a live Full-layer package. Layer-local SWA is unchanged
+    # and attention stays causal everywhere.
+    #
+    # 0 = OFF, which is every config before this one and keeps every existing checkpoint's
+    # architecture byte-identical. Distinct from csa2 (the flat stack's cross-layer reuse): with
+    # ced>0 the global-KV SOURCE is H_{L/2}, so the CSA2 package path is not what feeds a decoder.
+    ced = 0
+    ced_enc_layers = 6   # encoder = layers [0, ced_enc_layers); H_{L/2} is read below the split
     # V4 HYBRID ATTENTION + PARTIAL RoPE (facts/deepseek_v4.json#dsv4.hybrid_attention,
     # #dsv4.partial_rope). The p1 architecture is all three of these on together with
     # attn_every=1: every layer attention, CSA and HCA interleaved, position from partial RoPE
@@ -3106,6 +3118,7 @@ def main():
         "csa": "CSA attention arm in GatedMLA (required by --csa2)",
         "csa2": "V4.1 CSA2: learned entries + indexer + one softmax over entries and SWA",
         "csa2_win_flash": "CSA2: flash SWA window with dense entries, fp32 LSE split combine (default materialized)",
+        "ced": "CED: bottom ced_enc_layers encoder; every decoder layer projects its global KV from H_{L/2} with its own W_KV/W_Z",
     }.items():
         parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
                             default=None, required=name in RECIPE_REQUIRED, help=help_)
@@ -3122,6 +3135,10 @@ def main():
     parser.add_argument("--csa2_modes", type=str, default=None,
                         help="CSA2 per-layer modes for the non-SWA-only attention layers, F/R/X comma "
                              "string (default: Cfg.csa2_modes); parsed by model.HybridLM")
+    parser.add_argument("--ced_enc_layers", type=int, default=None,
+                        help="CED: how many of the bottom layers are the encoder; H_{L/2} is the "
+                             "output of the last encoder layer (default: Cfg.ced_enc_layers). "
+                             "Only read when --ced is on")
     parser.add_argument("--mem_layers", type=str, default=None,
                         help="sparse memory: block indices sharing the one pool, e.g. 3,6,9 "
                              "(default: Cfg.mem_layers)")
