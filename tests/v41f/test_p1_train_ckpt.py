@@ -653,8 +653,8 @@ def gate_resume_equivalent_to_uninterrupted():
 def gate_resume_retry_signature():
     """The retry decision's known-answer worlds. Pure, no torch, no model, milliseconds.
 
-    Registered in the gate list so `ci.yml:63`'s single command exercises it on every run without
-    a new job: a retry gate that silently stopped refusing (or started rescuing a mutant) would
+    Registered in the gate list so the ci.yml step running `python tests/v41f/p1_selftest.py`
+    exercises it on every run without a new job: a retry gate that silently stopped refusing (or started rescuing a mutant) would
     otherwise be invisible until the day it mattered.
     """
     sys.path.insert(0, str(_HERE))
