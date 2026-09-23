@@ -11,7 +11,7 @@ V4.1 gate is coding: HumanEval pass@1, 164 problems
     python eval/humaneval_gen.py --ckpt <ckpt> --rstrip_nl
 
 (base checkpoint: the `--rstrip_nl` continuation protocol; post-SFT: `--chatml`)
-and MBPP (`python eval/mbpp_gen.py --ckpt <ckpt>`), per
+and MBPP (`python eval/mbpp_gen.py --ckpt <ckpt> --run <name>` — `--run` is required), per
 `runs/prereg.jsonl#v41_ced_0923`.
 
 | Script | Data | Role |
