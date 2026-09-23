@@ -9,7 +9,7 @@ Baseline: `origin/main` = `f11fbb65` (`git rev-parse origin/main`, read 2026-09-
 ## 0. The task as stated cannot be executed, and the repo has a check that says why
 
 **The broadcast-list mechanism does not apply to this surface.** AGENTS.md §255, enforced by
-`harness.check_deletion_list_no_tracked` (`scripts/harness.py:3396`, registered at `:20619`,
+`harness.check_deletion_list_no_tracked` (`scripts/harness.py:3403`, registered at `:20721`,
 `auth=repo`, added in `316580a0`):
 
 > a deletion list may not name tracked content; strike the target or the rm removes what a
@@ -35,7 +35,7 @@ on it are §3's four pod-only rows.
   cleanup) and `docs/audits/deletion_audit_2026-09-02.md`. This analysis is built from the
   task text. If a specific file was meant, name it and it gets rebuilt against it.
 - **There is no `--flat` flag, and flat is not a separable surface.** `Cfg.ced = 0`
-  (`train.py:385`) *is* the flat architecture; `--ced` (`train.py:3121`) selects CED.
+  (`train.py:385`) *is* the flat architecture; `--ced` (`train.py:3121` is its help entry; the flag is registered by the loop at `:3124`) selects CED.
   `--moe_arm` gates no architecture — it is a ledger row label
   (`train.py:265,3127,3322,4482`). "Delete flat" is three runtime `if` branches inside
   `model.py`/`train.py`, both of which the running job imports.
@@ -159,14 +159,16 @@ I tested each; two of a peer's "flat-only" calls were wrong and are not carried:
 
 - **`scripts/test_arch_compat.py`** — 2,589 lines holding the repo's **only CED test**
   (`:2179-2313`: builds `_CfgCed`, asserts the refusals and the encoder-visibility property
-  that separates CED from flat). gated by the CI step running `python scripts/test_arch_compat.py`; pre-commit subject for both `model.py` and
+  that separates CED from flat). Gated by the CI step running `python scripts/test_arch_compat.py`;
+  pre-commit subject for both `model.py` and
   `train.py`. Cannot be deleted; a section-level excision is a code edit to a gating file —
   out of scope this window.
 - **`v41f/` (23 tracked) + `tests/v41f/` (38) + `probes/v41f_stepd_longrun.py`** — a **third
   architecture**, not flat. `V41FModel` (`v41f/model.py:60`) is single-pass with its own
   `train.py`/`master.py`, Engram, DSpark/MTP, hyper-connections. `grep -n ced v41f/*.py` =
   zero real hits. Zero references from `model.py`/`train.py`. CI-gated as its own package
-  (the CI steps that run `tests/v41f/`) with **two live preregs** (`v41f_indexer_train_0917` =
+  (the CI steps running `python tests/v41f/p0_selftest.py` and `p1_selftest.py`), with **two
+  live preregs** (`v41f_indexer_train_0917` =
   `design_proposal_pending_fb_de`; `v41f_dspark_train_equiv_0917` = `registered`).
   Deleting it deletes a live track.
 - **`v41f_l2/` (4) + `tests/test_l2_*.py` (2)** — frozen bge-m3 document-quality head,
