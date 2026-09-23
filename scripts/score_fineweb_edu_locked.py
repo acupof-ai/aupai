@@ -7,9 +7,8 @@ prompt prefix. int_score = round(clamp(score,0,5)); the official curation cut is
 
 Inputs (read-only, no retraining, no threshold chosen):
 - data/corpus/sample/web_labels.jsonl  180 zh web rows, y=1 educational / y=0 not
-- data/corpus/sample/cci3_audit_400.jsonl 400 zh CCI3 rows (per-row hand labels were
-  session-only and are not in the repo, so this reports the SCORE DISTRIBUTION only;
-  AUC is not computed here)
+- data/corpus/sample/cci3_audit_400.jsonl 400 zh CCI3 rows; per-row junk/rewrite labels
+  live in the joined-by-id cci3_audit_400_labels.jsonl, so this set gets a real AUC
 - runs/code_rp1t_markup_handread.json code_sample_100: 100 real OSS source files used
   as the "should-keep code" proxy to quantify the code false-kill rate at the >=3 cut.
 
@@ -92,11 +91,52 @@ def main():
         "at_cut3_notedu_kill_rate": round(junk_cut, 4),
     }
 
-    # 2. cci3 locked 400: distribution only (no in-repo per-row labels)
+    # 2. cci3 locked 400: real per-row junk/rewrite labels are in a SEPARATE file joined
+    # by id (data/corpus/sample/cci3_audit_400_labels.jsonl), so this set DOES get an AUC.
     with open(ROOT / "data/corpus/sample/cci3_audit_400.jsonl") as f:
-        cci = [json.loads(l) for l in f]
-    cci_s = score_texts([r["text"] for r in cci])
-    res["zh_cci3_locked400_distribution_only"] = dist(cci_s)
+        cci_by_id = {r["id"]: r for r in (json.loads(l) for l in f)}
+    with open(ROOT / "data/corpus/sample/cci3_audit_400_labels.jsonl") as f:
+        labels = {r["id"]: r for r in (json.loads(l) for l in f)}
+    ids = [i for i in cci_by_id if i in labels]
+    cci_s = score_texts([cci_by_id[i]["text"] for i in ids])
+    junk = np.array([str(labels[i]["junk"]).lower() == "true" for i in ids])
+    rewrite = np.array([str(labels[i]["rewrite"]).lower() == "true" for i in ids])
+    # Persist per-doc id+score+labels so the rank-statistics (AUC) are recomputable
+    # without the 438MB model; aggregates alone cannot yield ROC-AUC.
+    # restartable: one 400-row file written after ~27s CPU inference; an interrupt
+    # simply reruns the scorer (model is local), so no per-shard progress is needed.
+    with open(ROOT / "runs" / "fwe_locked400_perdoc.jsonl", "w") as f:
+        for i, sc, j, rw in zip(ids, cci_s, junk, rewrite, strict=True):
+            row = {"id": i, "score": float(sc), "junk": bool(j), "rewrite": bool(rw)}
+            f.write(json.dumps(row) + "\n")
+    # positive = "should keep": not-junk / not-rewrite. A useful head scores keepers higher.
+    auc_keep = roc_auc_score(~junk, cci_s)
+    auc_notrewrite = roc_auc_score(~rewrite, cci_s)
+    rng = np.random.default_rng(0)
+
+    def boot_auc(y, reps=3000):
+        b = [
+            roc_auc_score(y[idx], cci_s[idx])
+            for _ in range(reps)
+            for idx in [rng.integers(0, len(y), len(y))]
+        ]
+        return [round(float(x), 4) for x in np.quantile(b, [0.025, 0.975])]
+
+    res["zh_cci3_locked400"] = {
+        "n": len(ids),
+        "n_junk": int(junk.sum()),
+        "n_keep": int((~junk).sum()),
+        "n_rewrite": int(rewrite.sum()),
+        "auc_score_predicts_not_junk": round(float(auc_keep), 4),
+        "auc_not_junk_ci95": boot_auc(~junk),
+        "auc_score_predicts_not_rewrite": round(float(auc_notrewrite), 4),
+        "auc_not_rewrite_ci95": boot_auc(~rewrite),
+        "median_score_junk": round(float(np.median(cci_s[junk])), 4),
+        "median_score_keep": round(float(np.median(cci_s[~junk])), 4),
+        "frac_ge3_junk": round(float((cci_s[junk] >= 3).mean()), 4),
+        "frac_ge3_keep": round(float((cci_s[~junk] >= 3).mean()), 4),
+        "all": dist(cci_s),
+    }
 
     # 3. code 100: should-keep OSS source -> false-kill proxy at cut 3
     with open(ROOT / "runs/code_rp1t_markup_handread.json") as f:
