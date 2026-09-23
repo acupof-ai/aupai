@@ -691,9 +691,10 @@ def gate_resume_retry_signature():
     sys.path.insert(0, str(_HERE))
     import resume_gate_retry as rgr
 
-    fails = rgr.selftest()
+    fails, counts = rgr.selftest()
     assert not fails, fails
-    print("  resume retry signature: known-answer worlds all behaved (1 positive, 10 refusals)")
+    print(f"  resume retry signature: known-answer worlds all behaved "
+          f"({counts['pos']} positive, {counts['neg']} refusals)")
 
 
 def _write_retry_tickt(rgr, exc1, obs, dirs):
