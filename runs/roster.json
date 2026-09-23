@@ -34,7 +34,9 @@
    "listagents_name": "aupai-7b",
    "listagents_ref": "92ce31",
    "listagents": "aupai-7b",
-   "label": "aupai-7b"
+   "label": "aupai-7b",
+   "group": "data",
+   "ld": true
   },
   {
    "name": "de",
@@ -48,7 +50,9 @@
    "listagents_name": "aupai-08",
    "listagents_ref": "47baf0",
    "listagents": "aupai-08",
-   "label": "aupai-08"
+   "label": "aupai-08",
+   "group": "code",
+   "ld": true
   },
   {
    "name": "98",
@@ -59,18 +63,27 @@
    "listagents_name": "aupai-b2",
    "listagents_ref": "2d0371",
    "listagents": "aupai-b2",
-   "label": "aupai-b2"
+   "label": "aupai-b2",
+   "group": "data",
+   "ld": false
   },
   {
    "name": "ae",
    "socket": "uds:/tmp/cc-socks/89510.sock",
    "role": "implement",
-   "note": "New session 2026-09-10 after the restart; took over b0 slot. Owns V4.1 Step-0 config (ae-2, v41_size.py/facts/v41.json) and reviewed de-103 CSA2. Worktree /Users/bytedance/code/aupai-ae. Verified aupai-ae/7a9482 from its own messages. | 2026-09-10 14:2xZ fb sweep: all six restarted ~13:15Z; socket 83243, label aupai-2b, from the session's own from= address.",
+   "note": "TOKENIZER/GATE-MIX/DECONTAM -- NO LIVE SESSION as of 2026-09-20 (ListAgents shows 27 peers, none matching label aupai-2b). NAMED, not dispatched: a session that exited stays in the roster so a wrong mark stays visible. Their open item (six stale cont.gate_dc_* facts) went to 98. Headcount is 7 live; whether to backfill is the user's call. | New session 2026-09-10 after the restart; took over b0 slot. Owns V4.1 Step-0 config (ae-2, v41_size.py/facts/v41.json) and reviewed de-103 CSA2. Worktree /Users/bytedance/code/aupai-ae. Verified aupai-ae/7a9482 from its own messages. | 2026-09-10 14:2xZ fb sweep: all six restarted ~13:15Z; socket 83243, label aupai-2b, from the session's own from= address.",
    "listagents_name": "aupai-2b",
    "listagents_ref": "7a9482",
    "ref": "7a9482",
    "listagents": "aupai-2b",
-   "label": "aupai-2b"
+   "label": "aupai-2b",
+   "group": "data",
+   "ld": false,
+   "state": "active-session-unknown",
+   "topics": [
+    "tokenizer",
+    "mix"
+   ]
   },
   {
    "name": "0e",
@@ -81,7 +94,12 @@
    "listagents_ref": "2fe82f",
    "ref": "2fe82f",
    "listagents": "aupai-54",
-   "label": "aupai-54"
+   "label": "aupai-54",
+   "group": "data",
+   "ld": false,
+   "topics": [
+    "corpus"
+   ]
   },
   {
    "name": "66",
@@ -92,7 +110,13 @@
    "listagents_ref": "f7ea6b",
    "ref": "f7ea6b",
    "listagents": "aupai-74",
-   "label": "aupai-74"
+   "label": "aupai-74",
+   "group": "code",
+   "ld": false,
+   "topics": [
+    "launch_gate",
+    "infra"
+   ]
   },
   {
    "name": "genB",
@@ -106,7 +130,9 @@
    "listagents_name": "genb-62",
    "listagents_ref": "d3dd45",
    "ref": "d3dd45",
-   "label": "genb-62"
+   "label": "genb-62",
+   "group": "code",
+   "ld": false
   },
   {
    "name": "genA",
@@ -120,7 +146,9 @@
    "listagents_name": "aupai-gena-work-75",
    "listagents_ref": "48201d",
    "ref": "48201d",
-   "label": "aupai-gena-work-75"
+   "label": "aupai-gena-work-75",
+   "group": "code",
+   "ld": false
   }
  ],
  "not_on_this_team": [
@@ -138,7 +166,7 @@
   },
   {
    "name": "lessons-e1 [2f8158]",
-   "why": "answered 不是 2026-09-02. AND IT HAPPENED AGAIN 2026-09-09: fb sent e1's classifier rulings here without reading this list. e1 is lessons-eb / uds:/tmp/cc-socks/56034.sock."
+   "why": "answered \u4e0d\u662f 2026-09-02. AND IT HAPPENED AGAIN 2026-09-09: fb sent e1's classifier rulings here without reading this list. e1 is lessons-eb / uds:/tmp/cc-socks/56034.sock."
   },
   {
    "name": "lessons-31 [abcf8c]",
@@ -181,7 +209,7 @@
    "topics": [
     "launch_gate"
    ],
-   "note": "tokenizer, FoNE, launch-gate; recipe reconciliation gate (e1-9), milestone_profile throughput number (e1-10). Session lessons-03 (13136) died 01:51Z on an API 400 with its branch fully in main; back 02:05Z as lessons-58. The 'departed' ruling rested on the socket ENOENT and the session missing from ListAgents; lessons-e1 answering 不是 was a name collision, not evidence. ListAgents name lessons-58 as of 2026-09-03. SOCKET CORRECTED 2026-09-09 after a resume: was lessons-58 / 92... Identity verified against becd96f7, 18bd3842, f53aed11 and 7c121c37 on main, all present with matching subjects. A resume changes the label and the socket while the work continues -- that is the general case, not an exception, and this file is the one that has to be corrected each time.",
+   "note": "tokenizer, FoNE, launch-gate; recipe reconciliation gate (e1-9), milestone_profile throughput number (e1-10). Session lessons-03 (13136) died 01:51Z on an API 400 with its branch fully in main; back 02:05Z as lessons-58. The 'departed' ruling rested on the socket ENOENT and the session missing from ListAgents; lessons-e1 answering \u4e0d\u662f was a name collision, not evidence. ListAgents name lessons-58 as of 2026-09-03. SOCKET CORRECTED 2026-09-09 after a resume: was lessons-58 / 92... Identity verified against becd96f7, 18bd3842, f53aed11 and 7c121c37 on main, all present with matching subjects. A resume changes the label and the socket while the work continues -- that is the general case, not an exception, and this file is the one that has to be corrected each time.",
    "listagents_name": "lessons-eb",
    "listagents_ref": "75ded7",
    "departed_note": "moved to departed 2026-09-11 02:1xZ (fb): absent from ListAgents, socket dead"
@@ -210,6 +238,33 @@
   "genB": "3b",
   "genA": "98"
  },
- "refreshed": "2026-09-11T02:1xZ by fb: roster reconciled against ListAgents; ae socket corrected 83243->89510 (read from ae's from= address); four departed members moved out of members[]. | 2026-09-11 02:3xZ fb: fb socket corrected 99800->34049 (99800 ENOENT; peers read 34049 from fb's from= address); listagents_name aligned to label for all seven.",
- "pairs_note": "2026-09-11 02:1xZ fb: seven live members only. Pairs: fb<->de, 3b->fb, 98->fb, ae->de, 0e->3b, 66->3b. tilerl/b0/e1/44 departed; every pair that named them is re-pointed. A reviewer is the pair above; a second reader for a PR may be any other live member if the pair is busy, named in the review row."
+ "refreshed": "2026-09-20 bc: ld layer added (de/data groups); ae marked no-live-session",
+ "pairs_note": "2026-09-20 bc: the 1:1 `pairs` map is the DEFAULT reviewer, not the boundary -- rule 4 above makes any member of the OTHER group eligible as second reader, and the review row names who actually read it. `review_pairs` still requires every member to carry a pair entry (a member with no reviewer is the defect de-102 closed), so entries a group could not re-point are left as the inherited default rather than removed. | 2026-09-11 02:1xZ fb: seven live members only. Pairs: fb<->de, 3b->fb, 98->fb, ae->de, 0e->3b, 66->3b. tilerl/b0/e1/44 departed; every pair that named them is re-pointed. A reviewer is the pair above; a second reader for a PR may be any other live member if the pair is busy, named in the review row.",
+ "groups": {
+  "_comment": "Two groups, one ld each (bc, 2026-09-20). fb is not in a group: the controller decides and organizes, and executes nothing. `ld` marks the lead. THE FOUR RULES BELOW ARE MECHANISM, NOT COURTESY -- rule 2 lines up with the reason this file is code and not a ledger: on 2026-09-19/20 thirteen reported errors were caught by a lead verifying before the number went up, and none by the author re-reading their own.",
+  "rules": [
+   "A member reports to their own ld only; the ld reports increment + verified conclusion to fb in <=5 lines. fb does not task past an ld (one-off point-to-point notices for the reorg are already sent).",
+   "The ld is the first verify on their group's conclusions. A number a member hands up is checked by the ld before it goes further.",
+   "A cross-group dispute is settled between the two lds first; only after two rounds does it escalate to fb. What still escalates: data composition, deletions, GPUs/new machines, and fingerprint trade-offs only the user can decide.",
+   "reviewer!=author is cross-group: a member's PR is reviewed by the other group's ld or member. Approval = a ledger row naming the current sha + `gh pr merge --merge` (never --squash); the ld backs the group's merge result."
+  ],
+  "data": {
+   "ld": "3b",
+   "members": [
+    "0e",
+    "98",
+    "ae"
+   ],
+   "remit": "digest CPU corpus rebuild, decontamination/holdout/fingerprints, source reconnaissance, mix rebalance, token/byte accounting"
+  },
+  "code": {
+   "ld": "de",
+   "members": [
+    "66",
+    "genA",
+    "genB"
+   ],
+   "remit": "model/training code, CI gates, harness, PR merge gate, infrastructure scripts"
+  }
+ }
 }

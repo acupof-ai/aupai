@@ -365,7 +365,12 @@ def _ranged_get(url, part, name, chunks=8, **chunk_opts):
     in this function. A server that ignores Range (200 instead of 206) or hides its length
     gets (False, why) and the caller falls back to the single stream.
     """
-    head = subprocess.run(["curl", "-4", "-sI", "-m", "30", url], capture_output=True, text=True)
+    # -L FOLLOWS REDIRECTS. The ranged-capability headers (content-length, accept-ranges)
+    # live on the FINAL response: data.together.xyz and the mirrors 302 to a CDN, and a bare
+    # -sI reads only the 302 (no length, no ranges), so every redirecting source was wrongly
+    # judged unable to serve ranges and forced onto the throttled single stream. Same -L the
+    # OT3 probe at the top of this file already uses; a HEAD following -L is still a HEAD.
+    head = subprocess.run(["curl", "-4", "-sIL", "-m", "30", url], capture_output=True, text=True)
     size = None
     accepts_ranges = False
     for line in head.stdout.splitlines():
@@ -443,8 +448,11 @@ def _run_chunks(url, spans, name, floor=CHUNK_FLOOR_BPS, window=CHUNK_WINDOW_S,
     def _launch(i, resume_from=None):
         lo, hi, cp = spans[i]
         start = lo if resume_from is None else lo + resume_from
+        # -L so a range GET that begins with a CDN 302 reaches the bytes; the capability
+        # HEAD follows -L too, and a chunk curl that did not would save the redirect body
+        # (0 useful bytes) behind a 200-less, --fail-passing 3xx.
         p = subprocess.Popen(
-            ["curl", "-4", "-sS", "--fail", "--retry", "4", "--retry-delay", "5",
+            ["curl", "-4", "-sSL", "--fail", "--retry", "4", "--retry-delay", "5",
              "-r", f"{start}-{hi}", "-o", cp if resume_from is None else f"{cp}.r{restarts[i]}", url],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         live[i] = [p, _chunk_bytes(spans[i], restarts[i]), _now()]
@@ -710,6 +718,14 @@ def _selftest():
                 self.send_header("Location", "/x.jsonl")
                 self.send_header("Connection", "close")
                 self.end_headers()
+            elif self.path == "/redbig":
+                # 302 to the RANGE-CAPABLE big object. The ranged-capability HEAD must follow
+                # this (-L); without it curl reports the bare 302, which carries no
+                # content-length/accept-ranges and the ranged path is silently skipped.
+                self.send_response(302)
+                self.send_header("Location", "/big.jsonl")
+                self.send_header("Connection", "close")
+                self.end_headers()
             elif self.path == "/missing":
                 self.send_error(404)
             elif self.path == "/red403":
@@ -827,6 +843,7 @@ def _selftest():
     part = os.path.join(d, "shard.part")
     good = f"http://127.0.0.1:{port}/x.jsonl"
     red = f"http://127.0.0.1:{port}/red"      # 302 -> /x.jsonl: fetchable behind a redirect
+    redbig = f"http://127.0.0.1:{port}/redbig"  # 302 -> /big.jsonl: ranged capability behind a redirect
     missing = f"http://127.0.0.1:{port}/missing"  # 404: must be judged down
     closed_a = "http://127.0.0.1:9/x.jsonl"  # discard port: refused, fails fast
     closed_b = "http://127.0.0.1:8/y.jsonl"
@@ -968,6 +985,21 @@ def _selftest():
         assert ok, f"a range-serving host with a large body must use the ranged path: {why}"
         with open(big_part, "rb") as fp:
             assert fp.read() == big_payload, "ranged assembly did not reproduce the body"
+        # RANGED CAPABILITY BEHIND A 302. The capability headers sit on the FINAL response,
+        # not the 302: without -L the HEAD reads only the redirect (no content-length /
+        # accept-ranges) and silently falls to the throttled single stream. The assertion
+        # names the REAL length, not the redirect body -- a leg that only checked ok would
+        # pass while still reading the 302, which has no length and would have refused/fallen
+        # back. Reusing big_part proves the 8-way assembly reproduces the 80 MB object reached
+        # THROUGH the redirect, byte for byte.
+        _rm(big_part)
+        ok_rb, why_rb = _ranged_get(redbig, big_part, "redbig-rangetest")
+        assert ok_rb, f"a 302 to a range-capable large object must still chunk: {why_rb}"
+        assert os.path.getsize(big_part) == len(big_payload), (
+            f"must read the FINAL object's {len(big_payload)}B, not the 302 body: "
+            f"{os.path.getsize(big_part) if os.path.exists(big_part) else 'no file'}")
+        with open(big_part, "rb") as fp:
+            assert fp.read() == big_payload, "bytes must come from the redirect target"
         # THE ASSERTION THAT MATTERS: a server that lies about length must NOT yield a file.
         # Concatenating N chunks turns a short chunk into a complete-looking download, and a
         # truncated jsonl parses for most of its rows, so this failure would land in the

@@ -372,6 +372,18 @@ class Cfg:
     # map). F=Full (emits the KV package), R=Reuse (consumes it, 5d^2 params),
     # X=Reindex (deferred; shares the Reuse path until its own indexer lands).
     csa2_modes = "F,R,R,R,X,R,R,R,R,R"
+    # CED, CAUSAL ENCODER-DECODER (user order 2026-09-22; spec = runs/prereg.jsonl#ced_vs_flat_0910
+    # + docs/standards/v41_pivot.md:9-15). The bottom `ced_enc_layers` layers are the encoder; every
+    # layer above them is a decoder whose global KV entries C^l and compression weights Z^l are
+    # projected from the encoder's FINAL hidden state H_{L/2} by that layer's OWN W_KV/W_Z (Eq.1,
+    # per-layer UNSHARED), instead of from a live Full-layer package. Layer-local SWA is unchanged
+    # and attention stays causal everywhere.
+    #
+    # 0 = OFF, which is every config before this one and keeps every existing checkpoint's
+    # architecture byte-identical. Distinct from csa2 (the flat stack's cross-layer reuse): with
+    # ced>0 the global-KV SOURCE is H_{L/2}, so the CSA2 package path is not what feeds a decoder.
+    ced = 0
+    ced_enc_layers = 6   # encoder = layers [0, ced_enc_layers); H_{L/2} is read below the split
     # V4 HYBRID ATTENTION + PARTIAL RoPE (facts/deepseek_v4.json#dsv4.hybrid_attention,
     # #dsv4.partial_rope). The p1 architecture is all three of these on together with
     # attn_every=1: every layer attention, CSA and HCA interleaved, position from partial RoPE
@@ -2209,13 +2221,21 @@ def val_split_n(name, n_rows, mix):
     return min(max(1, int(n_rows * Cfg.val_frac)), Cfg.val_rows_max)
 
 
-def _domain_seqs(domain, tok, is_main, ddp, workers=1):
+def _domain_seqs(domain, tok, is_main, ddp, workers=1, allow_build=False):
     """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, [N, seq+1].
 
     Reused only while newer than every shard, carrying the same vocabulary fingerprint, AND
     carrying the source directory's corpus fingerprint (.srcfp): the 2026-08-30 swap rebuilt
     the cache from a different corpus and reused it with nothing raising, because mtime and
-    vocab both matched. A stale source fingerprint retokenizes, same as a stale vocabulary."""
+    vocab both matched. A stale source fingerprint retokenizes, same as a stale vocabulary.
+
+    allow_build names the caller's intent for the configured-cache-dir refusal below: a
+    BUILDER constructing a domain for the first time is the one caller that legitimately
+    finds the leaf absent. Same shape as _assert_mix_domains(..., allow_drift=False). It is
+    a parameter and not a marker file because a leaf that the guard cannot see is a leaf
+    that also fails to trip the guard on the training path -- measured 2026-09-20: a
+    zero-byte leaf present at the cache path made the refusal NOT fire and the run went
+    straight to tokenizing, which is the dropped-mount rebuild the refusal exists to stop."""
     cache = _domain_cache_path(domain)
     stamp = cache + ".vocab"
     srcfp = cache + ".srcfp"
@@ -2306,7 +2326,7 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
         # (AGENTS.md, "missing identity refuses, never rebuilds"). The refusal is scoped to a
         # CONFIGURED dir -- with the variable unset the default path is this repo's own history and a
         # first-ever tokenize must still work, which is why this is not a blanket refusal.
-        if os.environ.get("AUPAI_TOKEN_CACHE_DIR") and not os.path.exists(cache):
+        if os.environ.get("AUPAI_TOKEN_CACHE_DIR") and not os.path.exists(cache) and not allow_build:
             raise RuntimeError(
                 f"refusing to retokenize {domain}: AUPAI_TOKEN_CACHE_DIR is set to "
                 f"{_token_cache_dir()} and {cache} is ABSENT. A configured cache directory is a "
@@ -3098,6 +3118,7 @@ def main():
         "csa": "CSA attention arm in GatedMLA (required by --csa2)",
         "csa2": "V4.1 CSA2: learned entries + indexer + one softmax over entries and SWA",
         "csa2_win_flash": "CSA2: flash SWA window with dense entries, fp32 LSE split combine (default materialized)",
+        "ced": "CED: bottom ced_enc_layers encoder; every decoder layer projects its global KV from H_{L/2} with its own W_KV/W_Z",
     }.items():
         parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
                             default=None, required=name in RECIPE_REQUIRED, help=help_)
@@ -3114,6 +3135,10 @@ def main():
     parser.add_argument("--csa2_modes", type=str, default=None,
                         help="CSA2 per-layer modes for the non-SWA-only attention layers, F/R/X comma "
                              "string (default: Cfg.csa2_modes); parsed by model.HybridLM")
+    parser.add_argument("--ced_enc_layers", type=int, default=None,
+                        help="CED: how many of the bottom layers are the encoder; H_{L/2} is the "
+                             "output of the last encoder layer (default: Cfg.ced_enc_layers). "
+                             "Only read when --ced is on")
     parser.add_argument("--mem_layers", type=str, default=None,
                         help="sparse memory: block indices sharing the one pool, e.g. 3,6,9 "
                              "(default: Cfg.mem_layers)")
