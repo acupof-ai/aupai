@@ -512,17 +512,20 @@ def gate_resume_equivalent_to_uninterrupted():
             # is a property of the CALLERS, and naming by it here would bake a hidden
             # assumption into a generic helper -- the same shape as an optimizer-state dump
             # whose "dtype" field was read as the model's.
-            if _this_dump:
+            # THE GUARD TESTS THE ELEMENT, NOT THE LIST. `_this_dump` is [None] in strict mode
+            # (RESUME_GATE_NO_RETRY=1 with no GATE_DUMP_DIR), and a LIST OF ONE NONE IS TRUTHY --
+            # so `if _this_dump:` entered, _d was None, dump_root was ALSO None (that is the same
+            # strict config), os.path.join(None, ...) raised TypeError, and _attempt catches only
+            # AssertionError: the TypeError escaped and masked the "fp32 master differs" text that
+            # carries the signature, on exactly the red a local reader is debugging. Changing only
+            # the inner ternary left this outer guard wrong; de caught that the first fix was
+            # half a fix. Not reachable from CI, where GATE_DUMP_DIR is always set.
+            if _this_dump and _this_dump[0]:
                 try:
                     import json as _json
-                    # `_this_dump` holds [None] in strict mode, and a LIST OF ONE NONE IS
-                    # TRUTHY -- so the old `if _this_dump else` never fell through and
-                    # os.path.join(None, ...) raised TypeError, replacing the "fp32 master
-                    # differs" AssertionError that carries the signature. Test the ELEMENT.
                     for label, t in (("want", wf), ("got", gf)):
                         slug = "".join(c if c.isalnum() else "_" for c in tag.lower()).strip("_")
-                        _d = _this_dump[0] if _this_dump else None
-                        base = os.path.join(_d if _d else dump_root, f"{slug}.{label}")
+                        base = os.path.join(_this_dump[0], f"{slug}.{label}")
                         open(base + ".bin", "wb").write(
                             t.detach().cpu().contiguous().numpy().tobytes())
                         _json.dump({"tag": tag, "shape": list(t.shape),
