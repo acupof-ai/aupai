@@ -65,8 +65,9 @@ in the Coordination section.
 - **No flip date.** `AUPAI_PR_FLIP_EPOCH` unset means the gate is inert, so the transition is a
   separate act. Naming a date here before the switch is thrown would make the document wrong for
   however long the gap is.
-- **No claim that CI needed changing.** `.github/workflows/ci.yml:2` is already
-  `on: [push, pull_request]`, so a PR's head sha gets CI today. Measured, not built.
+- **No claim that CI needed changing.** The workflow's trigger block is already
+  `on:` over `push:` and `pull_request:` (plus a `workflow_dispatch:` for the diag matrix), so a
+  PR's head sha gets CI today. Measured, not built.
 - **Nothing about branch protection.** Whether GitHub itself enforces "the reviewer merges" is a
   repository setting, not a rule in this file, and I have not been asked to change repo settings.
   Until it is set, the ordering is a convention the PR gate does not check.
