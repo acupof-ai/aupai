@@ -1,0 +1,50 @@
+{
+ "measured": "2026-09-24",
+ "gate": {
+  "decontam_fp": "302aa793f7067462",
+  "humaneval_164.jsonl": "1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2",
+  "mbpp_holdouts.jsonl": "ccf64ceae9c5403bf50a044cb6d505bfd2a2963ee58338ba268fd65beab92a9f",
+  "module_sha256": "943c19ad30d2ac7d3c419b49c6a936d813b4165bbe2b90cf3dbeca218f272559"
+ },
+ "per_domain": {
+  "code_ultra_l2_dc": {
+   "shards_rescanned": 1304,
+   "rows_rescanned": 39018564,
+   "residual_hits": 0,
+   "sample_hits": []
+  },
+  "code_ultra_l3_noexec_dc": {
+   "shards_rescanned": 940,
+   "rows_rescanned": 15309833,
+   "residual_hits": 0,
+   "sample_hits": []
+  },
+  "code_py_starcoder_dc": {
+   "shards_rescanned": 283,
+   "rows_rescanned": 6178656,
+   "residual_hits": 0,
+   "sample_hits": []
+  },
+  "math_owm_stage2_dc": {
+   "shards_rescanned": 333,
+   "rows_rescanned": 6676413,
+   "residual_hits": 0,
+   "sample_hits": []
+  },
+  "en_c4_stage2_dc": {
+   "shards_rescanned": 242,
+   "rows_rescanned": 11309604,
+   "residual_hits": 0,
+   "sample_hits": []
+  },
+  "cot_dc": {
+   "shards_rescanned": 13,
+   "rows_rescanned": 851625,
+   "residual_hits": 0,
+   "sample_hits": []
+  }
+ },
+ "shards_total_rescanned": 3115,
+ "rows_total_rescanned": 79344695,
+ "residual_hits_total": 0
+}
