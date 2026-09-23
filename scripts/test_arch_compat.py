@@ -2287,17 +2287,32 @@ assert _dec_csa[0].w_kv.weight.data_ptr() != _dec_csa[1].w_kv.weight.data_ptr(),
 assert not any(getattr(_cedm.blocks[i].mixer.csa, "ced_kv", False) for i in range(0, 2)), (
     "an ENCODER layer was given a W_KV/W_Z pair; only decoders project from H_{L/2}")
 
-# 8. The attn_res construction refusal is GONE with the flat cut: the non-AttnRes body IS the
-#    CED two-pass body now, so there is no "ced on a single-pass body" combination left to
-#    refuse. attn_res=True still builds its own depth-attention body (its removal and its load
-#    contract are the separate step 5, scripts/test_attnres_load_contract.py); a CED setup is
-#    simply not attached to it, which is numerically the legacy AttnRes stack.
+# 8. AN EXPLICIT SPLIT ON THE AttnRes PATH REFUSES. ced_enc_layers>0 is a CED request and the
+#    two-pass body runs only off the AttnRes path; accepting it would silently build a flat
+#    AttnRes stack (zero decoder ced_kv, final_ar on) while the config named CED -- the exact
+#    defect #673's review found. A split of 0 is different: it requests no topology (and is what
+#    legacy AttnRes cfgs get via the loader backfill), so attn_res + 0 MUST still build.
 class _CfgCedAttnRes(_CfgCedStack):
     attn_res = True
 
 
-_ar_m = model.HybridLM(_CfgCedAttnRes)
-assert _ar_m.final_ar is not None, "attn_res config must keep building its depth-attention body"
+try:
+    model.HybridLM(_CfgCedAttnRes)
+except ValueError as _e:
+    assert "attn_res" in str(_e), f"the split/attn_res refusal does not name the flag: {_e}"
+else:
+    raise AssertionError(
+        "ced_enc_layers=2 with attn_res on constructed as a silent AttnRes stack (0 ced_kv)")
+
+
+class _CfgAttnResNoSplit(_CfgCedStack):
+    attn_res = True
+    ced_enc_layers = 0   # no CED topology requested: the legacy AttnRes config must still build
+
+
+_ar_m = model.HybridLM(_CfgAttnResNoSplit)
+assert _ar_m.final_ar is not None, (
+    "attn_res with ced_enc_layers=0 must keep building its depth-attention body (legacy configs)")
 
 
 class _CfgCedBadSplit(_CfgCedStack):
@@ -2310,7 +2325,7 @@ except ValueError as _e:
     assert "ced_enc_layers" in str(_e), f"the split refusal does not name the field: {_e}"
 else:
     raise AssertionError("ced_enc_layers=layers (no decoder) constructed")
-# ced_enc_layers=0 is VALID now: it means L//2, not "flat off".
+# ced_enc_layers=0 is VALID on the non-AttnRes path: it means L//2, not "flat off".
 _CfgHalfSplit = type("_CfgHalfSplit", (_CfgCedStack,), {"ced_enc_layers": 0})
 assert model.HybridLM(_CfgHalfSplit).ced_enc_layers == _CfgHalfSplit.layers // 2, (
     "ced_enc_layers=0 must resolve to L//2")

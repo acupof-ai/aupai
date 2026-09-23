@@ -2888,6 +2888,20 @@ class HybridLM(nn.Module):
         # scripts/test_attnres_load_contract.py), so while it exists it skips CED setup and keeps
         # running its own body unchanged.
         self.ced_enc_layers = int(getattr(cfg, "ced_enc_layers", 0) or 0)
+        # An EXPLICIT positive split is a CED request, and CED's two-pass body runs only on the
+        # non-AttnRes path. With attn_res on, the value is silently unreachable (no decoder gets
+        # ced_kv, the AttnRes body ignores it) -- the model would construct as a flat AttnRes
+        # stack while the launch line said CED. Refuse at construction. ced_enc_layers=0 is
+        # NOT a CED request (it means L//2 on the non-AttnRes path and "unset" on this one), so
+        # the legacy AttnRes configs -- whose cfg predates the field and gets 0 backfilled by
+        # loader.py -- still build.
+        if getattr(cfg, "attn_res", False) and self.ced_enc_layers > 0:
+            raise ValueError(
+                f"ced_enc_layers={self.ced_enc_layers} needs attn_res OFF: the CED "
+                "encoder/decoder body runs only on the non-AttnRes path, so with attn_res on "
+                "the split would be read and never used and the model would silently be an "
+                "AttnRes stack. Pass --no-attn_res (the gate launcher does). A split of 0 is "
+                "allowed with attn_res (it requests no CED topology).")
         if not getattr(cfg, "attn_res", False):
             if self.ced_enc_layers < 0 or self.ced_enc_layers >= cfg.layers:
                 raise ValueError(
