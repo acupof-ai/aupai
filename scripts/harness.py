@@ -28270,6 +28270,11 @@ def cmd_free_card(argv):
     ap = argparse.ArgumentParser(prog="harness free-card")
     ap.add_argument("--wait", type=int, default=0, help="seconds to wait for a card to free")
     ap.add_argument("--settle", type=int, default=8, help="window over which a card must stay idle")
+    ap.add_argument("--from-held-block", action="store_true",
+                    help="when the grant names no lane, take one card from the block THIS TREE'S "
+                         "grant gives this run. Only valid for a post-exit caller (the run's own "
+                         "ranks confirmed gone): the card must still measure idle. Never for a "
+                         "second job -- the block is not a spill lane.")
     a = ap.parse_args(argv)
     # ROOT, EXPLICITLY, and it is the reason CI red #4 could not be tested. _allocation_cards
     # defaults `root` to ROOT -- the harness's own tree -- so free-card read the live grant no
@@ -28289,17 +28294,37 @@ def cmd_free_card(argv):
     # test_free_card's no-grant case asserts.
     lane = [c.strip() for c in _allocation_cards(False, root=alloc_root).split(",") if c.strip()]
     if not lane:
-        print("no lane card in the allocation", file=sys.stderr)
-        return 1
+        if not a.from_held_block:
+            print("no lane card in the allocation", file=sys.stderr)
+            return 1
+        # Full-block grants name lane_card: null, so under an 8-card run there is no lane to
+        # queue on. The ONLY caller allowed here is run_ddp.sh AFTER torchrun has returned:
+        # its own ranks are then reaped, and the block this tree's grant names belongs to that
+        # run -- so one block card, MEASURED idle over the settle window, can score the
+        # checkpoint the run just produced. The measurement is the guard against the two ways
+        # this is unsafe: ranks not actually gone, and another job on a block card. The block
+        # is read from the same single-source grant (never from CUDA_VISIBLE_DEVICES), which
+        # also keeps the candidate inside what the controller granted this box.
+        granted, why = _grant_cards(alloc_root, raise_on_false=True)
+        if not granted:
+            print(f"no lane and no granted block to take a scoring card from ({why})",
+                  file=sys.stderr)
+            return 1
+        pool = [str(c) for c in granted]
+        print(f"note   no lane card (full-block grant); scoring may take one idle card from "
+              f"this run's held block {_csv(pool)} after rank exit", file=sys.stderr)
+    else:
+        pool = lane
     deadline = time.time() + a.wait
     while True:
-        free = [c for c in lane if c not in _busy_cards(lane, settle=a.settle)]
+        free = [c for c in pool if c not in _busy_cards(pool, settle=a.settle)]
         if free:
             print(free[0])
             return 0
         if time.time() >= deadline:
-            held = {c: _lane_occupant(c) for c in lane}
-            print(f"no free lane card: {held}. Queue, do not spill into the block.",
+            held = {c: _lane_occupant(c) for c in pool}
+            kind = "held block" if not lane else "lane"
+            print(f"no free {kind} card after {a.wait}s: {held}. Queue, do not take a busy card.",
                   file=sys.stderr)
             return 1
         time.sleep(min(30, max(5, a.wait / 20)))

@@ -53,7 +53,7 @@ exit 0
 """
 
 
-def free_card(busy, wait=0, settle=1, grant=None):
+def free_card(busy, wait=0, settle=1, grant=None, extra=()):
     """Run `harness free-card` with a fake nvidia-smi holding `busy`, in a FIXTURE tree.
 
     THE GRANT IS A FIXTURE, not the live file, and that is the whole of CI red #4 (2026-09-04).
@@ -93,7 +93,7 @@ def free_card(busy, wait=0, settle=1, grant=None):
                AUPAI_ALLOC_ROOT=tree)
     r = subprocess.run(
         [sys.executable, os.path.join(ROOT, "scripts", "harness.py"), "free-card",
-         "--wait", str(wait), "--settle", str(settle)],
+         "--wait", str(wait), "--settle", str(settle), *extra],
         capture_output=True, text=True, env=env, cwd=tree, timeout=180)
     return r.returncode, r.stdout.strip(), r.stderr.strip()
 
@@ -166,6 +166,68 @@ def main():
     # fails on the unfixed world, where the card number was a default.
     want(lane_free not in out.split(),
          "the busy card is never returned as free")
+
+    # 3. Full-block grant (world-8): lane_card is null and the run holds the whole block.
+    # After torchrun returns the run's own ranks are gone, so the post-exit scorer may take
+    # one card FROM THE BLOCK THIS GRANT NAMES, but only measured idle -- never from CVD, and
+    # never while another job holds it. Without the explicit flag the old refusal stands, so
+    # a second job that guesses the flag's name still cannot widen its candidate set.
+    full = {"launch_block_granted": True, "block_cards": "0-7", "lane_card": None,
+            "granted_by": ["test_free_card fixture: world-8 full block"]}
+
+    # The broken world: the unfixed code returned 1 on an empty lane no matter what the
+    # post-exit caller did, which is the defect run_ddp.sh's "unscored" FATAL recorded.
+    rc_b, out_b, err_b = free_card(busy=[], wait=0, grant=full)
+    want(rc_b != 0 and out_b == "",
+         f"null lane WITHOUT --from-held-block still refuses (rc={rc_b}, out={out_b!r})")
+
+    # The fixed world: same grant, post-exit caller, every block card idle. FAILS on the
+    # broken version (it refused regardless of the flag).
+    rc_f, out_f, err_f = free_card(busy=[], grant=full, extra=["--from-held-block"])
+    want(rc_f == 0 and out_f in [str(i) for i in range(8)],
+         f"null lane + flag after rank exit yields one idle held-block card "
+         f"(rc={rc_f}, out={out_f!r})")
+    want("block" in err_f.lower(),
+         f"the note says the card comes from the held block (err={err_f[:120]!r})")
+
+    # The card must come from the GRANTED block, never by complement: with block "0-3", an
+    # idle card 4 outside the grant is not a candidate even though it is free.
+    block4 = {"launch_block_granted": True, "block_cards": "0-3", "lane_card": None,
+              "granted_by": ["test_free_card fixture: 4-card block"]}
+    rc_4, out_4, _ = free_card(busy=[], grant=block4, extra=["--from-held-block"])
+    want(rc_4 == 0 and out_4 in ["0", "1", "2", "3"],
+         f"the held-block card stays inside the granted block 0-3, no complementing "
+         f"(rc={rc_4}, out={out_4!r})")
+
+    # The measurement is the safety precondition: after the run ended other jobs took every
+    # card of its old 4-card block, so the scorer must queue, not take one of them.
+    rc_x, out_x, err_x = free_card(busy=["0", "1", "2", "3"], wait=0, grant=block4,
+                                   extra=["--from-held-block"])
+    want(rc_x != 0 and out_x == "",
+         f"when every held-block card is busy it refuses, not takes one (rc={rc_x}, out={out_x!r})")
+    want(not (set(out_x.split()) & {"0", "1", "2", "3"}), "no busy block card is named")
+    want("queue" in err_x.lower() or "busy" in err_x.lower(),
+         f"the refusal says queue/busy (err={err_x[:140]!r})")
+
+    # A named lane wins even with the flag: the flag only fills the lane_card: null case, it
+    # never widens a caller that already has a lane into the training block.
+    rc_l, out_l, _ = free_card(busy=[], grant=None, extra=["--from-held-block"])
+    want(rc_l == 0 and out_l == "4",
+         f"with a real lane the flag changes nothing -- lane card 4, not a block card "
+         f"(rc={rc_l}, out={out_l!r})")
+
+    # Flag or no flag, an explicit no-grant is a refusal, not an empty block to fall into.
+    rc_z, out_z, _ = free_card(
+        busy=[], wait=0,
+        grant={"launch_block_granted": False, "block_cards": "", "lane_card": "",
+               "granted_by": ["test_free_card fixture: no grant"]},
+        extra=["--from-held-block"])
+    want(rc_z != 0 and out_z == "",
+         f"flag under an explicit no-grant still refuses (rc={rc_z}, out={out_z!r})")
+
+    # run_ddp.sh actually opts into the post-exit path.
+    want("--from-held-block" in auto,
+         "run_ddp.sh's post-torchrun free-card call passes --from-held-block")
 
     if bad:
         print(f"\n{len(bad)} case(s) failed: {bad}")
