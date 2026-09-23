@@ -223,6 +223,28 @@ def commit_resolves(sha, root=None):
     return True, f"{base[:12]} resolves"
 
 
+def _display_status(status):
+    """The status cell as a READER should see it. Pure; never writes.
+
+    `error` was one word for two opposite things and is retired from the writers as of
+    2026-09-20. The 10 rows already carrying it cannot be corrected -- experiments.jsonl is
+    append-only (`ledger_audit.WRITE_STYLE`) and its `subsume` predicate refuses a changed
+    non-empty field, measured at 6 regressions -- so they are annotated HERE instead. Reading
+    is the right layer: a rendering is a pure function of the ledger, and adding information
+    on read touches no stored byte.
+
+    The annotation says the word is ambiguous and says where to look. It deliberately does
+    NOT try to split the 9 scoring-blocked rows from the 1 SIGTERM row: the status column is
+    byte-identical across all 10 and the only discriminator is prose, so a rule here would be
+    text-matching wearing a status's clothes -- and it would fail silently the day that prose
+    changes. A reader who needs the distinction is pointed at `result`, which is where it
+    actually lives.
+    """
+    if status == "error":
+        return "error (pre-2026-09-20, ambiguous — read result)"
+    return status
+
+
 def render():
     rs = sorted(rows(), key=lambda r: r.get("started", ""), reverse=True)
     n_ok = sum(1 for r in rs if r.get("status") == "ok")
@@ -238,6 +260,7 @@ def render():
     ]
     for r in rs:
         cells = [r.get(k, "") or "" for k in ("started", "name", "status", "result", "notes", "commit")]
+        cells[2] = _display_status(cells[2])
         lines.append("| " + " | ".join(str(c).replace("|", "\\|").replace("\n", " ") for c in cells) + " |")
     lines += ["", "## What each run taught us", ""]
     for r in rs:

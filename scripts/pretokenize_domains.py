@@ -155,7 +155,7 @@ def main():
             )
             del data
             continue
-        seqs = train._domain_seqs(d, tok, True, False, workers=a.workers)
+        seqs = train._domain_seqs(d, tok, True, False, workers=a.workers, allow_build=True)
         dt = time.time() - t
         rows = len(seqs)
         path = train._domain_cache_path(d)

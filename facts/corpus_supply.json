@@ -1834,41 +1834,385 @@
    "tokens_status": "measured",
    "guard_phrases": [],
    "retracted_value": []
+  },
+  {
+   "id": "cs.gate_domains_dc_packed_0911",
+   "value": {
+    "code_ultra_l2_dc": 15340876449,
+    "code_ultra_l3_noexec_dc": 26697332099,
+    "code_py_starcoder_dc": 7948925654,
+    "math_owm_stage2_dc": 5857969755,
+    "en_c4_stage2_dc": 1985211248,
+    "cot_dc": 399994717,
+    "total_packed_tokens": 58230309922
+   },
+   "measured": "2026-09-11",
+   "status": "measured",
+   "unit": "packed tokens (seq 4096 rows) of the 13-gram-decontaminated _dc gate caches, vocab f1f860970d15d623, epochs-scheduling row-aligned basis",
+   "config": {
+    "vocab_id": "f1f860970d15d623",
+    "basis": "measured_pool_tokens from data/mix_v41_gate.json domains[].epochs_pool_source: each a full-load torch load of tokens_<domain>.pt on the pod 2026-09-11 with .srcfp == build_corpus_stats fingerprint; row-aligned count is build_mix cap=len(pool)*epochs basis, post-decontamination",
+    "domain_set": "six gate domains surviving the 2026-09-16 pod loss; code_keep_p1_dc and code_py_rp1t_dc EXCLUDED (user ruling 2026-09-19: drop code_keep_p1_dc, rebalance within survivors; rp1t github source unreachable)",
+    "per_domain_fp": {
+     "code_ultra_l2_dc": "adf2ff20698dae8a",
+     "code_ultra_l3_noexec_dc": "63a3b0e64b97e589"
     },
- {
-  "id": "cs.gate_domains_dc_packed_0911",
-  "value": {
-   "code_ultra_l2_dc": 15340876449,
-   "code_ultra_l3_noexec_dc": 26697332099,
-   "code_py_starcoder_dc": 7948925654,
-   "math_owm_stage2_dc": 5857969755,
-   "en_c4_stage2_dc": 1985211248,
-   "cot_dc": 399994717,
-   "total_packed_tokens": 58230309922
-  },
-  "measured": "2026-09-11",
-  "status": "measured",
-  "unit": "packed tokens (seq 4096 rows) of the 13-gram-decontaminated _dc gate caches, vocab f1f860970d15d623, epochs-scheduling row-aligned basis",
-  "config": {
-   "vocab_id": "f1f860970d15d623",
-   "basis": "measured_pool_tokens from data/mix_v41_gate.json domains[].epochs_pool_source: each a full-load torch load of tokens_<domain>.pt on the pod 2026-09-11 with .srcfp == build_corpus_stats fingerprint; row-aligned count is build_mix cap=len(pool)*epochs basis, post-decontamination",
-   "domain_set": "six gate domains surviving the 2026-09-16 pod loss; code_keep_p1_dc and code_py_rp1t_dc EXCLUDED (user ruling 2026-09-19: drop code_keep_p1_dc, rebalance within survivors; rp1t github source unreachable)",
-   "per_domain_fp": {
-    "code_ultra_l2_dc": "adf2ff20698dae8a",
-    "code_ultra_l3_noexec_dc": "63a3b0e64b97e589"
+    "ultra_full_tensor_basis": "cs.gate_cache_ultra_l2_dc_0911 full-tensor 15,340,877,471 = 1,022-token trailing partial row above the 15,340,876,449 scheduling basis used here; L3 full tensor equals scheduling value. Same data, two bases.",
+    "dropped_domains_history": {
+     "ruling_date": "2026-09-19",
+     "code_keep_p1_dc": 2626977570,
+     "code_py_rp1t_dc": 379600071,
+     "note": "pre-drop measured_pool_tokens same basis; keep_p1 dropped by user order (labels+raw lost 0916, no fingerprint-preserving source), rp1t dropped with unreachable github source; together freed 0.04 eff weight / 1.2B target; held for rebalance audit, NOT in value/total"
+    },
+    "cot_status": "399,994,717 = the 09-11 measured packed _dc gate cache and is the basis of this value. 0e's faithful source rebuild was reported complete by the data lead on 2026-09-19 with a corpus FULL_TOKENS of 400,105,114 (+0.028%); that figure is not independently verified here and its basis (raw corpus total vs gate-vocab packed cache with .srcfp) is unconfirmed, so this packed value stays 399,994,717 until a rebuilt packed cache is produced and fingerprint-checked. An interim target_tokens=1e9 note was retracted by fb and is not a basis here"
    },
-   "ultra_full_tensor_basis": "cs.gate_cache_ultra_l2_dc_0911 full-tensor 15,340,877,471 = 1,022-token trailing partial row above the 15,340,876,449 scheduling basis used here; L3 full tensor equals scheduling value. Same data, two bases.",
-   "dropped_domains_history": {
-    "ruling_date": "2026-09-19",
-    "code_keep_p1_dc": 2626977570,
-    "code_py_rp1t_dc": 379600071,
-    "note": "pre-drop measured_pool_tokens same basis; keep_p1 dropped by user order (labels+raw lost 0916, no fingerprint-preserving source), rp1t dropped with unreachable github source; together freed 0.04 eff weight / 1.2B target; held for rebalance audit, NOT in value/total"
-   },
-   "cot_status": "399,994,717 = the 09-11 measured packed _dc gate cache and is the basis of this value. 0e's faithful source rebuild was reported complete by the data lead on 2026-09-19 with a corpus FULL_TOKENS of 400,105,114 (+0.028%); that figure is not independently verified here and its basis (raw corpus total vs gate-vocab packed cache with .srcfp) is unconfirmed, so this packed value stays 399,994,717 until a rebuilt packed cache is produced and fingerprint-checked. An interim target_tokens=1e9 note was retracted by fb and is not a basis here"
+   "source": "data/mix_v41_gate.json domains[].epochs_pool_source; facts/corpus_supply.json#cs.v41_gate_token_caches_rebuilt_f1f86097_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l2_dc_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l3_noexec_dc_0911",
+   "uncertainty": "starcoder/math/en/cot exact measured, post-dc vs pre-dc drop <=0.19%; ultra L2/L3 exact measured 09-11 aggregates (NOT estimates; supersede stale 59.9B/31.8B once printed in the mix _comment); L2 scheduling vs full-tensor differs by a 1,022-token trailing row; cot_dc source rebuild done but no fingerprint-checked rebuilt packed cache yet, so the packed figure stays the 09-11 399,994,717 and the +0.028% corpus-only report is unconfirmed-basis (see config.cot_status); recorded pod measurements not downgraded by the 0916 byte loss",
+   "boundary": "supply upper bound for the within-survivor rebalance only; recorded pod measurements, not a re-verification of destroyed bytes"
   },
-  "source": "data/mix_v41_gate.json domains[].epochs_pool_source; facts/corpus_supply.json#cs.v41_gate_token_caches_rebuilt_f1f86097_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l2_dc_0911; facts/corpus_supply.json#cs.gate_cache_ultra_l3_noexec_dc_0911",
-  "uncertainty": "starcoder/math/en/cot exact measured, post-dc vs pre-dc drop <=0.19%; ultra L2/L3 exact measured 09-11 aggregates (NOT estimates; supersede stale 59.9B/31.8B once printed in the mix _comment); L2 scheduling vs full-tensor differs by a 1,022-token trailing row; cot_dc source rebuild done but no fingerprint-checked rebuilt packed cache yet, so the packed figure stays the 09-11 399,994,717 and the +0.028% corpus-only report is unconfirmed-basis (see config.cot_status); recorded pod measurements not downgraded by the 0916 byte loss",
-  "boundary": "supply upper bound for the within-survivor rebalance only; recorded pod measurements, not a re-verification of destroyed bytes"
- }
+  {
+   "id": "cs.gate_rebuild_m4_checklist_state_0921",
+   "value": "M4 (launch-ready checklist) independent items, measured on the live pod 2026-09-21 while the six gate domains are still absent. [1] PASS: all 8 GPUs report 0 MiB used; runs/card_assignment.json present on the pod. [2] PARTIAL/BLOCKED: data/mix_v41_gate.json present on the pod (total_tokens 3.0e10, 6 domains); data/tokenizer.json present and its vocab_fingerprint is f1f860970d15d623 (32768 get_vocab() slots, <eos>=1, [NUM]=32767) -- but 0 of 6 domains have a pretokenized cache, and 0 of 6 have corpus shards. [3] RESOLVED: de-108 closed as delivered (94f8127a); amendment 6 adopted --csa2_win_flash (de-109) into the launcher, which supersedes it. [4] controller decision, not measured here. [5] RESOLVED: amendment 1 rules warmup 500 / warmdown 0.65 / anneal_frac 0.10, matching runs/v41_gate_0911.sh:29. NET: 3 of 5 items green, item 2 is the only blocker and it is exactly the six-domain data funnel. [PARAM GATE] train.py --build_only with the exact runs/v41_gate_0911.sh flag line prints total 3,209,392,128 / active 342,847,488, matching the M4 acceptance criterion to the digit. Measured on the live pod 2026-09-21.",
+   "unit": "checklist items",
+   "measured": "2026-09-21",
+   "source": "~/bin/pod on the live pod: nvidia-smi --query-gpu=index,memory.used; ls data/tokenizer.json data/mix_v41_gate.json; python3 -c 'from tokenizers import Tokenizer; from loader import vocab_fingerprint'; python3 train.py <runs/v41_gate_0911.sh flags> --build_only on the pod (prints a JSON line)",
+   "config": {
+    "host": "sglang-test pod, container 8bc9f22978b7",
+    "tree": "/work/aupai",
+    "vocab_expected": "f1f860970d15d623",
+    "checklist_src": "runs/prereg.jsonl#v41_gate_0911 launch_checklist",
+    "gpu_count": 8,
+    "param_gate": "total 3,209,392,128 / active 342,847,488, flags exactly as runs/v41_gate_0911.sh:28-31"
+   },
+   "uncertainty": "Item [2] is stated as PARTIAL because the cache half is 0/6 and the mix half passes; the mix's own domain weights were not re-checked against facts/corpus_supply.json#cs.gate_domains_dc_packed_0911 in this pass. Item [4] is a controller decision and is not measured by this fact at all.",
+   "status": "measured",
+   "boundary": "Says nothing about whether the six domains can be rebuilt (see cs.gate_domains_dc_packed_0911 for the 58.23B supply) and nothing about the pod's ability to receive the c4 raw bytes -- that transfer has no usable route in either direction as of the same date. A green item here is a property of the pod at one instant, not of the funnel."
+  },
+  {
+   "id": "cs.c4_transfer_route_0921",
+   "value": "The 32 surviving rp1t_c4 raw files (25.197 GiB, 27,055,283,205 B; 32 is the *.jsonl count -- the directory holds 34 ENTRIES, the extra two being fetch_stats.json and fetch_stats.log, and counting entries reads as two missing shards) can reach the pod container over a two-hop route, sha-verified at each hop. HOP 1 digest -> laptop measured 10-12.8 MiB/s; HOP 2 laptop -> pod host (tn write, stdin + atomic rename) measured 0.44-0.65 MiB/s single-stream and is the bottleneck. TWO CONSTRAINTS found by direct measurement after this fact's first version: (1) a tn write stream is killed 300 s after it starts, at any speed -- a single 250 MiB stream died at exactly elapsed=300s with 'held connection: no response for 5m0s', having landed 172,163,072 B = 164.2 MiB (0.547 MiB/s that run). The byte ceiling is rate x 300 s and is NOT a constant, so chunks must be cut by seconds (240 s budget), not by a byte figure from an earlier run. (2) tn write FAILS OPEN: after that death the host held the final name with no .tn-tmp leftover, containing the 164.2 MiB truncated fragment whose first 1 MB sha matched the source -- a file that exists, is non-empty, is a true prefix, and has the wrong length, with rc=1 as the only external signal. Every chunk must therefore be sha-verified immediately after writing, and the final whole-shard sha is the last line of defence. The 3.8x parallel figure (four 8 MiB writes, 12 s, 2.46 MiB/s aggregate) is PROBE-INTERVAL ONLY and does not transfer to real payloads. Route: digest -> laptop -> tn write /data00/aupai_work/<dst> -> container /work/<dst>. tn push (sftp) fails with SSH_FX_FAILURE on every destination AND exits 0, so rc is not the signal; tn write is the working verb. EXECUTED END TO END 2026-09-21: the first shard arrived byte-correct -- 846,322,946 B with sha256 892ba06863950befeb936da3e4485f3c323ee860b6f05fc853f28989cd6458ac identical to the digest source, after 11 chunks (10 x 83,886,080 B + a 7,462,146 B tail) went through chunk -> host -> container -> concatenate -> sha. The route is no longer only described.",
+   "unit": "MiB/s and bytes",
+   "measured": "2026-09-21",
+   "source": "measured on the laptop 2026-09-21: ssh digest 'dd if=<c4 file> bs=1M count=64 | sha256sum' vs local shasum vs ~/bin/pod 'sha256sum /work/...'; timing by date +%s around each hop",
+   "config": {
+    "src": "digest /data00/home/chenkailun.c/aupai-cimap/wt-3b/data/raw/rp1t_c4 (32 *.jsonl, 25.197 GiB = 27,055,283,205 B; 34 directory entries)",
+    "dst_host": "/data00/aupai_work/aupai_c4",
+    "dst_container": "/work/aupai_c4",
+    "tn_host": "arle",
+    "hop2_verb": "tn write",
+    "sha_verified": "8 MiB slice bf85ed57530d05ca..., 64 MiB file 06395e5d0d442696..., both identical digest -> laptop -> container",
+    "doc": "docs/standards/c4_transfer_route_0921.md"
+   },
+   "uncertainty": "The 300 s figure is one measured death at exactly elapsed=300s for a single 250 MiB stream, plus four concurrent streams that each died at ~196 MB; the window's precise value and whether it is configurable were not read from tn's source. Whether the truncated-rename behaviour is universal or specific to this daemon's death path was not tested beyond this one case. The 3.8x parallel figure is probe-interval only. No total is given: an earlier version carried an 11.9 h / 3 h pair, both extrapolations from the wrong interval.",
+   "status": "measured",
+   "boundary": "The route moves bytes only; it says nothing about build, decontamination or tokenisation. It does not establish that digest->pod exists for any OTHER dataset. One shard has completed the full chunked path, and that shard was DELETED after its final whole-shard sha verified, so it is absent from both the pod and the host -- do not go looking for it as evidence. the parallel throughput for real payloads remains unmeasured (the 3.8x figure is probe-interval only), so the batch's total time is still an open quantity rather than an estimate."
+  },
+  {
+   "id": "cs.hf_finemath_4plus_two_copies_0920",
+   "value": "hf_finemath_4plus fetched twice on 2026-09-20, once to digest and once to the pod. Pod: 64/64 shards, FETCH_RC=0, no shard abandoned (giving_up=0); 4 of 64 shards (6.3%) hit a failure and recovered (attempt 1 x4, attempt 2 x1); hf-mirror.com served all 64, so the failover chain to huggingface.co never fired. Digest: 64/64, 3.1% (2 rc-18 events, 3 shards then served by huggingface.co). The two copies are byte-identical: sha256sum -c of the digest list against the pod directory returned 64 OK / 0 FAILED, and parquet bytes match exactly (18,365,184,633 both; the 13,132 B directory difference is fetch_stats.json 7,244 + fetch_stats.log 5,888). Pod wall clock 101.6 min for 64 shards = 95.2 s/shard. THE RATE IS AN OPTIMISTIC MEAN AND MUST NOT BE EXTRAPOLATED: it is pulled down by early fast shards while the sequence degrades monotonically (0056 took 581 s against a 22-46 s early baseline; 0057 was slower still). Extrapolating the ~287 GB L2/L3 set at 95.2 s gives ~26 h, which is a FLOOR, not an estimate. THE SHARD COUNT IN THAT SET IS 266 (L2 119 + L3 147, datagen/fetch_ultradata.py:15), at a mean 1.074 GB each -- measured from the HF tree API, 287,145,174,803 B total. An earlier revision of this entry said 1003 shards, which applied THIS source's 286 MB shard template to UltraData; the byte total still matched, so the error hid. The time projection is unchanged by the correction (the extrapolation is by bytes), but the shard count is not.",
+   "unit": "shards; seconds per shard; bytes",
+   "measured": "2026-09-20",
+   "source": "digest /data00/home/chenkailun.c/aupai-cimap/wt-0e-cot/data/raw/hf_finemath_4plus, re-hashed 2026-09-20 with `sha256sum *.parquet` (rc=0, 64 lines; the list is carried as data/raw/hf_finemath_4plus_sha256_manifest.txt in its own PR, not cited here because a source path must resolve on the tree that holds this fact) verified against the pod at /work/aupai/data/raw/hf_finemath_4plus by `sha256sum -c <that list>` (64 OK / 0 FAILED); pod fetch log /work/aupai/runs/fm_fetch_pod.log (ends FETCH_RC=0); pod fetch_stats.json + fetch_stats.log; per-shard wall clock from .parquet mtimes (fetch_corpus.py:1171 os.rename makes that mtime the completion instant).",
+   "config": {
+    "source": "huggingface.co/datasets/HuggingFaceTB/finemath, refs/convert/parquet/finemath-4plus/train",
+    "target_bytes": 18365184633,
+    "shards": 64,
+    "fetch_tool": "datagen/fetch_corpus.py --source hf_finemath_4plus",
+    "digest_host": "n37-112-238, /data00, 55G free at start",
+    "pod_host": "sglang-test container, /work, 2.7T free",
+    "proxy": "sys-proxy-rd-relay:8118 (set on digest; pod path uses the container egress)",
+    "mode": "SINGLE STREAM -- ranged chunking never engaged on either host, see boundary",
+    "pod_artifacts_not_in_git": "ran on the pod (not a git repo): the fetch log /work/aupai/runs/fm_fetch_pod.log, fetch_stats.json/.log and the .parquet bytes live only on the pod hostPath under /work/aupai. The fact gate cannot open them, so they are described here rather than cited as source paths; the code that produced the bytes is in the tree."
+   },
+   "uncertainty": "Two separate 6.3% and 3.1% rates measure different failure modes and must not be pooled: digest failures were rc-18 followed by a successful host failover, pod failures were both hosts returning status None in the same instant, recovered by retrying the SAME host with -C - resume. Neither log carries timestamps or an attempts field, so the failure times are reconstructed from .parquet mtimes, which are post-rename and therefore exact completion instants but tell nothing about when a shard STARTED. The 6.3%/3.1% are per-shard ever-failed rates, not per-attempt rates: a shard that failed twice and succeeded counts once. PROXY: the two hosts were not tested under identical egress. On digest the fetch ran with http_proxy/https_proxy=sys-proxy-rd-relay:8118; on the pod that hostname does NOT resolve (measured 2026-09-20: socket.gethostbyname raises gaierror -2 \"Name or service not known\"), so the pod path is direct egress and the container has no proxy to fall back to. This is a second, independent reason the two paths cannot be compared and their rates cannot be pooled, alongside the different failure modes.",
+   "boundary": "Answers \"are the digest and pod copies the same bytes\" (yes, sha256 per shard) and \"what did each fetch cost\" (101.6 min / 64 shards on the pod). Does NOT give a time estimate for the ~287G UltraData L2/L3 fetch: the rate is single-stream because ranged chunking is disabled by a missing -L (fetch_corpus.py:368 runs `curl -4 -sI` and so reads the length of the 302 redirect BODY (1020 B) as the object size, which is below the 64 MB floor -- measured; the real object is 286,267,316 B). With ranged working the transfer would be chunked-parallel, and per the note at :355 the achievable rate varies 177x between two connections on the same host in the same second, so no multiplier is derivable. The slow regime is also not attributable: it is not caused by failure (shard 0056 succeeded first try in 581 s) and not by connection age (a brand-new connection to 0057 ran at 259 KB/s, slower than 0056). Do not cite 95.2 s/shard as a planning input until per-shard timing is recorded and a small-scale run is measured. THE RATE IS ALSO NOT TRANSFERABLE BETWEEN THESE TWO SOURCES, which is a stronger objection than the optimistic-mean one: a finemath shard is 286 MB and an UltraData shard is 1.074 GB, a factor of 3.75, so the two are not the same measurement. The 64 MB floor at `fetch_corpus.py:389` tests the OBJECT's content-length (size), and `per = size // chunks` is computed only after it -- the floor never sees a chunk. The probe is `curl -4 -sIL` (:373), following redirects so the ranged-capability headers are read off the FINAL response rather than the 302 -- before #608 (669ae632, 2026-09-21) it was a bare -sI, which read no length and no ranges and wrongly judged every redirecting source unable to serve ranges, forcing it onto the throttled single stream (fetch_corpus.py:368-372 records that). With the probe fixed both objects clear the floor: finemath 286,267,316 B = 273 MiB, UltraData 1.074 GB. What a working -L buys is therefore larger per-shard parallelism on UltraData -- a statement about the parallelism available, not a claim about which source passes the floor. An earlier revision of this entry argued the opposite (that finemath failed the floor on this host), which was read off a copy of fetch_corpus.py predating #608; the floor was never the reason, the missing -L was. The 26 h figure above is therefore not evidence about UltraData: it is this source's rate applied to another source's byte total. The \"1018 B\" and \"1020 B\" figures that circulate for this source are both the length of the 302 redirect BODY, and the body length varies per shard because the signed redirect token does (measured 2026-09-20 with the -sI form: 0000 -> 1020, 0002 -> 1018, 0063 -> 1020); the same three shards under -sIL report 286,267,316 / 287,634,720 / 289,240,443 B. So 1018 and 1020 are not conflicting measurements, they are the same artifact on different URLs -- and neither is the object size.",
+   "status": "measured"
+  },
+  {
+   "id": "cs.gate_rebuild_disk_projection_0921",
+   "value": "Six-domain gate rebuild adds about 330 GB to /data00: 211 GB of raw parquet still inbound (UltraData L2 remaining 54 GB over 54 shards + L3 full 157 GB over 147 shards, at the measured 1.07 GB mean shard; rp1t_c4 ~27 GB over the remaining 30 of 34) plus about 120 GB of packed token cache for the gate mix's 30B-token budget at 4.000 bytes/token. /data00 read 3.5T total / 737G used / 2.6T free (23%) at the same reading. Peak depends on --release_intermediates: with it the peak is the ~330 GB above, without it the raw parquets are retained alongside the built shards and the caches, which is a ~700 GB order of magnitude. Current headroom covers either, so the binding constraint is not today's total but the peak the recipe chooses.",
+   "measured": "2026-09-21",
+   "status": "recorded",
+   "unit": "GB added to /data00",
+   "config": {
+    "bytes_per_token": {
+     "value": 4.0,
+     "source_file": "/data00/tokens_code.pt",
+     "file_bytes": 230279173,
+     "elements": 57569402,
+     "dtype": "torch.int32",
+     "elem_size": 4,
+     "note": "no per-cache header; the dtype fixes the unit, so the 30B-token gate mix gives ~120 GB by multiplication"
+    },
+    "raw_inbound_gb": {
+     "total": 211,
+     "l2_remaining": {
+      "shards": 54,
+      "gb": 54,
+      "from": "N_SHARDS L2=119 (datagen/ultradata_shards.py:34) minus 69 on disk"
+     },
+     "l3_total": {
+      "shards": 147,
+      "gb": 157,
+      "from": "N_SHARDS L3=147"
+     },
+     "rp1t_c4": {
+      "shards": 30,
+      "gb": 27,
+      "from": "30 of 34 still to move"
+     },
+     "mean_shard_gb": 1.07,
+     "mean_shard_from": "mean over the 69 UltraData L2 parquet on disk 2026-09-21"
+    },
+    "packed_cache_gb": 120,
+    "gate_mix_total_tokens": 30000000000.0,
+    "df_at_reading": {
+     "fs": "/data00",
+     "total": "3.5T",
+     "used": "737G",
+     "free": "2.6T",
+     "pct": 23
+    },
+    "peak_switch": "--release_intermediates: peak ~330 GB with it, ~700 GB order of magnitude without it (raw retained alongside built shards and caches)"
+   },
+   "source": "python3 -c torch.load('/data00/tokens_code.pt'); du -sh data/raw/*; df -h /data00; ls data/raw/ultradata/*.parquet | wc -l",
+   "uncertainty": "The multiplication is exact for the cache (dtype fixes bytes/token, so 30B -> 120 GB has no extrapolation in it). The raw term is a projection from a 69-shard mean across a corpus whose shards are visibly uniform (1.07 GB, tight); the c4 27 GB term is the same mean times 30 remaining shards and c4 is a different corpus. Peak-without-release is stated as an order of magnitude, not a number, because the built shard size is not yet measured for any of the six domains.",
+   "boundary": "This is a projection from two measured inputs, not a reading of a state that exists - of the six _dc domains, zero are built, so the +120 GB cache term and the built-shard term are both still ahead. It says nothing about whether 2.6 TB is enough for any other line (math_owm_stage2 was 64 GB and rising; other worktrees share /data00). It does not model inode pressure, page cache, or any filesystem other than /data00. Verify raw retention empirically on the first aggregate run rather than against the help text: the code path is that aggregate() never references the raw parquet directory at all - every os.remove in it targets a file under out/fout (tagged_p, cf, xdrop_p) - so --release_intermediates cannot reach raw, but that was established by reading the function, not by observing a run."
+  },
+  {
+   "id": "cs.code_ultra_l2_dc_rebuilt_0921",
+   "value": 36161205782,
+   "unit": "kept_tokens (sum of per-doc exact tokenizer ids + one <eos> per doc), post decontam + global exact dedup, of the rebuilt code_ultra_l2_dc domain on the pod",
+   "measured": "2026-09-21",
+   "status": "measured",
+   "config": {
+    "domain_stamp": "code_ultra_l2_dc",
+    "intermediate_domain": "code_ultra_l2",
+    "final_shard_prefix": "code_ultra_l2_ (taken from --out basename, NOT --final-out)",
+    "n_final_shards": 1304,
+    "kept_rows": 39018564,
+    "total_input_rows": 72844227,
+    "decontam_fp": "302aa793f7067462",
+    "vocab": "data/tokenizer.json (gate vocab f1f860970d15d623)",
+    "raw": "119 UltraData-Code-L2 parquet, 119.04 GiB, retained (aggregate never references the raw dir)",
+    "build": "30 parallel groups (29x4 + 1x3 shards) via datagen/ultradata_shards.py --level L2, each row-conservation gated (bucket sum == total_rows == parquet num_rows), then --aggregate 'stats_g*.json' --agg-workers 20",
+    "wall_clock": "group convert 82 min + aggregate 122 min (global crossdup pass wrote a 29.4 GB intermediate, final global hash ran ~129 cores)",
+    "non_reentrant": "aggregate() ends with an UNCONDITIONAL `for shard in tagged: os.remove(shard)` loop (datagen/ultradata_shards.py, independent of --release-intermediates; that flag only also removes .clean/.ngdrop). The tagged input jsonl are therefore gone after one aggregate, so the aggregate cannot be re-run as-is. The ONLY way to rebuild without re-fetching is to keep the 30 stats_g*.json together with the 119 raw parquet and reconvert. Do not delete data/corpus/code_ultra_l2/stats_g*.json.",
+    "open_mechanical_protection": "The retention rule above is text and only binds a reader; the stats files are git-ignored corpus bytes that exist only on the pod, so an in-repo harness existence assertion cannot cover them (CI never sees pod data/). Real enforcement, if wanted, must be a pod-side gate run before any corpus cleanup, asserting stats_g*.json count == 30 next to the 119 raw. Not built; recorded as open 2026-09-21 (bc)."
+   },
+   "source": "pod build_corpus_stats.json in data/corpus/code_ultra_l2_dc (git-ignored corpus bytes, not in this tree; domain/kept_tokens/decontam_fp read there 2026-09-21); conversion driver datagen/ultradata_shards.py; driver script /work/aupai/l2_full_build30.sh; group logs /work/aupai/runs/ultra_groups/l2_g*.log on the pod hostPath",
+   "uncertainty": "kept_tokens is the full-document tokenizer count stamped by the aggregate, not the 4096-row packed cache count (cs.gate_domains_dc_packed_0911 lists the 09-11 L2 packed basis as 15,340,876,449 - a different unit, not a disagreement; no packed tokens_code_ultra_l2_dc.pt exists yet). Exact for this build; a different raw set or filter would change it.",
+   "boundary": "Measures one rebuilt domain on the pod. Says nothing about L3 (larger shards, its own aggregate timing not extrapolated from this) and does not produce the gate token cache, which still needs pretokenize_domains."
+  },
+  {
+   "id": "cs.mix_inline_fingerprint_stale_0921",
+   "value": "The per-domain `fingerprint` field written inline in data/mix_v41_gate.json matches the live bytes of ZERO of the 3 of its 6 domains that could be compared, measured 2026-09-21 on both machines. The remaining 3 (code_ultra_l2_dc, code_ultra_l3_noexec_dc, code_keep_p1_dc) had no directory on either machine at that reading, so NO comparison ran for them and none is claimed -- an absent domain is not a match, and folding it into the zero would make the denominator unreadable. The 3 comparable domains all mismatch: code_py_starcoder_dc mix=390a13a56b6472b3 stamp==live=e12700ddb174f1cb (digest, 282 shards); en_c4_stage2_dc mix=c59c2e4227d875ec stamp==live=3747ce42a1322a21 (digest, 243 jsonl); math_owm_stage2_dc mix=4b1469bfe4667706 stamp==live=6201b92bf4ca4e1c (pod, 333 shards). THE STALE FIELD DOES NOT BLOCK THE GATE LAUNCH, and the reason is a code fact rather than a judgement: train.py's `_assert_mix_domains` reads `data/corpus/<domain>/build_corpus_stats.json`'s own `fingerprint` and compares it to the live `fp_dir` -- it never reads the mix json's inline field. The reader that DOES consume the inline field is `gate_corpora` in scripts/launch_gate.py (`want = spec.get('fingerprint')` vs `got` read from build_corpus_stats.json), and that gate is explicitly WAIVED for v41_gate_0911 by runs/prereg.jsonl#v41_gate_0911 amendment_7 (66, 2026-09-11T09:33Z), whose GREEN definition is the enforcement path only: (1) pod_drift --check, (2) train.py _assert_mix_domains, (3) assert_caches_fresh, (4) --build_only shapes. gate_corpora is not in that list. TWO HAZARDS THE VALUE ALONE DOES NOT CARRY. (a) The waiver is one-off, and it has a NAMED EXIT: a domain whose inline value is brought level with its live bytes stops needing it, so as each of the six domains is rebuilt the inline field should be re-pinned to that domain's real value and the waiver's remaining scope written down again -- otherwise a temporary waiver becomes a permanent exemption by nobody's decision. The general fix is owned by 66 as a post-launch action: teach launch_gate.py to read build_corpus_stats.json fingerprints when the mix lacks inline fields, after which the inline field stops being load-bearing at all. Until that lands, a stale inline field is silently ignored rather than caught, so the field's apparent role as a guard is not real. (b) The field also CANNOT be repaired by re-pinning it to the current bytes once, because the bytes themselves are in motion: en_c4_stage2_dc is being rebuilt on the pod and its output can never equal the digest copy's fingerprint -- rule_fp differs (digest slice 74b34c96d67013ba, frozen 2026-09-18 under pre-#621 holdout.py, against the pod's current fe7d8f8f5a5f484f) and fp_dir hashes the holdout_slice_*.jsonl together with the shards, so the same corpus built by two code versions gives two fingerprints. Any repair lands a value that a rebuild invalidates.",
+   "unit": "16-hex fingerprints; domain counts",
+   "measured": "2026-09-21",
+   "source": "measured 2026-09-21 on the pod (container /work/aupai, via the pod wrapper) and on digest (/data00/home/chenkailun.c/aupai-cimap/wt-3b) with fp_dir from datagen/corpus_fingerprint.py against each dir's build_corpus_stats.json, plus json.load of data/mix_v41_gate.json; the code facts were read from the files, not inferred: the symbols train.py _assert_mix_domains and scripts/launch_gate.py gate_corpora, both read on origin/main; the waiver text is runs/prereg.jsonl#v41_gate_0911 amendment_7. Raise this entry when the mix is re-pinned or when launch_gate learns to read the stamps.",
+   "config": {
+    "mix": "data/mix_v41_gate.json",
+    "domains_in_mix": 6,
+    "domains_with_a_directory_on_either_machine": 3,
+    "domains_whose_inline_fingerprint_matches_live": 0,
+    "readers_of_the_inline_field": "scripts/launch_gate.py gate_corpora (WAIVED for v41_gate_0911); train.py _assert_mix_domains does NOT read it",
+    "gate_waiver": "runs/prereg.jsonl#v41_gate_0911 amendment_7, 2026-09-11T09:33Z by 66; owner of the one-off fix is 66",
+    "pod_dirs_present": "math_owm_stage2_dc (stamp==live 6201b92bf4ca4e1c, 333 shards); cot_dc (at this reading: 1 shard and NO stamp -- its 13 shards were moved digest->pod later the same day and all 13 landed at 18:34 local with the stamp restored last; at the moment of THIS reading the domain was unstamped by construction, because a stamp present over a partial shard set is the worse state: the assert that fires is the fingerprint MISMATCH at train.py rather than the accurate 'carries no build-time fingerprint')",
+    "digest_dirs_present": "code_py_starcoder_dc (stamp==live e12700ddb174f1cb); en_c4_stage2_dc (stamp==live 3747ce42a1322a21)",
+    "domains_that_could_be_compared": 3,
+    "domains_absent_not_compared": 3
+   },
+   "uncertainty": "The count of non-matching domains is exact for the two machines read here and is NOT a statement about any other tree: the mix values were read from the 8-domain revision still present on digest, while origin/main carries the 6-domain rebalance (#abfb6508) with the same fingerprint strings for the surviving domains, so the mismatch is not an artifact of the mix revision. Domains with no directory on either machine are recorded as absent rather than as matching or mismatching -- a comparison that did not run is not a comparison that passed. No value here is extrapolated: all three comparisons were computed with the production fp_dir, not by hand.",
+   "boundary": "Answers 'is the mix json's inline fingerprint a live guard' (no, for this mix: train.py does not read it and the gate that does is waived), and gives the measured mismatch for every domain that has bytes to compare. Does NOT say the corpora are wrong -- in all three comparable domains the dir's own stamp equals its live bytes, which is the invariant train.py enforces at launch. Does NOT date when each inline value went stale, and does NOT cover the two domains whose directories do not exist yet (code_ultra_l2_dc, code_ultra_l3_noexec_dc) or the two dropped by the 2026-09-19 rebalance. Does NOT establish that any other mix file carries stale inline fields; mix_v41_r2/r3 and the older ladder mixes were not read.",
+   "status": "measured"
+  },
+  {
+   "id": "cs.en_c4_stage2_dc_landed_0921",
+   "value": "5,783,727,841 exact document tokens in the rebuilt en_c4_stage2_dc domain (242 shards, 11,309,604 docs), counted full-population by scripts/count_dir.py under the train.py convention (per-doc len(encode(content).ids) + 1 <eos>). The SOURCE domain's stamp value is 5,779,033,864 and is EXTRAPOLATED, not measured (tokens_status='extrapolated: 3/242-shard sample, by bytes'); the same stamp separately carries kept_tokens=16,338,485,650, which is a chars/1.5 estimate and is 2.82x this measured value, so quoting it would overstate the domain by nearly 3x. The _dc domain is a SUBSET of its source (decontam dropped 18 of 11,309,622 rows, 1.59e-06), so the subset's measured 5,783,727,841 bounds the parent's true value from below and the source's extrapolation understates it by at least 4,693,977 tokens (0.0812%). THAT PERCENTAGE IS THE POINT OF THIS ENTRY: the same 3-of-242 by-bytes extrapolation, applied by the same builder, understates code by 0.41% (cs.code_py_starcoder_dc_landed_0921) and English web text by 0.0812% here -- a five-fold spread between two domains of one corpus, from one estimator. 'Extrapolation is not measurement' is therefore not a uniform correction that can be applied once; its size is a property of the domain's byte-to-token ratio, so a value carried across domains is a different fact (see the threshold-comparability rule: a threshold's comparability is set by the set it acts on, not by its name).",
+   "unit": "exact new-vocab document tokens (per-doc len(encode(content).ids)+1), post 13-gram decontam vs HumanEval+MBPP",
+   "measured": "2026-09-21",
+   "source": "pod container /work/aupai, 2026-09-21: scripts/count_dir.py data/corpus/en_c4_stage2_dc 24 -> /work/aupai/runs/count_en_c4_stage2_dc.json (242 shards, docs 11,309,604, bytes 25,323,227,281, tokens 5,783,727,841, packed_rows 1,411,698, fingerprint 15caa8587b64e20f, wall_s 212.7, full population, no sampling). The _dc stamp is data/corpus/en_c4_stage2_dc/build_corpus_stats.json (scripts/filter_gate_domains.py, 13-token containment against the two benchmark files it names in its own HUMANEVAL_REL / MBPP_REL constants; the byte content of those two files is carried as data by decontam_fp 302aa793f7067462, which hashes the decontam module together with them, so this entry cites no data/eval artifact and depends on none). The source stamp is data/corpus/en_c4_stage2/build_corpus_stats.json (datagen/build_corpus.py --source jsonl:data/raw/rp1t_c4/*.jsonl --filters light). All fingerprints were checked against a live fp_dir recompute on the pod, not inferred; train.py._assert_mix_domains(['en_c4_stage2_dc'], data/corpus) was run there and returned {'en_c4_stage2_dc': '15caa8587b64e20f'}.",
+   "config": {
+    "domain": "en_c4_stage2_dc",
+    "source_domain": "en_c4_stage2",
+    "source_dataset": "RedPajama-1T c4, the 32 surviving data/raw/rp1t_c4/*.jsonl (26 G) -- the source cannot be re-fetched: data.together.xyz 403s and no HF mirror exists for RedPajama-1T c4",
+    "decontam": "scripts/filter_gate_domains.py N=13 word-token containment; 17 of 242 shards rewritten, 225 hardlinked byte-for-byte",
+    "rows_scanned": 11309622,
+    "rows_dropped": 18,
+    "drop_fraction": 1.591565129232436e-06,
+    "docs_after": 11309604,
+    "n_shards": 242,
+    "bytes": 25323227281,
+    "packed_rows": 1411698,
+    "fingerprint": "15caa8587b64e20f",
+    "source_fingerprint": "7552cc88e1c25062",
+    "decontam_fp": "302aa793f7067462",
+    "vocab": "f1f860970d15d623",
+    "counter": "scripts/count_dir.py (count_docs from scripts/count_tokens.py), full population, 24 workers",
+    "convention": "ids + one <eos> per document (train.py encode)",
+    "gate_weight_share": "mix w=0.045 main / 0.04 anneal of 30B; the smallest-weight surviving domain",
+    "source_stamp_values": "tokens 5,779,033,864 (extrapolated 3/242 by bytes) and kept_tokens 16,338,485,650 (chars/1.5 estimate). NEITHER is this entry's value; the measured count is 5,783,727,841. The _dc stamp itself carries no token field at all (count_dir reports stamp_delta_note: build_corpus_stats.json carries no integer tokens/kept_tokens), which is the shape of every domain filtered by scripts/filter_gate_domains.py -- see cs.code_py_starcoder_dc_landed_0921.",
+    "hardlink_safety_verified": "225 of 242 output shards are hardlinks to source shards and 17 are rewrites, and the rewrite did NOT write through a link: sampled en_c4_005.jsonl has dc_size 104,825,720 against src_size 104,857,751 (different bytes) and dc_nthlink=1 (an independent file), so no source inode was truncated. This is the property that makes 'hardlink the clean shards' safe here, and it is a measurement rather than an assumption about the code path.",
+    "launch_guard": "train.py._assert_mix_domains(['en_c4_stage2_dc'], data/corpus) returned {'en_c4_stage2_dc': '15caa8587b64e20f'} on the pod. The mix json's INLINE fingerprint for this domain is c59c2e4227d875ec and does NOT match; that field is not the launch guard -- see cs.mix_inline_fingerprint_stale_0921, where this domain was recorded as ABSENT and is now comparable.",
+    "decontam_pair_evidence": "decontam_fp 302aa793f7067462 is identical to cs.code_py_starcoder_dc_landed_0921's and to cot_dc's, so all three domains were filtered against one decontam baseline; the drop rates differ by two orders of magnitude (18 rows here, 1,518 in starcoder) and the difference therefore comes from the domains' own content, not from different procedures."
+   },
+   "uncertainty": "The token count is exact for the pod's _dc dir, full population, no sampling. The 0.0812% figure is exact arithmetic between two measured values and is a LOWER bound on the source stamp's error, since the extrapolation could be worse than its own estimate. It is also specific to this domain's byte-to-token ratio and must not be reused for another domain -- the comparison against starcoder's 0.41% is what makes that visible rather than implied.",
+   "boundary": "Answers 'how many gate-vocabulary tokens does the rebuilt en_c4_stage2_dc domain hold'. Does NOT cover the token CACHE: no tokens_en_c4_stage2_dc.pt exists on the pod at this reading, so this is a corpus-side count and not a pool the trainer can draw from. Does NOT cover the source domain's true token count, only that it is at least this entry's value. Does NOT establish that the digest copy of this domain would count the same (it was built by an earlier holdout.py and its fp_dir cannot converge). Does NOT cover the 17 rewritten shards' individual drop counts.",
+   "status": "measured",
+   "tokens_status": "measured"
+  },
+  {
+   "id": "cs.code_py_starcoder_dc_landed_0921",
+   "value": "7,948,956,977 exact document tokens in the rebuilt _dc domain (data/corpus/code_py_starcoder_dc, 283 shards, 6,178,656 docs), counted full-population by scripts/count_dir.py under the train.py convention (per-doc len(encode(content).ids) + 1 <eos>). The SOURCE domain's stamp value is 7,916,417,537 and is EXTRAPOLATED, not measured: build_corpus_stats.json records tokens_status='extrapolated: 3/283-shard sample, by bytes'. The two are not two readings of one quantity and must not be compared as such: the _dc domain is a SUBSET of the source (decontam dropped 1,518 of 6,180,174 rows, 0.0246%), so the subset's measured 7,948,956,977 bounds the parent's TRUE value from below and the source's extrapolation understates it by at least 32,539,440 tokens (0.41%). That is the measured size of the 'extrapolation is not measurement' error for this domain, not an estimate of it. The gate mix's own epochs_pool field records measured_pool_tokens=7,948,925,654, which differs from this count by 31,323 tokens (0.0004%). THAT GAP IS NOT A ROUNDING ARTIFACT OF THE ROW ALIGNMENT, and the decomposition is exact: 7,948,925,654 is 1,940,182 x 4,097 with no remainder, so the mix value is a whole number of packed rows -- 7 fewer rows than this stream's 1,940,189. Of the 31,323 difference, 28,679 (7 x 4,097) is those 7 rows and 2,644 is the trailing partial row. So the mix value was taken on a pool that differs from the current build by 7 rows and is NOT a second reading of this stream; an earlier revision of this entry explained the whole 31,323 as row-alignment truncation, which accounts for 2,644 of it and attributes the rest to the wrong cause.",
+   "unit": "exact new-vocab document tokens (per-doc len(encode(content).ids)+1), post 13-gram decontam vs HumanEval+MBPP",
+   "measured": "2026-09-21",
+   "source": "pod container /work/aupai, 2026-09-21, read in the container (not from a host view): /work/aupai/runs/count_code_py_starcoder_dc.json, the output of `scripts/count_dir.py data/corpus/code_py_starcoder_dc 24` -- 283 shards, docs 6,178,656, bytes 29,565,823,573, tokens 7,948,956,977, fingerprint 117f8fcbbefef881, wall_s 263.6, full population, no sampling. The _dc stamp is data/corpus/code_py_starcoder_dc/build_corpus_stats.json (written by scripts/filter_gate_domains.py, 13-token containment against the two benchmark files it names in its own HUMANEVAL_REL / MBPP_REL constants; the byte content of those two files is carried as data by decontam_fp 302aa793f7067462, which hashes the decontam module together with them, so this entry cites no data/eval artifact and depends on none). The source stamp is data/corpus/code_py_starcoder/build_corpus_stats.json (datagen/build_starcoder_py.py). The epoch-pool figure is data/mix_v41_gate.json domains[code_py_starcoder_dc].epochs_pool_source. All three fingerprints were checked against a live fp_dir recompute on the pod, not inferred; train.py._assert_mix_domains(['code_py_starcoder_dc'], data/corpus) was run there and returned {'code_py_starcoder_dc': '117f8fcbbefef881'}.",
+   "config": {
+    "domain": "code_py_starcoder_dc",
+    "source_domain": "code_py_starcoder",
+    "source_dataset": "bigcode/starcoderdata python, 59 train-*.parquet, ast.parse as language ID and syntax filter (datagen/build_starcoder_py.py)",
+    "decontam": "scripts/filter_gate_domains.py, N=13 word-token containment vs HumanEval+MBPP; 280 of 283 shards rewritten, 3 hardlinked byte-for-byte",
+    "rows_scanned": 6180174,
+    "rows_dropped": 1518,
+    "drop_fraction": 0.00024562415232969167,
+    "docs_after": 6178656,
+    "n_shards": 283,
+    "bytes": 29565823573,
+    "packed_rows": 1940189,
+    "fingerprint": "117f8fcbbefef881",
+    "source_fingerprint": "81b7d89527adafba",
+    "decontam_fp": "302aa793f7067462",
+    "vocab": "f1f860970d15d623",
+    "counter": "scripts/count_dir.py (count_docs from scripts/count_tokens.py), full population, 24 workers",
+    "convention": "ids + one <eos> per document (train.py encode)",
+    "gate_weight_share": "mix w=0.073415 main / annealing w=0.052667 of 30B, read from data/mix_v41_gate.json on origin/main at 2026-09-21 (commit abfb6508 rebalanced the six surviving domains on 2026-09-20; an earlier revision of this entry carried 0.07/0.05, the pre-rebalance values). The weight is cited with its source and as-of rather than as a bare number, because the file it comes from changes and a bare number cannot be told from a current one.",
+    "launch_guard": "train.py._assert_mix_domains(['code_py_starcoder_dc'], data/corpus) returned {'code_py_starcoder_dc': '117f8fcbbefef881'} on the pod, i.e. the dir's own stamp equals its live bytes -- the invariant the launch enforces. The mix json's INLINE fingerprint for this domain is 390a13a56b6472b3 and does NOT match; see cs.mix_inline_fingerprint_stale_0921 for why that field is not the launch guard.",
+    "two_machines": "pod /work/aupai: 283 shards, 6,180,174 scanned rows, fingerprint 117f8fcbbefef881 (this entry). digest /data00/home/chenkailun.c/aupai-cimap/wt-3b: 282 shards, 6,180,116 scanned rows, fingerprint e12700ddb174f1cb. The 58-row / 1-shard difference is the two machines' source copies, not a discrepancy in either build; the fingerprints cannot converge in any case because fp_dir hashes holdout_slice_*.jsonl, which is produced by holdout.py and differs across code versions (post-#621 on the pod)."
+   },
+   "uncertainty": "The token count is exact for the pod's _dc dir, full population, no sampling. It is NOT a statement about the digest copy, whose shard set differs by one shard and 58 rows and whose fingerprint is a different value for the reason in config.two_machines. The 0.41% understatement by the source stamp's extrapolation is exact arithmetic on two measured values; it is a lower bound on the error, since the extrapolation could be worse than its own estimate.",
+   "boundary": "Answers 'how many gate-vocabulary tokens does the rebuilt code_py_starcoder_dc domain hold'. Does NOT cover the token CACHE: no tokens_code_py_starcoder_dc.pt exists on the pod at this reading (find over /data00 and the host mount returns none of the six _dc domains' caches), so this is a corpus-side count and not a pool the trainer can draw from yet. Does NOT cover the source domain's true token count, only that it is at least this entry's value. Does NOT establish that the digest copy would count the same if counted.",
+   "status": "measured",
+   "tokens_status": "measured"
+  },
+  {
+   "id": "cs.code_ultra_l3_noexec_aggregate_identity_0922",
+   "value": "PROOF_BYTE_IDENTICAL: the OLD pre-sidecar aggregate (serial json parse + _norm + sha1 per line, git 9aa6e4c2) and the NEW sidecar aggregate (precomputed sha1 .sigs + raw line copy, current driver) emit byte-identical final shards for L3-noexec on a common nonempty input. cmp of the two sha256 manifests returned rc=0; old and new concatenated final bytes share one sha256 3a8bbd5066dbcdc87cb7dc29d44f9c4bb1f4d3301f2d021b926d61be4c99609b; both sides total 2,005,620,079 bytes over the same 20 final shards.",
+   "unit": "byte identity of aggregate final shards; sha256; bytes; comparison rc",
+   "measured": "2026-09-21",
+   "status": "measured",
+   "config": {
+    "groups": "s01,s02,s03 (three reconverted groups, one raw parquet each: UltraData-Code-L3 parts 00001/00002/00003 of 00147)",
+    "input_rows_nonempty": "314,746 rows entered the case (s01 kept 104,715 + s02 104,846 + s03 105,185 from row-conservation-gated reconversion; parquet rows 141,159/141,160/141,160). The nonempty guard matters: on an empty glob the proof script still prints PROOF_BYTE_IDENTICAL, so an empty case would be a false green; this case was verified nonempty before running (7 then 21 tagged jsonl, first row content_len 4074).",
+    "result": {
+     "kept": 312501,
+     "kept_tokens": 543991678,
+     "kept_chars": 1923358803,
+     "n_final_shards": 20,
+     "decontam_ngram_rows_dropped": 2245,
+     "cross_group_dup": 0,
+     "fingerprint": "faff05920a42b8d2",
+     "proof_exit_rc": 0
+    },
+    "comparison": "both old and new emitted the identical 20-name file set; per-file sha256sum and stat size were collected independently on each side into sorted manifests, and `cmp old.manifest new.manifest` returned rc=0 (manifest sha256 c4a48f6de2107e8c on both sides); every per-file size matched with zero differences; each side concatenated in sorted filename order hashes to 3a8bbd50...c99609b and totals 2,005,620,079 bytes.",
+    "final_shard_sha256_and_size_identical_on_both_sides": {
+     "code_ultra_l3_noexec_000.jsonl": [
+      "ce26b9686f4cb842b3401ae7fd4424a41ed4036d7b8a5dd4f0a233d45f66c767",
+      104851912
+     ],
+     "code_ultra_l3_noexec_001.jsonl": [
+      "c89d764b68fbf7a6a82ee96a987ff40ea5abd964493d72acc05137038e024679",
+      104853288
+     ],
+     "code_ultra_l3_noexec_002.jsonl": [
+      "a84c1875f422a1b14bcbd09855b11324c24d5e7d584aa3adae079070279fcc3b",
+      104854070
+     ],
+     "code_ultra_l3_noexec_003.jsonl": [
+      "d7396fd82598e792d2eaeaff5e41478ba6cc29c3acd1a8b2f52f6a0f5562d60",
+      104855308
+     ],
+     "code_ultra_l3_noexec_004.jsonl": [
+      "602d9e863d8b6b3fb45fe685e86df2d9110645add1533a48bf430dd049d64a08",
+      104852726
+     ],
+     "code_ultra_l3_noexec_005.jsonl": [
+      "af04c76a7ee6005c2098f0db11aae8f309223f83f55420b31a781c0b2436e988",
+      104854863
+     ],
+     "code_ultra_l3_noexec_006.jsonl": [
+      "2987d86cbbe7de6b4c3e43b3bd79071b83319343827acc144dff48ee7256a5e076",
+      104855538
+     ],
+     "code_ultra_l3_noexec_007.jsonl": [
+      "09857757de1ad1bd51c180c35d3e3c7f1919fa635638657901073621b11304e4",
+      104852675
+     ],
+     "code_ultra_l3_noexec_008.jsonl": [
+      "a5bd578d499e2033cd37407dc2f0e56387d538acdf250bb3e74a70ef1d3f968d",
+      104856624
+     ],
+     "code_ultra_l3_noexec_009.jsonl": [
+      "226686042306604af683b3b4026bfa7c386eefcd0af26c7df147435771d355b8",
+      104854880
+     ],
+     "code_ultra_l3_noexec_010.jsonl": [
+      "94d2a525a9d359ecff28ed52046c44f8dde5eb4dbcce30971aeac094a77b4558",
+      104855919
+     ],
+     "code_ultra_l3_noexec_011.jsonl": [
+      "1587c59c27cc66cb73963e92313915e6b2ce07118df3d8c0160f5a6ee57c93ef",
+      104856466
+     ],
+     "code_ultra_l3_noexec_012.jsonl": [
+      "a952b3f751c903d8849a70b393ecc8bba60784cfd3fd7910c46f357a459f3b4e",
+      104855093
+     ],
+     "code_ultra_l3_noexec_013.jsonl": [
+      "603b7ad355769671c4308d664badfed371617ab125228f64d533351753fbd73f",
+      104854601
+     ],
+     "code_ultra_l3_noexec_014.jsonl": [
+      "8e16f740b609c16d6dc06d8983f2a251a0ab13f5452a2377602d9c2d1fb802f5",
+      104854720
+     ],
+     "code_ultra_l3_noexec_015.jsonl": [
+      "aa8c2301dd139d9c8ae882a52eeee3f9a48eb3b3495617abbb539c879099bcdb",
+      104855603
+     ],
+     "code_ultra_l3_noexec_016.jsonl": [
+      "360b451f9a2facb098709e73495dc5f7364e691831e4ef9a95447a589c69f5a3",
+      104848997
+     ],
+     "code_ultra_l3_noexec_017.jsonl": [
+      "6634f648a270e25d488a40d9da47d5dc4dc4b4cd0a694a76a6c7db5430316328",
+      104854636
+     ],
+     "code_ultra_l3_noexec_018.jsonl": [
+      "d1fa65ca75a8a5e54454ae45dd1f04c69044ba2a361fdb5f32f1d7f204621305",
+      104849645
+     ],
+     "code_ultra_l3_noexec_019.jsonl": [
+      "c928f284211b800bc2307a2ded451883981c957a00b1d672c9bd41035c16185e",
+      13392515
+     ]
+    },
+    "concat_sha256_both_sides": "3a8bbd5066dbcdc87cb7dc29d44f9c4bb1f4d3301f2d021b926d61be4c99609b",
+    "total_bytes_both_sides": 2005620079,
+    "manifest_cmp_rc": 0,
+    "old_driver": "git 9aa6e4c2:datagen/ultradata_shards.py materialized to /tmp/oldref/datagen/ultradata_shards_pre_sidecar.py (21,538 bytes, sha256 1fac6dda1f9ad1dca8bd0069b649d71f28d16059900606756ab27217b366918e), placed one package deep so root=dirname(dirname(__file__)) resolves; the CURRENT datagen and filters modules and data/eval benchmarks were copied under /tmp/oldref so both arms run the same decontam baseline (humaneval sha256 1d49078b...), differing only in aggregate logic.",
+    "new_driver": "/work/aupai/datagen/ultradata_shards.py (current main, sidecar path)",
+    "reproduce_steps": [
+     "1) reconvert into an ISOLATED proof-only dir (never the production data/corpus/code_ultra_l3_noexec or _dc): python3 datagen/ultradata_shards.py --level L3 --no-exec --first N --last N --exec-workers 1 --raw /work/aupai/data/raw/ultradata --tag s0N --stats-name stats_s0N.json --out /work/aupai/data/proof_l3_src/code_ultra_l3_noexec, run for N=1,2,3 (taskset to one core each).",
+     "2) build the case: scripts/proof_aggregate_identity.py build_case() globs {AUPAI_PROOF_SRC}/code_ultra_l3_noexec_{s}_*.jsonl for s in AUPAI_PROOF_SHARDS, copies them into /tmp/proof_identity/{O,N}/code_ultra_l3_noexec as one g00 group, and tokenizes to build stats_g00.json.",
+     "3) materialize the old driver: mkdir -p /tmp/oldref/datagen && git show 9aa6e4c2:datagen/ultradata_shards.py > /tmp/oldref/datagen/ultradata_shards_pre_sidecar.py; copy current datagen/filters/data-eval under /tmp/oldref so the decontam baseline and imports resolve.",
+     "4) run the proof: AUPAI_ROOT=/work/aupai AUPAI_PROOF_SRC=/work/aupai/data/proof_l3_src/code_ultra_l3_noexec AUPAI_PROOF_SHARDS=s01,s02,s03 AUPAI_NEW=/work/aupai/datagen/ultradata_shards.py AUPAI_OLD=/tmp/oldref/datagen/ultradata_shards_pre_sidecar.py python3 scripts/proof_aggregate_identity.py ; it aggregates the COPIES only (shutil.copytree to O and N), so the proof source tagged shards are not touched."
+    ],
+    "temporary_patch": "scripts/proof_aggregate_identity.py line 51 is hardcoded `stats = json.load(open(f\"{SRC}/stats_s001.json\"))` with no env override, but this run's two-digit tags are s01/s02/s03 (the default SHARDS=s001,s002 does not exist here). A TEMPORARY copy at /tmp/proof_identity_patched.py (NOT committed) changed line 51 to read `stats_{SHARDS[0]}.json` so it loads stats_s01.json; original text: stats = json.load(open(f\"{SRC}/stats_s001.json\")). SHARDS itself was already env-overridable at line 29 via AUPAI_PROOF_SHARDS. A proper fix would give line 51 the same env override; recorded here rather than silently editing the repo file.",
+    "ordering_safety": "aggregate() unconditionally os.remove's its tagged inputs, so no aggregate was run on the reconverted source outside the proof; the proof aggregates only its own /tmp/proof_identity copies. The production data/corpus/code_ultra_l3_noexec (37 stats, 0 jsonl after the production aggregate) and code_ultra_l3_noexec_dc were never written, and data/mix_v41_gate.json was not modified."
+   },
+   "source": "pod (not a git repo) 2026-09-21T18:41Z: proof log /work/aupai/runs/proof_identity/proof_run.log (prints PROOF_BYTE_IDENTICAL) and /work/aupai/runs/proof_identity/proof_run.rc (PROOF_RC=0); reconversion logs /work/aupai/runs/proof_identity/conv_s0{1,2,3}.log and runner /work/aupai/proof_reconvert.sh (RECONVERT_DONE 18:18:38Z); independent manifests computed in the container at /tmp/O.manifest and /tmp/N.manifest (cmp rc=0); proof driver copy /tmp/proof_identity_patched.py and old driver /tmp/oldref/datagen/ultradata_shards_pre_sidecar.py. In-tree proof driver: scripts/proof_aggregate_identity.py; conversion driver: datagen/ultradata_shards.py;",
+   "uncertainty": "Identity is established for the L3-noexec aggregate on three real groups (314,746 input rows, 20 final shards, including a nonzero 13-gram drop of 2,245 and the global dedup path with cross_group_dup=0). It proves byte equivalence of the old and new aggregate logic for this input shape and frozen tokenizer/decontam baseline; it does not re-run the whole 147-shard corpus (the production domain's own fingerprint c40de52d is a separate measurement in cs.code_ultra_l3_noexec_dc_rebuilt_0921). The case used one raw shard per group; the aggregate code path exercised (classify, .sigs vs serial hash, final dedup, shard emission) is the same code that runs at full scale.",
+   "boundary": "Answers 'does the sidecar aggregate change output bytes vs the pre-sidecar driver' (no). Does NOT measure the full-domain token count and does NOT certify the L2 driver or exec-enabled L3 (only L3 --no-exec). The temporary line-51 patch is a test-harness workaround, not a claim the in-tree script already supports arbitrary tags."
+  }
  ]
 }

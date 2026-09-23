@@ -3,8 +3,23 @@ on:
   push:
   pull_request:
   # manual trigger for the diag-resume causal stress matrix (A/B/C/D arms); no inputs needed,
-  # the arms are the job matrix. Push/PR runs keep the unloaded control only.
+  # the arms are the job matrix. That job runs on this event ONLY -- push/PR skip it.
   workflow_dispatch:
+# One in-flight run per (ref, event); a newer run cancels the older one's in-progress jobs.
+# Without this, every push to main queues independently and the backlog grows linearly --
+# measured 2026-09-20: 32 queued / 3 in progress, oldest waiting 48 min, and still growing.
+#
+# THE EVENT IS IN THE GROUP, and that is load-bearing rather than tidy. `merge_main.sh:467`
+# refuses every ledger merge while main's newest PUSH run reads `cancelled` ("every branch
+# starts from that tree"), and `_main_ci_is_red` selects push runs only (`--event push`,
+# :432). A bare `ci-${{ github.ref }}` puts `workflow_dispatch` on refs/heads/main in the SAME
+# group as a push to main, so dispatching the diag matrix would cancel main's in-flight push
+# run and block the ledger path until the next push -- a tool cancelling the instrument that
+# guards it. Measured 2026-09-20: 14 of the last 50 push runs on main already ended
+# `cancelled`, so this is a live state, not a hypothetical one.
+concurrency:
+  group: ci-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -144,13 +159,24 @@ jobs:
   # artifact. Working hypothesis is a real control vs save/load-restart asymmetry (name-keyed
   # optim rebind / exp_avg / exp_avg_sq / step / serialization), pending de's spec. This job is
   # a passive instrument that compares the REAL gate against the diag as symmetric sibling
-  # children; push runs an unloaded co-located control, manual workflow_dispatch runs the 4-arm
-  # matrix. Burners are outer siblings, never in the test process; threads=1 / oneDNN-off are
+  # children; it runs ONLY on workflow_dispatch, as the 4-arm matrix (the `if` below; push/PR
+  # skip the job entirely -- see the note there for why a step-level guard was not enough).
+  # Burners are outer siblings, never in the test process; threads=1 / oneDNN-off are
   # diagnostic arms, not a gate fix. The required check job above keeps the real gate
   # fail-closed; this job exits 0 by construction.
   diag-resume:
     runs-on: ubuntu-latest
     continue-on-error: true
+    # DISPATCH ONLY, and the guard is at JOB level on purpose. A step-level `if` does not stop
+    # the matrix from EXPANDING: `strategy.matrix.include` is evaluated when the job is created,
+    # so without this line every push and PR spent four runners on four jobs whose only
+    # dispatch step is skipped, leaving each to run the same push-path control. The control
+    # reads no `matrix.arm` (its env is on the dispatch step alone), so the four cells are
+    # byte-identical: measured 2026-09-20, one push burned 4 runners for 11.7/12.1/21.5/21.6 min
+    # on the same command, whose output is a `--diag-colocate 8` mkdtemp deleted on exit and
+    # never uploaded. This job is a passive diagnostic and not a required check; a skipped job
+    # is terminal-neutral in `pr_merge_gate` (`skipping` -> GO), so gating it changes no gate.
+    if: github.event_name == 'workflow_dispatch'
     strategy:
       fail-fast: false
       matrix:
@@ -167,11 +193,13 @@ jobs:
       - run: pip install numpy
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: python tests/v41f/diag_resume_bimodal.py --diag-selftest
-      - name: unloaded co-located control (push; 8 pairs)
-        if: github.event_name != 'workflow_dispatch'
-        run: python tests/v41f/diag_resume_bimodal.py --diag-colocate 8
+      # The push-path "unloaded co-located control (8 pairs)" step was DELETED here, not
+      # commented out: gating this job to workflow_dispatch makes it unreachable, and a step
+      # whose own guard is `event != dispatch` inside a job whose guard is `event == dispatch`
+      # can never run. It was also producing nothing durable to keep -- no `--out`, so output
+      # went to a mkdtemp removed on exit, and the job has no upload-artifact. Keeping it would
+      # have left a dead step that reads as a live measurement.
       - name: "causal arm ${{ matrix.arm }}: 6 co-located pairs, stress=${{ matrix.stress }}"
-        if: github.event_name == 'workflow_dispatch'
         env:
           GATE_OMP: "${{ matrix.gate_omp }}"
           GATE_ONEDNN: "${{ matrix.onednn }}"

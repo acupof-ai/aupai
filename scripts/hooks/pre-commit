@@ -1896,6 +1896,14 @@ def main():
         "datagen/scan_code_contamination.py",
         "datagen/scan_math_contamination.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
+        # The UltraData-Code shard fetcher's failover chain (de, 2026-09-20). Registered
+        # because the properties that matter are all invisible to a live run: which host is
+        # tried first, that a 302 is NOT accepted as a serving mirror, that an empty
+        # candidate list is a value rather than an exception, and that a socket which
+        # connects and then sends nothing is bounded by --max-time. The last one is a real
+        # stall server in the selftest (localhost, 2 s bound): without it the serial loop
+        # holds a card-less slot forever and nothing raises. No network, no corpus, ~2.1 s.
+        "datagen/fetch_ultradata.py",
         "datagen/near_dedup_scale.py",
         "probes/t71_depth_lr_rule.py",
         "probes/a2a_bandwidth.py",
@@ -1933,6 +1941,11 @@ def main():
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
         "scripts/pod_verify_landed.py",
+        # pod_work_hostpath: pure-stdin parser of `crictl inspect` -> the host path backing
+        # /work. Registered because pod_push's large-file path depends on it and the mutation
+        # that matters (a startswith that accepts a /workspace decoy, or a missing mount
+        # guessed rather than answered empty) is a wrong host path with no pod in the test.
+        "scripts/pod_work_hostpath.py",
         # Builds a real two-branch conflict in a throwaway repo: no data, no card, ~1s.
         "scripts/merge_drivers.py",
         # Six pure-dict worlds, no git and no I/O, ~0.1s. Registered because the mutant that
