@@ -57,8 +57,10 @@ linear attention (`fla.ops.kda.chunk_kda`, recurrent state carries position, NoP
 gated MLA (latent KV, full causal attention), alternating, with optional Attention
 Residuals (`class AttnRes` in `model.py`, arXiv 2603.15031) on by default. It produced the 0830v1 ladder
 and the 30B run stopped at .step22500; V4.1 has no recurrent state, so KDA is dropped, and
-AttnRes does not cross the future CED boundary. Old checkpoints still load via `_cfg`
-(`scripts/loader.py`); the history is in git before this date.
+AttnRes does not cross the CED boundary. Checkpoint loading after the 2026-09-23 flat cut:
+a pre-csa2 legacy checkpoint still loads through the loader's cfg backfill, but a **flat csa2
+checkpoint is refused by name** (`scripts/loader.py`) — flat has no forward in this tree;
+checkout the last pre-cut commit `c26daf67` to read one. The history is in git.
 
 ## Writing rules (all docs, commit messages, register rows, and replies)
 
