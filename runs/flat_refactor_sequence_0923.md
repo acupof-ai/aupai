@@ -110,10 +110,26 @@ Two notes for the record:
   checkpoint **does** exist there today (479,293,133 B, mtime 2026-08-25). Current disk wins;
   the fact's boundary sentence is stale. Reported, not corrected here.
 
-**What step 5 must not break:** surface 2 is the compatibility branch, and it is the only
-thing standing between the K3 line and a strict-load failure. Its known-answer test is that
-exact file. If step 5 removes AttnRes, surface 2 has to be re-expressed as a refusal that
-names the ckpt, not deleted silently.
+**What step 5 must not break, and the coverage that already exists.** `CLAUDE.md:48` states
+the contract the AttnRes code is serving: "Old checkpoints still load via `_cfg`
+(`scripts/loader.py`)". Two facts bound step 5:
+
+- `scripts/test_arch_compat.py:145` **already asserts** the auto-disable
+  (`assert new.attn_res is False and Cfg.attn_res is False, "old ckpt must disable AttnRes"`),
+  on a synthetic legacy state_dict with no `final_ar.` keys. So step 5 must keep that
+  assertion's *effect*: whatever replaces surface 2 has to produce "this ckpt is AttnRes-era,
+  here is what happens" rather than a strict-load traceback.
+- `Cfg.attn_res` still defaults **True** (`train.py:309`, since `b3cad874` "arch(0830v1): full
+  causal MLA, AttnRes on by default"). With flat gone the flag still has a job: it is not
+  refused under `ced=0`, so `Cfg.ced = 1` becomes the thing that selects CED and `attn_res`
+  becomes dead-by-configuration rather than dead-by-code. Flipping the default is a **separate
+  decision** with its own blast radius (it changes the default architecture for any launcher
+  that passes neither flag) and is NOT part of step 5.
+
+So step 5's known-answer test is: a legacy AttnRes-era state_dict still loads, by whichever
+mechanism replaces surface 2, and `scripts/test_arch_compat.py:145`'s assertion is either kept
+or replaced by a strictly stronger one. Deleting surface 2 with nothing in its place reds that
+line — which is the mutant this step is accepted against.
 
 ## Explicitly not scheduled
 
