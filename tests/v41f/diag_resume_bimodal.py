@@ -535,12 +535,24 @@ def gate_once(out):
     """Single real-gate sample for cross-run tracking (one independent run = one sample; within
     a job repeats are correlated, proven by the 8/8 and 24/24 same-color jobs). Prints the env
     header, runs the REAL gate, and on red prints the FULL signature/stderr. Always exits 0;
-    on red the raw gate output is also saved under `out` for the actions artifact upload."""
+    on red the raw gate output is also saved under `out` for the actions artifact upload.
+
+    RESUME_GATE_NO_RETRY is forced on here: the verification matrix must measure the RAW first-pair
+    red/green per runner, not the signature-gated in-place retry (which would mask the very
+    VM-persistence the matrix is quantifying)."""
     os.makedirs(out, exist_ok=True)
+    # Mirror the required gate's worker chain exactly (test_p1_train_ckpt.py): the matrix must
+    # run the SAME pool configuration the gate pins, not an env that leaves MKL/OPENBLAS to the
+    # runner's defaults. A matrix cell sets GATE_OMP/GATE_MKL/GATE_ONEDNN only; the other two
+    # derive from GATE_OMP, as they do in the gate itself.
+    omp = os.environ.get("GATE_OMP", "1")
     env = dict(os.environ)
-    env["OMP_NUM_THREADS"] = os.environ.get("GATE_OMP", "2")
-    if os.environ.get("GATE_MKL"):
-        env["MKL_NUM_THREADS"] = os.environ["GATE_MKL"]
+    env["OMP_NUM_THREADS"] = omp
+    env["MKL_NUM_THREADS"] = os.environ.get("GATE_MKL", omp)
+    env["OPENBLAS_NUM_THREADS"] = os.environ.get("GATE_OPENBLAS", omp)
+    env["MKL_DYNAMIC"] = os.environ.get("GATE_MKL_DYNAMIC", "FALSE")
+    # Raw outcome: never let the tourniquet retry turn a runner-red into an in-place green here.
+    env["RESUME_GATE_NO_RETRY"] = "1"
     hdr = env_header()
     print("GATEONCE ENV " + json.dumps(hdr))
     g = subprocess.run(
