@@ -332,6 +332,113 @@ def _doc_blocks(q, cu, m):
     return block_id, doc, vis, NB
 
 
+FP8_MM_ALIGN = 16
+
+
+def _fp8_linear_entries(lin, hb, B, NB, H, hd):
+    """`lin(hb)` then (B,NB,d) -> (B,H,NB,hd), padding the M axis to fp8's 16 if needed.
+
+    WHY THE PAD EXISTS, measured 2026-09-22 on the pod (smoke v41_ced_smoke_0922, one H20,
+    fp8, B=4 T=4096 d=1024 m=8 -> NB=518):
+
+        RuntimeError: Expected self.size(1) to be divisible by 16, but got self.size(1)=2072
+
+    2072 is `B * NB`, and it is the M axis, not the contraction axis. torchao's
+    Float8Linear.forward flattens any input past 2-D (`(4,518,1024) -> (2072,1024)`) and its
+    backward computes `grad_weight = mm(grad_output.t(), input)` (float8_linear.py:197), whose
+    CONTRACTION dim is that flattened M. `_check_scaled_mm_sizes`
+    (torch/_meta_registrations.py:6588) requires it divisible by 16.
+
+    THE FLAT PATH NEVER HIT THIS, and the reason is the whole shape of the trap: flat's
+    compression Linear is fed `bk.reshape(B*H, NB, m*D)` (entries_per_doc, below), so its M
+    axis is `B*H*NB` and carries the head factor -- at H=8, `B*H` is 32 and the axis is
+    ALWAYS 16-aligned. CED's projection is d->d and applies BEFORE the head split (spec:
+    v41_pivot:9-15), so its M axis is only `B*NB`; the factor that made flat safe is gone.
+    B=4 alone gives 4, and 4*x is 16-aligned only when x is a multiple of 4 -- NB is
+    ceiling-divided per document, so it is 518 here and arbitrary in general.
+
+    NOT A CONTRACTION-DIM BUG: `hb.shape[-1]` is d=1024 before the pad, exactly as the
+    projection requires. Padding d would be wrong -- it would change the projection's input
+    width. Only the M axis is padded, and it is padded on the OUTSIDE of the Linear.
+
+    PAD ROWS ARE ZERO AND THEIR GRADIENT IS ZERO BY CONSTRUCTION, not by masking afterwards:
+    the padded rows are literal zeros, and a zero input row contributes nothing to
+    grad_weight (`grad_weight = grad_output^T @ input`, so a zero input row adds zero) . The
+    slice below then drops those rows from the OUTPUT, so nothing downstream can read them
+    either. Both halves are asserted on the real fp8 path in scripts/test_arch_compat.py.
+
+    The pad is applied unconditionally when the axis is already aligned? No -- `pad` is 0
+    then, and the no-pad path is the old expression byte for byte, so the aligned case (the
+    world-8 B=4 with NB a multiple of 4, and every flat shape) is unchanged.
+    """
+    M = B * NB
+    pad = (-M) % FP8_MM_ALIGN
+    # FLATTEN FIRST, THEN PAD, and that order is load-bearing. Padding `pad` rows onto each
+    # of the B batches would give a flattened M of B*(NB+pad), which is divisible by 16 only
+    # by accident (measured: B=4 NB=518, pad computed as (-2072)%16=8 -> 4*526=2104, still
+    # 8 mod 16). Flattening to (M, d) and padding that axis pads exactly the axis the checker
+    # measures, so M+pad is 16-aligned by construction.
+    if pad:
+        hb = hb.reshape(M, hb.shape[-1])
+        hb = torch.cat([hb, hb.new_zeros(pad, hb.shape[-1])], dim=0)   # (M+pad, d)
+    out = lin(hb)                                            # (M+pad, d)
+    if pad:
+        out = out[:M]                                        # drop the pad rows
+    return out.view(B, NB, H, hd).transpose(1, 2).contiguous()   # B,H,NB,hd
+
+
+def _ced_kv_from_enc(q, h_enc, cu, m, w_kv, w_z, n_head):
+    """CED decoder global KV, projected from the encoder's H_{L/2} (Eq.1, §2.2).
+
+    The decoder does NOT run a learned reducer over its own K/V. Each decoder layer owns a
+    W_KV/W_Z pair and projects the SAME encoder state through it, so the entries a decoder
+    attends to are a function of the encoder's output only -- which is what makes the tower a
+    causal encoder-decoder rather than a flat stack with cross-layer reuse.
+
+    SHAPES, and the one that is easy to get wrong: `q` arrives already reshaped to (B,T,H,hd),
+    so NOTHING here may take a width from q.shape[-1]. The encoder state is at the MODEL width
+    d and the projections are d->d; the head split is applied after, as view(B,NB,H,d//H). The
+    first version read D off q, giving a (.,64) tensor against a 256x256 weight and a matmul
+    shape error -- loud here, but the same slip inside a reshape would have been silent.
+
+    Blocks are `m` positions PER DOCUMENT, the same _doc_blocks arithmetic every other reducer
+    uses (a block straddling a document boundary, and a block gated on its first position, are
+    both recorded incidents in this file). Each block is MEAN-reduced over the positions it
+    really holds, then ONE Linear applies to the last dim -- so each entry is projected
+    independently and NB is a batch-like dim across which nothing mixes.
+
+    MEAN, not a learned combine: the prereg and v41_pivot:10-12 say C^l and Z^l are "projected
+    directly from H_{L/2}" and name no reducer, whereas CSA2's own docstring records that the
+    m>1 combine weights are unpublished. A learned pool here would be a second unmeasured
+    choice on top of the one this feature exists to measure.
+
+    Returns (kc, vc, vis, doc) in entries_per_doc's exact form: kc through W_KV (C^l) and vc
+    through W_Z (the compression weights Z^l), both from the same H_{L/2}.
+    """
+    B = h_enc.shape[0]
+    d_model = h_enc.shape[-1]
+    H = n_head
+    if d_model % H:
+        raise ValueError(f"encoder width {d_model} is not divisible by heads {H}")
+    hd = d_model // H
+    if w_kv.in_features != d_model or w_kv.out_features != d_model:
+        raise ValueError(
+            f"CED W_KV is {w_kv.in_features}->{w_kv.out_features} but the encoder state is "
+            f"width {d_model}; the projection must be d->d on the model width")
+    block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+    # Mean over real positions per document block: the pool_per_doc reduction, applied to the
+    # encoder state at model width.
+    idx = block_id[:, None, :, None].expand(B, 1, -1, d_model)
+    acc = h_enc.new_zeros(B, 1, NB, d_model)
+    acc.scatter_add_(2, idx, h_enc.unsqueeze(1))
+    cnt = h_enc.new_zeros(B, NB, dtype=torch.float32)
+    cnt.scatter_add_(1, block_id, torch.ones(B, h_enc.shape[1], device=h_enc.device))
+    hb = (acc / cnt.clamp(min=1)[:, None, :, None].to(acc.dtype)).squeeze(1)   # B,NB,d
+    kc = _fp8_linear_entries(w_kv, hb, B, NB, H, hd)                          # B,H,NB,hd
+    vc = _fp8_linear_entries(w_z, hb, B, NB, H, hd)
+    return kc, vc, vis, doc
+
+
 def pool_per_doc(q, kh, vh, cu, m):
     """Mean-pool K/V into blocks of `m` PER DOCUMENT, with the visibility mask.
 
@@ -901,6 +1008,18 @@ class CompressedSparseAttention(nn.Module):
             self.branch_gate = nn.Linear(hd, 3, bias=True)
             nn.init.zeros_(self.branch_gate.weight)
             nn.init.zeros_(self.branch_gate.bias)
+        # CED decoder (user order 2026-09-22). These live HERE, on the module that reads them --
+        # _forward_csa2 runs with `self` being this CSA module, not the GatedMLA that owns it, so
+        # attributes set on the mixer are invisible to the code that needs them (measured: doing
+        # exactly that left w_kv.grad None and the CED branch uncalled).
+        #
+        # OWNED by HybridLM, which alone knows where H_{L/2} is. False/None unless it assigns
+        # them, so a non-CED model registers no extra tensors and every existing checkpoint loads
+        # unchanged -- the CSA/HCA/SWA precedent.
+        self.ced_kv = False
+        self.w_kv = None
+        self.w_z = None
+        self._h_enc = None
 
     def forward(self, q, k, v, cu=None, x=None, pkg=None):
         # pkg is the incoming cross-layer package (3b-20). Full mode ignores it and
@@ -992,8 +1111,21 @@ class CompressedSparseAttention(nn.Module):
         kh, vh = k.transpose(1, 2), v.transpose(1, 2)
         if cu is None:
             cu = torch.arange(0, B * T + 1, T, device=q.device, dtype=torch.int32)
-        kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
-                                           self.compress_k, self.compress_v)
+        if getattr(self, "ced_kv", False):
+            # CED decoder: the global entries come from the ENCODER's H_{L/2}, not from this
+            # layer's own K/V, so the learned reducer is not run at all. `h_enc` is stashed by
+            # HybridLM._body. The result of _doc_blocks is computed from this layer's own
+            # shapes, so vis/NB/doc match the stream the encoder projected over.
+            if getattr(self, "_h_enc", None) is None:
+                raise ValueError(
+                    "a CED decoder layer reached the forward with no H_{L/2} stashed: HybridLM "
+                    "_body must run the encoder pass before the decoder pass. A decoder reading "
+                    "its own K/V here would silently be a flat CSA2 layer.")
+            kc, vc, vis, doc = _ced_kv_from_enc(q, self._h_enc, cu, self.m, self.w_kv, self.w_z,
+                                                self.h)
+        else:
+            kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+                                               self.compress_k, self.compress_v)
         NB = kc.shape[2]
 
         # --- indexer: score entries, mask BEFORE top-k, select -----------------------
@@ -2748,6 +2880,56 @@ class HybridLM(nn.Module):
         )
         self.attn_kinds = kind
         self.csa2_modes = csa2_modes
+        # CED (user order 2026-09-22). ced_enc_layers is the SPLIT: layers [0, split) are the
+        # encoder and every layer at or above it is a decoder that reads H_{L/2}, the encoder's
+        # final hidden state, instead of its own K/V (Eq.1, per-layer unshared W_KV/W_Z).
+        #
+        # VALIDATED HERE, not in the forward: a split that leaves no encoder, no decoder, or a
+        # decoder that is not an attention layer is a configuration error, and naming it at
+        # construction is what keeps it out of a 155 GiB cache load.
+        self.ced = int(getattr(cfg, "ced", 0) or 0)
+        self.ced_enc_layers = int(getattr(cfg, "ced_enc_layers", 0) or 0)
+        if self.ced:
+            if not 0 < self.ced_enc_layers < cfg.layers:
+                raise ValueError(
+                    f"ced={self.ced} needs 0 < ced_enc_layers < layers, got "
+                    f"ced_enc_layers={self.ced_enc_layers} with layers={cfg.layers}: the split "
+                    f"must leave a nonempty encoder below it and a nonempty decoder above it")
+            # ced WANTS THE TWO-PASS BODY, and that body is gated on `not self.attn_res`. With
+            # attn_res left at its default True the model CONSTRUCTS cleanly and dies at the
+            # first forward with "no H_{L/2} stashed" -- measured, and it would be the next
+            # person's construction that pays for it (every current launcher passes
+            # --no-attn_res, so no current recipe is affected). Refused HERE, where the split
+            # checks are and where the message can name both flags. Merging the two paths is a
+            # separate decision: AttnRes does not cross the CED boundary (v41_pivot:85), so
+            # "CED with depth attention" is unimplemented rather than merely untested.
+            if getattr(cfg, "attn_res", False):
+                raise ValueError(
+                    f"ced={self.ced} needs attn_res OFF (the CED body is a two-pass encoder/"
+                    f"decoder forward and runs only on the non-AttnRes path). Pass --no-attn_res. "
+                    f"AttnRes does not carry across the CED boundary (v41_pivot.md:85), so this "
+                    f"combination is unimplemented, not untested")
+            _dec = [i for i in range(self.ced_enc_layers, cfg.layers)
+                    if i % cfg.attn_every == cfg.attn_every - 1]
+            if not _dec:
+                raise ValueError(
+                    f"ced={self.ced} with ced_enc_layers={self.ced_enc_layers}: no attention "
+                    f"layer in the decoder half (attn_every={cfg.attn_every}), so nothing would "
+                    f"project the global KV and the split would be inert")
+            # PER-LAYER, UNSHARED (v41_pivot:10-12 says so in those words). Sharing one pair
+            # across the decoders would cost the same state_dict shape at 1/6 the parameters and
+            # would silently be a different architecture.
+            for i in _dec:
+                _mx = self.blocks[i].mixer
+                _csa = getattr(_mx, "csa", None)
+                if not isinstance(_csa, CompressedSparseAttention):
+                    raise ValueError(
+                        f"CED decoder layer {i} has CSA module {type(_csa).__name__}, not "
+                        f"CompressedSparseAttention; only that module runs the global-KV branch "
+                        f"that W_KV/W_Z feed")
+                _csa.ced_kv = True
+                _csa.w_kv = nn.Linear(cfg.d, cfg.d, bias=False)
+                _csa.w_z = nn.Linear(cfg.d, cfg.d, bias=False)
         self.norm = RMSNorm(cfg.d)
         # A/B (4): ONE shared value-embedding table for every MLA layer, or None when off.
         #
@@ -2965,6 +3147,28 @@ class HybridLM(nn.Module):
 
     def _body(self, x, cu=None):
         ckpt = self.grad_ckpt and self.training
+        # CED (user order 2026-09-22): the encoder half runs first, its final hidden state is
+        # stashed on every decoder layer, and the decoder half then runs against it. TWO PASSES,
+        # not one: a decoder layer's global KV is a function of H_{L/2}, which does not exist
+        # until the encoder has finished.
+        #
+        # GRADIENT: h_enc is NOT detached. "teacher-forced" (prereg#ced_vs_flat_0910) constrains
+        # WHAT the decoder reads -- h_enc comes from the normal causal forward over the true
+        # tokens, never from the decoder's own predictions -- and says nothing about whether the
+        # gradient flows back into the encoder. Cutting it would freeze the encoder against its
+        # own decoder's signal and would be a second unmeasured choice on top of the one this
+        # feature tests (the same reasoning as the MEAN pool in _ced_kv_from_enc).
+        if self.ced and not self.attn_res:
+            for b in self.blocks[: self.ced_enc_layers]:
+                x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+            h_enc = x
+            for b in self.blocks[self.ced_enc_layers:]:
+                _csa = getattr(b.mixer, "csa", None)
+                if getattr(_csa, "ced_kv", False):
+                    _csa._h_enc = h_enc
+                x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+            self._clear_pkg()
+            return x
         if not self.attn_res:
             pkg = None
             for b in self.blocks:
