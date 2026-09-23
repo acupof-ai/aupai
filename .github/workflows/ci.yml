@@ -237,12 +237,14 @@ jobs:
   # revert the GATE_OMP=1 default and gate with GATE_ONEDNN=0 instead.
   verify-resume-t1:
     runs-on: ubuntu-latest
-    # Its own run-id group with cancel-in-progress false: the experiment is 6-10 SEPARATE
-    # workflow_dispatch runs accumulated on independent runners, and the workflow-level group
-    # cancels an in-progress dispatch when the next one fires. Per-run-id means a dispatch never
-    # cancels and is never cancelled; push/PR runs keep the shared group untouched.
+    # Its own per-cell, per-run group with cancel-in-progress false: the experiment is 6-10
+    # SEPARATE workflow_dispatch runs accumulated on independent runners. The key MUST include
+    # matrix.arm -- a group keyed by run_id alone is shared by all 4 cells, so they cancel each
+    # other within one dispatch (measured: the two first-started cells were cancelled one second
+    # in, 2026-09-23). Keyed on run_id+arm, a dispatch never cancels and is never cancelled by
+    # another dispatch; push/PR runs keep the workflow-level group untouched.
     concurrency:
-      group: verify-resume-${{ github.run_id }}
+      group: verify-resume-${{ github.run_id }}-${{ matrix.arm }}
       cancel-in-progress: false
     continue-on-error: true
     if: github.event_name == 'workflow_dispatch'
