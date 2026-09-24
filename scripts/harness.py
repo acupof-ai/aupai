@@ -9436,6 +9436,62 @@ def check_guard_on_path(root):
     return PASS, "main() calls _assert_mix_domains and refuses a retired mix"
 
 
+def check_save_snapshot_cadence(root):
+    """The rollback snapshot and the periodic save run on ONE cadence, so a checkpoint is
+    always the state at its named step. Until 2026-09-24 the snapshot refreshed every 200 and
+    the save landed every 500: an odd-500 save wrote 100-step-stale weights/optimizer under a
+    current cursor, and a resume silently skipped those 100 steps (prereg v41_ced_0923
+    amendment_5; measured on ckpt step18500, AdamW state step 18400)."""
+    src_path = os.path.join(root, "train.py")
+    if not os.path.exists(src_path):
+        return SKIP, "train.py not present"
+    src = open(src_path, encoding="utf-8").read()
+    tree = ast.parse(src)
+    assigned = {t.id for n in ast.walk(tree) if isinstance(n, ast.Assign)
+                for t in n.targets if isinstance(t, ast.Name)}
+    if "GOOD_SAVE_INTERVAL" in assigned:
+        return FAIL, "GOOD_SAVE_INTERVAL still assigned: snapshot refresh has its own cadence"
+    fn = next((n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "main"), None)
+    if fn is None:
+        return FAIL, "train.py has no main()"
+
+    def plain_save_every_mods(test):
+        """Every `step % args.save_every` BinOp anywhere in an if test (the save guard lives
+        inside `step > 0 and step % args.save_every == 0 and is_main`)."""
+        return [n for n in ast.walk(test)
+                if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Mod)
+                and isinstance(n.right, ast.Attribute) and n.right.attr == "save_every"]
+
+    def min_cadence_mods(test):
+        # The broken shape: step % min(GOOD_SAVE_INTERVAL, args.save_every).
+        out = []
+        for n in ast.walk(test):
+            if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Mod) and isinstance(n.right, ast.Call):
+                if any(isinstance(a, ast.Attribute) and a.attr == "save_every"
+                       for a in ast.walk(n.right)):
+                    out.append(n)
+        return out
+
+    ifs = [n for n in ast.walk(fn) if isinstance(n, ast.If)]
+    if any(min_cadence_mods(i.test) for i in ifs):
+        return FAIL, "a `step % min(..., args.save_every)` refresh guard still exists"
+    refresh = save = False
+    for blk in ifs:
+        if not plain_save_every_mods(blk.test):
+            continue
+        refresh = refresh or any(
+            isinstance(x, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "good_state" for t in x.targets)
+            for x in ast.walk(blk))
+        save = save or any(
+            isinstance(x, ast.Call) and isinstance(x.func, ast.Name) and x.func.id == "save_checkpoint"
+            for x in ast.walk(blk))
+    if not (refresh and save):
+        return FAIL, (f"good_state refresh under save_every={refresh}, save_checkpoint under "
+                      f"save_every={save}: they must share the save_every cadence")
+    return PASS, "snapshot refresh and periodic save share the save_every cadence"
+
+
 def check_gemm_dims(root):
     """vocab 32773 cost 2.23x on the LM head because nothing checked shapes: it left the logits'
     leading dimension 2-byte aligned and cuBLAS fell back to an SM75 align-1 kernel on a Hopper
@@ -10544,6 +10600,35 @@ def _broken_gemm_dims():
 def _broken_guard():
     d = _tmp_repo()
     open(os.path.join(d, "train.py"), "w").write("def main():\n    pass\n")
+    return d
+
+
+def _broken_save_snapshot_cadence():
+    """Restore the two-cadence shape: snapshot every GOOD_SAVE_INTERVAL=200, save every
+    save_every, in separate if blocks -- the defect that wrote stale weights at odd-500."""
+    import shutil
+
+    d = _tmp_repo()
+    p = os.path.join(d, "train.py")
+    shutil.copy(os.path.join(ROOT, "train.py"), p)
+    s = open(p, encoding="utf-8").read()
+    old = """                if step % args.save_every == 0:
+                    # copy=True: .cpu() alone returns the SAME object for an already-CPU
+                    # tensor (CPU test runs), which would alias live state in the rollback
+                    # buffer; on CUDA it makes exactly one D2H copy instead of .cpu().clone()'s
+                    # two host-side copies of the whole state dict.
+                    good_state = {k: v.to("cpu", copy=True) for k, v in raw_model.state_dict().items()}
+                    good_opt = opt_snapshot(optimizers)
+                if step > 0 and step % args.save_every == 0 and is_main:
+                    save_checkpoint(ckpt_path + f".step{step}", good_state, Cfg, VOCAB_ID, good_opt, step)"""
+    new = """                GOOD_SAVE_INTERVAL = 200
+                if step % min(GOOD_SAVE_INTERVAL, args.save_every) == 0:
+                    good_state = {k: v.to("cpu", copy=True) for k, v in raw_model.state_dict().items()}
+                    good_opt = opt_snapshot(optimizers)
+                if step > 0 and step % args.save_every == 0 and is_main:
+                    save_checkpoint(ckpt_path + f".step{step}", good_state, Cfg, VOCAB_ID, good_opt, step)"""
+    assert old in s, "save_snapshot_cadence broken-world anchor not found in real train.py"
+    open(p, "w", encoding="utf-8").write(s.replace(old, new))
     return d
 
 
@@ -20714,6 +20799,13 @@ CHECKS = [
         _broken_guard,
     ),
     (
+        "save_snapshot_cadence",
+        "the rollback snapshot refreshes in the same block as the periodic save",
+        "the snapshot refreshed every 200 steps while saves landed every 500, so an odd-500 checkpoint carried 100-step-stale weights and optimizer under a current cursor; a resume silently skipped 100 steps (78.6M tokens), measured on v41_ced_0923 step18500",
+        check_save_snapshot_cadence,
+        _broken_save_snapshot_cadence,
+    ),
+    (
         "tasks_paired_and_prior",
         "every task opened since the rule names a second session and its prior art",
         "three sessions took the same work at once and a throughput number had no reference point in the literature; both are the same absence, stated before starting (user order 2026-09-01)",
@@ -21349,7 +21441,7 @@ EVIDENCE = {
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
     "merge_keeps_parent_paths": "repo",
     "no_stale_running": "repo", "no_stale_expected_end": "repo", "no_future_started": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
-    "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
+    "guard_on_path": "repo", "save_snapshot_cadence": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
     "review_pairs_match_roster": "repo",
     "peer_stalled": "repo",
     "one_deliverable_per_owner": "repo",
@@ -21472,7 +21564,7 @@ STAGES = [
         "a tokenizer_<name>.json pinned per live checkpoint",
     ),
     ("corpus", ["corpus_filters_fp", "mix_not_unfiltered", "mix_shards_present"], "contamination scan recorded for every source"),
-    ("pretrain", ["restartability", "gemm_dims_aligned", "guard_on_path", "no_stale_running", "score_matrix_present"], "checkpoint carries vocab_id; val loss recorded"),
+    ("pretrain", ["restartability", "gemm_dims_aligned", "guard_on_path", "save_snapshot_cadence", "no_stale_running", "score_matrix_present"], "checkpoint carries vocab_id; val loss recorded"),
     ("sft", ["pinned_ids"], "pack fingerprint == checkpoint vocab_id; loss-mask test passes"),
     ("eval", [], "math-hard recorded in runs/experiments.jsonl"),
 ]
