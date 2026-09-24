@@ -2894,6 +2894,133 @@ def ci_selftest_flags(src):
     return flags
 
 
+CI_SELFTEST_TIMINGS = os.path.join(ROOT, "scripts", "ci_selftest_timings.json")
+
+
+def _ci_selftest_timings():
+    """{target: seconds} from the committed CI timing table; {} when absent/unparseable.
+
+    The check makes absence or a key mismatch FAIL, so callers inside ci-selftests only
+    see {} in ad-hoc trees, where the weight-1 default in ci_selftest_shard is enough.
+    """
+    try:
+        obj = json.loads(open(CI_SELFTEST_TIMINGS, encoding="utf-8").read())
+    except (OSError, ValueError):
+        return {}
+    t = obj.get("targets") if isinstance(obj, dict) else None
+    if not isinstance(t, dict):
+        return {}
+    out = {}
+    for k, v in t.items():
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if fv >= 0:
+            out[str(k)] = fv
+    return out
+
+
+def ci_selftest_shard(targets, k, n, timings=None):
+    """The k-th (1-based) of n shards of targets, packed by LPT over the CI timing table.
+
+    LPT (longest processing time first: sort descending by weight, place each on the
+    currently lightest shard) is the laziest packing with a 4/3 approximation bound; the
+    measured table balances 266 targets at 308.2/308.2/308.2 s over 3 shards, where a
+    round-robin targets[k::n] slice cut them 795/231 because the slow targets cluster.
+    Targets absent from the table get weight 1.0 (fail-soft for the caller); the partition
+    check separately makes any missing table key a FAIL, so that default cannot persist.
+    """
+    if not (1 <= k <= n):
+        raise ValueError(f"bad shard {k}/{n}: need 1 <= k <= n")
+    if n == 1:
+        return list(targets)
+    if timings is None:
+        timings = _ci_selftest_timings()
+    shards = [[] for _ in range(n)]
+    loads = [0.0] * n
+    for p in sorted(targets, key=lambda x: (-float(timings.get(x, 1.0)), x)):
+        i = min(range(n), key=lambda j: (loads[j], j))
+        shards[i].append(p)
+        loads[i] += float(timings.get(p, 1.0))
+    return shards[k - 1]
+
+
+def _ci_run_commands(ci_src):
+    """The command text of every `run:` step in ci.yml, across ALL jobs (one entry per step).
+
+    Same per-step split as _ci_explicit_paths (a multi-key step puts run: on its own
+    line), plus block-scalar bodies (the `run: |` form), whose lines are included only
+    while indented past the `run:` key. COMMENTS ARE EXCLUDED on purpose: the workflow
+    carries prose that names commands, and a driver shard must be declared by a step that
+    actually runs, not by a sentence that mentions one.
+    """
+    commands = []
+    for chunk in re.split(r"^\s*-\s", ci_src, flags=re.M)[1:]:
+        lines = chunk.splitlines()
+        for i, line in enumerate(lines):
+            m = re.match(r"^(\s*)run:\s*(.*)$", line)
+            if not m:
+                continue
+            body = [m.group(2)]
+            indent = len(m.group(1))
+            for extra in lines[i + 1:]:
+                if extra.strip() and (len(extra) - len(extra.lstrip())) <= indent:
+                    break
+                if extra.strip() and not extra.lstrip().startswith("#"):
+                    body.append(extra)
+            commands.append("\n".join(body))
+    return commands
+
+
+def _ci_selftest_shards(ci_src):
+    """The (k, n) shards declared by ci-selftests invocations in ci.yml; or (None, reason).
+
+    Accepted declaration forms, per run-command chunk:
+      no --shard                        -> (1, 1)
+      --shard 2/3                      -> (2, 3), literal
+      --shard ${{ matrix.x }}/3        -> one pair per value of the inline matrix list x
+    Anything else (a missing/non-literal n, an unparseable matrix list) is a parse
+    failure, never a silent "no shards": that way the coverage check fails closed.
+    """
+    shards = []
+    for cmd in _ci_run_commands(ci_src):
+        if "ci-selftests" not in cmd:
+            continue
+        # A ${{ matrix.x }} expression contains spaces, so it is matched as a whole token
+        # before falling back to a whitespace-delimited literal.
+        m = re.search(
+            r"--shard(?:=|\s+)("
+            r"\$\{\{\s*matrix\.\w+\s*\}\}/\d+"
+            r"|\S+)",
+            cmd,
+        )
+        if not m:
+            shards.append((1, 1))
+            continue
+        token = m.group(1)
+        lm = re.fullmatch(r"(.+?)/(\d+)", token)
+        if not lm:
+            return None, f"cannot parse --shard token {token!r}: want K/N"
+        k_tok, n = lm.group(1).strip(), int(lm.group(2))
+        mm = re.fullmatch(r"\$\{\{\s*matrix\.(\w+)\s*\}\}", k_tok)
+        if mm:
+            var = mm.group(1)
+            lm2 = re.search(rf"(?m)^\s*{re.escape(var)}\s*:\s*\[([^\]]*)\]", ci_src)
+            if not lm2:
+                return None, f"--shard uses matrix.{var} but no inline list '{var}: [...]' found"
+            vals = re.findall(r"['\"]?(\d+)['\"]?", lm2.group(1))
+            if not vals:
+                return None, f"matrix list for {var} holds no integer shard ids"
+            for v in vals:
+                shards.append((int(v), n))
+        elif re.fullmatch(r"\d+", k_tok):
+            shards.append((int(k_tok), n))
+        else:
+            return None, f"unsupported --shard K token {k_tok!r} (literal int or ${{{{ matrix.x }}}} only)"
+    return shards, None
+
+
 _SELFTEST_TAIL = 200
 
 
@@ -3002,6 +3129,13 @@ def cmd_ci_selftests(argv):
     ap.add_argument("--timeout", type=float, default=120.0)
     ap.add_argument("--fail-fast", action="store_true",
                     help="stop at the first failing selftest (default: run all, report all)")
+    ap.add_argument(
+        "--shard",
+        default=None,
+        metavar="K/N",
+        help="run only the K-th of N LPT-packed shards (weights from the committed "
+        "scripts/ci_selftest_timings.json); used by the parallel CI matrix",
+    )
     a = ap.parse_args(argv)
     hook = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
     ci = os.path.join(ROOT, ".github", "workflows", "ci.yml")
@@ -3013,6 +3147,18 @@ def cmd_ci_selftests(argv):
         print("ci-selftests: cannot parse the hook selftest maps", file=sys.stderr)
         return 2
     targets = sorted(p for p, b in buckets.items() if b == "driver")
+    if a.shard is not None:
+        sm = re.fullmatch(r"(\d+)/(\d+)", a.shard.strip())
+        if not sm:
+            print(f"ci-selftests: bad --shard {a.shard!r}, want K/N with 1 <= K <= N",
+                  file=sys.stderr)
+            return 2
+        k, n = (int(x) for x in sm.groups())
+        if not (1 <= k <= n):
+            print(f"ci-selftests: bad --shard {a.shard!r}, want 1 <= K <= N", file=sys.stderr)
+            return 2
+        targets = ci_selftest_shard(targets, k, n)
+        print(f"ci-selftests: shard {k}/{n}: {len(targets)} target(s)", flush=True)
     env = dict(os.environ)
     env["CUDA_VISIBLE_DEVICES"] = ""  # CPU image: never let a selftest silently claim a card
     return _run_ci_targets(targets, flags or {}, a.timeout, a.fail_fast, env, ROOT)
@@ -3040,15 +3186,62 @@ def check_ci_selftest_partition(root):
     buckets = _hook_ci_partition(src, ci_src)
     if buckets is None:
         return FAIL, "the hook selftest maps do not parse; cannot prove CI coverage"
-    driver_invoked = "ci-selftests" in ci_src
     counts = {"driver": 0, "explicit": 0, "needs": 0, "exclude": 0}
     for b in buckets.values():
         counts[b] += 1
-    if not driver_invoked:
+
+    # EXACT SHARD COVER, not a substring. The old test was `"ci-selftests" in ci_src`: a comment
+    # mentioning the driver, or a matrix that declared only shards 1/3 and 2/3, read as fully
+    # covered while the third of the driver bucket ran nowhere (and still does -- there is no
+    # runner-side check that the matrix list is complete). Parse every invocation's --shard,
+    # re-run the same LPT packing the driver uses, and require the declared shards to be a
+    # partition of the driver bucket: same set, no dup, no missing.
+    shards, perr = _ci_selftest_shards(ci_src)
+    if not shards:
         uncovered = sorted(p for p, b in buckets.items() if b == "driver")
-        return FAIL, (f"ci.yml does not invoke 'harness ci-selftests', leaving "
-                      f"{len(uncovered)} hook-runnable selftest(s) with no CI run: "
+        return FAIL, (f"ci.yml declares no parseable 'harness ci-selftests' shard ({perr}), "
+                      f"leaving {len(uncovered)} driver selftest(s) with no CI run: "
                       f"{', '.join(uncovered[:4])}")
+    driver_targets = sorted(p for p, b in buckets.items() if b == "driver")
+    packed = []
+    for k, n in shards:
+        try:
+            packed.append(ci_selftest_shard(driver_targets, k, n))
+        except ValueError as e:
+            return FAIL, f"ci.yml declares a bad ci-selftests shard: {e}"
+    import collections
+    seen = collections.Counter(t for shard in packed for t in shard)
+    covered = set(seen)
+    missing = sorted(set(driver_targets) - covered)
+    dupes = sorted(t for t, c in seen.items() if c > 1)
+    extra = sorted(covered - set(driver_targets))
+    if missing:
+        return FAIL, (f"{len(missing)} driver selftest(s) are in NO declared ci-selftests shard "
+                      f"(a shard index can be dropped without the matrix noticing): "
+                      f"{', '.join(missing[:4])}")
+    if dupes or extra:
+        return FAIL, (f"the declared ci-selftests shards are not a partition: "
+                      f"{len(dupes)} run twice {dupes[:3]}, {len(extra)} outside the driver "
+                      f"bucket {extra[:3]}")
+
+    # The LPT weights come from a committed table; its keys must equal the driver bucket.
+    # A stale/missing key silently downgrades that target to the weight-1 default and unbalances
+    # the packing; an extra key rots against nothing. Checked here, where both sets are in hand.
+    tp_rel = os.path.relpath(CI_SELFTEST_TIMINGS, ROOT)
+    tp = os.path.join(root, tp_rel)
+    if not os.path.exists(tp):
+        return FAIL, (f"{tp_rel} missing: the ci-selftests shards need the committed LPT "
+                      f"timing table")
+    try:
+        tobj = json.loads(open(tp, encoding="utf-8").read())
+        tkeys = set((tobj.get("targets") or {}))
+    except (OSError, ValueError) as e:
+        return FAIL, f"{tp_rel} unparseable: {e}"
+    if tkeys != set(driver_targets):
+        stale = sorted(tkeys - set(driver_targets))
+        fresh = sorted(set(driver_targets) - tkeys)
+        return FAIL, (f"{tp_rel} keys != driver bucket ({len(tkeys)} vs {len(driver_targets)}): "
+                      f"{len(fresh)} unweighted {fresh[:3]}, {len(stale)} stale {stale[:3]}")
     # SUBSET DIRECTION THAT MATTERS: every hook selftest assigned to "explicit" is genuinely
     # named by a ci.yml step (internal consistency of the parse). The reverse -- every ci.yml
     # path is in the map -- is deliberately NOT asserted: ci.yml also runs non-selftest checks
@@ -3338,6 +3531,49 @@ def _broken_ci_selftest_partition():
     open(ci_dst, "w", encoding="utf-8").write(stripped)
     return d
 
+
+def _ci_partition_world(mutate):
+    """Real ci.yml + hook + timing table in a shaped world, with `mutate(ci, timings_path)`
+    applied to COPIES. scripts/ is a symlink in _tmp_repo_shaped, so it is replaced with a
+    real copy first: a write through the link would edit the repo (de, 2026-09-01)."""
+    import shutil
+    d = _tmp_repo_shaped()
+    link = os.path.join(d, "scripts")
+    if os.path.islink(link):
+        os.remove(link)
+        shutil.copytree(os.path.join(ROOT, "scripts"), link, symlinks=False)
+    ci_real = os.path.join(ROOT, ".github", "workflows", "ci.yml")
+    ci_dst = os.path.join(d, ".github", "workflows", "ci.yml")
+    if not os.path.exists(ci_real):
+        return None
+    os.makedirs(os.path.dirname(ci_dst), exist_ok=True)
+    ci = open(ci_real, encoding="utf-8").read()
+    tp = os.path.join(d, os.path.relpath(CI_SELFTEST_TIMINGS, ROOT))
+    ci2 = mutate(ci, tp)
+    open(ci_dst, "w", encoding="utf-8").write(ci2)
+    return d
+
+
+def _broken_ci_selftest_dropped_shard():
+    """The matrix declares shards 1/3 and 2/3 only -- one third of the driver bucket runs
+    nowhere, which the old substring test ("ci-selftests" in ci_src) still called covered."""
+    def _mut(ci, _tp):
+        out = ci.replace("shard: [1, 2, 3]", "shard: [1, 2]")
+        assert out != ci, "real ci.yml no longer carries the 3-shard inline list"
+        return out
+    return _ci_partition_world(_mut)
+
+
+def _broken_ci_selftest_stale_timings():
+    """The timing table drops one driver key: that target falls back to weight 1 and the
+    packing silently unbalances, with nothing else failing."""
+    def _mut(ci, tp):
+        obj = json.loads(open(tp, encoding="utf-8").read())
+        k = next(iter(obj["targets"]))
+        del obj["targets"][k]
+        json.dump(obj, open(tp, "w", encoding="utf-8"))
+        return ci
+    return _ci_partition_world(_mut)
 
 
 def _broken_no_duplicate_defs():
@@ -26703,6 +26939,21 @@ def _demo(only=None):
                 _st, _why = check_shapes_table_covers_doc(_d)
                 if _st != FAIL:
                     untested.append(f"shapes_table_covers_doc reported {_st} on {_label} ({_why[:60]})")
+            finally:
+                shutil.rmtree(_d, ignore_errors=True)
+
+    # ci_selftest_partition gained an exact-cover assertion. Its registered world removes the
+    # driver step entirely; two further defects the old substring test could not see each need
+    # their own world: a matrix index silently dropped (shards 1/3,2/3 leave a third of the
+    # bucket unrun), and a timing-table key dropped (the target silently runs at weight 1).
+    for _w, _label in ((_broken_ci_selftest_dropped_shard, "matrix declares only shards 1/3 and 2/3"),
+                       (_broken_ci_selftest_stale_timings, "timing table missing a driver key")):
+        _d = _w()
+        if _d:
+            try:
+                _st, _why = check_ci_selftest_partition(_d)
+                if _st != FAIL:
+                    untested.append(f"ci_selftest_partition reported {_st} on {_label} ({_why[:60]})")
             finally:
                 shutil.rmtree(_d, ignore_errors=True)
 
