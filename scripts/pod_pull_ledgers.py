@@ -80,6 +80,17 @@ def _ledgers():
     Sorted for a stable report order. `artifact_refs.jsonl` is still absent because it has no
     KEYS entry (DL-12: two schemas, no row identity) -- and it is absent by that fact rather than by
     a decision here, so the day it gets a key it gets transport too.
+
+    CONFIRMED NOT TO BE BACKFILLED, 2026-09-24 (3b). The 2026-09-22->24 window left 91 rows on the
+    pod against 46 in the repo with ZERO overlapping paths, and the question was whether to pull
+    them by hand. They are all HumanEval per-shard prediction records: reproducibility is what a
+    prediction file has instead of provenance, and the merged score they feed is already committed
+    (`runs/experiments.jsonl`, the nine heval_ced_* backfill rows). Pulling 91 derived files would
+    add a second copy of a value that is already on main and already re-derivable from the
+    checkpoint. So the absence is deliberate and this is the note that says so -- the DL-12 reason
+    above explains why the TOOL cannot carry it; this paragraph is why nobody should carry it by
+    hand either. If a future row is NOT re-derivable (a raw prediction whose checkpoint is pruned),
+    that row is the exception and belongs in a fact, not in this ledger.
     """
     return tuple(sorted(_keys()))
 
