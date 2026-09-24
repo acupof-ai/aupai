@@ -2432,6 +2432,14 @@ def main():
         # the cadence rounding, ignoring --no_bucket_view in the label, and restoring the
         # "unmeasurable at accum 1" label that is false whenever DDP is off at accum > 1.
         "scripts/test_step_profiler.py",
+        # The CED divergence watchdog (de, prereg v41_ced_0923 amendment_2). Registered
+        # because its whole job is to fire on a runaway and stay silent when healthy, and a
+        # wrong threshold or reset bug is invisible to a reader: the selftest pins gnorm
+        # fires only on the 3rd consecutive high line, one low line resets the run, the val
+        # line (same step prefix) is skipped, the 50-step loss mean fires only when the
+        # window is full and is recoverable, non-finite fires, and a shaped-but-unparsable
+        # progress line RAISES (a blind watchdog is an exit-3 fault, not a healthy read).
+        "scripts/test_ced_diverge_watch.py",
         # The checkpoint-deletion predicates. Registered because this file's output is what
         # someone reads before deleting 6 GB, and BOTH of its failures so far were silent: the
         # first version scored three predicates and printed a well-formed listing that offered
@@ -2965,6 +2973,10 @@ def main():
                               "scripts/test_serve_history.py"},              # 22.0s
         "fone.py": {"scripts/test_arch_compat.py"},                          # 18.0s
         "scripts/card_claim.py": {"scripts/test_launch_claims.py"},          # 4.0s
+        # de: the divergence watchdog's parse/decide layer is exactly what a threshold edit
+        # to the watchdog itself can break, so an edit to ced_diverge_watch.py runs its
+        # known-answer test (the pod --once real-log kata is separate, pod-only). 0.1s.
+        "scripts/ced_diverge_watch.py": {"scripts/test_ced_diverge_watch.py"}, # 0.1s
         "eval/prefix_mask.py": {"scripts/test_sft_prefix.py"},               # 1.9s
         "datagen/prepare_sft.py": {"scripts/test_sft_pack.py"},              # 1.8s
         "scripts/harness.py": {"scripts/test_cvd_pattern.py", "scripts/test_drop_zombies.py",
