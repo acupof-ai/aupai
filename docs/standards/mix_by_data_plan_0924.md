@@ -254,12 +254,15 @@ That is Steps 2-5 with the proxy sweep at its cheapest useful size. Cost:
 | 32 proxies, 1B tokens each | **4.5-17.9 h wall** on 8 cards at 1 proxy/card (the conservative column), or **1.1-4.5 h** if 4-per-card concurrency holds — both depend on the unmeasured rate |
 | scale check, 2 candidates × 3-5B at gate shape | **7.3-12.2 h wall** |
 
-**Estimate: 1.0-2.3 days total wall at 1 proxy/card** (CPU <1 d + proxies 4.5-17.9 h + validation
-7.3-12.2 h), or **0.9-1.7 days** if 4-per-card concurrency holds. Both ends are dominated by the
-one unmeasured number. The single most valuable
+**Estimate, at 1 proxy/card, summing each term's own range** (CPU 0.5-1.0 d + proxies 4.5-17.9 h
+= 0.19-0.75 d + validation 7.3-12.2 h = 0.30-0.51 d): **1.0-2.3 days total wall**, taking each
+term's lower bound for the lower end and its upper bound for the upper end. If 4-per-card
+concurrency holds the proxy term becomes 1.1-4.5 h = 0.05-0.19 d, giving **0.9-1.7 days**. The
+bounds are stated per term because a total over terms whose ranges are written as "< 1 d" cannot
+be re-derived without knowing which end each contributed. The single most valuable
 action before committing to this plan is to measure the 20-50M proxy's tok/s/gpu and its
 co-residency behaviour — one short run, and it collapses the range that decides whether this plan
-costs three days or three weeks.
+costs hours or tens of hours.
 
 ## What this method cannot answer
 
