@@ -211,21 +211,33 @@ def t_live_history_only_goes_stale_not_trigger():
 
 
 def t_live_chatter_does_not_reset_staleness():
-    # non-progress lines must NOT refresh the progress staleness timer
+    # non-progress lines must NOT refresh the progress staleness timer. Chatter is appended
+    # CONTINUOUSLY, past max_stale, until the watchdog exits: a regression that refreshes the
+    # timer on any line never goes stale and blows the 2.5s cap, so this test is discriminating
+    # (the prior version stopped chattering before the wait, which a line-refreshing build also
+    # survived by then going idle).
     with tempfile.TemporaryDirectory() as d:
         log = os.path.join(d, "l.log")
         with open(log, "w") as f:
             f.write("step 12000/38146 31% [main] | loss 1.0 | gnorm 0.5\n")
         with open(os.path.join(d, "o.txt"), "w") as out:
             p = _run_live(log, max_stale=0.6, out_path=out)
-            deadline = time.time() + 1.2
-            while time.time() < deadline:
-                if p.poll() is not None:
+            t0 = time.time()
+            rc = None
+            while time.time() - t0 < 2.5:
+                rc = p.poll()
+                if rc is not None:
                     break
-                with open(log, "a") as a:  # chatter, no progress shape
+                with open(log, "a") as a:  # continuous chatter, never a progress shape
                     a.write("saving checkpoint / warming compile / val noise\n")
-                time.sleep(0.15)
-            assert _wait_exit(p) == 4
+                time.sleep(0.1)
+            elapsed = time.time() - t0
+            if rc is None:
+                p.kill()
+                raise AssertionError("continuous non-progress chatter kept staleness from firing")
+            assert rc == 4
+            # fired on the 0.6s PROGRESS timer while chatter was still flowing, not after it stopped
+            assert elapsed < 1.5, f"stale fired late ({elapsed:.2f}s), timer may track chatter"
 
 
 TESTS = [
