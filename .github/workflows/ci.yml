@@ -35,6 +35,18 @@ jobs:
       # CED divergence watchdog known-answer layer (parse/decide + NUL-cmdline matcher).
       # The real seg1-log fire/silent kata is pod-only; this pins the pure layer on every push.
       - run: python scripts/test_ced_diverge_watch.py --selftest
+      # CED resume-continuity through the REAL train.py loop (~1 min, four CPU segments): a
+      # save_every ckpt's weights/optimizer/AdamW-step agree with its named step, resume is
+      # bit-exact vs an uninterrupted run, and the row cursor neither skips nor repeats; the
+      # 500-mod-1000 snapshot-skew defect is pinned by an in-test two-cadence mutant. The
+      # commit hook runs only this file's model-free --selftest; this is the heavy half.
+      - name: CED resume-continuity gate
+        env:
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_DYNAMIC: "FALSE"
+        run: python scripts/test_ced_resume_cpu.py
       - run: python scripts/de109/check_cpu_parity.py
       - run: python scripts/shape_audit.py --selftest
       - run: python scripts/shape_audit.py
