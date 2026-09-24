@@ -1956,13 +1956,6 @@ def main():
         # AST and synthetic-outcome checks over the cell table and the verdict, no GPU. The real
         # run needs a card; the test does not.
         "probes/kda_shape_fault.py",
-        # Step-D long-horizon numeric hygiene (98). --selftest runs off+ste at 40 steps in
-        # separate processes (~4 min CPU, 180M model + fp32 master + AdamW each), asserts
-        # frozen 8/4, SIX off=0/ste>0, finite m/v, bounded bf16 gap, real descent, and the
-        # off/ste backbone bit-identity; six in-process mutants each must go red. Registered
-        # so a probe that printed a JSON nobody read could not pass -- the assertions are the
-        # gate. The 160-step evidence JSONs live in runs/longrun/; CI runs the 40-step form.
-        "probes/v41f_stepd_longrun.py",
         "scripts/stale_claims.py",
         "scripts/merge_score_row.py",
         "scripts/trace_classes.py",
@@ -2496,71 +2489,6 @@ def main():
         # manifest and pins physical-line parsing, index screening, and the sha1/manifest
         # count guards.
         "eval/mmlu.py",
-        # The v41f P0 faithful-reproduction suite (fb). One runner discovers and runs every
-        # tests/v41f/test_p0_*.py per-module allclose against the vendored, sha-pinned
-        # DeepSeek-V4.1 reference, so a new P0 module needs no map entry (the runner does),
-        # and the suite is the oracle-equivalence proof for the whole v41f build.
-        "tests/v41f/p0_selftest.py",
-        # The v41f P1 assembly suite (de): whole-Block (then whole-Model) allclose against
-        # the same vendored reference, proving the P0 leaf modules are wired together.
-        "tests/v41f/p1_selftest.py",
-        # CPU parity skeleton for the future GPU torch._grouped_mm MoE dispatch (66, P4
-        # preresearch; design docs/standards/moe_grouped_mm_dispatch.md). --selftest pins the
-        # grouped flatten/sort/batch_sizes/index_add expansion to the per-expert where-loop at
-        # max_abs 0.0 in fp32 and bf16 (weight-before-w2), an empty group, and a bf16
-        # weight-order guard. Standalone until the GPU branch joins it to p1 discovery.
-        "tests/v41f/test_p1_grouped_dispatch.py",
-        # Assembly A/B key-set + dtype structural gate (98, #468 prep). --selftest freezes the
-        # all-off v41f_small floor (241 sd keys/236 params, fp32 head+hc+sink+gate-bias contract,
-        # no non-persistent leak), the ModelArgs<->V41FConfig field intersection (a ref-only
-        # model-shape field is named, not silently defaulted), and arms skip-loud A (engram) /
-        # B (tied mtp embed/head single-registration) sections when those modules are wired.
-        "tests/v41f/test_p1_assembly_keys.py",
-        # M14 / step D-PRE optimizer-membership gate (de). Registered because its checks are
-        # `gate_*` functions, NOT `test_*`: the p1_selftest glob runner selects only `test_*`
-        # callables, so without this entry the file would import, execute nothing, and
-        # contribute zero cases while the suite still printed green -- the same shape that
-        # makes test_p1_assembly_keys need both this map and an explicit CI step. Asserts set
-        # equality between requires_grad and AdamW state after a COVERED step (coverage itself
-        # asserted, since an unrouted MoE expert legitimately has neither), that F is derived
-        # from cfg and frozen in both modes, and that off/ste differ by exactly the indexer
-        # projections. Mutants: a dropped freeze and a missing unfreeze each go red by name.
-        "tests/v41f/test_p1_indexer_freeze.py",
-        # step D fp32-master training checkpoint (98): name-keyed optim_named, buffer routing,
-        # fp32-native alias through save/load, tokenizer/vocab_id refusal, and save/load-resume
-        # bit-equivalence. Gate fns are subprocess-isolated (180M models OOM one process).
-        "tests/v41f/test_p1_train_ckpt.py",
-        # Whole-machine train->checkpoint->fresh-process RESUME smoke (0e). --selftest is
-        # model-free/cheap (tier constants); the real ~180M x3-process run is an explicit CI
-        # step. Distinct from de's single-step test_p1_train_smoke (no save/load there).
-        "tests/v41f/test_p1_train_resume_smoke.py",
-        # Non-blocking bimodal-resume CI diagnostic (0e). Its --diag-selftest is model-free and
-        # proves the comparator is non-empty (green world, a planted 1.3% mutant localized,
-        # loss-function identity, alias-audit break); the heavy runner capture is an explicit
-        # continue-on-error CI job, never a production gate. Registered so a selftest-bearing
-        # file cannot sit outside the hook map and silently never run.
-        "tests/v41f/diag_resume_bimodal.py",
-        # The resume gate's signature-gated retry decision (genB, 2026-09-23). Registered because
-        # this file DECIDES whether a red gets a second chance, and the failure that matters is a
-        # silent one: a band that drifted into mutant space, or a predicate that started returning
-        # True on missing evidence, would turn the gate into a rubber stamp without ever going red.
-        # --selftest is pure (no torch, no model, no dump): one positive world is the measured
-        # 2026-09-22 red, ten negatives are one-predicate near-misses including the smallest real
-        # mutant (so the band cannot widen unnoticed) and an RNG-differed arm (so a pre-save
-        # bifurcation can never be rescued). Also reachable as the gate `gate_resume_retry_signature`.
-        "tests/v41f/resume_gate_retry.py",
-        # Engram ON config gate (de, 2026-09-18). Registered because its checks are `test_*`
-        # but the defect it guards is a CONFIG-shape one: a bare V41FConfig() has engram ON
-        # (engram_layer_ids=(1,)) while both derived fields sit at ()/0, and nothing in the
-        # production path filled them. validate() accepted that config, so the first refusal
-        # was an AssertionError/IndexError inside V41FModel construction. uv run a `v41f/`
-        # change and this file joins the subject set; the gate then asserts validate()
-        # refuses the bare default, that with_derived_engram requires the tokenizer it
-        # documents, and that the OFF path still needs neither.
-        "tests/v41f/test_p1_config_gate.py",
-        # v41f-S config-formula total/active parameter counter (3b); --selftest pins a
-        # hand-computed tiny config so the total=sum-of-modules identity cannot silently rot.
-        "scripts/v41f_param_count.py",
         # The PR merge gate (66, #441 class). Registered because the whole point is a race it
         # must not lose: a merge must wait for EVERY check settled-passing. --selftest is pure
         # (evaluate() over injected lists, zero network) and pins GO only on all-pass, exit 2 on
@@ -2771,17 +2699,7 @@ def main():
                      # the tolerance this relies on -- a script that IGNORES an unknown
                      # argument needs no entry, and one that PARSES argv strictly needs one
                      # here. file_claim is the first strict parser in the map.
-                     "scripts/file_claim.py": "selftest",
-                     # --diag-selftest, not --selftest. The THIRD recurrence of one shape: a
-                     # file registered in SELFTEST_FILES whose own flag the hook does not know,
-                     # so the hook passes --selftest and argparse exits 2. A branch's commits
-                     # run MAIN's hook, so the mismatch stays invisible until the merge -- and
-                     # then every commit that stages the file fails, which every merge of main
-                     # into a branch does. eval/code_fewshot.py and scripts/file_claim.py were
-                     # the first two, each fixed by adding a line here and nothing else, which
-                     # is why this one arrived (genB measured it, 2026-09-19). The map line is
-                     # still the fix; check_selftest_flags_accepted is what stops the fourth.
-                     "tests/v41f/diag_resume_bimodal.py": "--diag-selftest"}
+                     "scripts/file_claim.py": "selftest"}
     # A TEST ALSO RUNS WHEN ITS SUBJECT IS STAGED, not only when the test file itself is.
     #
     # MEASURED 2026-09-04, by staging a real defect and running this hook: dropping `demo_lang`
@@ -3038,23 +2956,9 @@ def main():
         "datagen/l3_rubric.py": {"datagen/test_l3_label_pipeline.py"},
         "datagen/l3_stratified_sample.py": {"datagen/test_l3_label_pipeline.py"},
     }
-    # v41f path-level trigger (ae): a v41f/<mod>.py production edit selects both faithful-repro
-    # suites. The map is exact-key, so without this prefix a pure v41f production change selected
-    # NO test (the v41f tests ran only when the commit staged the tests themselves). The two
-    # runners glob-discover every test_p0_*/test_p1_* per-module file, so they already cover the
-    # changed module; the per-module files are not SELFTEST_FILES-registered and are filtered by
-    # the intersection below.
-    _V41F_SUBJECT_TESTS = {"tests/v41f/p0_selftest.py", "tests/v41f/p1_selftest.py",
-                          "tests/v41f/test_p1_assembly_keys.py",
-                          "tests/v41f/test_p1_indexer_freeze.py",
-                          "tests/v41f/test_p1_train_ckpt.py",
-                          "tests/v41f/test_p1_train_resume_smoke.py",
-                          "tests/v41f/test_p1_config_gate.py"}
     _subject_tests = set()
     for _subj in staged("AM"):
         _subject_tests |= TESTS_FOR_SUBJECT.get(_subj, set())
-        if _subj.startswith("v41f/") and _subj.endswith(".py"):
-            _subject_tests |= _V41F_SUBJECT_TESTS
     # Restricted to the map: a test pulled in this way still has to be one the hook can run here,
     # or a NEEDS_DATA file would be launched on a box without its data and fail for the wrong
     # reason. Its own staged-ness is irrelevant, so `git show :<f>` cannot be used for those --
