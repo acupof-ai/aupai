@@ -10,6 +10,11 @@
 # Single instance via flock (never a pid file: a stale pid file and a live job look alike).
 # Iteration cap because a loop keyed on `ls` runs forever if a new ckpt keeps appearing.
 export CUDA_VISIBLE_DEVICES=
+# The script's own directory, resolved ONCE at the top. A later `_st_root` computed from
+# BASH_SOURCE inside the selftest resolved to the TEMP dir instead -- the hook copies the file
+# to a scratch tree before running it, so by then BASH_SOURCE points there, not at the repo.
+SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
+REPO_ROOT=$(cd "$SELF_DIR/.." && pwd)
 NAME=v41_ced_0923
 CK=/work/aupai/ckpt_v41_ced_0923.pt
 PAT=${PAT:-$(basename "$CK")}
@@ -324,12 +329,24 @@ if [ "${1:-}" = "--selftest" ]; then
   _st_hot="1 6 13 63 66 122 123 138 142 150 152 168"
   # The sibling lists are 'N' or 'A-B' RANGES (measured: cpu13 -> '12-13'), so a plain
   # membership test misses half of every pair. Expand the range.
-  _st_sibs() {
-    local f=/sys/devices/system/cpu/cpu$1/topology/thread_siblings_list
+  # Siblings come from a COMMITTED SNAPSHOT by default, not from /sys -- see the block below.
+  # The root is a parameter so the same code runs against the snapshot and against a live host.
+  _st_sibs() { # _st_sibs <cpu> <snapshot-path|"">
+    local c="$1" snap="$2" sh="$3" f="$4"
+    if [ -n "$snap" ]; then
+      awk -v c="$c" '$1=="cpu" && $2==c {print $4; exit}' "$snap"
+      return
+    fi
+    f="${4:-/sys/devices/system/cpu/cpu$c/topology/}/thread_siblings_list"
     [ -r "$f" ] || { echo "UNREADABLE"; return; }
-    tr ',' '\n' < "$f" | while read -r x; do
+    tr ',' '\n' < "$f"
+  }
+  # Expand 'A-B' or 'N' into a list of cpus.
+  _st_expand() {
+    tr ',' '\n' | while read -r x; do
       case "$x" in
         *-*) a=${x%-*}; b=${x#*-}; seq "$a" "$b" | tr '\n' ' ';;
+        "")  ;;
         *)   printf '%s ' "$x";;
       esac
     done
@@ -343,24 +360,43 @@ if [ "${1:-}" = "--selftest" ]; then
   # every commit for a check that needs Linux is a worse failure than the one it detects. So it
   # SKIPS OUT LOUD when the top-level dir is absent, and the skip is itself asserted -- a silent
   # skip and a vacuous pass are the same defect one level apart.
-  if [ -r /sys/devices/system/cpu/cpu0/topology/thread_siblings_list ]; then
-    _st_ran=1
+  # THE TOPOLOGY COMES FROM A COMMITTED SNAPSHOT, so this world RUNS EVERYWHERE -- CI, macOS,
+  # the pod. An earlier version read /sys and SKIPPED when it was absent, which meant it passed
+  # on the two machines that run it most (a dev box, and a GitHub runner with a small single-node
+  # /sys) and only ever bit on the pod. genB measured that: CI red on `topology readable on every
+  # group cpu`, 33 of 34 worlds green. A world that skips where it is usually run is not a check.
+  # From REPO_ROOT, captured at the top of the file. Two earlier attempts failed here: a
+  # relative path misses because the selftest runs from a temp dir, and BASH_SOURCE resolved to
+  # the temp tree because the hook copies this file there before running it.
+  _st_snap=${TOPO_SNAPSHOT:-$REPO_ROOT/data/eval/topo_snapshot_30b.tsv}
+  if [ -r "$_st_snap" ]; then
+    # (a) every group cpu exists in the snapshot, and the node it is bound to has it
     _st_top=0
-    for c in $(_st_groups | tr ',' ' '); do
-      case "$(_st_sibs "$c")" in *UNREADABLE*) _st_top=1;; esac
+    _st_i=0
+    for g in $(_st_groups); do
+      _st_i=$((_st_i + 1))
+      n=$(echo $G_NODE | cut -d" " -f$_st_i)
+      # The node cpulist is a RANGE ("0-89"), so a literal membership test never matches a bare
+      # cpu number. Expand it first -- measured: `case ",0-89," in *",2,"*` is false.
+      nlist=$(awk -v n="$n" '$1=="node" && $2==n {print $4}' "$_st_snap" | _st_expand | tr -s ' ' ',')
+      for c in $(echo "$g" | tr ',' ' '); do
+        awk -v c="$c" '$1=="cpu" && $2==c {found=1} END{exit !found}' "$_st_snap" || {
+          echo "  group $_st_i cpu $c is not in the snapshot"; _st_top=1; }
+        case ",$nlist," in *",$c,"*) ;; *) echo "  group $_st_i cpu $c is not on node$n (cpulist $nlist)"; _st_top=1;; esac
+      done
     done
-    _st "topology readable on every group cpu" 0 "$_st_top"
+    _st "every group cpu exists and sits on its declared node" 0 "$_st_top"
     clash=""
     for c in $(_st_groups | tr ',' ' '); do
-      for s in $(_st_sibs "$c"); do
+      for s in $(_st_sibs "$c" "$_st_snap" | _st_expand); do
         case " $_st_hot " in *" $s "*) clash="$clash $c/$s";; esac
       done
     done
+    # AN EMPTY CLASH HERE IS A MEASUREMENT, NOT A SKIP: the snapshot has real sibling data, so a
+    # group holding a hot core fails on any machine. Verified by mutation (see the PR).
     _st "no group cpu shares a physical core with a sampled-hot core" "" "$clash"
   else
-    _st_ran=0
-    echo "skip  hot-core exclusion: no /sys topology here (Linux-only). On a Linux host run:"
-    echo "        bash runs/heval_auto_loop.sh --selftest   # and check this line is NOT a skip"
+    _st "topology snapshot present (else this world cannot run)" 1 0
   fi
 
   # (iv) the group count matches SHARDS, and G_NODE has one entry per group
