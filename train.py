@@ -384,6 +384,13 @@ class Cfg:
     # ced>0 the global-KV SOURCE is H_{L/2}, so the CSA2 package path is not what feeds a decoder.
     ced = 0
     ced_enc_layers = 6   # encoder = layers [0, ced_enc_layers); H_{L/2} is read below the split
+    # QK-NORM ON CED GLOBAL ENTRY KEYS (prereg v41_ced_0923 amendment_4, user order 2026-09-24).
+    # Per-head F.rms_norm of kc = W_KV(H_6) in _ced_kv_from_enc, so the un-normed projected
+    # encoder keys entering the decoder softmax match the already-normed q scale. vc and the
+    # indexer are untouched. Default 0 = every pre-2026-09-24 checkpoint builds byte-identical;
+    # a resumed/old checkpoint whose cfg lacks this field reads False via getattr. New qkn runs
+    # write 1 into ck["cfg"].
+    ced_kc_norm = 0
     # V4 HYBRID ATTENTION + PARTIAL RoPE (facts/deepseek_v4.json#dsv4.hybrid_attention,
     # #dsv4.partial_rope). The p1 architecture is all three of these on together with
     # attn_every=1: every layer attention, CSA and HCA interleaved, position from partial RoPE
@@ -3119,6 +3126,7 @@ def main():
         "csa2": "V4.1 CSA2: learned entries + indexer + one softmax over entries and SWA",
         "csa2_win_flash": "CSA2: flash SWA window with dense entries, fp32 LSE split combine (default materialized)",
         "ced": "CED: bottom ced_enc_layers encoder; every decoder layer projects its global KV from H_{L/2} with its own W_KV/W_Z",
+        "ced_kc_norm": "QK-norm: per-head F.rms_norm of the CED decoder global entry keys W_KV(H_6); off keeps old checkpoints byte-identical",
     }.items():
         parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
                             default=None, required=name in RECIPE_REQUIRED, help=help_)
