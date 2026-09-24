@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Divergence watchdog for a training run (v41_ced_0923 resume, prereg amendment_2).
 
-Read-only on the log. Sends SIGTERM to the run's torchrun PIDs when either fires:
-  - gnorm > G on N consecutive progress lines, or
-  - mean train loss over the last W progress lines > L (needs W records).
-A read error, or a progress-shaped line whose numbers do not parse, is a HARD error
-(exit 3), never a silent "healthy": a watchdog that cannot read its log is blind.
+Read-only on the log and on GPU memory. Sends SIGTERM to the run's torchrun PIDs when:
+  - gnorm > G on N consecutive progress lines,
+  - mean train loss over the last W progress lines > L (needs W records), or
+  - ANY card's nvidia-smi used RSS > mem_thresh_gib (live only; sampled every mem_interval,
+    default 60s, so worst-case memory detection latency is ~60s, slower than the log rules).
+A read error, or a progress-shaped/memory line whose numbers do not parse, is a HARD error
+(exit 3), never a silent "healthy": a watchdog that cannot read its inputs is blind.
+
+Memory basis is `nvidia-smi memory.used` (process RSS: allocator pool + context), NOT the
+train log's torch.cuda.max_memory_allocated (~43 GiB) which is the allocator-only basis and
+cannot approach the H20 limit. Rule 2 (prereg v41_ced_0923) is enforced here on RSS.
 
 Exit codes: 0 healthy to EOF (--once); 2 triggered (and signalled unless --dry-run);
-3 read/parse error; 4 log stale (no new progress line within --max-stale seconds);
-5 target torchrun process not found at trigger time.
+3 read/parse error (log or nvidia-smi); 4 log stale; 5 trigger fired but no torchrun matched.
 
 The parse/decide layer (parse_step_line / DivergeDetector) is pure and known-answer
 tested in scripts/test_ced_diverge_watch.py --selftest (synthetic); the real segment-1
@@ -33,6 +38,61 @@ GNORM_RE = re.compile(r"\bgnorm ([0-9.eE+-]+)")
 
 class LogParseError(Exception):
     pass
+
+
+class MemReadError(Exception):
+    """nvidia-smi could not be executed or exited nonzero (cannot read memory)."""
+
+
+class MemParseError(Exception):
+    """nvidia-smi ran and returned output, but no usable per-card number parsed."""
+
+
+def parse_gpu_used_mib(text):
+    """Parse `nvidia-smi --query-gpu=index,memory.used --format=csv,noheader` output.
+
+    Pure: list of (index:int, used_mib:float). Empty or unparseable text raises MemParseError
+    (a READ THAT YIELDS NO NUMBER IS A FAULT, never a 0 that reads as "all cards free").
+    """
+    cards = []
+    for raw in text.splitlines():
+        parts = [p.strip() for p in raw.split(",")]
+        if len(parts) < 2:
+            continue
+        try:
+            idx = int(parts[0])
+            used = float(parts[1].split()[0])  # "71577 MiB" -> 71577.0
+        except (ValueError, IndexError):
+            continue
+        cards.append((idx, used))
+    if not cards:
+        raise MemParseError(f"no 'index, memory.used [MiB]' rows in: {text.strip()[:200]}")
+    return cards
+
+
+def read_gpu_used_mib(smi="nvidia-smi", timeout=20.0):
+    """Per-card used RSS in MiB via nvidia-smi (the same basis as `nvidia-smi` in the shell,
+    NOT torch allocator). A failed invocation raises MemReadError; bad output MemParseError.
+    """
+    try:
+        r = subprocess.run(
+            [smi, "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.SubprocessError) as e:
+        raise MemReadError(f"{smi} could not run: {e}") from e
+    if r.returncode != 0:
+        raise MemReadError(f"{smi} exit {r.returncode}: {r.stderr.strip()[:160]}")
+    return parse_gpu_used_mib(r.stdout)
+
+
+def mem_over(cards, thresh_mib):
+    """Return (idx, used_mib) for the fullest card over threshold, else None. Per-card used
+    RSS is the comparison object (not a sum/mean): one rank OOMing is the failure."""
+    over = [(i, u) for i, u in cards if u > thresh_mib]
+    return max(over, key=lambda x: x[1]) if over else None
 
 
 def parse_step_line(line):
@@ -172,6 +232,22 @@ def main():
     ap.add_argument("--once", action="store_true", help="scan whole file once, do not tail")
     ap.add_argument("--from_step", type=int, default=None, help="once: only feed steps >= N")
     ap.add_argument("--to_step", type=int, default=None, help="once: only feed steps < N")
+    ap.add_argument(
+        "--mem_thresh_gib",
+        type=float,
+        default=80.0,
+        help="live: SIGTERM if ANY card's nvidia-smi used RSS exceeds this many GiB (prereg "
+        "v41_ced_0923 stop rule 2, RSS basis, not the torch allocator line)",
+    )
+    ap.add_argument(
+        "--mem_interval",
+        type=float,
+        default=60.0,
+        help="live: seconds between nvidia-smi RSS samples; worst-case detection latency is "
+        "one mem_interval (60s), so this memory rule is slower than the log rules",
+    )
+    ap.add_argument("--smi", default="nvidia-smi", help="nvidia-smi binary (overridable for tests)")
+    ap.add_argument("--no_mem", action="store_true", help="live: disable the RSS memory rule")
     ap.add_argument("--dry_run", action="store_true", help="report triggers, send no signal")
     args = ap.parse_args()
 
@@ -193,6 +269,31 @@ def main():
         print(f"WATCHDOG SIGTERM torchrun pids {pids}", flush=True)
         _term(pids)
         return 2
+
+    def mem_sample():
+        """Sample RSS once. Return a terminal exit code, or None. A read/parse fault is exit 3."""
+        try:
+            cards = read_gpu_used_mib(args.smi)
+        except MemReadError as e:
+            print(f"WATCHDOG MEM READ ERROR: {e}", flush=True)
+            return 3
+        except MemParseError as e:
+            print(f"WATCHDOG MEM PARSE ERROR: {e}", flush=True)
+            return 3
+        worst = max(u for _, u in cards)
+        hit = mem_over(cards, args.mem_thresh_gib * 1024.0)
+        print(
+            f"WATCHDOG MEM max {worst / 1024:.2f}GiB across {len(cards)} card(s) "
+            f"(rule {args.mem_thresh_gib:g}GiB)",
+            flush=True,
+        )
+        if hit:
+            idx, used = hit
+            return act(
+                f"card {idx} nvidia-smi used RSS {used / 1024:.2f}GiB "
+                f"> {args.mem_thresh_gib:g}GiB (stop rule 2)"
+            )
+        return None
 
     if args.once:
         try:
@@ -229,7 +330,14 @@ def main():
     # keeps emitting non-progress chatter must still cross max_stale. Initialized at attach;
     # if no progress line arrives within max_stale (and ready_wait already passed), it fires.
     last_progress = time.time()
+    last_mem = 0.0  # force an RSS sample on the first live iteration
     while True:
+        now = time.time()
+        if not args.no_mem and now - last_mem >= args.mem_interval:
+            rc = mem_sample()
+            last_mem = time.time()
+            if rc is not None:
+                return rc
         line = f.readline()
         if not line:
             if time.time() - last_progress > args.max_stale:
