@@ -1057,6 +1057,68 @@
     "shards_in_merge": 11
    },
    "status": "measured"
+  },
+  {
+   "id": "v41.sft_mixA_pack_0924",
+   "value": "SFT mix-A continuation pack built for the post-pretrain HumanEval push (user selected plan A 2026-09-24, docs/standards/code_sft_plan_0924.md merged as #689). Raw continuation (no ChatML), split_encode=True, seq 4096. sft_mixA_0924.pt on the pod: 6617 rows x 4097 tokens, 27.11M total / 14.97M supervised (55.2% of positions), 143,687 examples, 0 dropped overlong, 0 prefix mismatches, 68,023 pad tokens (0.2%). Four gated sources by supervised-loss tokens: code_if 8,430,892 (56.3%), sc2-exec 4,094,494 (27.4%), APPS call-style 770,135 (5.1%), en_c4 prose 1,529,993 (10.2%) -- totals sum to 14,825,514 pair-body tokens; the pack's 14.97M supervised adds the appended <eos>. Pairs: code_if 76,644 / sc2 49,599 / apps 10,776 / prose 6,668. The target was code_if55/sc2 30/apps 5/prose 10; sc2 is 27.4 not 30 because the 50,661-row source yields only 4.09M in-length (body <=256) solution tokens (first parseable def/class fence per response; 98% of first fences are the solution, probe n=10000).",
+   "measured": "2026-09-24",
+   "source": "built on the digest Linux CPU box (64 cores, taskset 0-15, /data00/home/chenkailun.c/aupai-cimap/wt-3b-sfta) by scripts/sfta_build_pack.py; code_if and prose stages ran on the pod pinned to cores 96-119; pack verified to load on the pod with the gate vocab_id",
+   "config": {
+    "plan": "docs/standards/code_sft_plan_0924.md mix A (user-selected 2026-09-24)",
+    "pack_path_pod": "/work/aupai/data/sft/sfta/sft_mixA_0924.pt",
+    "pack_sha256": "b6f93fec3fd243a4e0a4acf0dc598202f22e4f587f713668322cd08da0ca8a6d",
+    "pack_bytes": 216881965,
+    "vocab_id": "f1f860970d15d623",
+    "format": "raw_continuation_split_encode",
+    "seq": 4096,
+    "rows": 6617,
+    "examples": 143687,
+    "total_tokens": 27109849,
+    "supervised_tokens": 14969201,
+    "build_scripts": {
+     "builder": "scripts/sfta_build_pack.py",
+     "builder_sha256": "f71c6068b8429ac783b425de28b0316410ac515781ce5787eff12b91cd066e81",
+     "stages": [
+      "scripts/sfta_codeif_filter.py",
+      "scripts/sfta_render_external.py",
+      "scripts/sfta_prose_extract.py"
+     ]
+    },
+    "input_sha256": {
+     "code_if_clean": "db812a51ae1e7838672332125c6bdb8635a23ae801ccbc877b516c441854526a",
+     "sc2_exec": "a9a74655668e1b9911e5eb0a0ef1d5217575f10dcbb52d146bcc5046e016e8b5",
+     "apps_call": "0a5ede02eab39c5a660ceac7d664d1c0a8128781ae8796b0bc0b7c77c4156152",
+     "prose": "44cdcec949e4ea681cdc7d91e446b91aaa023867fcbf93b2a44f342ed1bbcbf7"
+    },
+    "gates": {
+     "body_tokens_max": 256,
+     "prompt_tokens_max": 512,
+     "decontam_ngram_n": 13,
+     "decontam_fp_inputs": "302aa793f7067462",
+     "decontam_drops": {
+      "code_if": {
+       "prompt": 0,
+       "output": 0
+      },
+      "sc2": {
+       "ngram_prompt": 17,
+       "ngram_output": 42
+      },
+      "apps": {
+       "ngram_output": 11
+      }
+     }
+    },
+    "sources": {
+     "code_if": "datagen/extract_code_if_pairs.py over 283 code_py_starcoder_dc jsonl shards (seed 42), then 13-gram+length gate; 2,226,318 candidates -> 99,995 extracted -> 76,644 after body<=256 (23,047 dropped) / prompt<=512 (304); body-token median 97",
+     "sc2": "bigcode/self-oss-instruct-sc2-exec-filter-50k (ODC-By, 50,661 rows) first exec-validated python solution fence; drops output_len 910, prompt_long 89, no_solution_fence 4",
+     "apps": "codeparrot/apps train (MIT, 5000 problems) call-style only (fn_name+starter_code, 3062 problems), up to 4 distinct parseable solutions per problem; 1937 not call-style, output_len 1169",
+     "prose": "en_c4_stage2_dc 40 shards, pretrain-shaped prefix/tail document cuts, tail 64-256 tokens; 480,031 eligible cuts -> 6668 selected"
+    }
+   },
+   "uncertainty": "External-source token counts and 13-gram drops are measured on the downloaded files, not the HF cards: sc2 parquet 90.1MB/50,661 rows, APPS train.jsonl 107,101,272 bytes/5000 rows. Body-token shares use the per-pair stage stats; the pack .pt reports 14.97M supervised because each example appends one supervised <eos>. sc2's 30% target is unmet by source supply (27.4% actual), recorded rather than re-weighted. Holdout gate on digest could verify only 7 of 16 registry files (9 absent); it trusted committed fp 0442058d7e053826, the HumanEval/MBPP 13-gram gate itself ran with decontam_fp 302aa793f7067462 and its selftest passing.",
+   "boundary": "This records the pack that EXISTS and its composition, not an SFT result: no model has trained on it yet and no HumanEval delta is claimed. The 13-gram gate decontaminates HumanEval+MBPP; it says nothing about other benchmarks. APPS renders only the 3062 call-style problems; the 1938 stdin/stdout problems are excluded, not filtered.",
+   "status": "measured"
   }
  ]
 }
