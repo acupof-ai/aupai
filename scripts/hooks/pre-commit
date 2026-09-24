@@ -1242,6 +1242,16 @@ def main():
         # call; its --selftest builds the ff / checked-out / diverged worlds. Registered here so an
         # edit to either caller (merge_main.sh, this hook) selects it.
         "scripts/lib_ff_main.sh",
+        # The CED run's auto-eval loop: scores each checkpoint on CPU shards while training
+        # holds every GPU. Registered because its two decision rules are the kind that fail
+        # SILENTLY -- a step recorded done without a result file was never retried, and a
+        # path-string sort put step10000 ahead of step6000 -- and because no CI hook in this
+        # repo runs a shell script's behaviour, so the worlds a reviewer built by hand are
+        # only a check if they are committed. Its --selftest runs before the lock and before
+        # the cd: 12 worlds over the grid selection, the DONE-and-result predicate (including
+        # the step12000 shape), and the ordering. CPU, no pod, no data, ~0.1s.
+        "runs/heval_auto_loop.sh",
+
         # The review-row lookup merge_main.sh's gate calls. Registered because this logic spent its
         # whole life in a heredoc inside merge_main.sh, where nothing could reach it -- and what it
         # hid was that it read only the invoking worktree's review.jsonl, a union-merged ledger, so
