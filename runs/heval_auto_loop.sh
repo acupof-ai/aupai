@@ -110,15 +110,20 @@ if [ "${1:-}" = "--selftest" ]; then
   step_wanted 4000;  _st "below MIN_STEP" 1 $?
   step_wanted 38000; _st "grid point near the end" 0 $?
   step_wanted 37000; _st "off-grid, not near the end" 1 $?
-  # THE FINAL-CHECKPOINT CLAUSE NEEDS A TOTAL THAT PUTS THE LAST SAVE OFF THE GRID, or it is
-  # untested. With the live constants (TOTAL 38146, SAVE 500) the last save falls on 38000,
-  # which is already a multiple of 2000 -- so a world written against them passes on the grid
-  # clause alone. Measured: with this clause replaced by `return 1`, that world stayed green.
-  # TOTAL 37900 puts the last save at 37500 (off-grid), where only this clause can say yes.
+  # THE FINAL-CHECKPOINT CLAUSE NEEDS A TOTAL THAT PUTS ITS THRESHOLD OFF THE GRID, or it is
+  # untested. With the live constants the threshold is TOTAL-SAVE = 38146-500 = 37646, and the
+  # last save lands on 38000 -- already a multiple of 2000, so a world written against those
+  # constants passes on the grid clause alone. Measured: replacing this clause with `return 1`
+  # left that world green.
+  #
+  # The threshold moves with TOTAL, and the two worlds below straddle the THRESHOLD it creates
+  # (37900-500 = 37400), not any step number quoted in prose: 37500 is above it and off-grid,
+  # 37000 is below it. Both numbers are derived from the constants on the two lines above them,
+  # so a change to either constant moves the test with it.
   _st_saved_total=$TOTAL_STEPS
-  TOTAL_STEPS=37900
-  step_wanted 37500; _st "off-grid final checkpoint (only this clause)" 0 $?
-  step_wanted 37000; _st "off-grid, below the final save" 1 $?
+  TOTAL_STEPS=37900                                   # threshold becomes 37400
+  step_wanted 37500; _st "off-grid final checkpoint (above threshold)" 0 $?
+  step_wanted 37000; _st "off-grid, below the threshold" 1 $?
   TOTAL_STEPS=$_st_saved_total
 
   # --- done_and_produced: the step12000 shape is the first of these.
