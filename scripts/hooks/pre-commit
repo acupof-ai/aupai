@@ -2451,6 +2451,12 @@ def main():
         # window is full and is recoverable, non-finite fires, and a shaped-but-unparsable
         # progress line RAISES (a blind watchdog is an exit-3 fault, not a healthy read).
         "scripts/test_ced_diverge_watch.py",
+        # CED resume-continuity gate (de). The fast selftest is model-free: the step-agreement
+        # predicate (file-named step vs the AdamW step in the saved state -- the 500-mod-1000
+        # snapshot skew) and the mutant anchor that pins snapshot refresh and periodic save to
+        # one save_every block. The heavy four-segment bit-exact training run lives in ci.yml,
+        # not here, the same split as test_p1_train_resume_smoke.
+        "scripts/test_ced_resume_cpu.py",
         # The checkpoint-deletion predicates. Registered because this file's output is what
         # someone reads before deleting 6 GB, and BOTH of its failures so far were silent: the
         # first version scored three predicates and printed a well-formed listing that offered
@@ -2854,6 +2860,11 @@ def main():
                      # NameError on an unbound `dt`, and the test was right that the line had
                      # changed -- but nothing would have asked it. ~0.1s.
                      "scripts/test_eta_window.py",
+                     # CED resume gate's fast half: it parses train.py's snapshot-refresh guard
+                     # and must red if the two-cadence shape returns. The heavy bit-exact four-
+                     # segment run is CI-only; this is the ~0.1s anchor check, so an edit to the
+                     # train.py save block runs it from the SUBJECT side, not only on a test edit.
+                     "scripts/test_ced_resume_cpu.py",
                      # test_moe_module READS train.py -- it execs the fp8/bf16 refusal's own block
                      # out of train.main and drives it through six worlds -- and it was on
                      # model.py's trigger list ONLY. So da5ef8bf, which widened that guard's
