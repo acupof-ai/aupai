@@ -26,10 +26,11 @@ Naming this first because a plan that cites scripts that do not exist is not exe
 | embedding + clustering of the six domains | **none** | 待写 |
 | label extraction (has tests / docstring / algorithmic / imports / length) | **none** | 待写 |
 | reference-model loss pass (RHO-LOSS term) | **none** | 待写 |
+| a loss reader for a file-path holdout | **none** | 待写 |
 | proxy sweep driver (N proxy runs, fit ratio→loss) | **none** | 待写 |
 | constrained optimizer over the fitted surface | **none** | 待写 |
 
-The four 待写 items are the whole engineering cost. Everything else is wiring.
+The five 待写 items are the whole engineering cost. Everything else is wiring.
 
 ## Step 1 — target metric
 
@@ -37,9 +38,29 @@ The four 待写 items are the whole engineering cost. Everything else is wiring.
 Not pass@1: pass@1 at this scale is a noisy integer over 164 problems, and the plan's whole point
 is to fit a smooth surface. Loss is smooth and cheap; pass@1 is the gate at the end.
 
-**Set.** `data/eval/code_holdout_v2_500.jsonl`. It is already registry-tracked, already
-carved with its contamination split recorded, and its rows carry `instruction`, so
-`eval/domain_loss.py` reads it without a new loader.
+**Set.** `data/eval/code_holdout_v2_500.jsonl` — already registry-tracked (`REGISTRY_SHA1["code_holdout_v2_500"]`),
+already carved with its contamination split recorded (`cont.code_holdout_carved`).
+
+**Its loss reader is 待写, and this was wrong in an earlier draft of this plan.**
+`eval/domain_loss.py`'s only input is `--mix` (`:627`, defaulting to the retired
+`mix_scale_3.24b.json`); rows arrive through `val_seqs` → `train._domain_seqs`, i.e. as a **token
+cache per mix domain name** under `data/corpus/<name>/` with the `vocab_id`/`.srcfp` guards. There
+is no `--file`/`--jsonl`/`--holdout`. `code_holdout_v2_500.jsonl` is neither a mix domain nor
+keyed `content` (its keys are `instruction / reference_code / expected_output / source / family /
+sha1`), so the command an earlier draft gave would have scored **corpus head shards**, not the
+holdout — and would have looked like it succeeded.
+
+Two ways out, the second worth weighing:
+- **(a)** add a file-path parameter to `domain_loss.py`. Its `head_texts()` already parses jsonl
+  with a `content`→`text` fallback, so this is roughly a row-field parameter and ~15 lines.
+- **(b)** write `scripts/holdout_loss.py` reusing `_ce`.
+
+Either way a fifth 待写 item, and (b) is the honest default: the holdout's row shape differs from
+a corpus shard's, and a reader built for mix domains should not be widened to hide that.
+
+**Consequence for sequencing.** Scoring the holdout is a prerequisite for Step 3's reference-loss
+term to mean anything, and it sits on the same no-GPU critical path as the label extractor. The
+ordering section names both.
 
 **Why not HumanEval itself.** Fitting weights against HumanEval turns the gate into a training
 signal. The validation set must be disjoint from the gate, and the correlation between them is
@@ -54,9 +75,11 @@ itself something this plan measures (Step 5) rather than assumes.
 
 **Commands.**
 ```bash
-python3 eval/domain_loss.py --ckpt <ckpt>                 # existing read path
-python3 datagen/holdout.py --selftest                      # registry + REGISTRY_SHA1 pins
+python3 datagen/holdout.py --selftest                      # registry + REGISTRY_SHA1 pins   [exists]
+python3 scripts/holdout_loss.py --ckpt <ckpt> --set data/eval/code_holdout_v2_500.jsonl   # [待写, option (b)]
 ```
+`eval/domain_loss.py --ckpt <ckpt>` is NOT this command — see above: it reads mix-domain token
+caches and would score corpus head shards, appearing to succeed.
 The pin has no standalone checker: `REGISTRY_SHA1` lives in `datagen/holdout.py:330` and is
 exercised by that module's own selftest, which builds its worlds by mutating `REGISTRY` and
 `REGISTRY_SHA1` rather than touching files.
@@ -136,30 +159,54 @@ RegMix's shape: train N small proxy models on randomly-sampled ratios, regress r
 loss, optimize the fitted surface under supply constraints.
 
 **Design.**
-- N proxy runs. Each is the **real recipe at reduced scale**, not a different architecture —
-  otherwise the fitted surface describes a different model.
-- Ratios sampled from a Dirichlet over the 8 gate domains (over the cluster×domain cells once
+- N proxy runs. RegMix's proxies are **small models** — 1M to a few tens of M parameters, on the
+  order of 1B tokens each — and N is large because each run is cheap. **Proxy shape: 20-50M
+  parameters, ~1B tokens per run.** A proxy at the gate's own scale is not a proxy.
+- Each runs the **real recipe at reduced width**, not a different architecture, so the fitted
+  surface describes this model family.
+- Ratios sampled from a Dirichlet over the 6 gate domains (over the cluster×domain cells once
   Step 2 exists), with the supply constraint as a hard bound, not a penalty.
 - Regression: target loss as a function of the ratio vector. RegMix uses gradient-boosted trees;
   the choice is 待写, and it must be recorded — a fitted surface whose form is unstated cannot be
   checked for extrapolation.
-- **Repeats: each cell at most ~4 epochs** (user's constraint). This is a constraint on the
-  optimizer, not just the sampler: the optimum must sit inside the supply-feasible region, and
-  a 4-epoch cap makes that region smaller than the unconstrained argmin usually wants.
+- **Repeats: each cell at most ~4 epochs** (user's constraint). This bounds the optimizer, not
+  just the sampler: a 4-epoch cap shrinks the supply-feasible region below where the
+  unconstrained argmin usually sits.
 
-**Cost — the dominant line, estimated from measured numbers.** The gate recipe runs 786,432
-tok/step; `eff.p500m_20b_throughput_and_dips` measures **11.87K tok/s/gpu median** at the 500M
-shape on 8 cards, so 94,960 tok/s across 8 cards (and 786,432/94,960 = 8.3 s/step, vs the gate's
-own 38,147 steps for 30B). A proxy at 1/10 the gate's tokens (3B) on 8 cards:
+**Cost — the proxy rate is NOT MEASURED at this shape. 待测.** No run in this repo has trained a
+20-50M model, so the rate must be measured before the sweep is budgeted. The measured anchors
+around it, all on 8×H20:
+
+| shape | measured rate | fact |
+|---|---|---|
+| 200M dense, bf16 master | 62K tok/s/gpu | `eff.bf16_master_dense_200m_tps` |
+| 200M-class, fp8 | 73K tok/s/gpu | `eff.fb_mfu` |
+| gate shape, MoE-48 | 28-29K tok/s/gpu | `v41.gate_first_steps_0911` |
+
+A 20-50M model should be **faster per token than the 200M anchor**, but small models are
+latency- and memory-bound rather than FLOP-bound, so the gain is sublinear and cannot be
+extrapolated reliably. **Order-of-magnitude estimate**, bounded by assuming the rate is between
+1× and 4× the 200M anchor (62K–248K tok/s/gpu):
 
 ```
-3e9 / 94,960 ≈ 31,600 s ≈ 8.8 h per proxy run
-N=32 proxies: 32 × 8.8 h ≈ 281 h wall on 8 cards ≈ 2,247 card-hours ≈ 11.7 days
+32 proxies × 1B tokens = 32e9 tokens total
+  at 62K tok/s/gpu  : 143 card-hours
+  at 124K tok/s/gpu :  72 card-hours
+  at 248K tok/s/gpu :  36 card-hours
 ```
-**Estimate: ~8.8 h per proxy at 3B tokens; ~281 h wall (11.7 days) for N=32 on 8 cards.**
-N is 待写 and should be chosen from the fit's own stability, not fixed in advance. The throughput
-figure is measured at the 500M shape on a different run; a proxy at a different shape has a
-different rate, so this is an estimate that must be re-measured before the sweep is budgeted.
+
+Several proxies can share a card. Wall-clock on 8 cards:
+
+| | 62K | 124K | 248K |
+|---|---|---|---|
+| 1 proxy/card | 17.9 d | 9.0 d | 4.5 d |
+| 2 proxies/card | 9.0 d | 4.5 d | 2.2 d |
+| 4 proxies/card | 4.5 d | 2.2 d | 1.1 d |
+
+**Estimate: 1.1-17.9 days, depending on the unmeasured rate and the concurrency.** That range is
+too wide to plan against, which is why measuring the proxy rate is a prerequisite rather than a
+detail. Co-residency also has a floor: at 20-50M the model may not saturate a card, so the
+concurrency column is where the real win is, and it needs its own measurement.
 
 The reference-model pass (Step 3) and the large-scale validation (Step 5) are **on top of** this.
 
@@ -168,13 +215,44 @@ The reference-model pass (Step 3) and the large-scale validation (Step 5) are **
 Fit the surface on proxies, then check the **ordering** of the top candidates does not invert at a
 larger scale. Not the losses — the ordering, because the deliverable is a ranking to pick from.
 
-**Design.** Take the top ~3 fitted candidates plus the current hand-set gate mix as a control.
-Train each at a scale between proxy and gate. Compare orderings by rank correlation.
+**Design.** Take the top fitted candidate and the **current hand-set gate mix** as the control —
+two candidates, not a field. Train each at the gate shape for **3-5B tokens** and compare their
+**ordering**. Not the loss values: the deliverable is a ranking, and the question is whether the
+proxy's ranking survives at scale.
 
-**Cost.** At 30B tokens/candidate on 8 cards: `3e10 / 94,960 ≈ 315,900 s ≈ 87.8 h` per candidate.
-**Estimate: ~88 h per candidate; 4 candidates ≈ 351 h ≈ 14.6 days wall on 8 cards** — that is the
-gate's own full budget per candidate, which is why this step is last and why the candidate count
-must be decided from Step 4's fitted ordering rather than fixed in advance.
+**Cost.** At the gate shape the rate IS measured: 28-29K tok/s/gpu (`v41.gate_first_steps_0911`,
+world 6). Taking the conservative end, 28.5K:
+
+```
+3B tokens: 29.2 h on one card  →  2 candidates on 8 cards, one each: 29.2 h wall
+5B tokens: 48.7 h on one card  →  2 candidates on 8 cards, one each: 48.7 h wall
+```
+**Estimate: 1.2-2.0 days wall on 8 cards** (2 candidates × 3-5B tokens). For scale, the full 30B
+gate run at this rate is ~37 h wall on 8 cards, so this step costs about one full gate run.
+
+This is deliberately much smaller than a "run 4 candidates at 30B each" design: the question is
+whether an ORDERING inverts, which 3-5B tokens can answer, and it does not need each candidate
+trained to convergence.
+
+## Minimal viable version
+
+The smallest sequence that produces a defensible answer, for when the full plan is too expensive:
+
+**label extractor → clustering → one reference-model loss pass → N=32 proxies at 20-50M/1B tokens
+→ the 2-candidate scale check.**
+
+That is Steps 2-5 with the proxy sweep at its cheapest useful size. Cost:
+
+| line | estimate |
+|---|---|
+| Steps 1-3 (CPU: labels, embed, cluster, per-group loss) | < 1 day, no GPU (tokenization ~4-6 h) |
+| 32 proxies, 1B tokens each | **1.1-17.9 days** depending on the unmeasured proxy rate and concurrency |
+| scale check, 2 candidates × 3-5B at gate shape | **1.2-2.0 days** on 8 cards |
+
+**Estimate: 3-20 days total, dominated by the one unmeasured number.** The single most valuable
+action before committing to this plan is to measure the 20-50M proxy's tok/s/gpu and its
+co-residency behaviour — one short run, and it collapses the range that decides whether this plan
+costs three days or three weeks.
 
 ## What this method cannot answer
 
@@ -199,11 +277,22 @@ believed past its evidence.
 
 ## Sequencing and the first cheap check
 
-Steps 1-2 are CPU-only and cheap; Step 3's cost is mostly tokenization; Steps 4-5 are the GPU
-budget. **The first thing to build is Step 2's label extractor**, because it is cheap, exact,
-already interpretable, and it can falsify the premise early: if `has_tests` and `is_algorithmic`
-do not vary meaningfully across the six domains, then the grouping carries no signal and the
-expensive steps should not be started.
+Steps 1-2 are CPU-only and cheap. Step 3 is mixed: its loss pass is CPU, but its real cost is
+tokenizing the domains, a pod-CPU job of hours. Steps 4-5 are the GPU budget, and Step 4's cost is
+dominated by a rate nobody has measured.
+
+Two things go first, both cheap, both able to kill the plan before it is expensive:
+
+1. **The label extractor** (CPU, no GPU). It is exact, interpretable, and it falsifies the premise
+   directly: if `has_tests` and `is_algorithmic` do not vary meaningfully across the six domains,
+   the grouping carries no signal and the expensive steps should not start.
+2. **The proxy rate measurement** (one short GPU run). Train a 20-50M model at the real recipe for
+   a few hundred steps and read tok/s/gpu and co-residency. This one number is the difference
+   between a 3-day plan and a 3-week plan (see the estimate range in Step 4), and it is currently
+   待测 — no run in this repo has trained anything this small.
+
+Neither is a step in the method; both are prerequisites to knowing whether the method is
+affordable here.
 
 ## Open decisions (each must be recorded with its ruling, not defaulted)
 
