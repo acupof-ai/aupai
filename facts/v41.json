@@ -1119,6 +1119,55 @@
    "uncertainty": "External-source token counts and 13-gram drops are measured on the downloaded files, not the HF cards: sc2 parquet 90.1MB/50,661 rows, APPS train.jsonl 107,101,272 bytes/5000 rows. Body-token shares use the per-pair stage stats; the pack .pt reports 14.97M supervised because each example appends one supervised <eos>. sc2's 30% target is unmet by source supply (27.4% actual), recorded rather than re-weighted. Holdout gate on digest could verify only 7 of 16 registry files (9 absent); it trusted committed fp 0442058d7e053826, the HumanEval/MBPP 13-gram gate itself ran with decontam_fp 302aa793f7067462 and its selftest passing.",
    "boundary": "This records the pack that EXISTS and its composition, not an SFT result: no model has trained on it yet and no HumanEval delta is claimed. The 13-gram gate decontaminates HumanEval+MBPP; it says nothing about other benchmarks. APPS renders only the 3062 call-style problems; the 1938 stdin/stdout problems are excluded, not filtered.",
    "status": "measured"
+  },
+  {
+   "id": "v41.rl_code_pool_supply_0925",
+   "value": "Post-SFT executable CODE RL problem pool built 2026-09-25 (1e task), aligned to algorithms/code_reward.py reward_fn(code, tests): each row is {prompt (HumanEval-shaped def signature+docstring, raw continuation, no ChatML), impl (reference solution written to solution.py), tests (pytest `from solution import fn`, fn(*args)==expected), source, difficulty, entry, n_tests, license, attribution}; a row is kept only when its reference passes all generated tests. RESULT: only 27 usable NEW problems survive, 0 from APPS. Funnel (scripts/rl_code_pool.py, pytest 9.1.1, stdlib-import header injected per 1e order): APPS train 5000 -> 2714 call-style with per-call list args (2286 stdin/stdout excluded) -> 2703 hit the two-layer SFT-A dedup (question-text hash OR signature+fn_name hash) -> 0 kept. TACO train 25,443 -> 2695 list-arg call-style (22,748 stdin/stdout; fn_name present but stdin-encoded, incl. all 200 novel GeeksforGeeks) -> 2647 SFT-A dedup hits -> 60 reference failures across 49 tried-all + 11 no passing -> 27 kept, ALL leetcode (EASY 8 / MEDIUM 5 / MEDIUM_HARD 14). The dedup is real overlap, not a loose hash: of TACO's 3244 fn_name call-style problems, 3006 have a question text EXACTLY present in APPS train (TACO republishes APPS's codewars/leetcode set); only 238 are genuinely novel (200 gfg + 38 leetcode), and the 200 gfg are stdin-encoded so unscoreable under the current import-test contract. Reference pass rate where a candidate existed: 367/378 (97%) on APPS first-500 after the stdlib header (math/collections/itertools/heapq/functools/re/string/bisect + typing future-annotations; fixes missing-import references that otherwise fail ~30%), 27 of ~87 novel+executable TACO problems.",
+   "measured": "2026-09-25",
+   "source": "digest Linux box /data00/home/chenkailun.c/aupai-cimap/wt-3b-sfta, ALLOW_UNISOLATED=1 (trusted references, not model rollouts), taskset 0-15; artifacts pod /work/aupai/data/rl/code_pool/{rl_code_taco.jsonl,rl_code_apps.jsonl,*_stats.json}",
+   "config": {
+    "builder": "scripts/rl_code_pool.py",
+    "builder_sha256": "2130201592aa0c9c0c95a9cd532de5f268aa10f83b6ac6a706504689257231d9",
+    "decontam_ngram_n": 13,
+    "decontam_fp_inputs": "302aa793f7067462",
+    "sfta_dedup_signature_layer": 2819,
+    "sfta_dedup_question_layer": 3115,
+    "max_test_cases": 20,
+    "max_solutions_tried": 5,
+    "pytest": "9.1.1",
+    "artifacts": {
+     "rl_code_taco.jsonl": "d4ee1b45042fbee12f3f9d858dd81cb8c314a86085aadc08250f2355494001d8",
+     "rl_code_apps.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+     "rl_code_taco_stats.json": "6f3c28849042fbee12f3f9d858dd81cb8c314a86085aadc08250f2355494001d8",
+     "rl_code_apps_stats.json": "b16157a19897891397008ad4e82a9f726980b006ee378b39060eebfa28e90b19"
+    },
+    "sources": {
+     "apps": "codeparrot/apps train MIT 5000",
+     "taco": "BAAI/TACO train 25443 apache-2.0 overall; HackerRank excluded per 1e order (0 list-arg call-style hit it anyway); CC BY crawled kept with per-row attribution; sc2-exec ODC-By dropped from RL (only ~2.9% carry separate tests and none import from solution)"
+    },
+    "taco_funnel": {
+     "total": 25443,
+     "list_arg_call_style": 2695,
+     "stdin_stdout": 22748,
+     "sfta_dedup": 2647,
+     "ngram_prompt": 2,
+     "ref_failed_tries": 49,
+     "no_passing_reference": 11,
+     "kept": 27
+    },
+    "apps_funnel": {
+     "total": 5000,
+     "list_arg_call_style": 2714,
+     "stdin_stdout": 2286,
+     "sfta_dedup": 2703,
+     "ngram_prompt": 2,
+     "ngram_tests": 1,
+     "kept": 0
+    }
+   },
+   "uncertainty": "Counts are exact for the downloaded files (APPS train.jsonl 107,101,272 B/5000 rows; TACO 9 parquets, 25,443 rows = 9x2827). Exact-question overlap (3006/3244) is a separate full-rescan, not the builder's hash-layer count (2647); the two differ because the builder also requires list-arg IO and applies the signature layer. Pass/fail is trusted-reference execution, NOT model rollouts; the later GRPO-gradient filter (keep only problems the SFT model gets right on some but not all of 8 samples, 1e order) has not run -- it needs the SFT checkpoint and will shrink the 27 further. The stdlib-import header is a fixed prepend of stdlib modules only; solutions needing third-party or unknown symbols fail and are counted in ref failures.",
+   "boundary": "27 problems is a SUPPLY result for the importable-pytest + SFT-dedup + reference-passes contract, not a claim that no other code RL data exists. The large excluded buckets are recoverable only by changing a contract: ~25k TACO + 2.3k APPS stdin/stdout problems need a subprocess stdin/stdout driver added to code_reward (1e noted, de's future work); the 3006 TACO-in-APPS problems are correctly barred from RL because SFT-A trained them. No model has trained on this pool.",
+   "status": "measured"
   }
  ]
 }
