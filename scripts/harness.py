@@ -27608,6 +27608,11 @@ _FROZEN_KEYS = (
     # the magnitude to match: it moves the encoder/decoder SPLIT, so the same layer would be an
     # encoder in one segment and a decoder in the next, changing which parameters exist at all.
     "ced", "ced_enc_layers",
+    # ARCHITECTURE, user order 2026-09-24 (v41_ced_0923 amendment_4): ced_kc_norm adds a
+    # per-head F.rms_norm to the CED decoder global entry keys W_KV(H_6), changing the function a
+    # softmax sees. A resume that flipped it mid-run would be a different model under one name;
+    # an old checkpoint without the field reads False via getattr, so its function is preserved.
+    "ced_kc_norm",
     # b0-17: untie_head acts only at __init__ (model.py:359) -- the arm's weights carry the
     # architecture and a resume silently ignores the flag, which is the drift this set catches.
     # head_lr is NOT here: it is the A/B knob that exists to take two values (1e's ruling
