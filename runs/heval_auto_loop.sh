@@ -35,6 +35,18 @@ MAX_ITER=${MAX_ITER:-800}
 # gap reported per shard, which this does not read. Accepted for now: correctness first,
 # wasted CPU second.
 MIN_STEP=${MIN_STEP:-6000}
+# AND ONLY ON THE GRID, because the arithmetic does not close otherwise. The resumed run
+# saves every 500 steps (~30 min at ~3.7 s/step) while one evaluation takes ~41 min, so
+# scoring every checkpoint falls behind by construction and the backlog only grows. Score
+# step % GRID == 0, plus the final checkpoint of the schedule whatever its step -- that one
+# is the gate reading and must not be skipped for being off-grid.
+#
+# The step is the SAVE NUMBER, which after a resume is the absolute training step (the run
+# reads `step` from the checkpoint), so `% 2000` selects the same points the first segment
+# saved on the 2000 grid.
+GRID=${GRID:-2000}
+TOTAL_STEPS=${TOTAL_STEPS:-38146}
+SAVE_EVERY=${SAVE_EVERY:-500}
 # COMPLETION CRITERIA -- not an exact byte count. Two, and both must hold:
 #   (a) the training log has printed the step line for step+10. save_checkpoint is called
 #       SYNCHRONOUSLY in the training loop -- it is the `save_checkpoint(ckpt_path + f".step{step}",
@@ -55,12 +67,6 @@ G2="4,15,31,39,47,57,65,75";  G3="5,20,32,40,50,58,66,76"
 G4="7,21,33,41,51,59,67,77";  G5="10,26,34,42,52,60,68,78"
 G6="11,27,35,43,53,61,69,79"; G7="12,28,36,44,54,62,71,80"
 
-exec 9>"$LOCK" || exit 1
-flock -n 9 || { echo "another instance holds $LOCK"; exit 0; }
-
-cd /work/aupai || exit 1
-touch "$DONE" "$FAILED" "$GIVEUP"
-
 # A step is done only when BOTH the DONE line and its result file exist. One definition, used
 # by the skip test and by the post-merge bookkeeping, so a step recorded done without a result
 # (the step12000 shape: merge refused on a shard gap, the append ran anyway) is re-queued on
@@ -69,6 +75,67 @@ done_and_produced() {
   grep -qx "$1" "$DONE" 2>/dev/null || return 1
   [ -f "runs/heval_merged_step$1_result.json" ]
 }
+
+# step_wanted <n> -- is this checkpoint's step one this loop scores? Pure arithmetic, so the
+# selftest drives it without a pod, a checkpoint or a clock.
+step_wanted() {
+  [ "$1" -ge "$MIN_STEP" ] || return 1
+  [ "$(( $1 % GRID ))" -eq 0 ] && return 0
+  # Off the grid it is wanted only as the FINAL checkpoint. The save may land partway through
+  # the last block, so it is matched against the schedule's end with one save interval of
+  # slack rather than by equality.
+  [ "$1" -ge "$(( TOTAL_STEPS - SAVE_EVERY ))" ]
+}
+
+if [ "${1:-}" = "--selftest" ]; then
+  # Every assertion here is a world a reviewer had to build by hand, committed so the next
+  # reader does not have to. Nothing touches the pod: DONE/CK are redirected to a temp dir.
+  #
+  # WHY THIS IS IN THE FILE AND NOT IN A TEST HARNESS: no CI hook in this repo runs a shell
+  # script's behaviour, so a selftest that lives only in a report is a claim, not a check.
+  _st_fail=0
+  _st() { # _st <label> <expected rc> <actual rc>
+    if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1 (want $2, got $3)"; _st_fail=1; fi
+  }
+  d=$(mktemp -d) || exit 1
+  DONE="$d/done"; GIVEUP="$d/giveup"; CK="$d/ckpt"
+  : > "$DONE"; : > "$GIVEUP"
+  mkdir -p "$d/runs"
+
+  # --- selection grid: only step % 2000, plus the final checkpoint.
+  step_wanted 6000;  _st "grid 6000" 0 $?
+  step_wanted 8000;  _st "grid 8000" 0 $?
+  step_wanted 14500; _st "off-grid 14500" 1 $?
+  step_wanted 15000; _st "off-grid 15000" 1 $?
+  step_wanted 4000;  _st "below MIN_STEP" 1 $?
+  step_wanted 38000; _st "final checkpoint (TOTAL-146)" 0 $?
+  step_wanted 37000; _st "near-end but not final" 1 $?
+
+  # --- done_and_produced: the step12000 shape is the first of these.
+  run_dp() { ( cd "$d" && DONE="$DONE" ; done_and_produced "$1" ); }
+  echo 12000 > "$DONE"
+  run_dp 12000; _st "DONE line, no result -> not done" 1 $?
+  : > "$d/runs/heval_merged_step12000_result.json"
+  run_dp 12000; _st "DONE line and result -> done" 0 $?
+  : > "$d/runs/heval_merged_step6000_result.json"
+  run_dp 6000;  _st "result, no DONE line -> not done" 1 $?
+  run_dp 9999;  _st "neither -> not done" 1 $?
+
+  # --- ordering: the smallest step must come first, which is what the old sort got wrong.
+  for n in 2000 6000 8000 10000 12000; do : > "$CK.step$n"; done
+  got=$(ls -1 "$CK".step* | sed 's/.*\.step//' | sort -n | head -1)
+  _st "smallest step first" 2000 "$got"
+
+  rm -rf "$d"
+  [ "$_st_fail" -eq 0 ] && echo "selftest: all worlds pass" || echo "selftest: FAILURES above"
+  exit "$_st_fail"
+fi
+
+exec 9>"$LOCK" || exit 1
+flock -n 9 || { echo "another instance holds $LOCK"; exit 0; }
+
+cd /work/aupai || exit 1
+touch "$DONE" "$FAILED" "$GIVEUP"
 
 iter=0
 while [ "$iter" -lt "$MAX_ITER" ]; do
@@ -92,7 +159,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     case "$f" in *.ep*|*interrupt*) continue;; esac
     n=${f##*.step}
     case "$n" in ''|*[!0-9]*) continue;; esac
-    [ "$n" -ge "$MIN_STEP" ] || continue
+    step_wanted "$n" || continue
     done_and_produced "$n" && continue
     grep -qx "$n" "$GIVEUP" 2>/dev/null && continue
     next_n=$((n + 10))
