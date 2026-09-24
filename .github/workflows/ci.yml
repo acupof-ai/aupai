@@ -2,26 +2,31 @@ name: ci
 on:
   push:
   pull_request:
-# One in-flight run per (ref, event); a newer run cancels the older one's in-progress jobs.
-# Without this, every push to main queues independently and the backlog grows linearly --
-# measured 2026-09-20: 32 queued / 3 in progress, oldest waiting 48 min, and still growing.
+# One in-flight run per (ref, event); a newer run cancels the older one's in-progress jobs,
+# EXCEPT a push to main: main runs are the tree every branch starts from, and the 2026-09-24
+# CI split made each push cheaper but also more frequent -- cancelling one mid-flight leaves
+# its tip with no completed verdict, and merge_main reads `cancelled` as a refuse state. Main
+# pushes now run to completion and queue; PR/branch pushes keep latest-wins (the backlog that
+# motivated cancellation was branch pushes, measured 2026-09-20: 32 queued / 3 in progress).
 #
 # THE EVENT IS IN THE GROUP, and that is load-bearing rather than tidy. `merge_main.sh:467`
 # refuses every ledger merge while main's newest PUSH run reads `cancelled` ("every branch
-# starts from that tree"), and `_main_ci_is_red` selects push runs only (`--event push`,
-# :432). Measured 2026-09-20: 14 of the last 50 push runs on main already ended `cancelled`,
-# so this is a live state, not a hypothetical one.
+# starts from that tree"), and `_main_ci_is_red` selects push runs only (`--event push`).
 concurrency:
   group: ci-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !(github.event_name == 'push' && github.ref == 'refs/heads/main') }}
 jobs:
-  check:
+  # Fast static + script checks. Kept separate from the heavy model-building jobs so this
+  # reports first; ruff/py_compile failures no longer wait behind a 200s torch install.
+  check-static:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
+      # cache-dependency-path is the workflow itself: the install set is the two pip lines
+      # below, so a bump there invalidates the cache and anything else keeps it.
       - uses: actions/setup-python@v5
-        with: { python-version: "3.11" }
+        with: { python-version: "3.11", cache: pip, cache-dependency-path: ".github/workflows/ci.yml" }
       - run: pip install ruff tokenizers numpy pytest scipy detect-secrets transformers
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - run: ruff check --select E9,F train.py sft.py sft_math.py eval scripts datagen algorithms filters
@@ -82,16 +87,49 @@ jobs:
       - run: python datagen/gen_textbooks.py --selftest
       - run: python scripts/tokenizer_report.py --selftest
       - run: python scripts/tokenizer_eval.py --selftest
-      - run: python scripts/harness.py --selftest
       - run: python scripts/harness.py check
-      # Every registered, CI-runnable selftest, enumerated from the hook's SELFTEST_FILES/PARTIAL
-      # map at runtime rather than re-listed here. Closes the gap where a map selftest sat red for
-      # days because nothing in this explicit list ran it (#502). NEEDS_DATA exemptions and the
-      # small reasoned CI_SELFTEST_EXCLUDE set (GPU/gitignored-data/root) are partitioned out by
-      # the ci_selftest_partition check; a newly registered portable selftest is covered without
-      # anyone editing this file.
-      - run: python scripts/harness.py ci-selftests --timeout 300
-      # scripts/test_e2e.py is deliberately NOT here. It needs a GPU (KDA is fla/Triton
-      # only), so on a runner it could only re-check the mix and the vocabulary that the
-      # two steps above already cover, and exit 0 -- a green that means nothing. The chain
-      # is covered by `E2E_GPU=<idx> python scripts/test_e2e.py` on the pod, and nowhere else.
+
+  # `harness --selftest` alone: every check's broken-world suite. Measured at ~500s on
+  # 2026-09-24 (run 35992833222), it was the single longest serial step; isolating it lets
+  # the other four jobs run alongside instead of behind it.
+  check-selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip, cache-dependency-path: ".github/workflows/ci.yml" }
+      - run: pip install ruff tokenizers numpy pytest scipy detect-secrets transformers
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python scripts/harness.py --selftest
+
+  # Every registered, CI-runnable selftest, enumerated from the hook's SELFTEST_FILES/PARTIAL
+  # map at runtime rather than re-listed here, split over a 3-way matrix. Each entry runs
+  # `harness ci-selftests --shard K/3`: the shard contents are LPT-packed (longest first
+  # onto the lightest shard) against the committed scripts/ci_selftest_timings.json, which
+  # balances the measured 924s at 308.2/308.2/308.2s -- a round-robin slice cut the same set
+  # 795/231 because the slow targets cluster. check_ci_selftest_partition asserts the three
+  # declared shards union back to the EXACT driver bucket (no dropped/duplicated target) and
+  # the timing table keys equal that bucket, so a matrix edit or a stale table is red.
+  # NEEDS_DATA exemptions and the small reasoned CI_SELFTEST_EXCLUDE set stay partitioned out
+  # by that check; a newly registered portable selftest enters the packing without anyone
+  # editing this file (it gets weight 1 until the table is regenerated).
+  ci-selftests:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip, cache-dependency-path: ".github/workflows/ci.yml" }
+      - run: pip install ruff tokenizers numpy pytest scipy detect-secrets transformers
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python scripts/harness.py ci-selftests --shard ${{ matrix.shard }}/3 --timeout 300
+      # scripts/test_e2e.py is deliberately NOT here. It needs a GPU, so on a runner it could
+      # only re-check the mix and the vocabulary that harness check already covers, and exit 0
+      # -- a green that means nothing. It runs via `E2E_GPU=<idx> python scripts/test_e2e.py`
+      # on the pod, and nowhere else.
+
