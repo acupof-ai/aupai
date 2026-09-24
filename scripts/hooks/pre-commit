@@ -1251,6 +1251,10 @@ def main():
         # the cd: 12 worlds over the grid selection, the DONE-and-result predicate (including
         # the step12000 shape), and the ordering. CPU, no pod, no data, ~0.1s.
         "runs/heval_auto_loop.sh",
+        # The v41_ced_0923 ckpt backup loop (host /data00 -> /data01). Its exit rule decides
+        # whether a checkpoint is ever copied, and the wrong one is silent: exiting on "training
+        # stopped" lost step16000 (2026-09-24). decide() covers exit / keep / give-up.
+        "scripts/ckpt_backup_loop.sh",
 
         # The review-row lookup merge_main.sh's gate calls. Registered because this logic spent its
         # whole life in a heredoc inside merge_main.sh, where nothing could reach it -- and what it
