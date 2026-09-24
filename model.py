@@ -387,7 +387,7 @@ def _fp8_linear_entries(lin, hb, B, NB, H, hd):
     return out.view(B, NB, H, hd).transpose(1, 2).contiguous()   # B,H,NB,hd
 
 
-def _ced_kv_from_enc(q, h_enc, cu, m, w_kv, w_z, n_head):
+def _ced_kv_from_enc(q, h_enc, cu, m, w_kv, w_z, n_head, kc_norm=False):
     """CED decoder global KV, projected from the encoder's H_{L/2} (Eq.1, §2.2).
 
     The decoder does NOT run a learned reducer over its own K/V. Each decoder layer owns a
@@ -436,6 +436,17 @@ def _ced_kv_from_enc(q, h_enc, cu, m, w_kv, w_z, n_head):
     hb = (acc / cnt.clamp(min=1)[:, None, :, None].to(acc.dtype)).squeeze(1)   # B,NB,d
     kc = _fp8_linear_entries(w_kv, hb, B, NB, H, hd)                          # B,H,NB,hd
     vc = _fp8_linear_entries(w_z, hb, B, NB, H, hd)
+    # QK-NORM ON THE GLOBAL ENTRY KEYS ONLY (cfg ced_kc_norm). The decoder's q arrives already
+    # per-head RMS-normed in GatedMLA.forward, but these keys are W_KV(H_6), a raw projected
+    # encoder residual with no norm, so before this flag the two sides of one softmax had
+    # different scales: ||q|| was fixed while ||kc|| could grow -- the measured recurrent
+    # runaway the two v41_ced_0923 divergences were stopped for. Normalize keys per head to the
+    # SAME convention GatedMLA uses (F.rms_norm over the head dim). vc is left untouched: it is
+    # a VALUE, it never enters a softmax, and normalizing it would only rescale the output. The
+    # entry keys carry no RoPE (global entries have no position), so there is no norm/rope
+    # ordering here. kc_norm=False returns kc byte-for-byte as before (old checkpoints).
+    if kc_norm:
+        kc = F.rms_norm(kc, (hd,))
     return kc, vc, vis, doc
 
 
@@ -1019,6 +1030,12 @@ class CompressedSparseAttention(nn.Module):
         self.ced_kv = False
         self.w_kv = None
         self.w_z = None
+        # Per-head RMS-norm on the CED global entry keys W_KV(H_6) (prereg v41_ced_0923
+        # amendment_4, user order 2026-09-24). Read off cfg, default False: a checkpoint from
+        # before this field exists must build the un-normed function byte-for-byte. New qkn runs
+        # persist True in ck["cfg"]. Only ever applied in _ced_kv_from_enc (the decoder global
+        # keys); encoder learned-entry keys already derive from the normed per-layer k.
+        self.kc_norm = bool(getattr(cfg, "ced_kc_norm", False))
         self._h_enc = None
 
     def forward(self, q, k, v, cu=None, x=None, pkg=None):
@@ -1121,8 +1138,9 @@ class CompressedSparseAttention(nn.Module):
                     "a CED decoder layer reached the forward with no H_{L/2} stashed: HybridLM "
                     "_body must run the encoder pass before the decoder pass. A decoder reading "
                     "its own K/V here would silently be a flat CSA2 layer.")
-            kc, vc, vis, doc = _ced_kv_from_enc(q, self._h_enc, cu, self.m, self.w_kv, self.w_z,
-                                                self.h)
+            kc, vc, vis, doc = _ced_kv_from_enc(
+                q, self._h_enc, cu, self.m, self.w_kv, self.w_z, self.h, kc_norm=self.kc_norm
+            )
         else:
             kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
                                                self.compress_k, self.compress_v)
