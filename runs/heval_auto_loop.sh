@@ -12,6 +12,7 @@
 export CUDA_VISIBLE_DEVICES=
 NAME=v41_ced_0923
 CK=/work/aupai/ckpt_v41_ced_0923.pt
+PAT=${PAT:-$(basename "$CK")}
 LOCK=/work/aupai/runs/heval_auto.lock
 DONE=/work/aupai/runs/heval_auto.done
 FAILED=/work/aupai/runs/heval_auto.failed
@@ -101,6 +102,21 @@ step_wanted() {
 # Extracted from the loop body so the selftest can drive the REAL selection: the defect this
 # function exists to fix was in the selection itself (a glob of "$CK".step* cannot match the
 # suffixless final ckpt), so a test that calls a helper the loop does not use proves nothing.
+# paths_for <tag> -- emit ckf/base as shell assignments for a step number or FINAL.
+# A FUNCTION because the glob built from `base` fails SILENTLY: `preds_humaneval_${base}.rstripnl
+# .shard*of8...jsonl` with an empty or wrong base matches nothing, e0_merge_score exits on
+# "no shard files match", and the loop records MERGE-FAILED without saying which half was wrong.
+# That is exactly how a never-defined PAT shipped: $PAT expanded to the empty string under `set -u`
+# being unset here, both paths broke, and no test looked at the paths at all.
+paths_for() {
+  local t="$1"
+  if [ "$t" = FINAL ]; then
+    printf 'ckf=%q base=%q\n' "$FINAL_CKPT" "$PAT"
+  else
+    printf 'ckf=%q base=%q\n' "$CK.step$t" "$PAT.step$t"
+  fi
+}
+
 pick_step() {
   local f n sz1 sz2 next_n
   # Smallest step checkpoint that is COMPLETE by both criteria and not yet evaluated.
@@ -160,6 +176,11 @@ if [ "${1:-}" = "--selftest" ]; then
     if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1 (want $2, got $3)"; _st_fail=1; fi
   }
   d=$(mktemp -d) || exit 1
+  # GROUND TRUTH for the preds-filename shape, read from the REAL ckpt path before CK is
+  # reassigned to a temp fixture below. Naming the fixture from $PAT instead makes the test
+  # self-referential and blind: a wrong PAT renames the fixture too, so pattern and file always
+  # agree. Measured -- with PAT=ckpt_WRONG_name.pt every world stayed green.
+  _st_ckname=$(basename "$CK")
   DONE="$d/done"; GIVEUP="$d/giveup"; CK="$d/ckpt"
   : > "$DONE"; : > "$GIVEUP"
   mkdir -p "$d/runs"
@@ -232,6 +253,41 @@ if [ "${1:-}" = "--selftest" ]; then
   got=$(run_pick); _st "pending .stepN is picked before FINAL" "6000" "$got"
   rm -f "$CK.step6000"
 
+  # --- paths_for: the glob must MATCH A REAL FILENAME, not merely be non-empty.
+  # This is the check whose absence let an undefined PAT ship. The failure is silent in the
+  # tightest way: an empty base builds a glob that matches nothing, e0_merge_score exits
+  # "no shard files match", and every step records MERGE-FAILED. Nothing printed the path.
+  # CK is the real pod path (defined at the top of the file), but the glob is matched from the
+  # selftest's temp dir: build the fixture under $d/data/eval and run the match there.
+  run_paths() { ( eval "$(paths_for "$1")"; printf '%s|%s' "$ckf" "$base" ); }
+  # The fixture is named from _st_ckname (the real ckpt basename), NOT from $PAT. CK is also
+  # reassigned to $d/ckpt above, so `basename $CK` would name it `..._ckpt.` while paths_for
+  # returned `..._ckpt_v41_ced_0923.pt.` -- a mismatch that reads as "the glob is broken" when
+  # the fixture is what is wrong. Measured: both worlds failed for exactly that reason.
+  mkdir -p "$d/data/eval"
+  : > "$d/data/eval/preds_humaneval_${_st_ckname}.step6000.rstripnl.shard0of8.ced_s6000_rstrip_sh0.jsonl"
+  : > "$d/data/eval/preds_humaneval_${_st_ckname}.rstripnl.shard0of8.ced_sFINAL_rstrip_sh0.jsonl"
+
+  # THE GLOB IS EXPANDED THE WAY THE CONSUMER EXPANDS IT. e0_merge_score does
+  # `glob.glob(args.glob)` in python; the loop passes the pattern as a QUOTED argument. A bash
+  # `ls "…*…"` would hand the pattern over literally and report 0 matches against a file that is
+  # right there -- measured, on all four of these worlds, which is how a passing test would have
+  # "confirmed" the defect. Match with python's glob, the subject's own mechanism.
+  pglob() { python3 -c 'import glob,sys; print(len(glob.glob(sys.argv[1])))' "$1"; }
+
+  got=$(run_paths 6000); _st "paths_for 6000: ckf is the .stepN file" "$CK.step6000|$PAT.step6000" "$got"
+  gg=$(pglob "$d/data/eval/preds_humaneval_$(run_paths 6000 | cut -d'|' -f2).rstripnl.shard*of8.ced_s6000_rstrip_sh*.jsonl")
+  _st "paths_for 6000: the merge glob matches a real file" 1 "$gg"
+
+  got=$(run_paths FINAL); _st "paths_for FINAL: ckf is the suffixless ckpt" "$FINAL_CKPT|$PAT" "$got"
+  gf=$(pglob "$d/data/eval/preds_humaneval_$(run_paths FINAL | cut -d'|' -f2).rstripnl.shard*of8.ced_sFINAL_rstrip_sh*.jsonl")
+  _st "paths_for FINAL: the merge glob matches a real file" 1 "$gf"
+  # AND the control: the old undefined-PAT shape matches ZERO, which is what made the defect
+  # silent rather than loud. Without this line the worlds above would also pass for a pattern so
+  # broad it matches anything.
+  badg=$(pglob "$d/data/eval/preds_humaneval_.step6000.rstripnl.shard*of8.ced_s6000_rstrip_sh*.jsonl")
+  _st "empty base matches nothing (the shipped failure shape)" 0 "$badg"
+
   # --- ordering: the smallest step must come first, which is what the old sort got wrong.
   for n in 2000 6000 8000 10000 12000; do : > "$CK.step$n"; done
   got=$(ls -1 "$CK".step* | sed 's/.*\.step//' | sort -n | head -1)
@@ -255,10 +311,11 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   step=$(pick_step)
   if [ -z "$step" ]; then sleep "$POLL"; continue; fi
 
-  # ONE place where FINAL becomes concrete paths. The tag is what DONE/GIVEUP carry and what the
-  # result file is named after; ckf is the file to load; base is the preds-name stem, which for
-  # FINAL is the suffixless ckpt name.
-  if [ "$step" = FINAL ]; then tag=FINAL; ckf=$FINAL_CKPT; base=$PAT; else tag=$step; ckf=$CK.step$step; base=$PAT.step$step; fi
+  # ONE place where FINAL becomes concrete paths -- see paths_for, which is also what the
+  # selftest drives. The tag is what DONE/GIVEUP carry and what the result file is named after;
+  # ckf is the file to load; base is the preds-name stem (the suffixless ckpt name for FINAL).
+  tag=$step
+  eval "$(paths_for "$tag")"
   echo "=== $(date -u +%H:%M:%SZ) evaluating step $tag"
   pids=""
   i=0
