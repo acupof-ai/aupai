@@ -144,13 +144,6 @@ jobs:
       # as in the hook because the defect it guards is cheap to reintroduce by editing a
       # default, and the failure it prevents surfaces only at model build.
       - run: python tests/v41f/test_p1_config_gate.py --selftest
-      # Step-D long-horizon numeric hygiene: off+ste at 40 steps, separate processes, with
-      # frozen/SIX/finite/descent assertions and in-process mutants (~2-4 min CPU). The full
-      # 160-step evidence is runs/longrun/*.json, too slow for CI; --selftest is the gate.
-      - run: python probes/v41f_stepd_longrun.py --selftest
-      # Cheap guard for the committed 160-step evidence JSONs (no model): the same validate()
-      # over runs/longrun/, so a tampered/stale evidence file cannot sit there unchecked.
-      - run: python probes/v41f_stepd_longrun.py --validate-committed runs/longrun
       # Non-blocking bimodal-resume diagnostic (0e): this selftest stays in the required
       # CI jobs so the diagnostic's comparator is proven non-empty; the heavy multi-run
       # capture lives in the separate diag-resume job below (continue-on-error). It does NOT
@@ -161,6 +154,25 @@ jobs:
       # load and a single-threaded 1-step bit-exact continuation (cross-platform). Heavy x3
       # model build runs here; the pre-commit hook runs the model-free --selftest.
       - run: python tests/v41f/test_p1_train_resume_smoke.py
+
+  # Step-D long-horizon numeric hygiene, in its own job: the selftest runs off+ste at 40
+  # steps in separate processes and is the longest single non-harness step (~750-760s on a
+  # loaded CI runner; a quiet runner once did it in 45s, the variance is runner CPU). Keeping
+  # it serial behind the v41f suites made that whole arm 22 minutes; isolated it lands at ~14.
+  # The full 160-step evidence is runs/longrun/*.json, too slow for CI; --selftest is the
+  # gate, and --validate-committed is the cheap no-model guard over the committed evidence
+  # JSONs, so a tampered/stale evidence file cannot sit there unchecked.
+  check-stepd:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip, cache-dependency-path: ".github/workflows/ci.yml" }
+      - run: pip install ruff tokenizers numpy pytest scipy detect-secrets transformers
+      - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - run: python probes/v41f_stepd_longrun.py --selftest
+      - run: python probes/v41f_stepd_longrun.py --validate-committed runs/longrun
 
   # The train checkpoint gate and ITS DUMP UPLOAD ARE ONE JOB, deliberately: the upload step
   # keys on steps.train_ckpt.outcome and reads the same runner.temp the gate writes into, so
