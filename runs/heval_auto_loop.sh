@@ -10,6 +10,11 @@
 # Single instance via flock (never a pid file: a stale pid file and a live job look alike).
 # Iteration cap because a loop keyed on `ls` runs forever if a new ckpt keeps appearing.
 export CUDA_VISIBLE_DEVICES=
+# The script's own directory, resolved ONCE at the top. A later `_st_root` computed from
+# BASH_SOURCE inside the selftest resolved to the TEMP dir instead -- the hook copies the file
+# to a scratch tree before running it, so by then BASH_SOURCE points there, not at the repo.
+SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
+REPO_ROOT=$(cd "$SELF_DIR/.." && pwd)
 NAME=v41_ced_0923
 CK=/work/aupai/ckpt_v41_ced_0923.pt
 PAT=${PAT:-$(basename "$CK")}
@@ -18,8 +23,13 @@ DONE=/work/aupai/runs/heval_auto.done
 FAILED=/work/aupai/runs/heval_auto.failed
 GIVEUP=/work/aupai/runs/heval_auto.giveup
 MERGE_RETRIES=3
-SHARDS=8
+SHARDS=11
 THREADS=8
+# A worker holds the whole model: measured 13.0GB RSS, 98% ANONYMOUS (not reclaimable cache),
+# and the ckpt is 12.1GiB loaded per process with no sharing. So a worker is only started when
+# its node has room, and the check is per-node because node0 and node1 were measured at 144GB
+# and 41GB free while the 8 real shards were running. 14GB = 13.0 measured + headroom.
+MIN_FREE_KB=${MIN_FREE_KB:-$((14 * 1024 * 1024))}
 # THE CAP COUNTS POLLS, NOT EVALUATIONS: a round with no complete checkpoint increments it too.
 # A shorter poll means MORE iterations per checkpoint, so POLL and MAX_ITER move together: at
 # POLL=60 and ~2000 steps between saves at ~3.7 s/step, one checkpoint cycle costs ~124
@@ -69,12 +79,23 @@ SETTLE_S=120
 POLL=${POLL:-60}
 LOG=/work/aupai/runs/${NAME}.log
 
-# Core groups: 8 x 8 CPUs, disjoint physical cores, avoiding the cores the training dataloader
-# uses AND their SMT siblings (topology read from /sys, not an assumed offset).
-G0="2,13,29,37,45,55,63,73";  G1="3,14,30,38,46,56,64,74"
-G2="4,15,31,39,47,57,65,75";  G3="5,20,32,40,50,58,66,76"
-G4="7,21,33,41,51,59,67,77";  G5="10,26,34,42,52,60,68,78"
-G6="11,27,35,43,53,61,69,79"; G7="12,28,36,44,54,62,71,80"
+# Core groups: 11 workers x 8 CPUs (node0 8, node1 3), excluded against TRAINING's hot cores.
+# Each worker's 8 threads sit on 4 physical cores (two threads per core), the same shape the
+# previous 8-way groups used -- G0 and G1 there are each other's SMT siblings.
+#
+# SELECTION IS FROM TOPOLOGY, NOT BY HAND. A physical core is excluded when ANY of its threads
+# is hot, so no eval thread ever shares a core with a trainer thread. The hot set is ONE
+# SAMPLE (busy = user+nice+system+irq+softirq, idle and iowait excluded) and training is not
+# pinned, so the scheduler may move it -- which is why the ACCEPTANCE TEST IS TRAINING'S OWN
+# SPEED, not this list. 4 further cores per node are left unassigned for the scheduler.
+G0="2,3,4,5,8,9,10,11";       G1="14,15,16,17,18,19,20,21"
+G2="22,23,24,25,26,27,28,29"; G3="30,31,32,33,34,35,36,37"
+G4="38,39,40,41,42,43,44,45"; G5="46,47,48,49,50,51,52,53"
+G6="54,55,56,57,58,59,60,61"; G7="64,65,68,69,70,71,72,73"
+G8="90,91,92,93,94,95,96,97"; G9="98,99,100,101,102,103,104,105"
+G10="106,107,108,109,110,111,112,113"
+# node of each group, for numactl --cpunodebind/--membind. G0..G7 are node0, G8..G10 node1.
+G_NODE="0 0 0 0 0 0 0 0 1 1 1"
 
 # A step is done only when BOTH the DONE line and its result file exist. One definition, used
 # by the skip test and by the post-merge bookkeeping, so a step recorded done without a result
@@ -288,6 +309,119 @@ if [ "${1:-}" = "--selftest" ]; then
   badg=$(pglob "$d/data/eval/preds_humaneval_.step6000.rstripnl.shard*of8.ced_s6000_rstrip_sh*.jsonl")
   _st "empty base matches nothing (the shipped failure shape)" 0 "$badg"
 
+  # --- the worker groups: 11 disjoint sets that never touch a hot core's physical core.
+  # Read from the SCRIPT, so a hand-edit that reintroduces an overlap fails here. The failure
+  # is quiet otherwise: two workers sharing a physical core just run slower, and nothing in
+  # the merge or the counts would notice.
+  _st_groups() { for k in $(seq 0 $((SHARDS - 1))); do eval "echo \$G$k"; done; }
+  # (i) every group has THREADS cpus
+  bad=$(for g in $(_st_groups); do [ "$(echo "$g" | tr ',' '\n' | wc -l)" -eq "$THREADS" ] || echo "$g"; done)
+  _st "every group has THREADS cpus" "" "$bad"
+  # (ii) no cpu appears in two groups -- disjointness is what makes the shards independent
+  tot=$(echo "$(_st_groups)" | tr ',' '\n' | sort -n | wc -l)
+  uniq=$(echo "$(_st_groups)" | tr ',' '\n' | sort -nu | wc -l)
+  _st "groups are disjoint" "$tot" "$uniq"
+  # (iii) NO GROUP MEMBER SHARES A PHYSICAL CORE WITH A HOT CORE. The hot set is one sample
+  # (busy = user+nice+system+irq+softirq; idle and iowait excluded) and training is unpinned, so
+  # this cannot promise current exclusion -- it pins the EXCLUSION THE GROUPS WERE BUILT WITH,
+  # which is the thing a hand-edit would silently undo. The old groups failed exactly this:
+  # 13 and 63 were sampled hot and both were group members.
+  _st_hot="1 6 13 63 66 122 123 138 142 150 152 168"
+  # The sibling lists are 'N' or 'A-B' RANGES (measured: cpu13 -> '12-13'), so a plain
+  # membership test misses half of every pair. Expand the range.
+  # Siblings come from a COMMITTED SNAPSHOT by default, not from /sys -- see the block below.
+  # The root is a parameter so the same code runs against the snapshot and against a live host.
+  _st_sibs() { # _st_sibs <cpu> <snapshot-path|"">
+    local c="$1" snap="$2" sh="$3" f="$4"
+    if [ -n "$snap" ]; then
+      awk -v c="$c" '$1=="cpu" && $2==c {print $4; exit}' "$snap"
+      return
+    fi
+    f="${4:-/sys/devices/system/cpu/cpu$c/topology/}/thread_siblings_list"
+    [ -r "$f" ] || { echo "UNREADABLE"; return; }
+    tr ',' '\n' < "$f"
+  }
+  # Expand 'A-B' or 'N' into a list of cpus.
+  _st_expand() {
+    tr ',' '\n' | while read -r x; do
+      case "$x" in
+        *-*) a=${x%-*}; b=${x#*-}; seq "$a" "$b" | tr '\n' ' ';;
+        "")  ;;
+        *)   printf '%s ' "$x";;
+      esac
+    done
+  }
+  # AN UNREADABLE TOPOLOGY MUST NOT READ AS A PASS. On macOS /sys does not exist, so the old
+  # guard `[ -r ] || continue` skipped every cpu and this world went green while asserting
+  # nothing -- measured: a group holding hot cores 1/6/13/63 passed. The hook runs this selftest
+  # on macOS, so the vacuous pass was the NORMAL case.
+  #
+  # It cannot simply FAIL there: the same hook gates every commit on a dev box, and refusing
+  # every commit for a check that needs Linux is a worse failure than the one it detects. So it
+  # SKIPS OUT LOUD when the top-level dir is absent, and the skip is itself asserted -- a silent
+  # skip and a vacuous pass are the same defect one level apart.
+  # THE TOPOLOGY COMES FROM A COMMITTED SNAPSHOT, so this world RUNS EVERYWHERE -- CI, macOS,
+  # the pod. An earlier version read /sys and SKIPPED when it was absent, which meant it passed
+  # on the two machines that run it most (a dev box, and a GitHub runner with a small single-node
+  # /sys) and only ever bit on the pod. genB measured that: CI red on `topology readable on every
+  # group cpu`, 33 of 34 worlds green. A world that skips where it is usually run is not a check.
+  # From REPO_ROOT, captured at the top of the file. Two earlier attempts failed here: a
+  # relative path misses because the selftest runs from a temp dir, and BASH_SOURCE resolved to
+  # the temp tree because the hook copies this file there before running it.
+  _st_snap=${TOPO_SNAPSHOT:-$REPO_ROOT/data/eval/topo_snapshot_30b.tsv}
+  if [ -r "$_st_snap" ]; then
+    # (a) every group cpu exists in the snapshot, and the node it is bound to has it
+    _st_top=0
+    _st_i=0
+    for g in $(_st_groups); do
+      _st_i=$((_st_i + 1))
+      n=$(echo $G_NODE | cut -d" " -f$_st_i)
+      # The node cpulist is a RANGE ("0-89"), so a literal membership test never matches a bare
+      # cpu number. Expand it first -- measured: `case ",0-89," in *",2,"*` is false.
+      nlist=$(awk -v n="$n" '$1=="node" && $2==n {print $4}' "$_st_snap" | _st_expand | tr -s ' ' ',')
+      for c in $(echo "$g" | tr ',' ' '); do
+        awk -v c="$c" '$1=="cpu" && $2==c {found=1} END{exit !found}' "$_st_snap" || {
+          echo "  group $_st_i cpu $c is not in the snapshot"; _st_top=1; }
+        case ",$nlist," in *",$c,"*) ;; *) echo "  group $_st_i cpu $c is not on node$n (cpulist $nlist)"; _st_top=1;; esac
+      done
+    done
+    _st "every group cpu exists and sits on its declared node" 0 "$_st_top"
+    clash=""
+    for c in $(_st_groups | tr ',' ' '); do
+      for s in $(_st_sibs "$c" "$_st_snap" | _st_expand); do
+        case " $_st_hot " in *" $s "*) clash="$clash $c/$s";; esac
+      done
+    done
+    # AN EMPTY CLASH HERE IS A MEASUREMENT, NOT A SKIP: the snapshot has real sibling data, so a
+    # group holding a hot core fails on any machine. Verified by mutation (see the PR).
+    _st "no group cpu shares a physical core with a sampled-hot core" "" "$clash"
+  else
+    _st "topology snapshot present (else this world cannot run)" 1 0
+  fi
+
+  # (iv) the group count matches SHARDS, and G_NODE has one entry per group
+  _st "one group per shard" "$SHARDS" "$(_st_groups | wc -l | tr -d ' ')"
+  _st "G_NODE has one node per group" "$SHARDS" "$(echo $G_NODE | wc -w | tr -d ' ')"
+
+  # --- a worker is DROPPED, not failed, when its node is short on memory -- and the drop must
+  # not leave a hole in shard_i, because the merge refuses a gap. Modelled on the launch loop's
+  # own arithmetic: index by launch order, not by group number.
+  assign() { # assign <free_kb...> -> the shard_i values that would be launched
+    local idx=0 out=""
+    local k=0
+    for f in "$@"; do
+      if [ "$f" -ge "$MIN_FREE_KB" ]; then out="$out $idx"; idx=$((idx + 1)); fi
+      k=$((k + 1))
+    done
+    echo "$out" | sed 's/^ //'
+  }
+  _st "no drop: 0..2" "0 1 2" "$(assign 99999999 99999999 99999999)"
+  _st "middle node short: still contiguous" "0 1" "$(assign 99999999 1 99999999)"
+  # A HOLE IS THE FAILURE THIS GUARDS: assigning by group number would give 0 2 here, and the
+  # merge's `shard set {0,2} is not 0..k` refusal would fire at the end of a 40-minute eval.
+  _st "first node short: no hole (would be 1 2 by group number)" "0 1" "$(assign 1 99999999 99999999)"
+  _st "all short: nothing to merge" "" "$(assign 1 1 1)"
+
   # --- ordering: the smallest step must come first, which is what the old sort got wrong.
   for n in 2000 6000 8000 10000 12000; do : > "$CK.step$n"; done
   got=$(ls -1 "$CK".step* | sed 's/.*\.step//' | sort -n | head -1)
@@ -317,17 +451,39 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   tag=$step
   eval "$(paths_for "$tag")"
   echo "=== $(date -u +%H:%M:%SZ) evaluating step $tag"
-  pids=""
+  # ONE SHARED QUEUE per evaluation: every worker claims from it, so a worker that finishes
+  # early takes the next task instead of idling while the slowest peer drains its fixed slice.
+  # --shard_i/--shard_n still NAME the worker (the merge needs 0..k contiguous); only the
+  # selection changes.
+  qdir="runs/heval_q_${tag}"
+  rm -rf "$qdir"; mkdir -p "$qdir"
+  # NWORK is the number actually launched, and it is what the merge glob is matched against.
+  # A worker is dropped when its node lacks memory for the weights, and the drop must not leave
+  # a hole in shard_i: assign indices in launch order, not by group number.
+  nwork=0
   i=0
   while [ "$i" -lt "$SHARDS" ]; do
     eval "cores=\$G$i"
-    setsid nohup taskset -c "$cores" python3 eval/humaneval_gen.py \
+    node=$(echo $G_NODE | cut -d" " -f$((i + 1)))
+    need=$(awk "/MemFree/{print \$4}" /sys/devices/system/node/node${node}/meminfo 2>/dev/null || echo 0)
+    if [ "${need:-0}" -lt "$MIN_FREE_KB" ]; then
+      echo "=== skipping worker $i: node$node free $((need / 1048576))GB < $((MIN_FREE_KB / 1048576))GB"
+      i=$((i + 1)); continue
+    fi
+    # numactl, not taskset: --membind pins the weights to the node the CPUs are on, which is the
+    # half of NUMA placement that taskset does not do. Both are passed so a numactl failure on
+    # --cpunodebind alone cannot silently drop the cpu restriction.
+    setsid nohup numactl --physcpubind="$cores" --membind="$node" \
+      python3 eval/humaneval_gen.py \
       --ckpt "$ckf" --device cpu --threads "$THREADS" --rstrip_nl \
-      --shard_i "$i" --shard_n "$SHARDS" --run "ced_s${tag}_rstrip_sh$i" --force \
-      > "runs/heval_auto_${tag}_sh${i}.log" 2>&1 < /dev/null &
+      --queue_dir "$qdir" \
+      --shard_i "$nwork" --shard_n "$SHARDS" --run "ced_s${tag}_rstrip_sh$nwork" --force \
+      > "runs/heval_auto_${tag}_sh${nwork}.log" 2>&1 < /dev/null &
+    nwork=$((nwork + 1))
     i=$((i + 1))
   done
   wait
+  echo "=== $nwork of $SHARDS worker(s) ran; merging shard_i 0..$((nwork - 1))"
   echo "=== $(date -u +%H:%M:%SZ) shards done for step $tag"
   # THE MERGE'S EXIT STATUS IS THE DECISION, and it has to be captured WITHOUT a pipe: `$?`
   # after `cmd | tail` is tail's status, so the original code appended to DONE even when
@@ -340,7 +496,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   # count as produced.
   merge_log="runs/heval_auto_merge_${tag}.log"
   if python3 eval/e0_merge_score.py --bench humaneval --n 1 \
-      --glob "data/eval/preds_humaneval_${base}.rstripnl.shard*of8.ced_s${tag}_rstrip_sh*.jsonl" \
+      --glob "data/eval/preds_humaneval_${base}.rstripnl.shard*of${SHARDS}.ced_s${tag}_rstrip_sh*.jsonl" \
       --out "runs/heval_merged_step${tag}.jsonl" \
       --result "runs/heval_merged_step${tag}_result.json" > "$merge_log" 2>&1 \
       && [ -f "runs/heval_merged_step${tag}_result.json" ]; then
