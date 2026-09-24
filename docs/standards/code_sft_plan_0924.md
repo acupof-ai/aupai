@@ -9,6 +9,10 @@ source: 用户任务 2026-09-24（via aupai-1e 交接）；失败拆分实测自
 This is a plan, not a build. 本文不下载、不构建、不占 GPU。配比由用户拍板。
 每个外部源的规模是 card 数字，token 量在我们 32,768 词表下**未测量**；仓内源的数字带 fact 引用。
 
+> **用户选定（2026-09-24，via aupai-1e）：方案 A（停止优先）。**
+> 配比 code_if 55% + sc2-exec 30% + APPS 5% + 非 code 散文 10%，按 §4 共同口径构建。
+> 方案 B 保留为 SFT 后第一轮读数（81 类下降、73 类不动时）的第二轮加料。
+
 范围：CED run（`v41_ced_0923`）结束后，面向 HumanEval pass@1 ≥ 30% 门的**一段**代码 SFT。
 只覆盖数据。SFT 入口走 `sft.py` 还是 `sft_math.py`、CED 架构的 decoder 段如何接 pack，
 是 de 的实现决定，本文不替代。
