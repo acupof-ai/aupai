@@ -1112,6 +1112,12 @@ def main():
         # Registered because the parser reported "0 red(s)" against a driver that had failed 7:
         # it matched a lowercase marker and treated TIMEOUT, which is not a FAIL line, as green.
         "scripts/ci_redlist_reconcile.py",
+        # 3b: post-SFT executable code-RL pool builder. Registered because the pool feeds a
+        # binary test-reward: a self.* method body silently turned into a broken module fn, a
+        # self left in the signature, or a stdin-style arg list rendered as a test would emit
+        # problems that can never score. The selftest pins signature/self handling, solution
+        # normalisation rejection, and the generated-test contract without data or pytest.
+        "scripts/rl_code_pool.py",
         # Shard-by-shard comparator for the parallel-vs-serial exact pass (3b). Registered
         # because `_parallel_exact_pass`'s "byte-identical to the serial pass" is a docstring
         # claim over the code that decides a multi-GB corpus's exact bytes. The selftest drives
