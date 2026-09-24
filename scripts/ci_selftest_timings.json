@@ -269,6 +269,7 @@
   "tests/v41f/resume_gate_retry.py": 0.0,
   "tests/v41f/test_p1_grouped_dispatch.py": 1.1,
   "v41f_l2/l2_census_scan.py": 0.2,
-  "scripts/file_claim.py": 0.4
+  "scripts/file_claim.py": 0.4,
+  "scripts/ckpt_backup_loop.sh": 0.1
  }
 }
