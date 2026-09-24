@@ -531,6 +531,14 @@ def check_pod(root=ROOT, scope=None):
         manifest = {p: v for p, v in manifest.items() if v[1] == scope}
     bad = []
     runs_div = []
+    # ABSENT AND DIVERGED ARE DIFFERENT FACTS AND WERE COUNTED AS ONE. Both are
+    # non-fatal (pod_push skips runs/ in both directions), so both landed in
+    # `runs_div` -- and the count then read as "60 runs files diverged" when only 3
+    # of the 60 existed on the pod at all. A file that is not there cannot be
+    # holding pod-produced rows, so folding it in inflates the actionable set by
+    # ~20x and sends a reader to reconcile 60 files to find 3 (3b, 2026-09-24).
+    # The classification below is unchanged; only the reporting separates them.
+    runs_absent = []
     for p, (want, _cls, want_mode) in manifest.items():
         fp = os.path.join(root, p)
         if not os.path.exists(fp):
@@ -539,7 +547,7 @@ def check_pod(root=ROOT, scope=None):
             # be there. The gate treated diverged runs/ files as expected but missing
             # ones as fatal -- so adding runs/retro.jsonl turned the gate red on a file
             # nothing is allowed to push (fb, 2026-08-31).
-            (runs_div if _pod_written(p) else bad).append(
+            (runs_absent if _pod_written(p) else bad).append(
                 p if _pod_written(p) else f"missing {p}"
             )
         elif sha_disk(fp) != want:
@@ -564,7 +572,11 @@ def check_pod(root=ROOT, scope=None):
     extra = unregistered_py(root, manifest)
     parts = [f"{len(manifest)} files match" + (f" (scope={scope})" if scope else "")]
     if runs_div:
-        parts.append(f"{len(runs_div)} runs file(s) diverged (pod produces rows; sync to commit): {'; '.join(sorted(runs_div))}")
+        parts.append(f"{len(runs_div)} runs file(s) diverged (present on the pod, content differs; sync to commit): {'; '.join(sorted(runs_div))}")
+    if runs_absent:
+        shown = ", ".join(sorted(runs_absent)[:5]) + ("..." if len(runs_absent) > 5 else "")
+        parts.append(f"{len(runs_absent)} runs file(s) ABSENT from the pod (no pod-produced rows "
+                     f"possible; pod_push skips runs/ both ways): {shown}")
     if extra:
         shown = ", ".join(extra[:5]) + ("..." if len(extra) > 5 else "")
         parts.append(f"{len(extra)} UNREGISTERED .py not in manifest: {shown}")
@@ -1024,6 +1036,29 @@ def selftest():
         assert not ok, (
             "manifest-first would have to fail here too, or the order is not what makes the "
             f"gate safe: {ev}")
+
+        # ABSENT AND DIVERGED ARE COUNTED SEPARATELY, and neither is fatal. Both classes
+        # are runs/ files, so both are non-fatal by the rule above -- which is exactly why
+        # they were folded into one count and the count then read as "60 diverged" when 3
+        # existed on the pod. The mutant this kills: appending an absent file to runs_div,
+        # or dropping runs_absent from `parts`. Asserted on the printed counts, because
+        # that string is the whole output of the check.
+        os.makedirs(os.path.join(pod, "runs"), exist_ok=True)
+        with open(code, "wb") as fh:
+            fh.write(new_code)  # the order test above left it at old_code
+        with open(os.path.join(pod, "runs", "diverged.jsonl"), "w") as fh:
+            fh.write('{"a": 1}\n')
+        with open(MANIFEST, "w") as fh:
+            fh.write(f"{sha_new}  scripts/shipped.py  training  644\n")
+            fh.write(f"{'0' * 64}  runs/diverged.jsonl  644\n")
+            fh.write(f"{'0' * 64}  runs/absent.jsonl  644\n")
+        ok, ev = check_pod(pod)
+        assert ok, f"runs/ drift in either direction is reported, never fatal: {ev}"
+        assert "1 runs file(s) diverged" in ev, f"the diverged count must be its own: {ev}"
+        assert "1 runs file(s) ABSENT" in ev, f"the absent count must be its own: {ev}"
+        assert "absent.jsonl" not in ev.split("ABSENT")[0], (
+            "an absent file must not be named among the diverged ones -- that is the fold: "
+            f"{ev}")
     finally:
         globals()["MANIFEST"], globals()["ROOT"] = _saved_manifest, _saved_root
         shutil.rmtree(pod, ignore_errors=True)
