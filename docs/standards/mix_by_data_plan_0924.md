@@ -199,11 +199,12 @@ Several proxies can share a card. Wall-clock on 8 cards:
 
 | | 62K | 124K | 248K |
 |---|---|---|---|
-| 1 proxy/card | 17.9 d | 9.0 d | 4.5 d |
-| 2 proxies/card | 9.0 d | 4.5 d | 2.2 d |
-| 4 proxies/card | 4.5 d | 2.2 d | 1.1 d |
+| 1 proxy/card | 17.9 h | 9.0 h | 4.5 h |
+| 2 proxies/card | 9.0 h | 4.5 h | 2.2 h |
+| 4 proxies/card | 4.5 h | 2.2 h | 1.1 h |
 
-**Estimate: 1.1-17.9 days, depending on the unmeasured rate and the concurrency.** That range is
+**Estimate: 1.1-17.9 HOURS wall on 8 cards, depending on the unmeasured rate and the
+concurrency** (143 / 72 / 36 card-hours divided by 8 cards). That range is
 too wide to plan against, which is why measuring the proxy rate is a prerequisite rather than a
 detail. Co-residency also has a floor: at 20-50M the model may not saturate a card, so the
 concurrency column is where the real win is, and it needs its own measurement.
@@ -224,11 +225,15 @@ proxy's ranking survives at scale.
 world 6). Taking the conservative end, 28.5K:
 
 ```
-3B tokens: 29.2 h on one card  →  2 candidates on 8 cards, one each: 29.2 h wall
-5B tokens: 48.7 h on one card  →  2 candidates on 8 cards, one each: 48.7 h wall
+8-card aggregate at this rate: 228,000 tok/s
+  full 30B on 8 cards : 36.5 h   (the gate's own budget, for scale)
+  3B on 8 cards       :  3.7 h
+  5B on 8 cards       :  6.1 h
+2 candidates on 4 cards EACH (parallel): 3B -> 7.3 h wall, 5B -> 12.2 h wall
 ```
-**Estimate: 1.2-2.0 days wall on 8 cards** (2 candidates × 3-5B tokens). For scale, the full 30B
-gate run at this rate is ~37 h wall on 8 cards, so this step costs about one full gate run.
+**Estimate: 7.3-12.2 h wall** (2 candidates × 3-5B tokens, 4 cards each). The full 30B gate run at
+this rate is 36.5 h on 8 cards, so this step is about a fifth of one gate run -- it checks whether
+an ORDERING inverts, which 3-5B tokens can answer.
 
 This is deliberately much smaller than a "run 4 candidates at 30B each" design: the question is
 whether an ORDERING inverts, which 3-5B tokens can answer, and it does not need each candidate
@@ -246,10 +251,12 @@ That is Steps 2-5 with the proxy sweep at its cheapest useful size. Cost:
 | line | estimate |
 |---|---|
 | Steps 1-3 (CPU: labels, embed, cluster, per-group loss) | < 1 day, no GPU (tokenization ~4-6 h) |
-| 32 proxies, 1B tokens each | **1.1-17.9 days** depending on the unmeasured proxy rate and concurrency |
-| scale check, 2 candidates × 3-5B at gate shape | **1.2-2.0 days** on 8 cards |
+| 32 proxies, 1B tokens each | **4.5-17.9 h wall** on 8 cards at 1 proxy/card (the conservative column), or **1.1-4.5 h** if 4-per-card concurrency holds — both depend on the unmeasured rate |
+| scale check, 2 candidates × 3-5B at gate shape | **7.3-12.2 h wall** |
 
-**Estimate: 3-20 days total, dominated by the one unmeasured number.** The single most valuable
+**Estimate: 1.0-2.3 days total wall at 1 proxy/card** (CPU <1 d + proxies 4.5-17.9 h + validation
+7.3-12.2 h), or **0.9-1.7 days** if 4-per-card concurrency holds. Both ends are dominated by the
+one unmeasured number. The single most valuable
 action before committing to this plan is to measure the 20-50M proxy's tok/s/gpu and its
 co-residency behaviour — one short run, and it collapses the range that decides whether this plan
 costs three days or three weeks.
