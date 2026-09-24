@@ -481,6 +481,12 @@ def main():
     if args.control:
         return
     shard_validate(args.shard_i, args.shard_n)
+    # --first bounds the POOL, before either selection path. Applied after the shard select it
+    # would take the first N of the file and shards 1.. would get none; applied only in the
+    # non-queue path it left a queue worker draining all 164 (measured: a --first 1 test ran the
+    # full pool). One bound, above both, so the two modes see the same universe.
+    if args.first:
+        probs_all = probs_all[:args.first]
     if args.queue_dir:
         from eval.shard import claim_next  # noqa: PLC0415
         os.makedirs(args.queue_dir, exist_ok=True)
@@ -507,9 +513,6 @@ def main():
         pr = p["prompt"]
         return pr.rstrip("\n") if args.rstrip_nl else pr
     prompts = [_prompt(p) for p in probs]
-    if args.first:
-        probs = probs[:args.first]
-        prompts = prompts[:args.first]
     if not args.ckpt:
         ap.error("--ckpt required (unless --control)")
     is_cpu = str(args.device).startswith("cpu")
