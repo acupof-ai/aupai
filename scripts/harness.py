@@ -74,6 +74,7 @@ from harness_core import (  # noqa: E402
     _aupai_cards,
     _card_map,
     _cat_file_exists,
+    _revs_are_ancestors_of_main,
     _LEND_RE,
     _cite_sentence,
     _classify_card_note,
@@ -3285,17 +3286,18 @@ def _broken_selftests_are_gated():
 
 
 def _broken_selftest_flags_accepted():
-    """The REAL hook with the v41f map entry reverted to the flag the file rejects.
+    """The REAL hook with a SELFTEST_FLAG map entry reverted to the flag the file rejects.
 
-    This is the exact artifact state that blocked the whole tree for every session on
-    2026-09-19: tests/v41f/diag_resume_bimodal.py registered in SELFTEST_FILES with no
-    SELFTEST_FLAG entry, so the hook passed it --selftest and its argparse exited 2.
+    The original 2026-09-19 artifact was tests/v41f/diag_resume_bimodal.py registered with
+    no SELFTEST_FLAG entry, so the hook passed it --selftest and argparse exited 2; that
+    file was retired with the v41f tree on 2026-09-24. The SHAPE is what must keep failing,
+    not that path: a registered file whose own flag differs from --selftest. The surviving
+    instance is eval/code_fewshot.py, which takes --selfcheck (argparse exits 2 on
+    --selftest, verified); reverting its line to --selftest reproduces the exact mismatch.
 
-    Reverting the MAP LINE rather than adding a bogus entry keeps the world honest: the
-    mutation is the real historical defect, not a synthetic one. Built on _tmp_repo_shaped,
-    because the check reads every registered file and a bare tree resolves none of them --
-    and scripts/ is a symlink there, so the hook must be copied in or the write lands in the
-    repo itself.
+    Built on _tmp_repo_shaped, because the check reads every registered file and a bare tree
+    resolves none of them -- and scripts/ is a symlink there, so the hook must be copied in
+    or the write lands in the repo itself.
     """
     d = _tmp_repo_shaped()
     link = os.path.join(d, "scripts")
@@ -3310,10 +3312,10 @@ def _broken_selftest_flags_accepted():
                     ignore=shutil.ignore_patterns("__pycache__"))
     p = os.path.join(d, "scripts", "hooks", "pre-commit")
     text = open(p, encoding="utf-8").read()
-    fixed = '"tests/v41f/diag_resume_bimodal.py": "--diag-selftest"'
+    fixed = '"eval/code_fewshot.py": "--selfcheck"'
     if fixed not in text:
         return None
-    open(p, "w", encoding="utf-8").write(text.replace(fixed, '"tests/v41f/diag_resume_bimodal.py": "--selftest"'))
+    open(p, "w", encoding="utf-8").write(text.replace(fixed, '"eval/code_fewshot.py": "--selftest"'))
     return d
 
 
@@ -10358,7 +10360,7 @@ FACT_SOURCE_PATH = re.compile(
     # The same retirements under eval/ or scripts/ FAILed the day de wrote them (de-21).
     # Added once @rev was understood here; all 27 probes/ citations resolve, 21 by rev and
     # profile_step.py live.
-    r"(?<![\w/])(?:data|runs|scripts|docs|eval|datagen|filters|mathbank|algorithms|workflows|probes)/[\w./-]+"
+    r"(?<![\w/])(?:data|runs|scripts|docs|eval|datagen|filters|mathbank|algorithms|workflows|probes|v41f|tests)/[\w./-]+"
 )
 # A source whose ONLY evidence is a path nobody can open. /tmp is per-machine and per-boot, so
 # a fact resting solely on one names an artifact whose absence is guaranteed rather than
@@ -11419,9 +11421,24 @@ def check_facts_well_formed(root):
     if pending:
         rev_specs = [f"{r}:{m}" for _tag, m, r in pending if r]
         rev_ok = _cat_file_exists(root, rev_specs) if rev_specs else {}
+        # A path@rev citation is durable only when rev is history reachable from main, not
+        # merely an object that exists. A sha on an unmerged/deleted branch passes cat-file
+        # until a prune, then silently dangles. Enforce ancestry ONLY where main history is
+        # queryable: the shaped selftest worlds build an empty throwaway .git (no origin/main),
+        # and there the pre-existing baseline/cat-file precedence must stay authoritative, or
+        # every legitimate existing path@rev retirement citation false-reds there.
+        _main_resolvable = subprocess.run(
+            ["git", "-C", root, "rev-parse", "--verify", "--quiet", "origin/main^{commit}"],
+            capture_output=True, text=True).returncode == 0
+        rev_ancestor = (
+            _revs_are_ancestors_of_main(root, {r for _t, _m, r in pending if r})
+            if rev_specs and _main_resolvable else {})
         ignored = _gitignored_set([m for _tag, m, _r in pending], root)
         for tag, m, rev in pending:
-            if rev and rev_ok.get(f"{rev}:{m}"):
+            if rev and rev_ok.get(f"{rev}:{m}") and rev_ancestor.get(rev, True):
+                continue
+            if rev and rev_ok.get(f"{rev}:{m}") and not rev_ancestor.get(rev, True):
+                errors.append(f"{tag}: source path@rev {m}@{rev} names a rev that is not an ancestor of origin/main -- it is not durable history")
                 continue
             if ignored.get(m):
                 continue  # pod-only artifact; this machine doesn't have it
@@ -23920,6 +23937,21 @@ def _selftest_batched_git_probes():
     # A repeated spec must produce a repeated line, or every later spec shifts by one.
     rep = _cat_file_exists(ROOT, [f"{head}:{live}", f"{head}:{dead}", f"{head}:{live}"])
     assert rep[f"{head}:{live}"] is True and rep[f"{head}:{dead}"] is False, rep
+
+    # 1b. _revs_are_ancestors_of_main -- the path@rev durability gate. A retirement citation
+    # must name main-reachable history, not any object that merely exists. Three states on the
+    # REAL repo: HEAD's first parent is an ancestor (True); a 40-zero rev and a blob sha are
+    # both non-commit/non-ancestor (False). The blob case matters because cat-file resolves a
+    # blob, so an existence-only check would let a content sha pass as a history pointer.
+    parent = subprocess.run(
+        ["git", "-C", ROOT, "rev-parse", "HEAD^"], capture_output=True, text=True
+    ).stdout.strip()
+    anc = _revs_are_ancestors_of_main(ROOT, [parent, "0" * 40,
+                                            "8c561107412c20d54925bf2f82c60b175f8644dc"])
+    assert anc.get(parent) is True, "HEAD^ must be an ancestor of main"
+    assert anc.get("0" * 40) is False, "a nonsense rev must not read as durable history"
+    assert anc.get("8c561107412c20d54925bf2f82c60b175f8644dc") is False, \
+        "a blob sha must not satisfy a commit-ancestry check"
 
     # 2. _gitignored_set / _is_gitignored -- a gitignored path and a tracked one. The
     # batched form must agree with the single form on BOTH, and they must differ from
