@@ -20,10 +20,10 @@ MERGE_RETRIES=3
 SHARDS=8
 THREADS=8
 # THE CAP COUNTS POLLS, NOT EVALUATIONS: a round with no complete checkpoint increments it too.
-# With a 600 s poll and ~2000 steps between saves at ~3.7 s/step, one checkpoint cycle costs
-# about 13 iterations (12 polls + the eval round), so the ~15 checkpoints left in the 30B
-# schedule need ~200 -- i.e. the original 200 would have expired in the last hours of training.
-# 800 covers the remaining run with margin.
+# A shorter poll means MORE iterations per checkpoint, so POLL and MAX_ITER move together: at
+# POLL=60 and ~2000 steps between saves at ~3.7 s/step, one checkpoint cycle costs ~124
+# iterations, and the remaining checkpoints of the 30B schedule want ~1000. 800 is kept because
+# the loop is restarted by hand between evaluations anyway; raise it if the run is left alone.
 MAX_ITER=${MAX_ITER:-800}
 # SCOPE: only steps >= MIN_STEP are evaluated. 2000 and 4000 already have their readings by
 # other means (2000 from the single-process run, 4000 from the first 8-shard run). They are
@@ -47,6 +47,11 @@ MIN_STEP=${MIN_STEP:-6000}
 GRID=${GRID:-2000}
 TOTAL_STEPS=${TOTAL_STEPS:-38146}
 SAVE_EVERY=${SAVE_EVERY:-500}
+# The FINAL checkpoint is written by train.py:4555 as the suffixless ckpt_<name>.pt, AFTER the
+# loop reaches total_steps -- it is not a .stepN file at all. Every earlier completion criterion
+# here is keyed on a .step suffix, so the one checkpoint the gate actually reads was unreachable:
+# 38146 is not a multiple of GRID, and no glob of "$CK".step* can match a name without the suffix.
+FINAL_CKPT=$CK
 # COMPLETION CRITERIA -- not an exact byte count. Two, and both must hold:
 #   (a) the training log has printed the step line for step+10. save_checkpoint is called
 #       SYNCHRONOUSLY in the training loop -- it is the `save_checkpoint(ckpt_path + f".step{step}",
@@ -58,6 +63,9 @@ SAVE_EVERY=${SAVE_EVERY:-500}
 #   (b) the file size has not changed for 120 s -- the host backup loop's second line of
 #       defence, already exercised on three checkpoints.
 SETTLE_S=120
+# Poll interval for a new checkpoint. 600 -> 60 buys ~4.5 min earlier start on average (half
+# the poll), and a poll that finds nothing costs one `ls` of a handful of files.
+POLL=${POLL:-60}
 LOG=/work/aupai/runs/${NAME}.log
 
 # Core groups: 8 x 8 CPUs, disjoint physical cores, avoiding the cores the training dataloader
@@ -71,6 +79,8 @@ G6="11,27,35,43,53,61,69,79"; G7="12,28,36,44,54,62,71,80"
 # by the skip test and by the post-merge bookkeeping, so a step recorded done without a result
 # (the step12000 shape: merge refused on a shard gap, the append ran anyway) is re-queued on
 # the next pass instead of being trusted forever.
+fsize() { wc -c < "$1" 2>/dev/null || echo 0; }
+
 done_and_produced() {
   grep -qx "$1" "$DONE" 2>/dev/null || return 1
   [ -f "runs/heval_merged_step$1_result.json" ]
@@ -85,6 +95,58 @@ step_wanted() {
   # the last block, so it is matched against the schedule's end with one save interval of
   # slack rather than by equality.
   [ "$1" -ge "$(( TOTAL_STEPS - SAVE_EVERY ))" ]
+}
+
+# pick_step -- print the next checkpoint to evaluate (a step number or FINAL), or nothing.
+# Extracted from the loop body so the selftest can drive the REAL selection: the defect this
+# function exists to fix was in the selection itself (a glob of "$CK".step* cannot match the
+# suffixless final ckpt), so a test that calls a helper the loop does not use proves nothing.
+pick_step() {
+  local f n sz1 sz2 next_n
+  # Smallest step checkpoint that is COMPLETE by both criteria and not yet evaluated.
+  #
+  # ORDER BY THE NUMBER, not by the path string. `sort -t. -k3 -n` looks numeric but is not:
+  # with the field separator at the last `.`, `-k3` runs to the END OF THE LINE, so `-n` parses
+  # "6000" as a number only while the field holds nothing else -- and the shell's `$( )` word
+  # splitting then re-reads the paths in glob order. Measured: step10000 and step12000 sort
+  # BEFORE step6000/8000. The selection below scans for a `break`, so a wrong order does not
+  # skip a step, but the note is here because reading it as numeric is the easy mistake.
+  #
+  # THE self-heal lives in one place: done_and_produced. A step counts as done only when the
+  # DONE line AND its result file both exist. Both the skip test below and the post-merge
+  # bookkeeping use it, so "done but never produced" cannot survive a restart.
+  step=""
+  for f in $(ls -1 "$CK".step* 2>/dev/null | sed 's/.*\.step//' | sort -n); do
+    f="$CK.step$f"
+    [ -f "$f" ] || continue
+    case "$f" in *.ep*|*interrupt*) continue;; esac
+    n=${f##*.step}
+    case "$n" in ''|*[!0-9]*) continue;; esac
+    step_wanted "$n" || continue
+    done_and_produced "$n" && continue
+    grep -qx "$n" "$GIVEUP" 2>/dev/null && continue
+    next_n=$((n + 10))
+    grep -qE "^step $next_n/" "$LOG" 2>/dev/null || continue
+    sz1=$(fsize "$f")
+    sleep "$SETTLE_S"
+    sz2=$(fsize "$f")
+    [ "$sz1" = "$sz2" ] && [ "$sz1" -gt 0 ] || continue
+    echo "$n"; return 0
+  done
+  # THE FINAL CHECKPOINT, tried only when no .stepN is pending. It has no number of its own, so
+  # it is tagged FINAL in the DONE/GIVEUP/give-up bookkeeping. The completion signal cannot be the
+  # step+10 log line (there is no step+10) -- it is train.py:4557's `print(f"saved {ckpt_path}")`,
+  # which reaches this log because the launcher captures stdout. That line is emitted AFTER the
+  # save returns, so its presence proves the file is whole.
+  if [ -f "$FINAL_CKPT" ] \
+     && ! done_and_produced FINAL && ! grep -qx FINAL "$GIVEUP" 2>/dev/null \
+     && grep -qF "saved $FINAL_CKPT" "$LOG" 2>/dev/null; then
+    sz1=$(fsize "$FINAL_CKPT")
+    sleep "$SETTLE_S"
+    sz2=$(fsize "$FINAL_CKPT")
+    [ "$sz1" = "$sz2" ] && [ "$sz1" -gt 0 ] && { echo FINAL; return 0; }
+  fi
+  return 0
 }
 
 if [ "${1:-}" = "--selftest" ]; then
@@ -136,6 +198,40 @@ if [ "${1:-}" = "--selftest" ]; then
   run_dp 6000;  _st "result, no DONE line -> not done" 1 $?
   run_dp 9999;  _st "neither -> not done" 1 $?
 
+  # --- the FINAL checkpoint: the gate's own reading, and the one the old loop could never reach.
+  # It is selected from a file that is NOT $CK.stepN, so it is tested through pick_step -- the
+  # real selection loop -- rather than by calling a helper, because the defect WAS the selection:
+  # a glob of "$CK".step* cannot match a name with no .step suffix, and 38146 is off the grid.
+  run_pick() { ( cd "$d" && CK="$CK" LOG="$LOG" DONE="$DONE" GIVEUP="$GIVEUP" FINAL_CKPT="$FINAL_CKPT" \
+                 SETTLE_S=0 ; pick_step ); }
+  LOG="$d/run.log"; FINAL_CKPT="$d/final"; : > "$LOG"; : > "$DONE"; : > "$GIVEUP"
+  mkdir -p "$d/data/eval"; cd "$d" || exit 1
+
+  # (a) file present, no "saved" line yet: the save may still be in flight, so NOT picked.
+  printf 'x' > "$FINAL_CKPT"
+  got=$(run_pick); _st "final ckpt with no saved-line -> not picked" "" "$got"
+  # (b) a 0-byte file is refused even WITH the saved-line -- "exists" is not "written".
+  echo "saved $FINAL_CKPT" > "$LOG"; : > "$FINAL_CKPT"
+  got=$(run_pick); _st "0-byte final ckpt is not picked even with the saved-line" "" "$got"
+  # (c) saved-line present and non-empty -> picked, tagged FINAL (it has no step number).
+  printf 'x' > "$FINAL_CKPT"
+  got=$(run_pick); _st "final ckpt + saved-line -> picked as FINAL" "FINAL" "$got"
+  # (d) once it has a result file, it is not re-picked.
+  : > "$d/runs/heval_merged_stepFINAL_result.json"; echo FINAL > "$DONE"
+  got=$(run_pick); _st "final ckpt already produced -> not re-picked" "" "$got"
+
+  # WORLD (e) NEEDS ITS OWN CLEAN STATE. The "already produced" predicate is clearable in two
+  # places, and resetting only $DONE leaves (d)'s result file on disk -- measured: with a
+  # reordered pick_step that tried FINAL first, this world still passed, i.e. it asserted nothing.
+  : > "$DONE"; : > "$GIVEUP"; rm -f "$d/runs/heval_merged_stepFINAL_result.json"
+  # (e) a .stepN on the grid still WINS over FINAL -- the final ckpt is the gate reading, not a
+  # reason to skip an earlier one. BOTH log lines must be present, or the FINAL branch is
+  # disqualified by its saved-line grep rather than by the ordering.
+  printf 'x' > "$CK.step6000"
+  printf 'saved %s\nstep 6010/100000\n' "$FINAL_CKPT" > "$LOG"
+  got=$(run_pick); _st "pending .stepN is picked before FINAL" "6000" "$got"
+  rm -f "$CK.step6000"
+
   # --- ordering: the smallest step must come first, which is what the old sort got wrong.
   for n in 2000 6000 8000 10000 12000; do : > "$CK.step$n"; done
   got=$(ls -1 "$CK".step* | sed 's/.*\.step//' | sort -n | head -1)
@@ -152,54 +248,30 @@ flock -n 9 || { echo "another instance holds $LOCK"; exit 0; }
 cd /work/aupai || exit 1
 touch "$DONE" "$FAILED" "$GIVEUP"
 
+
 iter=0
 while [ "$iter" -lt "$MAX_ITER" ]; do
   iter=$((iter + 1))
-  # Smallest step checkpoint that is COMPLETE by both criteria and not yet evaluated.
-  #
-  # ORDER BY THE NUMBER, not by the path string. `sort -t. -k3 -n` looks numeric but is not:
-  # with the field separator at the last `.`, `-k3` runs to the END OF THE LINE, so `-n` parses
-  # "6000" as a number only while the field holds nothing else -- and the shell's `$( )` word
-  # splitting then re-reads the paths in glob order. Measured: step10000 and step12000 sort
-  # BEFORE step6000/8000. The selection below scans for a `break`, so a wrong order does not
-  # skip a step, but the note is here because reading it as numeric is the easy mistake.
-  #
-  # THE self-heal lives in one place: done_and_produced. A step counts as done only when the
-  # DONE line AND its result file both exist. Both the skip test below and the post-merge
-  # bookkeeping use it, so "done but never produced" cannot survive a restart.
-  step=""
-  for f in $(ls -1 "$CK".step* 2>/dev/null | sed 's/.*\.step//' | sort -n); do
-    f="$CK.step$f"
-    [ -f "$f" ] || continue
-    case "$f" in *.ep*|*interrupt*) continue;; esac
-    n=${f##*.step}
-    case "$n" in ''|*[!0-9]*) continue;; esac
-    step_wanted "$n" || continue
-    done_and_produced "$n" && continue
-    grep -qx "$n" "$GIVEUP" 2>/dev/null && continue
-    next_n=$((n + 10))
-    grep -qE "^step $next_n/" "$LOG" 2>/dev/null || continue
-    sz1=$(stat -c %s "$f" 2>/dev/null || echo 0)
-    sleep "$SETTLE_S"
-    sz2=$(stat -c %s "$f" 2>/dev/null || echo 0)
-    [ "$sz1" = "$sz2" ] && [ "$sz1" -gt 0 ] || continue
-    step=$n; break
-  done
-  if [ -z "$step" ]; then sleep 600; continue; fi
+  step=$(pick_step)
+  if [ -z "$step" ]; then sleep "$POLL"; continue; fi
 
-  echo "=== $(date -u +%H:%M:%SZ) evaluating step $step"
+  # ONE place where FINAL becomes concrete paths. The tag is what DONE/GIVEUP carry and what the
+  # result file is named after; ckf is the file to load; base is the preds-name stem, which for
+  # FINAL is the suffixless ckpt name.
+  if [ "$step" = FINAL ]; then tag=FINAL; ckf=$FINAL_CKPT; base=$PAT; else tag=$step; ckf=$CK.step$step; base=$PAT.step$step; fi
+  echo "=== $(date -u +%H:%M:%SZ) evaluating step $tag"
   pids=""
   i=0
   while [ "$i" -lt "$SHARDS" ]; do
     eval "cores=\$G$i"
     setsid nohup taskset -c "$cores" python3 eval/humaneval_gen.py \
-      --ckpt "$CK.step$step" --device cpu --threads "$THREADS" --rstrip_nl \
-      --shard_i "$i" --shard_n "$SHARDS" --run "ced_s${step}_rstrip_sh$i" --force \
-      > "runs/heval_auto_${step}_sh${i}.log" 2>&1 < /dev/null &
+      --ckpt "$ckf" --device cpu --threads "$THREADS" --rstrip_nl \
+      --shard_i "$i" --shard_n "$SHARDS" --run "ced_s${tag}_rstrip_sh$i" --force \
+      > "runs/heval_auto_${tag}_sh${i}.log" 2>&1 < /dev/null &
     i=$((i + 1))
   done
   wait
-  echo "=== $(date -u +%H:%M:%SZ) shards done for step $step"
+  echo "=== $(date -u +%H:%M:%SZ) shards done for step $tag"
   # THE MERGE'S EXIT STATUS IS THE DECISION, and it has to be captured WITHOUT a pipe: `$?`
   # after `cmd | tail` is tail's status, so the original code appended to DONE even when
   # e0_merge_score refused. `merge()` raises SystemExit on a shard gap, a duplicate
@@ -209,24 +281,24 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   # The rule is the RESULT FILE, not the merged jsonl (e0_merge_score writes the jsonl first)
   # and not "non-empty" (a partial file is still a file). Only when it exists does the step
   # count as produced.
-  merge_log="runs/heval_auto_merge_${step}.log"
+  merge_log="runs/heval_auto_merge_${tag}.log"
   if python3 eval/e0_merge_score.py --bench humaneval --n 1 \
-      --glob "data/eval/preds_humaneval_ckpt_${NAME}.pt.step${step}.rstripnl.shard*of8.ced_s${step}_rstrip_sh*.jsonl" \
-      --out "runs/heval_merged_step${step}.jsonl" \
-      --result "runs/heval_merged_step${step}_result.json" > "$merge_log" 2>&1 \
-      && [ -f "runs/heval_merged_step${step}_result.json" ]; then
-    echo "$step" >> "$DONE"
+      --glob "data/eval/preds_humaneval_${base}.rstripnl.shard*of8.ced_s${tag}_rstrip_sh*.jsonl" \
+      --out "runs/heval_merged_step${tag}.jsonl" \
+      --result "runs/heval_merged_step${tag}_result.json" > "$merge_log" 2>&1 \
+      && [ -f "runs/heval_merged_step${tag}_result.json" ]; then
+    echo "$tag" >> "$DONE"
     tail -2 "$merge_log"
-    echo "=== $(date -u +%H:%M:%SZ) step $step DONE (result written)"
+    echo "=== $(date -u +%H:%M:%SZ) step $tag DONE (result written)"
   else
     # LOUD, and retried -- but not forever. The attempt count is derived from the log file so
     # it survives a restart of this loop.
-    att=$(grep -c "MERGE-FAILED step $step" "$FAILED" 2>/dev/null); att=${att:-0}
-    echo "MERGE-FAILED step $step (attempt $((att + 1)) of $MERGE_RETRIES)" | tee -a "$FAILED"
+    att=$(grep -c "MERGE-FAILED step $tag" "$FAILED" 2>/dev/null); att=${att:-0}
+    echo "MERGE-FAILED step $tag (attempt $((att + 1)) of $MERGE_RETRIES)" | tee -a "$FAILED"
     tail -3 "$merge_log" 2>/dev/null
     if [ "$((att + 1))" -ge "$MERGE_RETRIES" ]; then
-      echo "=== GIVING UP on step $step after $MERGE_RETRIES attempts; leaving it un-done and moving on" | tee -a "$FAILED"
-      echo "$step" >> "$GIVEUP"
+      echo "=== GIVING UP on step $tag after $MERGE_RETRIES attempts; leaving it un-done and moving on" | tee -a "$FAILED"
+      echo "$tag" >> "$GIVEUP"
     fi
   fi
 done
