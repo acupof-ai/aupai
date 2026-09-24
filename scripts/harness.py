@@ -23939,16 +23939,18 @@ def _selftest_batched_git_probes():
     assert rep[f"{head}:{live}"] is True and rep[f"{head}:{dead}"] is False, rep
 
     # 1b. _revs_are_ancestors_of_main -- the path@rev durability gate. A retirement citation
-    # must name main-reachable history, not any object that merely exists. Three states on the
-    # REAL repo: HEAD's first parent is an ancestor (True); a 40-zero rev and a blob sha are
-    # both non-commit/non-ancestor (False). The blob case matters because cat-file resolves a
-    # blob, so an existence-only check would let a content sha pass as a history pointer.
-    parent = subprocess.run(
-        ["git", "-C", ROOT, "rev-parse", "HEAD^"], capture_output=True, text=True
+    # must name main-reachable history, not any object that merely exists. Three states. Use
+    # origin/main ITSELF as the positive case (a commit is its own ancestor; HEAD^ is NOT safe
+    # here because under CI's pull_request merge-ref HEAD^ can be a PR parent that the local
+    # origin/main does not contain), a 40-zero rev and a blob sha as the two negatives. The
+    # blob case matters because cat-file resolves a blob, so an existence-only check would
+    # let a content sha pass as a history pointer.
+    main_ref = subprocess.run(
+        ["git", "-C", ROOT, "rev-parse", "origin/main"], capture_output=True, text=True
     ).stdout.strip()
-    anc = _revs_are_ancestors_of_main(ROOT, [parent, "0" * 40,
+    anc = _revs_are_ancestors_of_main(ROOT, [main_ref, "0" * 40,
                                             "8c561107412c20d54925bf2f82c60b175f8644dc"])
-    assert anc.get(parent) is True, "HEAD^ must be an ancestor of main"
+    assert anc.get(main_ref) is True, "origin/main must be its own ancestor"
     assert anc.get("0" * 40) is False, "a nonsense rev must not read as durable history"
     assert anc.get("8c561107412c20d54925bf2f82c60b175f8644dc") is False, \
         "a blob sha must not satisfy a commit-ancestry check"
