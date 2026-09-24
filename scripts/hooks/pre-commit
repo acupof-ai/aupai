@@ -2388,6 +2388,10 @@ def main():
         # grow (and the clamp hides it, making the arm a bit-exact baseline), and a factor
         # hoisted to the group gives every shape the first shape's number. Both still train.
         "scripts/test_muon_shape_lr.py",
+        # Muon Newton-Schulz rank sharding (de). The fast selftest pins the default-off flag,
+        # the n/world shard predicate (incl. the uneven-group fallback boundary) and that the
+        # constructor reads the flag. The heavy gloo world2/4 bit-parity run is ci.yml.
+        "scripts/test_muon_ns_shard.py",
         # A/B (4)'s arm: a zero gate makes the table invisible (the arm would measure how fast
         # it finds the table), an add into the latent puts token identity into K too, three
         # tables instead of one is +48.9% not +16.3%, and a leaked per-forward stash is a wrong
@@ -2842,6 +2846,10 @@ def main():
                      "scripts/test_moe_diag_rank.py",
                      "scripts/test_bf16_flag.py",
                      "scripts/test_warmdown_start.py",
+                     # Muon NS sharding: edits to Muon.step's stacked-instance branch must run
+                     # the default-off/predicate/constructor selftest. The gloo bit-parity
+                     # world2/4 run is CI-only. ~0.2s.
+                     "scripts/test_muon_ns_shard.py",
                      "scripts/test_moe_latent.py",
                      # test_eta_window READS train.py -- it extracts main's step-line f-string with
                      # inspect.getsource and asserts on that template, and calls _eta_fields
