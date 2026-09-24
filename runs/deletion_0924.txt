@@ -1,0 +1,64 @@
+# 2026-09-24 user-approved deletion outside git (relayed by 1e): pod old checkpoints, host old-vocab caches, laptop merged worktrees.
+# Batch 1 pod /work/aupai (container ~/bin/pod): 12 checkpoints 155.43GB. interrupt.step13210/14142 sha-verified byte-identical to /data01/aupai_backup/v41_ced_0923/MANIFEST before delete. Training v41_ced_0923 running; rolling .stepN and .step8000/.interrupt.step8196 kept; lsof showed no reader.
+PODCKPT ckpt_v41_ced_0923.pt.interrupt.step13210 13.02G
+PODCKPT ckpt_v41_ced_0923.pt.interrupt.step14142 13.02G
+PODCKPT ckpt_v41_ced_smoke_0922.pt.ep1 12.95G
+PODCKPT ckpt_v41_ced_w8smoke_0923.pt.ep1 12.95G
+PODCKPT ckpt_v41_peak_0920.pt.ep1 12.91G
+PODCKPT ckpt_v41_smoke_0920k.pt.ep1 12.91G
+PODCKPT ckpt_v41_ced_smoke_0922.pt 12.95G
+PODCKPT ckpt_v41_ced_w8smoke_0923.pt 12.95G
+PODCKPT ckpt_v41_peak_0920.pt 12.91G
+PODCKPT ckpt_v41_smoke_0920k.pt 12.91G
+PODCKPT ckpt_v41_gate_0922.pt.step4000 12.97G
+PODCKPT ckpt_v41_gate_0922.pt.step6000 12.97G
+DELETED batch1 12 entries 2026-09-24T12:32:38Z
+# Batch 2 host /data00 (tn exec): 44 files 105118772220 bytes = 105.12GB decimal. Every non-empty deleted .vocab is old vocab 0bce3584bc24f255; none is current f1f860970d15d623. Protected and kept: tokens_*_dc.pt, tokens_sample.pt, ckpt_k3-mla_2b_step2000.pt, fw2raw/. Detached setsid run after first tn tunnel dropped.
+HOSTCACHE tokens_chat.pt.stale_0826 0.17G
+HOSTCACHE tokens_code.pt.stale_0826 0.30G
+HOSTCACHE tokens_en.pt.stale_0826 0.79G
+HOSTCACHE tokens_math.pt.stale_0826 0.65G
+HOSTCACHE tokens_web.pt.stale_0826 33.26G
+HOSTCACHE tokens_chat_fone.pt 0.16G
+HOSTCACHE tokens_chat_fone.pt.vocab 0.00G
+HOSTCACHE tokens_code_fone.pt 0.23G
+HOSTCACHE tokens_code_fone.pt.vocab 0.00G
+HOSTCACHE tokens_en_fone.pt 0.65G
+HOSTCACHE tokens_en_fone.pt.vocab 0.00G
+HOSTCACHE tokens_math_fone.pt 0.35G
+HOSTCACHE tokens_math_fone.pt.vocab 0.00G
+HOSTCACHE tokens_textbook_fone.pt 6.49G
+HOSTCACHE tokens_textbook_fone.pt.vocab 0.00G
+HOSTCACHE tokens_web_hq_fone.pt 4.27G
+HOSTCACHE tokens_web_hq_fone.pt.vocab 0.00G
+HOSTCACHE tokens_wiki_fone.pt 1.01G
+HOSTCACHE tokens_wiki_fone.pt.vocab 0.00G
+HOSTCACHE tokens_chat.pt 0.15G
+HOSTCACHE tokens_chat.pt.vocab 0.00G
+HOSTCACHE tokens_chat.pt.srcfp 0.00G
+HOSTCACHE tokens_code.pt 0.23G
+HOSTCACHE tokens_code.pt.vocab 0.00G
+HOSTCACHE tokens_code.pt.srcfp 0.00G
+HOSTCACHE tokens_en.pt 0.64G
+HOSTCACHE tokens_en.pt.vocab 0.00G
+HOSTCACHE tokens_en.pt.srcfp 0.00G
+HOSTCACHE tokens_math.pt 0.33G
+HOSTCACHE tokens_math.pt.vocab 0.00G
+HOSTCACHE tokens_math.pt.srcfp 0.00G
+HOSTCACHE tokens_textbook.pt 6.44G
+HOSTCACHE tokens_textbook.pt.vocab 0.00G
+HOSTCACHE tokens_textbook.pt.srcfp 0.00G
+HOSTCACHE tokens_web_hq.pt 5.74G
+HOSTCACHE tokens_web_hq.pt.vocab 0.00G
+HOSTCACHE tokens_web_hq.pt.srcfp 0.00G
+HOSTCACHE tokens_wiki.pt 0.98G
+HOSTCACHE tokens_wiki.pt.vocab 0.00G
+HOSTCACHE tokens_wiki.pt.srcfp 0.00G
+HOSTCACHE tokens_web.pt 32.44G
+HOSTCACHE POISONED_cci3_tokens_web_hq.pt.quarantine 0.79G
+HOSTCACHE POISONED_cci3_tokens_web_hq.pt.vocab.quarantine 0.00G
+HOSTCACHE pretrain_1b_tokens.pt 9.06G
+DELETED batch2 44 entries 2026-09-24T12:32:38Z
+# Batch 3 laptop: 43 git worktrees, all clean, ahead=0 (HEAD ancestor of origin/main), no lsof/tmux cwd. 3.68GB total du before remove. Removed with 'git worktree remove' (no --force); 15 named branches deleted (14 -d, 1 -D verified main ancestor), rest detached. 1 skipped: aupai-ci (tmux pane cwd). 18 ahead and 15 dirty untouched (reported separately).
+LAPTOPWT 43-merged-worktrees 3.68G
+DELETED batch3 43 entries 2026-09-24T12:32:38Z
