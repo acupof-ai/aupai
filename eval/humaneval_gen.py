@@ -428,6 +428,11 @@ def main():
                          "Used with --shard_n so N cards cover every task exactly once.")
     ap.add_argument("--shard_n", type=int, default=None,
                     help="total number of shards; requires --shard_i in [0, shard_n).")
+    ap.add_argument("--queue_dir", default=None,
+                    help="dynamic task queue: claim indices from <dir>/cursor instead of "
+                         "taking a fixed position modulo. --shard_i/--shard_n still name this "
+                         "worker and keep the header's 0..k contract; only the SELECTION "
+                         "changes. Per-task cost varies ~2x, so fixed positions idle workers.")
     ap.add_argument("--preds", default=None,
                     help="score an existing preds jsonl (pass/empty/repetition) and exit; "
                          "no model, cardless")
@@ -476,7 +481,20 @@ def main():
     if args.control:
         return
     shard_validate(args.shard_i, args.shard_n)
-    probs = [p for _, p in shard_select(probs_all, args.shard_i, args.shard_n)]
+    # --first bounds the POOL, before either selection path. Applied after the shard select it
+    # would take the first N of the file and shards 1.. would get none; applied only in the
+    # non-queue path it left a queue worker draining all 164 (measured: a --first 1 test ran the
+    # full pool). One bound, above both, so the two modes see the same universe.
+    if args.first:
+        probs_all = probs_all[:args.first]
+    if args.queue_dir:
+        from eval.shard import claim_next  # noqa: PLC0415
+        os.makedirs(args.queue_dir, exist_ok=True)
+        # The queue is drained LAZILY, inside the generation loop: claiming here would hand
+        # every task to whichever worker started first and defeat the queue entirely.
+        probs = probs_all
+    else:
+        probs = [p for _, p in shard_select(probs_all, args.shard_i, args.shard_n)]
     arm = ("chatml" if args.chatml else
            "sig-only" if args.strip_docstrings else
            "no-doctest" if args.strip_doctests else "rstrip-nl" if args.rstrip_nl else
@@ -495,9 +513,6 @@ def main():
         pr = p["prompt"]
         return pr.rstrip("\n") if args.rstrip_nl else pr
     prompts = [_prompt(p) for p in probs]
-    if args.first:
-        probs = probs[:args.first]
-        prompts = prompts[:args.first]
     if not args.ckpt:
         ap.error("--ckpt required (unless --control)")
     is_cpu = str(args.device).startswith("cpu")
@@ -588,10 +603,30 @@ def main():
             "temperature": args.temperature,
             "stops": STOPS,
             "n_problems": len(probs),
+            "queue_dir": args.queue_dir,
             "shard_i": args.shard_i, "shard_n": args.shard_n,
             "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, ensure_ascii=False) + "\n")
-        for i, (p, prompt) in enumerate(zip(probs, prompts), 1):
+        # n_here is the divisor for progress/summary lines. A fixed shard knows it up front;
+        # a queue worker only learns it by finishing, so it starts at the pool size and the
+        # final line uses n_done instead.
+        n_here = 0 if args.queue_dir else len(probs)
+        # THE QUEUE DRAINS LAZILY. Claiming the whole list up front would hand every task to
+        # whichever worker reached the claim first, which is the fixed-shard behaviour with
+        # extra steps. `i` counts the worker's OWN completed tasks (used only for progress
+        # printing); probs/prompts are indexed by the claimed position.
+        if args.queue_dir:
+            def _drain():
+                while True:
+                    k = claim_next(args.queue_dir, len(probs_all))
+                    if k is None:
+                        return
+                    yield probs_all[k], _prompt(probs_all[k])
+            _items = _drain()
+        else:
+            _items = zip(probs, prompts)
+        i = 0                      # an empty queue never enters the loop; n_done reads this
+        for i, (p, prompt) in enumerate(_items, 1):
             if args.n > 1:
                 # Stage-2 paired protocol: n task-seeded stochastic draws. Each sample is
                 # truncated/judged exactly like the single greedy continuation; the same
@@ -612,9 +647,9 @@ def main():
                         "temperature": args.temperature}, ensure_ascii=False) + "\n")
                 npass += sum(oks)
                 fout.flush()
-                if i % 20 == 0 or i == len(probs):
+                if i % 20 == 0 or i == n_here:
                     done_tasks = i
-                    print(f"  {done_tasks}/{len(probs)} tasks, "
+                    print(f"  {done_tasks}/{n_here if n_here else '?'} tasks, "
                           f"c={npass}/{done_tasks * args.n} samples "
                           f"({100 * npass / (done_tasks * args.n):.2f}%)", flush=True)
                 continue
@@ -658,23 +693,34 @@ def main():
                 row["raw"] = raw
             fout.write(json.dumps(row, ensure_ascii=False) + "\n")
             fout.flush()
-            if i % 20 == 0 or i == len(probs):
-                print(f"  {i}/{len(probs)}  pass@1 = {npass}/{i} = "
+            # n_here is the pool size for a fixed shard and an unknown for a queue worker
+            # (it ends when the queue is empty). The final line therefore prints when the
+            # drain ENDS, which is what the `n_here` sentinel below handles -- the
+            # `i == len(probs)` form would silently never fire in queue mode.
+            if i % 20 == 0 or i == n_here:   # i == n_here never fires when n_here is 0
+                print(f"  {i}/{n_here}  pass@1 = {npass}/{i} = "
                       f"{100 * npass / i:.2f}%   ({time.time() - t0:.0f}s)", flush=True)
 
+    # n_done is what THIS worker wrote. In queue mode that is its own share of the pool, not
+    # the pool: dividing by len(probs) would report 21/164 for a worker that did 21/21.
+    n_done = i
+    if not args.queue_dir:
+        n_done = n_here
+    else:
+        print(f"  {n_done} tasks claimed from the queue", flush=True)
     attest(out_path)
     if args.n > 1:
-        ntask = len(probs)
+        ntask = n_done
         print(f"\nHUMANEVAL n={args.n} T={args.temperature}: sample pass rate "
               f"c={npass}/{ntask * args.n} = {100 * npass / (ntask * args.n):.2f}%", flush=True)
         print(f"preds saved: {out_path}", flush=True)
         return
-    n_nonempty = len(probs) - nempty
-    print(f"\nHUMANEVAL pass@1 (greedy) = {npass}/{len(probs)} = "
-          f"{100 * npass / len(probs):.2f}%", flush=True)
-    print(f"empty-completion split: eos_first {neos}/{len(probs)}, "
-          f"stop_at_0 {nstop}/{len(probs)} (total empty {nempty}/{len(probs)} = "
-          f"{100 * nempty / len(probs):.1f}%)"
+    n_nonempty = n_done - nempty
+    print(f"\nHUMANEVAL pass@1 (greedy) = {npass}/{n_done} = "
+          f"{100 * npass / n_done:.2f}%", flush=True)
+    print(f"empty-completion split: eos_first {neos}/{n_done}, "
+          f"stop_at_0 {nstop}/{n_done} (total empty {nempty}/{n_done} = "
+          f"{100 * nempty / n_done:.1f}%)"
           + (f", im_end_no_func {nimend}" if args.chatml else ""), flush=True)
     rep_frac = f"{100 * nrep / n_nonempty:.1f}%" if n_nonempty else "n/a (0 non-empty)"
     print(f"repetitive non-empty (last 200 chars, >=3 consecutive equal lines or tokens): "
