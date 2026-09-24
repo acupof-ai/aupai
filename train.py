@@ -3948,7 +3948,6 @@ def main():
             on_trace_ready=lambda p: p.export_chrome_trace(f"/work/aupai/bench_eff/ddp_trace_rank{rank}.json"),
         )
         _prof.start()
-    GOOD_SAVE_INTERVAL = 200
     # An interrupt writes a checkpoint before it dies. The periodic save is the floor,
     # not the only line: SIGTERM (container stop, torchrun teardown, an operator's kill)
     # and SIGINT reach the main thread between bytecodes, so the handler can snapshot
@@ -4201,17 +4200,28 @@ def main():
                 step += 1
                 if _prof is not None:
                     _prof.step()
-                # Refresh the rollback buffer on the finer of the two cadences so a save
-                # never writes a stale snapshot (save_every can be < GOOD_SAVE_INTERVAL).
-                # EVERY rank, not just rank 0: the NaN rollback below loads good_state
-                # unguarded, so a rank whose buffer never refreshed would restore itself to
-                # initialisation while rank 0 restored a real step, and DDP synchronises
-                # gradients, not parameters -- the divergence would not heal and would not
-                # raise. Folding this into the is_main save reopened exactly that (tilerl,
-                # 2026-09-02, caught before it ran).
+                # Snapshot and save on ONE cadence so a saved checkpoint is always the state
+                # at its named step. Until 2026-09-24 the rollback snapshot refreshed every
+                # GOOD_SAVE_INTERVAL=200 while saves landed every save_every=500, so an
+                # odd-500 save (500, 1500, ...) wrote the snapshot from 100 steps earlier under
+                # the current cursor -- measured: ckpt_v41_ced_0923.pt.step18500 carried AdamW
+                # state step 18400 (prereg v41_ced_0923 amendment_5). A resume from it silently
+                # skipped 100 steps of data.
+                # EVERY rank refreshes, not just rank 0: the NaN rollback below loads
+                # good_state unguarded, so a rank whose buffer never refreshed would restore
+                # itself to initialisation while rank 0 restored a real step, and DDP
+                # synchronises gradients, not parameters -- the divergence would not heal and
+                # would not raise. Folding this into the is_main save reopened exactly that
+                # (tilerl, 2026-09-02, caught before it ran). The rollback's oldest live buffer
+                # is at most save_every steps stale, equal to the data a resume can lose anyway;
+                # finite-but-runaway trajectories are covered by the watchdog, not this buffer.
                 _step_now[0] = step
-                if step % min(GOOD_SAVE_INTERVAL, args.save_every) == 0:
-                    good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
+                if step % args.save_every == 0:
+                    # copy=True: .cpu() alone returns the SAME object for an already-CPU
+                    # tensor (CPU test runs), which would alias live state in the rollback
+                    # buffer; on CUDA it makes exactly one D2H copy instead of .cpu().clone()'s
+                    # two host-side copies of the whole state dict.
+                    good_state = {k: v.to("cpu", copy=True) for k, v in raw_model.state_dict().items()}
                     good_opt = opt_snapshot(optimizers)
                 if step > 0 and step % args.save_every == 0 and is_main:
                     save_checkpoint(ckpt_path + f".step{step}", good_state, Cfg, VOCAB_ID, good_opt, step)
@@ -4237,8 +4247,7 @@ def main():
                     for p in stale:
                         try:
                             if os.stat(p).st_ino in pinned_inodes:
-                                if is_main:
-                                    runlog(f"roller: keeping {os.path.basename(p)} -- pinned")
+                                runlog(f"roller: keeping {os.path.basename(p)} -- pinned")
                                 continue
                         except OSError:
                             pass
