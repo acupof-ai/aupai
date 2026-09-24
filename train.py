@@ -459,6 +459,10 @@ class Cfg:
     muon_momentum = 0.95
     muon_ns_steps = 5
     muon_wd = 0.10  # was 0.28; nanochat 1/width² law @ d=1024
+    # Shard Muon Newton-Schulz along the stacked same-shape instance axis over DDP ranks and
+    # all_gather the updates. Default off: bit-parity is pinned by scripts/test_muon_ns_shard.py,
+    # and a mid-run toggle changes no math but has to be proven before a gate run uses it.
+    muon_ns_shard = False
     # AdamW (embedding + 1D params) — batch-scaled per nanochat
     embed_lr = 0.1
     embed_betas = (0.8, 0.995)
@@ -871,6 +875,14 @@ class Muon(torch.optim.Optimizer):
         assert hasattr(Cfg, "muon_shape_lr"), (
             "Cfg.muon_shape_lr is gone; A/B (2a) cannot tell its arm from the baseline")
         self._shape_lr = Cfg.muon_shape_lr
+        # Shard Newton-Schulz across DDP ranks along the stacked-MATRIX-INSTANCE axis (the
+        # batch of same-shape params, chiefly the 48 MoE experts). Every matrix's NS iteration
+        # is independent of every other's, so rank r orthonormalises instances
+        # [r*n/w:(r+1)*n/w) and an all_gather concatenates; the per-matrix math is unchanged
+        # and the result is bit-identical to one rank doing all n. n==1 (a lone dense 2-D
+        # param) and a group whose n is not a positive multiple of world cannot shard and fall
+        # back to the all-instances path. Default off; opt-in via --muon_ns_shard.
+        self._ns_shard = bool(getattr(Cfg, "muon_ns_shard", False))
         defaults = dict(lr=lr, momentum=momentum, ns_steps=ns_steps, weight_decay=weight_decay)
         super().__init__(params, defaults)
         self._compiled = {}  # (shape, ns_steps, tall, device) -> compiled function
@@ -1008,7 +1020,30 @@ class Muon(torch.optim.Optimizer):
                 G = torch.stack(sg["grads"])
                 M = torch.stack(sg["mbs"])
                 fn = self._get_compiled(shape, sg["ns_steps"], tall, device)
-                W, M = fn(G, W, M, lr_t, mom_t, wd_t)
+                # Shard the INSTANCE axis across ranks: DDP has all-reduced G, so every rank
+                # holds the identical stacked G/W/M; each rank runs NS on its own n/w
+                # instances, then all_gather concatenates. NS, the momentum lerp and the
+                # weight update are all per-instance, so this is a partition of the same
+                # arithmetic and stays bit-identical to one rank doing all n. The cache key is
+                # the trailing 2-D shape (muon_update collapses the lead dim), so no new
+                # function beyond the shard's specialization. Falls back when n is not a
+                # positive multiple of world (uneven instances) -- correctness before speed.
+                world = dist.get_world_size() if (self._ns_shard and dist.is_available()
+                                                   and dist.is_initialized()) else 1
+                if world > 1 and n >= world and n % world == 0:
+                    rank = dist.get_rank()
+                    lo, hi = rank * n // world, (rank + 1) * n // world
+                    Wl, Ml = fn(G[lo:hi], W[lo:hi], M[lo:hi], lr_t, mom_t, wd_t)
+                    # list all_gather (not all_gather_into_tensor): identical on NCCL and gloo,
+                    # so the CPU parity test and the H20 training path run one code path.
+                    wlist = [torch.empty_like(Wl) for _ in range(world)]
+                    mlist = [torch.empty_like(Ml) for _ in range(world)]
+                    dist.all_gather(wlist, Wl.contiguous())
+                    dist.all_gather(mlist, Ml.contiguous())
+                    W = torch.cat(wlist, dim=0)
+                    M = torch.cat(mlist, dim=0)
+                else:
+                    W, M = fn(G, W, M, lr_t, mom_t, wd_t)
                 for i, p in enumerate(sg["params"]):
                     p.data.copy_(W[i])
                     sg["mbs"][i].copy_(M[i])
@@ -3127,6 +3162,7 @@ def main():
         "csa2_win_flash": "CSA2: flash SWA window with dense entries, fp32 LSE split combine (default materialized)",
         "ced": "CED: bottom ced_enc_layers encoder; every decoder layer projects its global KV from H_{L/2} with its own W_KV/W_Z",
         "ced_kc_norm": "QK-norm: per-head F.rms_norm of the CED decoder global entry keys W_KV(H_6); off keeps old checkpoints byte-identical",
+        "muon_ns_shard": "Muon: shard Newton-Schulz over DDP ranks along stacked same-shape instances and all_gather (bit-identical; default off)",
     }.items():
         parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
                             default=None, required=name in RECIPE_REQUIRED, help=help_)
