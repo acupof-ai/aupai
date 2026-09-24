@@ -2263,6 +2263,40 @@ else:
 _csa_ced._h_enc = _h_enc
 
 
+# 6b. QK-NORM ON THE CED GLOBAL ENTRY KEYS (cfg ced_kc_norm, amendment_4). Directly exercises
+#     _ced_kv_from_enc so the assertion is on kc/vc themselves, not diluted through attention:
+#       - off: kc is bit-for-bit the unflagged function (old checkpoints stay identical);
+#       - on:  kc has per-head RMS exactly 1, while vc is UNCHANGED (values are never normed).
+def _ced_entries(kc_norm):
+    return model._ced_kv_from_enc(
+        _qe, _h_enc, _cue, _csa_ced.m, _csa_ced.w_kv, _csa_ced.w_z, 4, kc_norm=kc_norm
+    )
+
+
+_kc_off, _vc_off, _vis_off, _doc_off = _ced_entries(False)
+assert _csa_ced.kc_norm is False, "test CSA must default to kc_norm False (old-build parity)"
+# ON path: every (head, entry) key vector has RMS 1
+_kc_on, _vc_on, _vis_on, _doc_on = _ced_entries(True)
+_rms = _kc_on.double().pow(2).mean(-1).sqrt()
+assert torch.allclose(_rms, torch.ones_like(_rms), atol=1e-12), (
+    f"ced_kc_norm on: per-head kc RMS must be 1, got max dev {(_rms - 1).abs().max().item():.2e}"
+)
+# values identical off vs on (norm touches keys only); masks/docs untouched
+assert torch.equal(_vc_off, _vc_on), "ced_kc_norm changed vc (values must be untouched)"
+assert torch.equal(_vis_off, _vis_on) and torch.equal(_doc_off, _doc_on), (
+    "ced_kc_norm altered visibility/doc blocks"
+)
+# off kc is NOT already unit-RMS in general (else the norm would be a no-op and prove nothing)
+_off_rms = _kc_off.double().pow(2).mean(-1).sqrt()
+assert not torch.allclose(_off_rms, torch.ones_like(_off_rms), atol=1e-4), (
+    "raw kc happened to be unit-RMS; this fixture cannot show the norm changes the keys"
+)
+# and the normed keys differ from the raw keys
+assert not torch.allclose(_kc_off, _kc_on, atol=1e-6), (
+    "ced_kc_norm on returned the same kc as off -- norm not applied"
+)
+
+
 # 7. PER-LAYER UNSHARED, end to end through the stack. Rebased on the REAL Cfg via _CfgPaDense
 #    (_CfgReuseStack's pattern): HybridLM reads fields off cfg directly, so a bare class here
 #    dies at `cfg.grad_ckpt` before any CED assertion runs. n_swa_only_layers=2 at layers=4 puts
