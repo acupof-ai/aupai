@@ -488,11 +488,11 @@ def _tmp_repo_shaped(mix_obj=None):
     import subprocess
 
     d = _tmp_repo(mix_obj)
-    # third_party must be linked too: tests/v41f/ref_oracle.py locates the vendored ref as a
-    # sibling of the repo root via a NON-resolving path (a resolving __file__ escaped to the
-    # real ROOT and made the suite ignore a missing/broken v41f in this sandbox, issue #426).
+    # third_party is linked alongside the code dirs so suites that locate a vendored ref as a
+    # sibling of the repo root resolve inside the sandbox, not the real ROOT (a resolving
+    # __file__ escaped and made a suite ignore a missing dep, issue #426).
     for name in ("scripts", "eval", "datagen", "probes", "mathbank", "algorithms",
-                 "filters", "docs", "facts", "tests", "v41f", "v41f_l2", "third_party"):
+                 "filters", "docs", "facts", "tests", "v41f_l2", "third_party"):
         if os.path.isdir(os.path.join(ROOT, name)) and not os.path.exists(os.path.join(d, name)):
             os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
     for f in os.listdir(ROOT):
@@ -593,6 +593,27 @@ def _cat_file_exists(root, specs):
         )
     for spec, line in zip(specs, lines[: len(specs)], strict=True):
         out[spec] = bool(line) and not line.endswith(" missing")
+    return out
+
+def _revs_are_ancestors_of_main(root, revs):
+    """{rev: bool}: is each rev an ancestor of origin/main?
+
+    A `path@rev` retirement citation is durable only when the rev is real history that
+    remains reachable from main -- an arbitrary object or a sha on a branch that never
+    merges would pass `cat-file` today and vanish after a prune, a dead citation wearing
+    the durable form. One batched `merge-base --is-ancestor` per rev. False on the pod (no
+    .git); callers there already skip rev enforcement. A rev origin/main cannot resolve
+    is False (never True)."""
+    out = {}
+    for rev in revs:
+        if not rev:
+            out[rev] = False
+            continue
+        r = subprocess.run(
+            ["git", "-C", root, "merge-base", "--is-ancestor", rev, "origin/main"],
+            capture_output=True, text=True, timeout=30,
+        )
+        out[rev] = (r.returncode == 0)
     return out
 
 def _gitignored_set(paths, root):
