@@ -108,8 +108,18 @@ if [ "${1:-}" = "--selftest" ]; then
   step_wanted 14500; _st "off-grid 14500" 1 $?
   step_wanted 15000; _st "off-grid 15000" 1 $?
   step_wanted 4000;  _st "below MIN_STEP" 1 $?
-  step_wanted 38000; _st "final checkpoint (TOTAL-146)" 0 $?
-  step_wanted 37000; _st "near-end but not final" 1 $?
+  step_wanted 38000; _st "grid point near the end" 0 $?
+  step_wanted 37000; _st "off-grid, not near the end" 1 $?
+  # THE FINAL-CHECKPOINT CLAUSE NEEDS A TOTAL THAT PUTS THE LAST SAVE OFF THE GRID, or it is
+  # untested. With the live constants (TOTAL 38146, SAVE 500) the last save falls on 38000,
+  # which is already a multiple of 2000 -- so a world written against them passes on the grid
+  # clause alone. Measured: with this clause replaced by `return 1`, that world stayed green.
+  # TOTAL 37900 puts the last save at 37500 (off-grid), where only this clause can say yes.
+  _st_saved_total=$TOTAL_STEPS
+  TOTAL_STEPS=37900
+  step_wanted 37500; _st "off-grid final checkpoint (only this clause)" 0 $?
+  step_wanted 37000; _st "off-grid, below the final save" 1 $?
+  TOTAL_STEPS=$_st_saved_total
 
   # --- done_and_produced: the step12000 shape is the first of these.
   run_dp() { ( cd "$d" && DONE="$DONE" ; done_and_produced "$1" ); }
