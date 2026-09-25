@@ -2,7 +2,6 @@
   "_measured": "2026-09-24",
   "_source": "https://github.com/acupof-ai/aupai/actions/runs/35992833222 (job check, step 'harness ci-selftests'; each value is the wall gap between consecutive CI-SELFTESTS RUN lines, so the last target's value includes process teardown noise)",
   "_unit": "seconds per driver target on the GitHub-hosted ubuntu-latest CI image",
-  "_use": "LPT bin packing for `harness ci-selftests --shard K/N`; check_ci_selftest_partition requires these keys to equal the hook map's driver bucket exactly. To regenerate, download a completed ci run log (`gh run view <id> --log`) and take the wall gap between consecutive CI-SELFTESTS RUN lines in the ci-selftests step; laptop timings are not CI-representative.",
   "targets": {
     "algorithms/code_reward.py": 0.1,
     "algorithms/rlvr_data.py": 0.0,
@@ -182,6 +181,7 @@
     "scripts/reweight_l3_shortfall.py": 0.0,
     "scripts/rl_code_pool.py": 0.1,
     "scripts/sft_hf_control.py": 5.1,
+    "scripts/sftb_ultra3_tail_funnel.py": 0.1,
     "scripts/stale_claims.py": 0.0,
     "scripts/sweep.py": 0.2,
     "scripts/test_behind_main_overlap.py": 0.3,

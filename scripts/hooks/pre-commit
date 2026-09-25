@@ -1118,6 +1118,13 @@ def main():
         # problems that can never score. The selftest pins signature/self handling, solution
         # normalisation rejection, and the generated-test contract without data or pytest.
         "scripts/rl_code_pool.py",
+        # 3b: real ultra_l3 unconsumed-tail SFT-B funnel. Registered because its identity is
+        # the exact seed-42 train.py shuffle: a tail slice that does not match the permutation
+        # silently selects already-consumed rows, and a loose marker floods false positives.
+        # The selftest pins the permutation/slice identity, the barber arrow marker, a benign
+        # "actually best" comment staying clean, and the statement/code shape extractor; no
+        # corpus or subprocess.
+        "scripts/sftb_ultra3_tail_funnel.py",
         # Shard-by-shard comparator for the parallel-vs-serial exact pass (3b). Registered
         # because `_parallel_exact_pass`'s "byte-identical to the serial pass" is a docstring
         # claim over the code that decides a multi-GB corpus's exact bytes. The selftest drives
