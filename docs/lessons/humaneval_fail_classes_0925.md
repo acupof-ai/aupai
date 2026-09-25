@@ -11,12 +11,18 @@ Raw table with the completion text, one row per task x step: `runs/heval_fail_cl
 
 ## 1. Headline
 
-| | 30000 | 32000 | 34000 | total |
+| | 30000 | 32000 | 34000 | **FINAL** |
 |---|---|---|---|---|
-| pass | 31 | 29 | 27 | 87 |
-| FAIL | 133 | 135 | 137 | 405 |
+| pass | 31 | 29 | 27 | **28** |
+| pass@1 | 18.90% | 17.68% | 16.46% | **17.07%** |
+| FAIL | 133 | 135 | 137 | **136** |
 
-**The 280-token cap costs zero passes.** On the 96 capped failures (`stop_reason=max_new`, `ok=false`) every line-boundary prefix of the completion was judged — 2821 judge calls — and **not one passes**. The rollout never contained a correct solution at any cut point, so no larger budget and no stopping policy recovers a pass on these rows. Raising `max_new` is not a fix.
+`FINAL` is the end-of-schedule checkpoint (`ckpt_v41_ced_0923.pt`, the suffixless name), scored
+after the loop's own run. The pass curve is flat within noise across the four points.
+
+**The 280-token cap costs zero passes at the three mid-schedule steps.** On their 96 capped failures (`stop_reason=max_new`, `ok=false`) every line-boundary prefix of the completion was judged — 2821 judge calls — and **not one passes**. The rollout never contained a correct solution at any cut point, so no larger budget and no stopping policy recovers a pass on those rows.
+
+**At the FINAL checkpoint the claim changes, and the change matters.** Of its 32 capped failures, **one has a passing prefix** (939 judge calls): `HumanEval/76` completes the correct 9-line body, then restarts the whole function — re-emitting `def is_simple_power` with the full docstring — and the 280-cut lands inside that restart. So a better stopping policy would have recovered that one task, and "the cap costs nothing" is **a property of these checkpoints, not of the cap**. Across all four points: 128 capped failures, exactly 1 with a passing prefix.
 
 The other half of the same claim, from the length side: the 164 canonical HumanEval bodies tokenize to **median 46 / p90 108 / max 251** tokens, and **0 of 164 exceed 280**. The correct completions the model does produce are **median 20 / p90 58 / max 125** tokens. Both the reference solutions and the model's own successes fit the budget with room to spare.
 
@@ -56,6 +62,14 @@ So the failures are not a length or budget problem, and "the model ran out of ro
 | correct at all three | 21 |
 | wrong at all three | 128 |
 | mixed (sometimes right) | **15** |
+
+**Adding the FINAL checkpoint changes none of these three numbers** (21 / 128 / 15 hold over all
+four points). Finer: no task that was wrong at all three mid points is right at FINAL, and no
+task right at all three is wrong at FINAL — FINAL's outcome for every task agrees with its
+three-point pattern. The stability result is therefore robust to whether the end-of-schedule
+checkpoint is included, which is worth having because it was measured at the three points that
+were available first.
+
 
 Mixed set: 10, 11, 12, 13, 14, 25, 27, 43, 47, 49, 52, 56, 59, 63, 76 — note 10–14 are consecutive.
 
