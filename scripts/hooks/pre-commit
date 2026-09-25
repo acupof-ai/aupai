@@ -2004,6 +2004,12 @@ def main():
         # union world and overwrite somebody's amendment without saying so.
         "scripts/prereg_merge.py",
         "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
+        # Atomic checkpoint write (de, 1e order 2026-09-26). Its acceptance is a known-answer
+        # world: a torch.save that dies after streaming bytes must leave the prior checkpoint
+        # loadable and unlink its temp. A plain torch.save to the final path passes every normal
+        # save/load and only truncates when a kill lands mid-write -- exactly what corrupted
+        # interrupt.step452. Subject is _atomic_torch_save in train.py (also in its map).
+        "scripts/test_atomic_save.py",
         # The p1 attention path: partial RoPE, HCA, and the pool_per_doc lift out of CSA. CPU,
         # ~2s. Registered in the same commit as the file, the same deadlock check_sft_ready
         # below records. Every world is a perturbation test because all three ways this path
@@ -2891,6 +2897,9 @@ def main():
         # ALONE would have meant it runs only when someone edits the test -- the gap this table
         # exists to close, and the one my own guard fell into before (registered-guard-never-asked).
         "train.py": {"scripts/test_arch_compat.py", "scripts/test_plan_length.py",
+                     # _atomic_torch_save lives in train.py; a save edit is exactly when the
+                     # kill-during-save gate must run.
+                     "scripts/test_atomic_save.py",
                      # Its subject is train.py's cache-path accessor, read out of the file
                      # by source span -- so a train.py edit is exactly when it must run.
                      # It was ONLY in SELFTEST_FILES, so nothing launched it on the
