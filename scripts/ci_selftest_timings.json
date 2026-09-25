@@ -271,6 +271,11 @@
     "scripts/write_mix_500m.py": 8.7,
     "v41f_l2/l2_census_scan.py": 0.2,
     "scripts/problem_types.py": 0.1,
-    "scripts/rl_pool_dedup_replay.py": 0.1
+    "scripts/rl_pool_dedup_replay.py": 0.1,
+    "scripts/test_muon_stochastic.py": 15.0,
+    "scripts/test_sr_cast.py": 4.0
+  },
+  "_estimated": {
+    "2026-09-25 de option B": "sr_cast.py and scripts/test_muon_stochastic.py are laptop-CPU times (M-series, 3.0s/12.8s), not CI-measured; replace at the next ci-selftests timing regeneration."
   }
 }
