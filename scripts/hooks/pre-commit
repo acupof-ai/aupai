@@ -2526,6 +2526,11 @@ def main():
         # an exemption, so the broken one says so and names its first error line.
         "scripts/test_e2e.py": "asserts `set E2E_GPU=<idx>` at import; the pod's cards are shared and it will not pick one",
         "datagen/test_scan_math_contamination.py": "needs data/corpus/math/ape210k_000.jsonl at import (gitignored corpus); IndexError on the glob",
+        # 3b 2026-09-25: known-answer gate for code_reward.score_stdin. Selects 50 stdin
+        # problems per source and executes their reference solutions, so it needs the
+        # gitignored multi-GB APPS jsonl and TACO parquets and is CPU-minutes long; it
+        # runs by hand on the digest box (ALLOW_UNISOLATED=1), not at commit time.
+        "algorithms/test_stdin_reward_known.py": "needs gitignored multi-GB APPS/TACO raw data and executes dataset references; run by hand on the digest box",
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
         # The format-SFT packer's boundary known-answer test (ruling C, 2026-09-09):
         # asserts the split-encode invariants on the REAL tokenizer, because the
