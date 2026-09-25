@@ -1244,6 +1244,32 @@
       },
       "uncertainty": "The variant sweep used 96 rows and a handful of header constructions; it bounds the sensitivity, it does not identify which construction a human would call correct. The shipped choice is the repo's own strip_docstring because that function already exists and is used elsewhere in eval/, not because 66 is privileged over 61 or 65.",
       "boundary": "This records the fragility of one derived column, not a change to any score: every row's klass/detail still reproduces the official pass/fail exactly. Kinds of 'completion' that no header construction in this sweep can express without also loosening the check are not covered."
+    },
+    {
+      "id": "v41.heval_gpu_pass8_final_38146_0925",
+      "value": "GPU HumanEval pass@8 baseline for the RL gate, on the FINAL checkpoint (ckpt_v41_ced_0923.pt, internal step 38146). GREEDY CONTROL FIRST: the n=1 T=0.0 GPU arm reads 28/164 = 17.07% and reproduces the CPU classification table's 28/164 TASK-FOR-TASK, which is what makes the sampling arm comparable. Sampling arm (T=0.8, n=8, 5 shards): pass@8 = 36/164 = 21.95%, delta = +4.88 pt; total correct samples 135/1312 = 10.29%; coverage verified 164 distinct tasks x exactly 8 samples, no overlap, none missing. ESTIMATOR: pass@8 uses 1 - C(n-c,k)/C(n,k) with n=k=8. This IS unbiased -- verified by brute force over c ~ Binomial(8,p) for p in {0,0.05,0.1,0.2,0.5}, where E[estimate] equals 1-(1-p)^8 to ~1e-16 -- but its per-task value takes only 0 or 1 at n=k, so it has HIGHER VARIANCE than n=32,k=8 and the comparison against greedy rests on fewer effective outcomes than the sample count suggests. THE GROUPS ARE NOT 8 TASKS: 12 tasks are wrong under greedy but right in at least one sample (8,14,16,18,21,24,25,43,49,52,55,96; counts 3,1,1,3,1,1,1,4,3,1,6,1 of 8) while 4 tasks are right under greedy and wrong in all 8 samples (0,44,47,76). Net +8 tasks. Types -- gained: number_theory 4 (24,25,49,96), string_transform 2 (14,18), collection_transform 2 (43,52), arithmetic_basics 1 (8), counting_histogram 1 (16), float_geometry 1 (21), dynamic_programming 1 (55); lost: float_geometry 1 (0), base_and_bits 1 (44), sorting_select 1 (47), number_theory 1 (76). So number_theory gains 4 and loses 1, the largest net movement of any type, consistent with its thin supply in the SFT-A sources but not explained by this measurement. THE GATE: the RL gate requires pass@8 - pass@1 >= 15 pt AFTER SFT; this pre-SFT base reading of +4.88 pt is a CONTROL for that, not a candidate. Whether +4.88 pt overstates or understates the post-SFT headroom is not measured here, and the 12/4 split shows the delta is not one-directional sampling luck.",
+      "measured": "2026-09-25",
+      "source": "runs/heval_gpu_p8_38146.jsonl (164 rows, one per task: greedy_ok, samples_ok/8, the greedy completion, and the per-sample stop_reason tally) built from the pod preds preds_humaneval_ckpt_v41_ced_0923.pt.rstripnl.n8temp0.8.shard{0..4}of5.he_gpu_p8_s*.jsonl and the control preds_humaneval_ckpt_v41_ced_0923.pt.rstripnl.he_gpu_ctrl_p1.jsonl, both in pod data/eval/ (gitignored); type labels from scripts/problem_types.py; the comparison code is not a committed script -- the per-task outcomes it produced are all in runs/heval_gpu_p8_38146.jsonl; cards 1-6 on the training pod, released and verified free after the run",
+      "status": "measured",
+      "config": {
+        "ckpt": "ckpt_v41_ced_0923.pt",
+        "step": 38146,
+        "device": "cuda",
+        "arms": [
+          "greedy n=1 T=0.0",
+          "n=8 T=0.8"
+        ],
+        "max_new": 280,
+        "rstrip_nl": true,
+        "shards": 5,
+        "tasks": 164,
+        "samples": 1312,
+        "pass8_estimator": "1 - C(n-c,k)/C(n,k), n=k=8, verified unbiased by brute force",
+        "gate_threshold_pt": 15,
+        "gate_scope": "post-SFT; this row is the pre-SFT control"
+      },
+      "uncertainty": "The delta is +4.88 pt on an 8-task net, with 12 gaining and 4 losing, so the net hides two-way movement and any statement about 'the model can sometimes find it' has to name which tasks rather than quote the aggregate. pass@8 at n=k=8 has high per-task variance (its value is 0 or 1 per task); n=32,k=8 would tighten it and was not run. Sampling used temperature 0.8 with --batched, whose batch composition could in principle shift results relative to unbatched decoding -- not measured. Whether the 12/4 sets are stable across a different sampling seed is not measured: this is a single sampling pass. LISTING SNAPSHOT: ckpt_v41_ced_0923.pt was written 2026-09-23..25, newer than the runs/pod_ckpt_candidates_*.txt listing (2026-09-25 06:06Z) that ckpt_facts_sources_present compares against, so it reads [absent] until the listing is refreshed -- this note is the interim unblock that check prescribes, not a claim about the checkpoint.",
+      "boundary": "This is a PRE-SFT base measurement and a CONTROL for the RL gate, not a gate result: the >=15 pt requirement is evaluated after SFT, and nothing here predicts that outcome. It also does not measure whether the 12 gained tasks are learnable by RL (they are right >=1 time in 8 at T=0.8, which is a necessary but not sufficient condition) nor whether the 4 lost tasks are unstable. No loss or val number is involved. The CPU table's 492 rows cover steps 30000/32000/34000 and its FINAL append covers 38146 greedy only; this entry is the sampling arm."
     }
   ]
 }
