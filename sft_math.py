@@ -105,6 +105,13 @@ def main():
     parser.add_argument("--batch", type=int, default=48)
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--lr_scale", type=float, default=0.1, help="SFT LR = pretrain LR x scale")
+    parser.add_argument("--lr_decay", choices=("cosine", "linear"), default="cosine",
+                        help="post-warmup decay shape. linear decays to ZERO over every "
+                             "remaining step (CED code-SFT user order 2026-09-25) and ignores "
+                             "the resumed ckpt's warmdown; cosine keeps the pretraining shape")
+    parser.add_argument("--warmup_frac", type=float, default=None,
+                        help="warmup as a fraction of total steps (e.g. 0.05); overrides the "
+                             "resumed ckpt's absolute warmup. None keeps absolute warmup")
     parser.add_argument("--no_fp8", action="store_true")
     # Spelled --no-grad_ckpt (hyphen) to match train.py, whose BooleanOptionalAction
     # generates that form (ead2d2b). Two entry points spelling the same switch differently
@@ -262,6 +269,12 @@ def main():
     # Before ANY save: SAVE_INTERVAL writes .stepN checkpoints mid-run, and an interrupted
     # run's last .stepN is precisely the file someone has to identify later.
     Cfg.lr_scale = args.lr_scale
+    # SFT checkpoint marker: score_matrix.classify and the RL trainer's resume gate read
+    # cfg["kind"] first. Continuation-format SFT is not inferable from the rest of cfg, so
+    # the marker must be written, never guessed. Set AFTER the ckpt cfg copy above.
+    Cfg.kind = "sft"
+    Cfg.lr_decay = args.lr_decay
+    Cfg.warmup_frac = args.warmup_frac
     # grad_ckpt must stay ON: FP8 e4m3 backward goes NaN without it.
     if args.no_grad_ckpt:
         print("WARNING --no_grad_ckpt is deprecated; use --no-grad_ckpt (hyphen), the "
@@ -487,6 +500,7 @@ def main():
     # runs in flight pass it. _stop is whichever bound applies; the two are refused up at
     # parse time, not here, so a contradictory launch dies before loading 1.6 GB.
     _stop = args.stop_after or args.max_steps
+    steps_per_epoch = len(X) // Cfg.batch
     # THE RUN'S OWN RECORD OF WHAT IT WAS ASKED TO DO. lr_scale never reaches Cfg -- train.py
     # :848 applies it inside set_schedule as initial_lr * lr_scale * m -- so it reached no log
     # and no checkpoint, and ckpt_control_ours.pt's scale is now unrecoverable: not in its cfg,
@@ -496,8 +510,12 @@ def main():
     # per-group lr costs two lines and makes the question answerable from the log alone.
     if is_main:
         runlog("argv " + json.dumps(sys.argv[1:]))
-        runlog(f"lr_scale {args.lr_scale} total_steps {total_steps} stop_after {args.stop_after} "
-               f"batch {Cfg.batch} epochs {Cfg.epochs} seed {Cfg.seed}")
+        runlog(f"lr_scale {args.lr_scale} lr_decay {Cfg.lr_decay} warmup_frac {Cfg.warmup_frac} "
+               f"total_steps {total_steps} steps_per_epoch {steps_per_epoch} "
+               f"stop_after {args.stop_after} batch {Cfg.batch} epochs {Cfg.epochs} seed {Cfg.seed}")
+        for e in range(Cfg.epochs):
+            runlog(f"epoch {e + 1}/{Cfg.epochs} boundary save at step {(e + 1) * steps_per_epoch} "
+                   f"-> {os.path.basename(args.out)}.epoch{e + 1}")
         set_schedule(optimizers, 0, total_steps, Cfg, args.lr_scale)
         for opt in optimizers:
             for gi, g in enumerate(opt.param_groups):
@@ -621,6 +639,15 @@ def main():
                 t0 = time.time()
             if _stop and step >= _stop:
                 break
+        # Epoch-boundary read points for eval (CED code-SFT user order 2026-09-25: score each
+        # epoch end, keep the higher HumanEval). Only a FULLY consumed epoch is written: under
+        # --max_steps/--stop_after the boundary step is never reached, so no misnamed file.
+        # No optimizer, same as the final save: eval read points, not resume sources.
+        if is_main and step == (ep + 1) * steps_per_epoch:
+            ep_path = args.out + f".epoch{ep + 1}"
+            save_checkpoint(ep_path, raw_model.state_dict(), Cfg, ck_vocab, step=step)
+            runlog(f"epoch {ep + 1} boundary saved {ep_path} at step {step}")
+            print(f"saved {ep_path}", flush=True)
         if _stop and step >= _stop:
             break
 

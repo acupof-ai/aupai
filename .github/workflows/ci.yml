@@ -47,6 +47,18 @@ jobs:
           OPENBLAS_NUM_THREADS: "1"
           MKL_DYNAMIC: "FALSE"
         run: python scripts/test_ced_resume_cpu.py
+      # CED code-SFT smoke through the REAL sft_math.py loop (~1 min CPU): a d512/L4 CED+MoE
+      # ckpt + a real-schema pack runs 24 steps with the user-ordered linear schedule, loss
+      # decreases, every batch masks prompt and supervises eos, kind="sft" and the
+      # epoch1/epoch2 boundary saves are correct. The commit hook runs only its model-free
+      # --selftest; this is the heavy half.
+      - name: CED code-SFT smoke
+        env:
+          OMP_NUM_THREADS: "1"
+          MKL_NUM_THREADS: "1"
+          OPENBLAS_NUM_THREADS: "1"
+          MKL_DYNAMIC: "FALSE"
+        run: python scripts/test_sft_ced_cpu.py
       - run: python scripts/de109/check_cpu_parity.py
       # Muon Newton-Schulz rank sharding bit-parity: gloo world2/world4 CPU, sharded NS must
       # equal one rank doing every stacked instance, plus the uneven-group fallback.
