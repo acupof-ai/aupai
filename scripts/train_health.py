@@ -38,6 +38,7 @@ SAMPLE = 4096  # elements per parameter tensor probed for movement
 TOP1_MAX = 0.90
 ZERO_LOAD_MAX = 0.10  # fraction of routed experts with no token in the window
 BIAS_RANGE_MAX = 0.5
+ARGMAX_SEL_MIN = 0.5  # rows whose router-preferred expert is actually selected
 MOVED_MIN = 0.05  # per group with lr > 0
 LAYER_Z_MAX = 6.0  # robust z of a block's grad norm against the other blocks
 
@@ -63,9 +64,9 @@ def _gini(c):
 
 
 def moe_stats(load, sums, bias):
-    """One layer's window -> dict. load [E] tokens per expert, sums (top1, lnorm, rows)."""
+    """One layer's window -> dict. load [E] tokens per expert, sums (top1, lnorm, rows, argmax_sel)."""
     load = load.float().cpu()
-    top1, lnorm, rows = (float(v) for v in sums.cpu())
+    top1, lnorm, rows, amax = (float(v) for v in sums.cpu())
     tot = float(load.sum())
     E = load.numel()
     b = bias.float().cpu()
@@ -73,6 +74,7 @@ def moe_stats(load, sums, bias):
         "rows": int(rows),
         "top1": top1 / rows if rows else float("nan"),
         "logit_norm": lnorm / rows if rows else float("nan"),
+        "argmax_selected": amax / rows if rows else float("nan"),
         "zero_load": int((load == 0).sum()),
         "zero_load_frac": float((load == 0).sum()) / E,
         "load_max_over_mean": float(load.max()) * E / tot if tot else float("nan"),
@@ -178,6 +180,9 @@ def alarms(row):
     for li, s in row.get("moe", {}).items():
         if not s["top1"] <= TOP1_MAX:
             out.append(f"moe L{li} top1 {s['top1']:.3f} > {TOP1_MAX} (router one-hot)")
+        if not s["argmax_selected"] >= ARGMAX_SEL_MIN:
+            out.append(f"moe L{li} router's first choice selected in {100 * s['argmax_selected']:.0f}% of rows "
+                       f"(bias overriding the router)")
         if s["zero_load_frac"] > ZERO_LOAD_MAX:
             out.append(f"moe L{li} {s['zero_load']} experts got no token")
         if s["bias_range"] > BIAS_RANGE_MAX:
@@ -222,7 +227,7 @@ def _selftest():
                              moe_top_k=3, moe_expert_ffn=16, moe_shared=1, moe_bias_gamma=0.001,
                              moe_balance_alpha=1e-4))()
 
-    def window(scale):
+    def window(scale, prep=None, x=None):
         m = MoEFFN(cfg)
         # the training path casts the whole model to bf16 and back; the window counters must
         # come out fp64 or the ratios saturate (v41_ced_fixprobe_0925, logit_norm 32.000)
@@ -231,8 +236,10 @@ def _selftest():
         m.float()
         with torch.no_grad():
             m.router.weight.mul_(scale)
+            if prep is not None:
+                prep(m)
         m.train()
-        m(torch.randn(4, 16, 32))
+        m(torch.randn(4, 16, 32) if x is None else x)
         blk = type("B", (torch.nn.Module,), {})()
         blk.ffn = m
         model = type("M", (), {"blocks": [blk]})()
@@ -250,9 +257,31 @@ def _selftest():
     # the window resets: a second read with no forward in between reports no rows
     assert int(m_ok.h_sums[2]) == 0 and float(m_ok.h_load.sum()) == 0
 
+    # 1b. The bias overriding the router, through the real forward: on an all-ones input expert 0
+    # leads every row by a modest margin (gate share ~0.5, not one-hot). Without a bias its first
+    # choice is always selected; a -50 bias on it keeps the gate spread and the load flat while
+    # the router's preference is never served -- only argmax_selected sees that.
+    def prefer0(m):
+        m.router.weight.zero_()
+        m.router.weight[0].fill_(0.02)
+
+    ones = torch.ones(4, 16, 32)
+    pref, _ = window(1.0, prefer0, ones)
+    over, _ = window(1.0, lambda m: (prefer0(m), m.expert_bias.__setitem__(0, -50.0)), ones)
+    # identical rows pick the same 3 experts, so the zero-load rule fires here by construction;
+    # the property under test is only the override rule
+    assert pref["argmax_selected"] == 1.0 and pref["top1"] < 0.9, pref
+    assert not any("overriding" in a for a in alarms({"moe": {"0": pref}}))
+    assert over["argmax_selected"] == 0.0 and over["top1"] < 0.9, over
+    assert any("overriding" in a for a in alarms({"moe": {"0": over}})), alarms({"moe": {"0": over}})
+    # a zeroed router ties every affinity; a tied first choice is served, so this must read 1.0
+    # (index-based argmax read 0.0 here on the CI runner, #724)
+    tie, _ = window(1.0, lambda m: m.router.weight.zero_(), ones)
+    assert tie["argmax_selected"] == 1.0, tie
+
     # 2. The 0923 shape: a bias that forces the load flat does not lower the un-biased top-1.
     load = torch.full((48,), 100.0)
-    s = moe_stats(load, torch.tensor([0.996 * 4800, 4800.0 * 30, 4800.0]), torch.linspace(-0.98, 0.02, 48))
+    s = moe_stats(load, torch.tensor([0.996 * 4800, 4800.0 * 30, 4800.0, 0.0]), torch.linspace(-0.98, 0.02, 48))
     got = alarms({"moe": {"3": s}})
     assert s["zero_load"] == 0 and any("one-hot" in a for a in got) and any("bias range" in a for a in got), got
 
