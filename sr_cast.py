@@ -99,14 +99,16 @@ class StochasticRounder:
     def apply(self, w, update):
         """New bf16 weight = stochastic_round_bf16(w - update), computed in fp32 BLOCKS.
 
-        `w` is the bf16 parameter, `update` its bf16 Muon step (lr*X + lr*wd*w*mask). The fp32
-        candidate exists only inside one block at a time, which is what bounds opt.step peak on
-        the stacked MoE group."""
+        `w` is the bf16 parameter, `update` its bf16 Muon step (lr*X + lr*wd*w*mask). Both are
+        sliced in their NATIVE dtype and promoted to fp32 INSIDE the block: promoting the whole
+        ~2.0e9-element group up front would hold two ~8 GiB fp32 copies for the whole opt.step.
+        As written, the only fp32 tensors alive are one block's."""
         n = w.numel()
-        wf, uf = w.reshape(-1).float(), update.reshape(-1).float()
+        wf, uf = w.reshape(-1), update.reshape(-1)
         out = torch.empty(n, dtype=torch.bfloat16, device=w.device)
         gen = self.generator(w.device)
         for lo in range(0, n, self.chunk_elems):
-            cand = wf[lo : lo + self.chunk_elems] - uf[lo : lo + self.chunk_elems]
-            out[lo : lo + self.chunk_elems] = stochastic_round_bf16(cand, gen).reshape(-1)
+            hi = lo + self.chunk_elems
+            cand = wf[lo:hi].float() - uf[lo:hi].float()
+            out[lo:hi] = stochastic_round_bf16(cand, gen).reshape(-1)
         return out.view_as(w)
