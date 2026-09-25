@@ -1792,6 +1792,7 @@ def main():
         # gate, not a defect; the alternative was 19 tests nobody ran.
         "algorithms/test_gspo_ratio.py",
         "algorithms/test_rl_code.py",
+        "algorithms/test_rl_code_ced_smoke.py",
         "algorithms/test_rlvr_reward_suite.py",
         "datagen/test_near_dedup_known.py",
         "datagen/test_parallel_exact_identity.py",
@@ -3013,7 +3014,8 @@ def main():
         "filters/pass2_garbage.py": {"filters/test_l0_garbage_known.py"},
         "filters/pass3_garbage.py": {"filters/test_l0_garbage_known.py"},
         "algorithms/rlvr_trainer.py": {"algorithms/test_gspo_ratio.py"},
-        "algorithms/rl_code_trainer.py": {"algorithms/test_rl_code.py"},
+        "algorithms/rl_code_trainer.py": {"algorithms/test_rl_code.py",
+                                          "algorithms/test_rl_code_ced_smoke.py"},
         "datagen/l2_code_chunk_pool.py": {"datagen/test_l2_code_chunks_edges.py"},
         "datagen/l3_rubric.py": {"datagen/test_l3_label_pipeline.py"},
         "datagen/l3_stratified_sample.py": {"datagen/test_l3_label_pipeline.py"},
