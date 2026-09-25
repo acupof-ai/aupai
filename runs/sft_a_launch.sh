@@ -5,7 +5,9 @@
 #   EPOCHS=2 over ALL of data/sft/sfta/sft_mixA_0924.pt, no truncation
 #   LR_SCALE=0.1, first 5% of steps LINEAR warmup, then LINEAR decay to 0 over every
 #     remaining step (--lr_decay linear --warmup_frac 0.05; NOT the pretraining cosine)
-#   bf16 (--no_fp8) with activation checkpointing (sft_math's --grad_ckpt default ON),
+#   bf16 model storage + activation checkpointing, with --fp32_master (the optimizer owns
+#     fp32 weight copies: SFT's ~1e-4 rel update is below the bf16 half-ULP, so without a
+#     master 0.1-10% of elements move per step -- measured on the CED ckpt 2026-09-25),
 #   seq 4096 from the pack, BATCH 4/rank (no accumulation: sft_math has none; global 32
 #   rows ~131K tokens/step). The user's "default 48" was read as a GLOBAL batch; 48 was
 #   actually per-rank rows, which extrapolates past the 96 GB H20 at B4x4096 -- corrected
@@ -53,4 +55,4 @@ exec python3 scripts/harness.py launch "$NAME" --training --class incremental \
     --resume "$RESUME" --sft_path "$SFT_PT" --out "$OUT" \
     --epochs "$EPOCHS" --batch "$BATCH" --lr_scale "$LR_SCALE" \
     --lr_decay linear --warmup_frac "$WARMUP_FRAC" \
-    --no_fp8 --save_every 1000000
+    --no_fp8 --fp32_master --save_every 1000000
