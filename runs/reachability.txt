@@ -1,7 +1,7 @@
-TREE: /Users/bytedance/code/aupai-v41f-cut
-POPULATION: 692 .py/.sh files, excluding .git, .ruff_cache, .venv, __pycache__, node_modules
+TREE: /Users/bytedance/code/aupai-jan1
+POPULATION: 699 .py/.sh files, excluding .git, .ruff_cache, .venv, __pycache__, node_modules
 EDGE KINDS CHECKED: ENTRY, import, registry, docs, facts, ledger, comment
-LEDGERS READ: 38 runs/*.jsonl, every field of every row
+LEDGERS READ: 39 runs/*.jsonl, every field of every row
 
 NOT A DELETION ORACLE. This is a citation graph: a doc mention counts as an edge,
 so 'reachable' can mean 'named by a doc nobody runs'. And a file loaded by a runtime
@@ -44,13 +44,13 @@ datagen/audit_source_score.py                              100  9176f859 2026-08
 datagen/build_chat_qa.py                                    61  02bc5c73 2026-09-01   docs:docs/audits/deletion_audit_2026-09-02.md  Build data/corpus/chat_qa/ (fb ruling 2026-09-01): the same   
 datagen/build_chatml.py                                     83  02bc5c73 2026-09-01   docs:docs/audits/deletion_audit_2026-09-02.md  Build data/corpus/chatml/ (fb ruling 2026-09-01): the SAME c  
 datagen/build_code_py_rp1t.py                              113  db976f2b 2026-09-08   docs:docs/audits/deletion_audit_2026-09-02.md  Build data/corpus/code_py_rp1t (fb ruling 2026-09-01): the c  
-datagen/build_code_tests_v1.py                             454  60ac68c8 2026-09-17   none                                    Build data/corpus/code_tests_v1/ from MS starcoderdata 'pyth  KEEP (3b's N4 code_tests Phase A, committed today with a wip marker)
+datagen/build_code_tests_v1.py                             454  60ac68c8 2026-09-17   docs:docs/standards/code_sft_plan_0924.md  Build data/corpus/code_tests_v1/ from MS starcoderdata 'pyth  KEEP (3b's N4 code_tests Phase A, committed today with a wip marker)
 datagen/build_control_sft_text.py                          356  41b37160 2026-09-02   ENTRY                                   Build ONE text-level SFT pack shared by both arms of the con  
 datagen/build_corpus.py                                   2519  3fc2f434 2026-09-19   ENTRY                                   Build the pretraining corpus: select, clean, dedup, cap — th  
 datagen/build_cot.py                                       138  ae6829c2 2026-09-07   docs:docs/lessons/gate_failure_incidents.md  Build a cot corpus dir from fetched parquet, applying cot_cr  
 datagen/build_dd09_full.py                                 418  dc7d8fcc 2026-09-07   ENTRY                                   3b-17: one directory expressing dd09 + b2v2_dd as a single s  
 datagen/build_domains.sh                                    78  c3a47e8f 2026-08-31   docs:docs/standards/infra_persistent_rebuild_0916.md  Build data/corpus/<domain>/ for the default mix (train.py Cf  
-datagen/build_l3_stub.py                                   294  3a192fe7 2026-09-12   docs:scripts/build_l3_stub.sh           0e-8: HumanEval-stub domain from the static L3 survivors.     
+datagen/build_l3_stub.py                                   294  3a192fe7 2026-09-12   docs:docs/standards/code_sft_plan_0924.md  0e-8: HumanEval-stub domain from the static L3 survivors.     
 datagen/build_math_expand.sh                                39  c3a47e8f 2026-08-31   docs:docs/audits/deletion_audit_2026-09-02.md  Reproduce the math-domain corpus expansion: ~0.07B tokens of  
 datagen/build_phi_codeexercises_pack.py                    315  d3460979 2026-09-14   docs:scripts/build_phi_codeexercises.sh  3b-24 (round 3, phi-1 route): CodeExercises analogue from th  
 datagen/build_post30b_chatml_pack.py                       388  59257436 2026-09-12   ledger:runs/review.jsonl                3b-22: build the post-30B V4.1 ChatML SFT pack.               
@@ -170,7 +170,7 @@ datagen/ultradata_shards.py                                519  732ea293 2026-09
 datagen/validate_l3_stub_sample.py                          67  3a192fe7 2026-09-12   facts:facts/corpus_supply.json          0e-8 gate: draw a deterministic 200-row sample from the stub  
 datagen/vet_textbooks.py                                   535  9abda56e 2026-09-14   ENTRY                                   True when the line-anchored fence scan ends inside an open f  
 docs/reports/v41_round1/make_figs.py                       109  1a36e18e 2026-09-15   ledger:runs/review.jsonl                Figures for docs/reports/v41_round1/report.md.                
-eval/__init__.py                                            22  af1a34b7 2026-09-02   ledger:runs/review.jsonl                Shared helpers for the eval harness.                          
+eval/__init__.py                                            22  af1a34b7 2026-09-02   facts:facts/data_quality.json           Shared helpers for the eval harness.                          
 eval/_devs.sh                                               31  46800292 2026-08-31   ENTRY                                   Map N shards onto the caller's CUDA_VISIBLE_DEVICES. Sourced  
 eval/api_cloze.py                                         1230  2969c063 2026-09-09   ENTRY                                   API-name cloze over two regions of one training domain: reca  
 eval/arc.py                                                 82  5604d421 2026-08-28   registry:eval/run_eval.py               ARC eval: log-likelihood scoring for ARC-Easy and ARC-Challe  
@@ -197,7 +197,7 @@ eval/gate_math_short.sh                                     28  c3a47e8f 2026-08
 eval/gsm8k.py                                               78  18f993b4 2026-09-02   registry:eval/run_eval.py               GSM8K evaluation via greedy generation (Chinese prompts).     
 eval/hellaswag.py                                           64  9176f859 2026-08-29   registry:eval/run_eval.py               HellaSwag evaluation: pick the most likely continuation via   
 eval/humaneval_bpb.py                                      490  779bfee0 2026-09-03   ENTRY                                   HumanEval gold BPB: bits per byte of the 164 canonical solut  
-eval/humaneval_gen.py                                      686  2c10a050 2026-09-15   docs:docs/audits/v41_eval_agnostic.md   Generative HumanEval pass@1, normalized from 4c's pod _human  
+eval/humaneval_gen.py                                      732  0923a44e 2026-09-24   docs:docs/audits/v41_eval_agnostic.md   Generative HumanEval pass@1, normalized from 4c's pod _human  
 eval/humaneval_sample.py                                   433  fe195bb9 2026-09-23   ENTRY                                   Sampled pass@k HumanEval, sharing the greedy path's judge an  
 eval/l1_2x2_diagnose.py                                    308  29b31367 2026-09-04   ENTRY                                   Why the control's answer-present rate is 0.6%, measured rath  
 eval/l1_fewshot.py                                         763  ed8482a6 2026-09-09   ENTRY                                   L1: few-shot continuation math on a base checkpoint (reasoni  
@@ -227,7 +227,7 @@ eval/score_code_exec.py                                    410  01fdc087 2026-09
 eval/score_math_formatfree.py                              335  eabc37ff 2026-09-01   ENTRY                                   Score math predictions WITHOUT requiring the \\boxed{} templ  
 eval/score_matrix.py                                      2086  0ab846c2 2026-09-08   ENTRY                                   Score one checkpoint with the metrics that move on its type,  
 eval/sft_val_loss.py                                        84  4c0133a4 2026-09-09   none                                    Val loss on the held-out signature-only control pack (prereg  
-eval/shard.py                                               78  a541cbf2 2026-09-15   ENTRY                                   Fixed-position task sharding for multi-card stage-2 evals (E  
+eval/shard.py                                              176  ce2c6a47 2026-09-24   ENTRY                                   Fixed-position task sharding for multi-card stage-2 evals (E  
 eval/test_l1_fewshot_2x2.py                                369  9f0b9638 2026-09-08   ENTRY                                   The 2x2 scorer is language-symmetric, and the truncation sti  
 eval/test_sampling_paired.py                               176  2c10a050 2026-09-15   ENTRY                                   Pairing-contract test for eval/sampling.py (stage-2, 3b chan  
 eval/validate_lambda_probe.py                               58  3d2acd91 2026-08-31   ENTRY                                   Local validator for Fable lambda-probe problems (t05).        KEEP (3b's t05, deprioritised, live)
@@ -330,7 +330,7 @@ runs/e0_n10.sh                                              85  db03c78e 2026-09
 runs/e1_close_shape_row.sh                                  14  6e8e95e7 2026-09-05   none                                    Close e1_kda_shape_fault's ledger row on the pod.             
 runs/e1_v14_build.sh                                        10  b1f794fa 2026-09-04   none                                    v14 agentic SFT pack, rebuilt under the write gate with the   
 runs/en_c4_30b_shared.sh                                    21  b4095851 2026-09-07   none                                    58's caution: a recount that only adds the terminator agrees  
-runs/heval_auto_loop.sh                                    233  b59abf94 2026-09-24   none                                    Auto HumanEval on every new ckpt_v41_ced_0923.pt.stepN, CPU-  
+runs/heval_auto_loop.sh                                    518  e902f52f 2026-09-24   none                                    Auto HumanEval on every new ckpt_v41_ced_0923.pt.stepN, CPU-  
 runs/kda_shape_launch.sh                                    20  aebe8328 2026-09-05   none                                    Shape-fault probe on CARD 5. Grant: runs/card_assignment.jso  
 runs/mem_probe_TEMPLATE.sh                                  73  8c23ea86 2026-09-05   ENTRY                                   TEMPLATE for one cell of the six-cell readout-4 probe (4c's   
 runs/mem_probe_base.sh                                      73  8c23ea86 2026-09-05   ENTRY                                   TEMPLATE for one cell of the six-cell readout-4 probe (4c's   
@@ -468,8 +468,8 @@ scripts/fit_scaling.py                                     138  c669a4f0 2026-08
 scripts/gen_ckpt_listing.py                                892  514f3874 2026-09-06   ENTRY                                   Generate the pod checkpoint deletion listing that ckpt_facts  
 scripts/gen_ledger_transport_schema.py                     270  788dbca5 2026-09-04   ENTRY                                   Generate and verify data/ledger_transport_schema.json — the   
 scripts/gpu_forward_bench_pod.py                           152  405350af 2026-09-16   docs:docs/lessons/l2_encoder_base_selection.md  Pure GPU-forward encoder throughput (tokenizer excluded from  
-scripts/harness.py                                       31042  fe77c484 2026-09-24   ENTRY                                   The single place this project's progress is checked, recorde  
-scripts/harness_core.py                                   1375  58195082 2026-09-16   ENTRY                                   Shared predicates for the harness family: git, ledgers, work  
+scripts/harness.py                                       31402  973eda3b 2026-09-24   ENTRY                                   The single place this project's progress is checked, recorde  
+scripts/harness_core.py                                   1375  e67aa73b 2026-09-24   ENTRY                                   Shared predicates for the harness family: git, ledgers, work  
 scripts/head_path_rows.py                                  265  514f3874 2026-09-06   ENTRY                                   b0-17: did untying the head reduce tok.weight's growth? It I  
 scripts/heldout_crossarm.sh                                112  93fdedd8 2026-09-02   docs:scripts/heldout_crossarm.sh        The cross-arm number, in the only order that produces a comp  
 scripts/holdout_containment.py                             100  1e91d8da 2026-09-08   docs:docs/lessons/anneal_weight_proposal_30b_v2.md  Containment of the CURRENT holdout set in domains a decay re  
@@ -547,6 +547,7 @@ scripts/restartability_audit.py                            237  9bf64d65 2026-08
 scripts/retract.py                                         114  be346757 2026-09-02   ENTRY                                   scripts/retract.py <phrase> [<phrase>...]: every site a retr  
 scripts/review_row_lookup.py                               414  320a231a 2026-09-08   ENTRY                                   Who reviewed a sha: the one implementation, so a test can dr  
 scripts/reweight_l3_shortfall.py                           274  35dd776f 2026-09-11   ENTRY                                   L3-shortfall reweight for data/mix_v41_gate.json (fb ruling   
+scripts/rl_code_pool.py                                    430  bbbc05c0 2026-09-24   ENTRY                                   3b 2026-09-25: build the post-SFT executable CODE RL problem  
 scripts/run_ab_speedrun.sh                                 184  169da865 2026-09-03   ENTRY                                   One speedrun A/B: baseline vs one flag, at equal tokens. ARM  
 scripts/run_ablation.sh                                     27  c5c04b24 2026-08-29   ENTRY                                   AttnRes A/B at equal tokens: baseline vs --attn_res, same se  
 scripts/run_pipeline.sh                                     92  c3a47e8f 2026-08-31   ENTRY                                   Pretrain -> SFT -> RL -> benchmark, unattended, one stage at  
@@ -557,6 +558,10 @@ scripts/scan_control_lr.sh                                  96  fe59c04c 2026-09
 scripts/score_fineweb_edu_locked.py                        158  cb9358bd 2026-09-23   docs:docs/lessons/fineweb_edu_classifier_locked.md  Score the locked hand-read sets with the OFFICIAL FineWeb-Ed  
 scripts/select_band.py                                      66  9176f859 2026-08-29   import:scripts/run_pipeline.sh          Pick the RL prompt set from measured per-instance solve rate  
 scripts/sft_hf_control.py                                  755  fb839688 2026-09-02   ENTRY                                   SFT a HuggingFace causal LM on the shared control text pack.  
+scripts/sfta_build_pack.py                                 104  fa9d636a 2026-09-24   docs:EXPERIMENTS.md                     3b 2026-09-24: build the SFT mix-A continuation pack (user-s  
+scripts/sfta_codeif_filter.py                              133  fa9d636a 2026-09-24   docs:EXPERIMENTS.md                     3b 2026-09-24: SFT mix A stage 1 -- 13-gram decontam + lengt  
+scripts/sfta_prose_extract.py                              152  fa9d636a 2026-09-24   docs:EXPERIMENTS.md                     3b 2026-09-24: SFT mix A prose slice -- pretrain-shaped cont  
+scripts/sfta_render_external.py                            225  fa9d636a 2026-09-24   docs:EXPERIMENTS.md                     3b 2026-09-24: SFT mix A external-source rendering (sc2-exec  
 scripts/shape_audit.py                                     138  db762cad 2026-08-30   ENTRY                                   Startup shape audit: catch GEMM-hostile dimensions before a   
 scripts/stale_claims.py                                    111  df80b6b6 2026-09-01   ENTRY                                   Comments that assert something about code younger than the c  
 scripts/stamp_cache_seeds.py                                81  a70959bf 2026-09-05   ENTRY                                   Stamp every existing token cache with the seed it was actual  
@@ -574,6 +579,7 @@ scripts/test_cache_dir_knob.py                             285  25b46ebc 2026-09
 scripts/test_cache_mmap.py                                 752  e796b712 2026-09-18   ENTRY                                   _domain_seqs maps the token cache instead of loading it resi  
 scripts/test_cache_read_line.py                            172  4af982a9 2026-09-06   ENTRY                                   build_mix states the cache bytes it is about to read, before  
 scripts/test_ced_diverge_watch.py                          378  c9b3ce79 2026-09-24   ENTRY                                   Known-answer selftest for scripts/ced_diverge_watch.py (the   
+scripts/test_ced_resume_cpu.py                             355  ef1acbd0 2026-09-24   ENTRY                                   CED resume-continuity gate driven through the REAL train.py   
 scripts/test_check_summary.py                              175  7e58b720 2026-09-18   ENTRY                                   `harness check`'s summary must state what it did NOT run.     
 scripts/test_ci_selftests_driver.py                        100  6e0a61b6 2026-09-18   ENTRY                                   The ci-selftests DRIVER's own contract: loud failures, strea  
 scripts/test_ckpt_name_hyphen.py                           493  ffb4fa11 2026-09-11   ENTRY                                   b0-30: harness.py's checkpoint-name extraction must admit `-  
@@ -623,6 +629,7 @@ scripts/test_moe_latent.py                                 295  c0315c86 2026-09
 scripts/test_moe_module.py                                 589  0b21cdfc 2026-09-07   ENTRY                                   MoEFFN's correctness contract: it computes the dense FFN's f  
 scripts/test_monitor_exit.py                               145  f292f537 2026-09-01   ENTRY                                   The monitor must not close a KILLED run as ok (de, 2026-09-0  
 scripts/test_muon_3d.py                                    200  50c9dbbb 2026-09-05   ENTRY                                   Muon takes one step on a 3-D parameter, and takes the SAME s  
+scripts/test_muon_ns_shard.py                              164  4be64745 2026-09-24   ENTRY                                   Bit-parity for --muon_ns_shard: sharding Newton-Schulz over   
 scripts/test_muon_shape_lr.py                              144  2a0096c7 2026-09-02   ENTRY                                   A/B (2a) `--muon_shape_lr`: the factor is applied, is per SH  
 scripts/test_num_id_resolve.py                              62  3e1c7c26 2026-09-06   ENTRY                                   Failing-case test for the num_id derivation (e1, 2026-09-01,  
 scripts/test_on_main_refusal.py                            239  320a231a 2026-09-08   ENTRY                                   _refuse_committing_on_main's five worlds, including the unbo  
@@ -699,19 +706,19 @@ scripts/write_prereg_moe48_30b.py                          300  65d704ac 2026-09
 serve.py                                                   166  0f4337a9 2026-09-02   ENTRY                                   Standalone CPU inference server — no fla dependency.          
 sft.py                                                     231  0b21cdfc 2026-09-07   ENTRY                                   SFT: fine-tune a pretrained HybridLM checkpoint on packed in  
 sft_math.py                                                636  b6c6785f 2026-09-18   ENTRY                                   Stage-2 math SFT: sft.py plus --out (never overwrites ckpt_s  
-tests/__init__.py                                            0  abe92dc1 2026-09-16   facts:facts/data_quality.json           NO PURPOSE LINE                                               
+tests/__init__.py                                            0  abe92dc1 2026-09-16   none                                    NO PURPOSE LINE                                               
 tests/test_l2_fit_alignment.py                             121  5356534c 2026-09-16   none                                    Small-scale end-to-end fit: de's #397 ledger loader -> our h  
 tests/test_l2_quality_head.py                              269  426df02c 2026-09-16   none                                    Known-answer checks for the L2 quality head losses (no encod  
 third_party/deepseek_v41_ref/verify_ref.py                  43  abe92dc1 2026-09-16   none                                    Verify the vendored DeepSeek-V4.1 reference snapshot against  
-train.py                                                  4564  fe77c484 2026-09-24   ENTRY                                   Train a ~200M Chinese LLM with hybrid recurrent architecture  
+train.py                                                  4609  973eda3b 2026-09-24   ENTRY                                   Train a ~200M Chinese LLM with hybrid recurrent architecture  
 v41f_l2/__init__.py                                          0  aab220ee 2026-09-16   none                                    NO PURPOSE LINE                                               
 v41f_l2/l2_census_scan.py                                 1026  3deddbaa 2026-09-17   none                                    Census-scan the corpus with the frozen bge-m3 encoder + trai  
 v41f_l2/l2_quality_head.py                                 302  426df02c 2026-09-16   none                                    L2 quality regression head on top of a frozen (or lightly fi  
 v41f_l2/train_l2.py                                        149  488daaa7 2026-09-16   none                                    L2 quality head training entry point.                         
 
 ==============================================================================================================================================================================================
-Total: 692 files, 384 entry points, 601 BFS-reachable, 575 citation edges, 91 unreachable (0 DELETE, 14 KEEP)
-Readability debt: 21 of 692 files have NO PURPOSE LINE (3.0%) -- no docstring and no leading comment saying what the file is for
+Total: 699 files, 387 entry points, 608 BFS-reachable, 583 citation edges, 91 unreachable (0 DELETE, 13 KEEP)
+Readability debt: 21 of 699 files have NO PURPOSE LINE (3.0%) -- no docstring and no leading comment saying what the file is for
 
 Unreachable after checking all 7 edge kinds (ENTRY, import, registry, docs, facts, ledger, comment) -- deletion candidates, and each still needs a
 fixed-point run before it is deleted:
@@ -720,7 +727,6 @@ fixed-point run before it is deleted:
   bench_eff/parse_ddp.py                                  KEEP (runs on the pod and produces its result: 'HtoD memcpy: 0.00 ms/step (0.00%)'. My 'missing trace file' reading was of a Mac run only)
   bench_eff/parse_kernels.py                              KEEP (ran it on the pod: prints 'total GPU kernel time: 2074.5 ms/step (20 active steps)' then the per-kernel table, e.g. 247.9 ms x3000 nvjet_qqtst_128x160 under 'FP8 linear (cuBLASLt scaled_mm): 657.8 ms/step (31.7%)'. CPU-only, no card. Its input /work/aupai/bench_eff/ddp_trace_rank0.json is 415,798,937 B on the pod, 2026-08-31 21:51, uncommitted by design -- so a Mac run raises FileNotFoundError and reads as broken, same misreading as parse_ddp.py above. It is the per-kernel resolution behind facts/efficiency.json's trace attributions)
   bench_eff/parse_trace.py                                KEEP (ran it on the pod with the rank0 trace as argv[1]: 'total GPU kernel time: 41.5 ms over 20 steps = 2074.53 ms/step' and the category table -- other 36.9%, triton_compiled 24.7%, ddp_comm 17.5%, kda_kernel 3.5%, attention 2.4%. Its 2074.53 agrees with parse_kernels.py's 2074.5 on the same trace, which is why both are kept: same input, one aggregates by category and one by kernel, and neither derives the other's number)
-  datagen/build_code_tests_v1.py                          KEEP (3b's N4 code_tests Phase A, committed today with a wip marker)
   datagen/fetch_sft_data.py                               
   datagen/p1/measure_dedup08_tokens.py                    
   datagen/p1/score_corpus.py                              
@@ -799,6 +805,7 @@ fixed-point run before it is deleted:
   scripts/n7c_score_prefix.py                             
   scripts/test_attn_res_fp32_logits.py                    KEEP (green from repo root; the only check that --attn_res_fp32_logits is not inert)
   scripts/verify_endpoint_ckpt.py                         
+  tests/__init__.py                                       
   tests/test_l2_fit_alignment.py                          
   tests/test_l2_quality_head.py                           
   third_party/deepseek_v41_ref/verify_ref.py              
