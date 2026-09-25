@@ -2273,13 +2273,14 @@ class MoEFFN(nn.Module):
         # TRAINING-HEALTH WINDOW (scripts/train_health.py), its own counters so it never shares a
         # reset with readout 4 or the balancer. In v41_ced_0923 readout 4 (layer 0, load only) read
         # 94% of experts used at step 10900 while the top-1 affinity sat at ~0.996: load cannot see
-        # a one-hot gate. h_sums = (renormalized top-1 gate share, router-logit L2 norm, rows),
+        # a one-hot gate. h_sums = (renormalized top-1 gate share, router-logit L2 norm, rows, rows whose
+        # affinity argmax is among the selected experts -- the bias overriding the router reads low),
         # each summed over rows. Non-persistent: no checkpoint key changes. fp64 and pinned in
         # _apply: raw_model.to(bf16) cast them to bf16 in v41_ced_fixprobe_0925, where a bf16
         # accumulator stops growing past a few million and every ratio read garbage (logit_norm
         # 32.000 / 30.125, all on bf16's grid).
         self.register_buffer("h_load", torch.zeros(self.n_routed, dtype=torch.float64), persistent=False)
-        self.register_buffer("h_sums", torch.zeros(3, dtype=torch.float64), persistent=False)
+        self.register_buffer("h_sums", torch.zeros(4, dtype=torch.float64), persistent=False)
         # The sequence-wise balance loss for the current forward, read by train.py and added to
         # the loss there. Kept as an attribute rather than returned so Block.forward's signature
         # and the AttnRes sublayer protocol stay unchanged.
@@ -2501,6 +2502,8 @@ class MoEFFN(nn.Module):
                 self.h_sums[0] += gate.max(-1).values.sum()
                 self.h_sums[1] += logits.norm(dim=-1).sum()
                 self.h_sums[2] += n
+                # by value, not index: under tied affinities topk and argmax pick different indices
+                self.h_sums[3] += (affinity.gather(-1, sel).max(-1).values >= affinity.max(-1).values).sum()
         # OFFSETS ARE CUMULATIVE ENDS, and int32 -- the op's convention, measured by tilerl.
         offs = torch.cumsum(counts, 0).to(torch.int32)
         # ONE CAST, ONE PLACE, for every expert matmul in this module (tilerl's review,
