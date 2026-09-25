@@ -2108,6 +2108,13 @@ class MoEFFN(nn.Module):
         self.n_routed = int(getattr(cfg, "moe_experts", 0))
         self.top_k = int(getattr(cfg, "moe_top_k", 3))
         self.n_shared = int(getattr(cfg, "moe_shared", 1))
+        # ROUTER AFFINITY: softmax (default; bit-identical to every pre-router_score checkpoint)
+        # or sigmoid (V3 §2.1.2). Stored on the module so forward() reads one explicit branch
+        # and a checkpoint without the field still resolves to softmax via the Cfg default.
+        rs = str(getattr(cfg, "router_score", "softmax") or "softmax")
+        if rs not in ("softmax", "sigmoid"):
+            raise ValueError(f"router_score must be 'softmax' or 'sigmoid', got {rs!r}")
+        self.router_score = rs
         w = int(getattr(cfg, "moe_expert_ffn", 0) or 0)
         # THE LATENT VARIANT, off unless moe_latent is set (prereg moe_0905 amendment 13). The
         # routed experts run in a PROJECTED width: down-project d -> d_latent once per token,
@@ -2406,6 +2413,28 @@ class MoEFFN(nn.Module):
         # changes NO routing decision at the moment it is applied, and stops the integrator dead.
         self.expert_bias -= self.expert_bias.mean()
 
+    def _route(self, logits):
+        """Affinity, selected expert indices and the UN-biased renormalized gate.
+
+        Factored out of forward() so the softmax-vs-sigmoid contract is testable on known
+        logits without dispatching experts. Shared by both score functions:
+
+          softmax (default): affinity normalized over ALL experts;
+          sigmoid (V3 §2.1.2): affinity per-expert independent; selected sigmoids
+                               renormalized only within the top-k.
+        On BOTH, expert_bias enters the SELECTION score but never the gate.
+        Returns (affinity [n,E], sel [n,k], gate [n,k]); affinity is detached-free so the
+        router gradient (and the sequence-wise balance loss) still flows.
+        """
+        if self.router_score == "sigmoid":
+            affinity = torch.sigmoid(logits)
+        else:
+            affinity = torch.softmax(logits, dim=-1)
+        sel = (affinity + self.expert_bias.float()).topk(self.top_k, dim=-1).indices
+        gate = affinity.gather(1, sel)
+        gate = gate / gate.sum(-1, keepdim=True).clamp_min(1e-9)
+        return affinity, sel, gate
+
     def forward(self, x):
         B, T, d = x.shape
         n = B * T
@@ -2414,13 +2443,7 @@ class MoEFFN(nn.Module):
         # tie broken differently by bf16 rounding is not a tolerance question -- it changes the
         # function. The charter's kernel question 3 asks the same thing of fp8.
         logits = self.router(flat).float()
-        affinity = torch.softmax(logits, dim=-1)
-        # THE BIAS ENTERS SELECTION ONLY. `affinity` (un-biased) supplies the gate below; the
-        # biased score chooses. Reversing this is the single easiest way to get a plausible-looking
-        # module that computes the wrong function.
-        sel = (affinity + self.expert_bias.float()).topk(self.top_k, dim=-1).indices
-        gate = affinity.gather(1, sel)                                    # (n, top_k) UN-biased
-        gate = gate / gate.sum(-1, keepdim=True).clamp_min(1e-9)
+        affinity, sel, gate = self._route(logits)
         if self.training:
             # THE SEQUENCE-WISE BALANCE LOSS (eq. 17), alpha = 1e-4. Complementary to the bias,
             # not an alternative: the bias balances across the step's batch, this term catches
