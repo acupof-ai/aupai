@@ -267,14 +267,21 @@ def _selftest():
     check(s["top1"] >= COLLAPSED_TOP1_FLOOR, f"saturated top1 should be ~1, got {s['top1']:.3f}")
     check(s["top3_entropy_norm"] < 0.05, f"saturated entropy ~0, got {s['top3_entropy_norm']:.4f}")
 
-    # 4. A balancing BIAS cannot rescue the DISCRIMINATIVE metrics: even with a large negative
-    #    bias on the hot columns that spreads selection (n_zero drops), un-biased top1 stays ~1.
+    # 4. A balancing BIAS cannot rescue the DISCRIMINATIVE metrics. ONE global expert saturates
+    #    every row (the measured shape: load max/mean ~16x, L1 e32 affinity 1.000) and the bias
+    #    pushes exactly that column out, so selection moves to the tail while the un-biased
+    #    affinity stays one-hot. Per-row dominant experts (world 3) would leave ~92% of rows
+    #    untouched by a 4-column bias, and a top1 read from the BIASED score then still cleared
+    #    the floor (genB mutant on #716: ALL 5 PASS). Here that mutant reads 0.
+    glog = torch.randn(n, e) * 0.5
+    glog[:, 0] += 12.0
+    gsat = torch.softmax(glog, dim=-1)
     bias = torch.zeros(e)
-    for j in range(4):
-        bias[j] = -50.0  # push the 4 saturated experts out, force selection onto the cold tail
-    bm = layer_metrics(sat, bias, k)
+    bias[0] = -50.0
+    bm = layer_metrics(gsat, bias, k)
     check(bm["top1"] >= COLLAPSED_TOP1_FLOOR,
           f"bias must not lower un-biased top1, got {bm['top1']:.3f}")
+    check(bm["n_zero"] <= e - k, f"bias should spread selection off the hot column, n_zero={bm['n_zero']}")
 
     # 5. invariance: metric is deterministic and dtype tolerant (bf16 affinity still classified)
     h2 = layer_metrics(uni.to(torch.bfloat16).float(), None, k)
