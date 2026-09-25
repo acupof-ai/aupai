@@ -134,12 +134,15 @@ def _bwrap_netns_ok():
 
     `bwrap --unshare-all` unshares the network namespace and brings up loopback,
     which needs CAP_NET_ADMIN inside the user namespace. A non-root GitHub-hosted
-    runner grants user namespaces but not that cap, so bwrap dies before exec with
-    `loopback: Failed RTM_NEWADDR: Operation not permitted` (measured in CI run
-    36143768948, 2026-09-25). Probe once with a throwaway `true`; when it fails the
-    caller uses --share-net (host network stack), which keeps the filesystem/pid
-    isolation but does NOT isolate the network -- the returned isolates map then
-    reports net=False rather than claiming isolation the sandbox does not have.
+    runner only gets that cap once kernel.apparmor_restrict_unprivileged_userns is
+    relaxed; before that bwrap died with `setting up uid map: Permission denied`
+    (and, earlier, `loopback: Failed RTM_NEWADDR`). Probe once with a throwaway
+    `true`. Cached.
+
+    A False here is a HARD FAILURE for untrusted code by default: falling back to
+    the host network stack would let generated code reach the network during RL on
+    the pod. run() only uses --share-net when AUPAI_SANDBOX_ALLOW_SHARED_NET=1 is
+    set explicitly (the CI selftest sets it); otherwise it raises.
     """
     if not shutil.which("bwrap") or platform.system() == "Darwin":
         return False
@@ -159,6 +162,11 @@ def _bwrap_netns_ok():
 
 
 _BW_NETNS = None
+
+
+class SharedNetNotPermitted(RuntimeError):
+    """bwrap cannot isolate the network and no shared-net override was given."""
+
 
 
 # macOS Seatbelt profile. Three traps, each of which produced a wrong reading before it was
@@ -226,6 +234,7 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
     stdin closed, the behaviour every existing caller depends on.
     """
     lvl = level or detect_level()
+    _net_isolated = True  # every level except the explicit bwrap --share-net override
     if lvl == "rlimits_only" and os.environ.get("ALLOW_UNISOLATED") != "1":
         raise Unisolated(
             "REFUSING: this host offers no process isolation (no bwrap/nsjail/firejail, "
@@ -280,21 +289,41 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
             # BIND THE INTERPRETER'S REAL TREE, not just /usr. A GitHub-hosted runner's
             # CPython lives under /opt/hostedtoolcache (a symlinked, non-/usr prefix), and
             # pytest/site-packages sit under it; with only /usr bound the sandbox cannot
-            # exec python at all and every code-reward rollout silently scores 0. Bind
-            # /opt, /etc and /tmp in addition to the standard libc dirs.
+            # exec python at all and every code-reward rollout silently scores 0.
             #
-            # NET: --unshare-all brings up a private-loopback net namespace, which needs
-            # CAP_NET_ADMIN the hosted runner lacks; on such a host use --share-net and
-            # report net=False in the result (fs/pid isolation still holds). See
-            # _bwrap_netns_ok for the measured RTM_NEWADDR failure.
-            net = [] if _bwrap_netns_ok() else ["--share-net"]
+            # /tmp IS A PRIVATE TMPFS, never a read-only bind of the host /tmp: on a shared
+            # box (the pod) the host /tmp can hold another task's temp files, and a ro-bind
+            # would expose them to generated code. The interpreter only needs /usr, /opt and
+            # /etc; scratch gets an empty tmpfs.
+            #
+            # NET IS ISOLATED BY DEFAULT. --unshare-all builds a private net namespace and
+            # brings up loopback; a host that cannot (no CAP_NET_ADMIN / AppArmor-blocked
+            # userns) must FAIL for untrusted code, because silently sharing the host stack
+            # would let RL-generated code reach the network mid-run. Only an explicit
+            # AUPAI_SANDBOX_ALLOW_SHARED_NET=1 (the CI selftest) falls back to --share-net,
+            # and the result then reports isolates.net=False.
+            if not _bwrap_netns_ok():
+                if os.environ.get("AUPAI_SANDBOX_ALLOW_SHARED_NET") != "1":
+                    raise SharedNetNotPermitted(
+                        "bwrap cannot build an isolated network namespace on this host "
+                        "(no CAP_NET_ADMIN / unprivileged user namespaces blocked), so "
+                        "running untrusted code is REFUSED rather than silently sharing the "
+                        "host network. Fix the host (e.g. "
+                        "sysctl kernel.apparmor_restrict_unprivileged_userns=0) or set "
+                        "AUPAI_SANDBOX_ALLOW_SHARED_NET=1 to run with --share-net "
+                        "(network NOT isolated; result reports isolates.net=False).")
+                net = ["--share-net"]
+                _net_isolated = False
+            else:
+                net = []
+                _net_isolated = True
             argv = ["bwrap", "--unshare-all", "--die-with-parent", *net,
                     "--ro-bind", "/usr", "/usr",
                     "--ro-bind-try", "/lib", "/lib", "--ro-bind-try", "/lib64", "/lib64",
                     "--ro-bind-try", "/bin", "/bin",
                     "--ro-bind-try", "/etc", "/etc",
                     "--ro-bind-try", "/opt", "/opt",
-                    "--ro-bind-try", "/tmp", "/tmp",
+                    "--tmpfs", "/tmp",
                     "--proc", "/proc", "--dev", "/dev",
                     "--bind", workdir, workdir, "--chdir", workdir] + argv
         elif lvl == "nsjail":
@@ -325,8 +354,8 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
             out, err = p.communicate()
             timed_out = True
         iso = dict(ISOLATES[lvl])
-        if lvl == "bwrap" and not _bwrap_netns_ok():
-            iso["net"] = False  # --share-net: host network stack, no network isolation
+        if lvl == "bwrap" and not _net_isolated:
+            iso["net"] = False  # --share-net override: host network stack, not isolated
         return {"level": lvl, "rc": -1 if timed_out else p.returncode,
                 "stdout": (out or b"").decode("utf-8", "replace"),
                 "stderr": (err or b"").decode("utf-8", "replace")[-2000:],

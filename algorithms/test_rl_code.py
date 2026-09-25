@@ -347,6 +347,66 @@ def test_length_filter():
     check("headerless row measured whole", len(k2) == 1)
 
 
+def test_shared_net_gate():
+    """Known answer for the bwrap shared-net safety gate.
+
+    When bwrap cannot build an isolated net namespace, run() must RAISE by default
+    (untrusted RL code never silently shares the pod's host network); with
+    AUPAI_SANDBOX_ALLOW_SHARED_NET=1 it runs with --share-net and reports
+    isolates.net=False. Host-independent: force the bwrap level and a False netns
+    probe, and stub the actual Popen so no real bwrap is needed.
+    """
+    import isolate
+    from isolate import SharedNetNotPermitted
+
+    class FakeP:
+        returncode = 0
+
+        def __init__(self, *a, **k):
+            self.argv = a[0] if a else k.get("args")
+
+        def communicate(self, input=None, timeout=None):
+            return b"", b""
+
+    orig_detect, orig_netns, orig_popen, orig_which = (
+        isolate.detect_level, isolate._bwrap_netns_ok, isolate.subprocess.Popen,
+        isolate.shutil.which)
+    orig_env = dict(os.environ)
+    captured = {}
+
+    def fake_popen(argv, **k):
+        captured["argv"] = argv
+        return FakeP()
+
+    try:
+        isolate.detect_level = lambda: "bwrap"
+        isolate._bwrap_netns_ok = lambda: False
+        isolate.subprocess.Popen = fake_popen
+        isolate.shutil.which = lambda name: "/usr/bin/bwrap" if name == "bwrap" else orig_which(name)
+
+        os.environ.pop("AUPAI_SANDBOX_ALLOW_SHARED_NET", None)
+        raised = False
+        try:
+            isolate.run("print(1)", level="bwrap")
+        except SharedNetNotPermitted:
+            raised = True
+        check("bwrap without netns RAISES when shared-net override is unset", raised)
+
+        os.environ["AUPAI_SANDBOX_ALLOW_SHARED_NET"] = "1"
+        r = isolate.run("print(1)", level="bwrap")
+        check("override lets bwrap run with --share-net", r["rc"] == 0 and
+              "--share-net" in captured["argv"], str(captured.get("argv")))
+        check("shared-net result honestly reports isolates.net=False",
+              r["isolates"]["net"] is False, str(r["isolates"]))
+    finally:
+        isolate.detect_level = orig_detect
+        isolate._bwrap_netns_ok = orig_netns
+        isolate.subprocess.Popen = orig_popen
+        isolate.shutil.which = orig_which
+        os.environ.clear()
+        os.environ.update(orig_env)
+
+
 def main():
     test_advantage()
     test_reward()
@@ -354,6 +414,7 @@ def main():
     test_sr_unbiased()
     test_pool_loader_shape()
     test_length_filter()
+    test_shared_net_gate()
     if FAILS:
         print(f"\n{len(FAILS)} FAIL:")
         for f in FAILS:
