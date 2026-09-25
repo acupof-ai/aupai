@@ -1980,6 +1980,10 @@ def main():
         # union world and overwrite somebody's amendment without saying so.
         "scripts/prereg_merge.py",
         "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
+        # Step 5 of the flat refactor: the AttnRes load contract (CLAUDE.md:48). The file
+        # carries a selftest whose mutant must red, so it belongs here rather than being
+        # run by hand -- registered in the same commit that creates it.
+        "scripts/test_attnres_load_contract.py",
         # The p1 attention path: partial RoPE, HCA, and the pool_per_doc lift out of CSA. CPU,
         # ~2s. Registered in the same commit as the file, the same deadlock check_sft_ready
         # below records. Every world is a perturbation test because all three ways this path
