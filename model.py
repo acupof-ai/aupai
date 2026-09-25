@@ -2502,7 +2502,8 @@ class MoEFFN(nn.Module):
                 self.h_sums[0] += gate.max(-1).values.sum()
                 self.h_sums[1] += logits.norm(dim=-1).sum()
                 self.h_sums[2] += n
-                self.h_sums[3] += (sel == affinity.argmax(-1, keepdim=True)).any(-1).sum()
+                # by value, not index: under tied affinities topk and argmax pick different indices
+                self.h_sums[3] += (affinity.gather(-1, sel).max(-1).values >= affinity.max(-1).values).sum()
         # OFFSETS ARE CUMULATIVE ENDS, and int32 -- the op's convention, measured by tilerl.
         offs = torch.cumsum(counts, 0).to(torch.int32)
         # ONE CAST, ONE PLACE, for every expert matmul in this module (tilerl's review,
