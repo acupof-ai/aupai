@@ -112,13 +112,16 @@ def main():
                      and p.grad.abs().sum() > 0)
     assert grads_seen > 0, "backward produced no gradients"
 
-    # The same optimizer split the trainer uses: Muon on 2-D, fp32 AdamW on the rest.
-    # If this branch's train.Muon predates de's SR flags, build_optimizer falls back.
-    opts = build_optimizer(list(model.parameters()), lr=1e-4)
+    # The same optimizer split the trainer uses: Muon on 2-D with its SR writeback,
+    # fp32 AdamW on the rest, sharing one StochasticRounder.
+    from sr_cast import StochasticRounder
+
+    rounder = StochasticRounder(seed=1)
+    opts = build_optimizer(list(model.parameters()), lr=1e-4, rounder=rounder)
     assert any(isinstance(o, Muon) for o in opts), "no Muon group for a CED+MoE model"
 
     def sr(x):
-        return x.to(torch.bfloat16)
+        return rounder.round(x) if x.device.type == "cuda" else x.to(torch.bfloat16)
 
     for opt in opts:
         if isinstance(opt, torch.optim.AdamW):
