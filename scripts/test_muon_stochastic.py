@@ -98,7 +98,31 @@ def _run_adam(dtype, sr, seed=20260925, w0=None):
     return w0, w.detach()
 
 
+def _check_ranks_share_seed():
+    """DDP replicas stay identical only if every rank draws the same casts: pose as rank 3 and
+    require build_optimizers' rounder seed to equal what rank 0 would get."""
+    import train
+
+    class Tiny(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.tok = torch.nn.Embedding(16, 32)
+            self.lin = torch.nn.Linear(32, 64, bias=False)
+            self.gain = torch.nn.Parameter(torch.ones(32))
+
+    saved = (train.dist.is_initialized, train.dist.get_rank, train.Cfg.stochastic_round)
+    train.dist.is_initialized, train.dist.get_rank = (lambda: True), (lambda: 3)
+    train.Cfg.stochastic_round = True
+    try:
+        opts = train.build_optimizers(Tiny().bfloat16(), train.Cfg)
+    finally:
+        train.dist.is_initialized, train.dist.get_rank, train.Cfg.stochastic_round = saved
+    seeds = {v.seed for o in opts for v in vars(o).values() if isinstance(v, StochasticRounder)}
+    assert seeds == {int(train.Cfg.seed)}, f"rank 3 rounder seeds {seeds} != Cfg.seed {train.Cfg.seed}"
+
+
 def main():
+    _check_ranks_share_seed()
     # ── Muon ─────────────────────────────────────────────────────────────────────
     # All three arms start from the SAME bf16 grid values; the oracle carries them in fp32.
     base = (1.0 + 0.5 * torch.rand(4, 64, 32, generator=torch.Generator().manual_seed(3))).bfloat16()
