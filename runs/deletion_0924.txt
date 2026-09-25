@@ -67,3 +67,21 @@ PODSCRIPT probes/v41f_stepd_longrun.py 17782B sha256=5c8693bfa34a19d855dfaafdefc
 PODSCRIPT scripts/v41f_param_count.py 15279B sha256=7793a0e8b066aa4da96249f8548f8460402390d02d410c91475aba6dc97d1254 git=e67aa73b^:scripts/v41f_param_count.py
 PODSCRIPT audit_caches_0e.py 1280B sha256=c5ebcfa673a1872791211aa835485ada97be4f956ad58bb364d28bd846815b64 never-committed no-persistent-backup
 DELETED batch4 3 entries 2026-09-25T07:26:00Z
+# Batch 5 pod /work/aupai (container view): reconcile pod to main after PRs #675/#677/#680 removed 54 tracked files (pod_push adds only). 2026-09-25, user authorized via 1e. 38 (runs/inductor_src/* 26, runs/n7c_prefix/* 12) were already ABSENT on the pod. The 16 below existed; each pod file's sha256 matched the pre-deletion git blob byte-for-byte (base 33aa8b2a, content sha via git cat-file -p 33aa8b2a:<path>), so they are recoverable from history. No lsof handle on any of the 16; no running sft_math or train.py (GPU compute-apps empty); a transient 'timeout 600 runs/sft_head_probe.py' ended on its own and references none of them, and runs/sft_head_probe.py is not in this set. 51295 bytes total. 54/54 verified absent after rm; training ckpt count unchanged.
+PODRUN datagen/build_xsource_handread.py 9572B sha256=8a384f08ab82ce5fda3edde0f6edf7b078d468457dba1a624b496c920467f679
+PODRUN runs/arm_corr_run.sh 2628B sha256=40a3a680c591ced568c93881720cf9bdb2e1a0f38bd545fbf4f764ada332c07b
+PODRUN runs/e1_close_shape_row.sh 1631B sha256=23add268629cf5f243ad9e71d889fd547598d46be0eb31f2f5874d21a601a094
+PODRUN runs/e1_v14_build.sh 557B sha256=7d3a79c07ab3eae7bb206c29738c7a427ea93293786b36ea70cb158edf0d7ae6
+PODRUN runs/en_c4_30b_shared.sh 807B sha256=0784782cb53280ffc56764b85646e7e1d4dde288a13bed762d387a040de6985e
+PODRUN runs/kda_shape_launch.sh 1203B sha256=66ebe02b8dbc57729ed10929745a9ad47b8c7a0d8680e1395cd310a878aff60d
+PODRUN runs/mem_probe_bn.sh 4977B sha256=da50151f7d502a47553e32223c707bc2d30a07c8e2ce7be6029e0757c6d9d76d
+PODRUN runs/mem_probe_l2.sh 4977B sha256=8b0f0b911d1c7af8b335f42ce15db61ccbaa53e506bf1033c9ed800b38d826de
+PODRUN runs/mem_probe_sel2.sh 4975B sha256=25a8d80bd1a871edd866d64be0e5c7be0e0dd34cca2d797b922842f53b955c9c
+PODRUN runs/mem_probe_sel2_l2.sh 5013B sha256=5eba0e3fcbd621693fabdcdf2b5a7f8dc6dbe8da1c15535bb9c756bd48a55983
+PODRUN runs/mem_probe_sel3.sh 4977B sha256=11faadf84200d29dca4648ba15b231be68d55cb739216678ee93b2932320a35d
+PODRUN runs/recount_rc2.sh 217B sha256=234d9b5e88b26a0e97d1a0ee31b06c2e3af32041d4269c1bd21cafe7ead24423
+PODRUN runs/recount_t44.sh 202B sha256=6ec70e81cb2ccbfdc5076d9a3810c2401ffd878fa0897445a3a7430cddc73c35
+PODRUN runs/restamp_cot_ot.py 1602B sha256=50d17a0b275803bc40f33b40dfae36968383689ca005361cbb3f0b073b7f46c9
+PODRUN runs/restamp_en_c4_30b.py 1985B sha256=b97c38920544b4d0a40fc18de3e77f110c185339e6e9770530cfc357797ed410
+PODRUN runs/resume1_30b.sh 5972B sha256=c070a0054e1b9a4820fe769a1abe7cc324cc07a4a969f808cdec7834d537da17
+DELETED batch5 16 entries 2026-09-25T08:57:52Z
