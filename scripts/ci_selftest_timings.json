@@ -272,6 +272,8 @@
     "v41f_l2/l2_census_scan.py": 0.2,
     "scripts/problem_types.py": 0.1,
     "scripts/rl_pool_dedup_replay.py": 0.1,
+    "algorithms/test_rl_code.py": 7.0,
+    "algorithms/test_rl_code_ced_smoke.py": 8.0,
     "scripts/test_exp_unretract.py": 0.5,
     "scripts/test_muon_stochastic.py": 15.0,
     "scripts/test_sr_cast.py": 4.0,
