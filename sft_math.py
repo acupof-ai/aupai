@@ -129,6 +129,13 @@ def main():
         action="store_true",
         help=argparse.SUPPRESS,  # deprecated spelling, one version only
     )
+    parser.add_argument("--fp32_master", action="store_true",
+                        help="optimizer owns fp32 master copies of the bf16 weights "
+                             "(train.MasterWeights). REQUIRED for bf16 SFT at small LR: a "
+                             "single-step rel update ~1e-4 is below the bf16 half-ULP, so "
+                             "without a master only 0.1-10%% of elements move per step (measured "
+                             "2026-09-25 on the CED ckpt). Costs one fp32 copy + fp32 "
+                             "optimizer state; the model, DDP and kernels stay bf16")
     parser.add_argument("--save_every", type=int, default=SAVE_INTERVAL,
                         help="mid-run checkpoint interval; each one now carries optimizer state, "
                              "so a later extension resumes on one curve instead of restarting "
@@ -342,19 +349,33 @@ def main():
     assert_moe_matches_ckpt(raw_model, ck.get("cfg", {}))
     raw_model.load_state_dict(ck["model"])
     fp8 = not args.no_fp8 and amp
-    if fp8:
+    # On GPU the model is ALWAYS stored bf16: fp8 casts before the float8 conversion, and the
+    # --no_fp8 bf16 path must cast too -- leaving the checkpoint's fp32 weights doubles static
+    # memory AND leaves the optimizer stepping fp32 weights when --fp32_master is off. With
+    # --fp32_master the optimizer owns fp32 copies (MasterWeights) while the model stays bf16.
+    # CPU (amp False) keeps fp32: the CPU smoke runs there and bf16 CPU kernels are not the path.
+    if amp:
         raw_model = raw_model.to(torch.bfloat16)
+    if fp8:
         convert_to_fp8_compute(raw_model)
+    master = None
+    if args.fp32_master:
+        from train import MasterWeights
+        master = MasterWeights(raw_model)
+        if is_main:
+            _mb = sum(m.numel() for _, m in master.pairs) * 4 / 2**30
+            print(f"fp32 master weights: {_mb:.2f} GiB over {len(master.pairs)} tensors", flush=True)
     if is_main:
         from train import HAS_FA
 
         print(
             f"resumed {args.resume} | params {sum(p.numel() for p in raw_model.parameters()) / 1e6:.1f}M | "
-            f"fp8 {fp8} | fa {HAS_FA} | doc_mask {Cfg.doc_mask}",
+            f"fp8 {fp8} | bf16_store {amp} | fp32_master {master is not None} | "
+            f"fa {HAS_FA} | doc_mask {Cfg.doc_mask}",
             flush=True,
         )
 
-    optimizers = build_optimizers(raw_model, Cfg)
+    optimizers = build_optimizers(raw_model, Cfg, master.map if master is not None else None)
 
     if args.loop:
         # BEFORE torch.compile and before DDP: the patch replaces a bound method, and compile
@@ -592,6 +613,10 @@ def main():
                 for j, opt in enumerate(optimizers):
                     if good_opt[j] is not None:
                         opt.load_state_dict(good_opt[j])
+                if master is not None:
+                    # The good_state load rewrote the bf16 model; the fp32 masters must follow
+                    # or the next push would resurrect the pre-rollback weights.
+                    master.resync()
                 if is_main:
                     runlog(f"step {step}/{total_steps} NaN — restored last good state")
                 for opt in optimizers:
@@ -602,9 +627,17 @@ def main():
                 continue
 
             set_schedule(optimizers, step, total_steps, Cfg, args.lr_scale)
+            # fp32 master: lift the (clipped) bf16 grads to the optimizer's fp32 copies before
+            # the step, then write the stepped masters back to the bf16 model after it -- same
+            # pull/push ordering as train.py. Without these, the optimizer would step a master
+            # whose grad is still None (and the bf16 grads would leak into the next backward).
+            if master is not None:
+                master.pull_grads()
             for opt in optimizers:
                 opt.step()
                 opt.zero_grad(set_to_none=True)
+            if master is not None:
+                master.push()
             step += 1
 
             if step % args.save_every == 0:

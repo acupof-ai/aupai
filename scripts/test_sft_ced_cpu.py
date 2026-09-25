@@ -164,6 +164,7 @@ def _worker():
         "--warmup_frac",
         "0.05",
         "--no_fp8",
+        "--fp32_master",  # exercise MasterWeights pull/push in the training loop
         "--allow_unstamped_pack",
         "--save_every",
         "1000",  # only epoch saves land
