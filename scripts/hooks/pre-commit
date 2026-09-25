@@ -2160,6 +2160,13 @@ def main():
         # from the up-projection, down-projection per dispatched row instead of per token) have
         # identical shapes to the correct code and were caught only by counting projection calls.
         "scripts/test_moe_latent.py",
+        # Reusable MoE router-health acceptance tool (--selftest, no GPU/ckpt needed). Five
+        # synthetic worlds are the known-answer gate that the metrics separate a healthy
+        # near-uniform router from a softmax-saturated top-1 collapse -- and that a selection
+        # bias which spreads the counts still leaves un-biased top-1 ~1 (the exact shape
+        # measured on v41_ced_0923, facts/moe.json). A threshold that lets both states pass is
+        # the mutant this guards against.
+        "scripts/moe_health.py",
         # The per-domain val_frac override. Registered here AND on train.py's trigger list below,
         # because the defect it guards lands in build_mix and not in this file: the 5% val split
         # came off the FRONT of every domain including an injection shard whose row count IS the
