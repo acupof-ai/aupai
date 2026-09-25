@@ -356,6 +356,9 @@ def main():
     Cfg.stochastic_round = args.stochastic_round
     if args.stochastic_round:
         assert not fp8, "stochastic_round is the bf16 (--no_fp8) path, not the fp8 path"
+        assert amp, ("stochastic_round needs CUDA bf16 compute: on CPU the model is fp32, and "
+                     "Bernoulli-casting every write to bf16 then back into fp32 would quantize "
+                     "every parameter. Pass it on a GPU run only")
     if is_main:
         from train import HAS_FA
 
