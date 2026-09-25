@@ -1121,6 +1121,51 @@
       "status": "measured"
     },
     {
+      "id": "v41.rl_code_pool_stdin_supply_0925",
+      "value": "Post-SFT executable CODE RL/SFT-B problem supply with the stdin/stdout driver, built 2026-09-25 (1e task). Two reward contracts share algorithms/code_reward.py: call-style reward_fn (pytest `from solution import fn`) and stdin-style score_stdin (whole script piped stdin, per-line trailing-whitespace strip then exact compare; per-case rel/abs 1e-6 float tolerance as a separate field, no fuzzy match). Every row is prompt+impl+tests in raw continuation (stdin prompt is the statement as a module docstring carrying the statement's OWN input/output format and sample, plan A; no hidden-case leakage), 0 ChatML. Pipeline: (1) reference must pass every test (builder, generated=False, ALLOW_UNISOLATED=1 trusted refs); (2) HE/MBPP 13-gram on prompt/impl/tests; (3) two-layer SFT-A dedup (normalised-question sha1 OR normalised-starter sha1); (4) HackerRank excluded case-insensitively; (5) global cross-file exact-prompt dedup keyed sha1(norm_text(prompt)), survivor=max test count, tie priority call-style>apps>taco; (6) two-run determinism screen, a row kept only when both runs reward 1.0 with byte-identical stdout per case. FINAL POOL 9,531 unique deterministic problems: TACO call-style 27 (all leetcode), APPS stdin 182, TACO stdin 9,322. Pre-dedup kept rows were 27 + 539 + 9,478 = 10,044; dedup dropped 509 (131 within-TACO mirror pairs + 378 TACO-republishes-APPS); the determinism screen then quarantined 4 TACO stdin rows (1 genuine stdout drift, taco_stdin/9772 a set-order multi-answer problem; 3 SIGKILL/OOM rc -9 on one of two runs), and the post-screen re-dedup left 9,531. Raw funnels: APPS 5,000 -> fn_name 3,063 / no-string-IO 1,313 / stdin-style 624 -> SFT-A dedup 27 -> 57 no passing ref -> 539 kept (dedup final 182: 357 lost to the more-tested TACO copy of the same problem). TACO 25,443 -> HackerRank 764 / fn_name 3,242 / no-string-IO 1,529 / stdin-style 19,908 -> 5,789 no parseable ref, 13-gram prompt 8 + impl 155(candidate-tries), SFT-A 0 -> 4,633 no passing ref -> 9,478 kept (dedup final 9,322: 131 within-file + 21 lost cross-file + 4 nondet). TACO stdin survivors by source: codeforces 5,032 / codechef 1,768 / atcoder 1,174 / aizu 1,136 / hackerearth 208 / gfg 4; difficulty EASY 3,140 / MEDIUM 969 / MEDIUM_HARD 1,542 / HARD 1,323 / VERY_HARD 625 / UNKNOWN 1,750 (+APPS introductory 67 / interview 29 / competition 86); numeric-tolerance rows 381 TACO + 20 APPS. Independent verification: the 50+50 known-answer gate (algorithms/test_stdin_reward_known.py) selected 50 APPS + 50 TACO stdin problems whose own ref passes, mutants (append stdout.write) all score 0, infinite loops all timeout 0 without hanging; full independent rescore of all 182+539 APPS rows (539 pre-dedup) and the 27 call-style rows = all pass; a 150-row fixed-seed random sample of the 9,478 TACO rows rescored 150/150. By rule of three with zero failures in 150, the per-row reference-failure rate is below 2.0% at 95% confidence (the pool was NOT fully rescored, 1e order); the 1 drift the sample did not hit was caught independently and motivated the mandatory two-run screen, which then scans the whole pool.",
+      "measured": "2026-09-25",
+      "source": "digest box /data00/home/chenkailun.c/aupai-cimap/wt-3b-sfta builder scripts/rl_code_pool.py (sha256 1847931ee14da9000721047d1a91cc83cab7788bbdca9ba907b3089fe731d8cc), venv pytest 9.1.1, ALLOW_UNISOLATED=1, taskset cores; artifacts digest /data00/home/chenkailun.c/sfta/rl_pool/{rl_code_taco.jsonl,rl_code_apps_stdin.jsonl,rl_code_taco_stdin.jsonl,rl_code_taco_stdin_nondet.jsonl,rl_code_global_dedup_stats.json,rl_code_nondet_screen_stats.json}; pre-dedup snapshot rl_pool_prededupe_0925/. Known-answer gate and code: PR by 3b reviewed by genB. Shas: rl_code_taco.jsonl d4ee1b45..., rl_code_apps_stdin.jsonl 26c74cdd..., rl_code_taco_stdin.jsonl 2d98d396..., nondet quarantine 65b7a4bc...",
+      "config": {
+        "builder": "scripts/rl_code_pool.py",
+        "builder_sha256": "1847931ee14da9000721047d1a91cc83cab7788bbdca9ba907b3089fe731d8cc",
+        "decontam_ngram_n": 13,
+        "decontam_fp_inputs": "302aa793f7067462",
+        "sfta_dedup_signature_layer": 2819,
+        "sfta_dedup_question_layer": 3115,
+        "max_test_cases": 20,
+        "max_solutions_tried": 5,
+        "ref_timeout_s_build": 30,
+        "nondet_screen": {"runs_per_row": 2, "timeout_s": 30, "workers": 8,
+                          "identity": "both reward 1.0 and per-case stdout byte-identical",
+                          "dropped": 4},
+        "global_dedup": {"key": "sha1(norm_text(prompt))", "survivor": "max test count",
+                         "tie_priority": ["call-style", "apps-stdin", "taco-stdin"],
+                         "within_file_dropped": 131, "cross_file_dropped": 378},
+        "final_pool_rows": {"taco_call": 27, "apps_stdin": 182, "taco_stdin": 9322,
+                            "total": 9531},
+        "final_by_type_66_classifier_pr703": {
+          "arithmetic_basics": 2879, "sorting_select": 1622, "collection_transform": 1030,
+          "number_theory": 969, "string_transform": 946, "counting_histogram": 671,
+          "float_geometry": 602, "scenario_simulation": 285, "base_and_bits": 265,
+          "dynamic_programming": 135, "bracket_nesting": 70, "string_parse": 57},
+        "default_stage_split_1e": {
+          "rule": "SFT-B and RL are mutually exclusive by the same prompt hash; APPS introductory and TACO EASY -> SFT-B, MEDIUM and up -> RL, UNKNOWN_DIFFICULTY -> RL; the split is a user-facing option, not fixed",
+          "sftB": 3207,
+          "RL": 6324
+        },
+        "taco_stdin_sources": {"codeforces": 5032, "codechef": 1768, "atcoder": 1174,
+                               "aizu": 1136, "hackerearth": 208, "geeksforgeeks": 4},
+        "numeric_tolerance_rows": {"taco_stdin": 381, "apps_stdin": 20},
+        "independent_rescore": {"apps_stdin_full": "539/539 pre-dedup, 0 fail",
+                                "taco_call_full": "27/27, 0 fail",
+                                "taco_stdin_random_sample": "150/150 seed 42, 0 fail",
+                                "rule_of_three_95pct_upper_bound_per_row_fail": 0.02}
+      },
+      "uncertainty": "Counts are exact for the downloaded files (APPS 5,000; TACO 9 parquets 25,443). Pass/fail and determinism are trusted-reference executions, not model rollouts; ALLOW_UNISOLATED=1 is legal only on that builder path and code_reward raises on it for the generated reward_fn_* path. TACO stdin was NOT fully rescored: a fixed-seed 150-row sample was 150/150, giving a rule-of-three 95% upper bound of 2.0% per-row failure; the whole pool DID pass the two-run determinism screen, which would also catch any replay failure it observes, but two runs at one 30s timeout do not prove rare flaky references impossible. Type labels are one mechanical classifier (PR #703 problem_types.py), audited at 21/21 on its HumanEval sample; they are for supply order-of-magnitude and split planning, not ground truth, and 12 types over only 27 call-style rows make the call column noise. Multi-solution problems whose reference happens to match the one stored output are not detectable; exact stdout can still zero a different valid model answer on them (boundary inherited from the binary exact reward).",
+      "boundary": "This is a SUPPLY and pool-quality result. No model has trained on these rows, no HumanEval/SFT-B/RL gain is claimed, and per-type HumanEval pass rates (4-27 tasks per type) are too noisy to promise a lift from any split. The 9,531 rows are what survive the three hard gates (reference passes, HE/MBPP decontam, SFT-A disjoint); they are not a recommended mix — SFT-B vs RL counts under the difficulty split are options for the user. CodeChef/Codeforces/etc problem statements carry source-specific terms; redistribution rights beyond the already-applied HackerRank exclusion are not re-audited here (attribution is carried per row).",
+      "status": "measured"
+    },
+    {
       "id": "v41.rl_code_pool_supply_0925",
       "value": "Post-SFT executable CODE RL problem pool built 2026-09-25 (1e task), aligned to algorithms/code_reward.py reward_fn(code, tests): each row is {prompt (HumanEval-shaped def signature+docstring, raw continuation, no ChatML), impl (reference solution written to solution.py), tests (pytest `from solution import fn`, fn(*args)==expected), source, difficulty, entry, n_tests, license, attribution}; a row is kept only when its reference passes all generated tests. RESULT: only 27 usable NEW problems survive, 0 from APPS. Funnel (scripts/rl_code_pool.py, pytest 9.1.1, stdlib-import header injected per 1e order): APPS train 5000 -> 2714 call-style with per-call list args (2286 stdin/stdout excluded) -> 2703 hit the two-layer SFT-A dedup (question-text hash OR signature+fn_name hash) -> 0 kept. TACO train 25,443 -> 2695 list-arg call-style (22,748 stdin/stdout; fn_name present but stdin-encoded, incl. all 200 novel GeeksforGeeks) -> 2647 SFT-A dedup hits -> 60 reference failures across 49 tried-all + 11 no passing -> 27 kept, ALL leetcode (EASY 8 / MEDIUM 5 / MEDIUM_HARD 14). The dedup is real overlap, not a loose hash: of TACO's 3244 fn_name call-style problems, 3006 have a question text EXACTLY present in APPS train (TACO republishes APPS's codewars/leetcode set); only 238 are genuinely novel (200 gfg + 38 leetcode), and the 200 gfg are stdin-encoded so unscoreable under the current import-test contract. Reference pass rate where a candidate existed: 367/378 (97%) on APPS first-500 after the stdlib header (math/collections/itertools/heapq/functools/re/string/bisect + typing future-annotations; fixes missing-import references that otherwise fail ~30%), 27 of ~87 novel+executable TACO problems.",
       "measured": "2026-09-25",
