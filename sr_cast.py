@@ -9,7 +9,8 @@ accumulate without bias and cross a grid point at the statistically correct rate
 Exact, portable, identical on CPU and CUDA: grid points are derived directly from bf16 bit
 integers (bf16 is the top 16 bits of an fp32), no exponent/log arithmetic. Randomness comes
 from one caller-supplied torch.Generator ON THE TENSOR DEVICE, so casts are reproducible
-per (seed, rank).
+per seed. DDP ranks must share the seed: independent per-rank
+draws would desynchronize the weight replicas.
 """
 
 import torch
@@ -46,7 +47,7 @@ def stochastic_round_bf16(x, generator):
     """fp32 -> bf16 with E[result] = x. `generator` must be on the SAME device as x.
 
     Pure function of (x, generator state): uses torch.rand(..., generator=generator) only,
-    never the global RNG, so per-rank seeds replay exactly.
+    never the global RNG, so a seed replays exactly.
     """
     lower, upper, frac = _bf16_neighbors(x)
     draw = torch.rand(x.shape, dtype=torch.float32, device=x.device, generator=generator)
@@ -56,8 +57,8 @@ def stochastic_round_bf16(x, generator):
 
 
 class StochasticRounder:
-    """One reproducible generator per (rank, device kind). Seeded so each DDP rank has an
-    independent but replayable cast stream."""
+    """One reproducible generator per device. Under DDP pass the same seed and rank on every
+    rank, or the replicas diverge; rank only offsets the seed for single-process tests."""
 
     def __init__(self, seed=20260925, rank=0):
         self.seed = int(seed) + int(rank)
