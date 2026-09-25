@@ -1,5 +1,5 @@
-TREE: /Users/bytedance/code/aupai-jan2
-POPULATION: 684 .py/.sh files, excluding .git, .ruff_cache, .venv, __pycache__, node_modules
+TREE: /Users/bytedance/code/aupai-jan3
+POPULATION: 683 .py/.sh files, excluding .git, .ruff_cache, .venv, __pycache__, node_modules
 EDGE KINDS CHECKED: ENTRY, import, registry, docs, facts, ledger, comment
 LEDGERS READ: 39 runs/*.jsonl, every field of every row
 
@@ -58,7 +58,6 @@ datagen/build_post30b_chatml_pack_v2.py                    208  1d6d31e2 2026-09
 datagen/build_s_inject.py                                  575  90ccd8dc 2026-09-06   ENTRY                                   Build the experiment-1 injection corpus: n exposures of a fi  
 datagen/build_starcoder_py.py                              143  cc62ef10 2026-09-19   ENTRY                                   Build data/corpus/code_py_starcoder from the fetched starcod  
 datagen/build_web_hq.sh                                     54  c3a47e8f 2026-08-31   docs:docs/standards/corpus_rebuild.md   Turn the scored web corpus into data/corpus/web_hq, then rep  
-datagen/build_xsource_handread.py                          203  f9650302 2026-09-07   ledger:runs/review.jsonl                3b-10 #70: stratified hand-read sheet for rp1t-vs-starcoder   
 datagen/build_zh_domain.py                                 162  61c7cbf7 2026-09-12   docs:scripts/build_zh_wiki.sh           Build the 0e-6 Chinese gate-vocab domain from wikipedia-cn-2  
 datagen/cascade_code_py.py                                  95  fe32ceb6 2026-09-02   docs:docs/lessons/pod_only_python_inventory.md  Cascade on code_rp1t ast.parse survivors (fb P0 2026-09-01):  
 datagen/check_mix.py                                       103  2f202919 2026-09-05   docs:docs/audits/deletion_audit_2026-09-02.md  Dry-run the data schedule against the token caches that exis  
@@ -170,7 +169,7 @@ datagen/ultradata_shards.py                                519  732ea293 2026-09
 datagen/validate_l3_stub_sample.py                          67  3a192fe7 2026-09-12   facts:facts/corpus_supply.json          0e-8 gate: draw a deterministic 200-row sample from the stub  
 datagen/vet_textbooks.py                                   535  9abda56e 2026-09-14   ENTRY                                   True when the line-anchored fence scan ends inside an open f  
 docs/reports/v41_round1/make_figs.py                       109  1a36e18e 2026-09-15   ledger:runs/review.jsonl                Figures for docs/reports/v41_round1/report.md.                
-eval/__init__.py                                            22  af1a34b7 2026-09-02   ledger:runs/review.jsonl                Shared helpers for the eval harness.                          
+eval/__init__.py                                            22  af1a34b7 2026-09-02   facts:facts/data_quality.json           Shared helpers for the eval harness.                          
 eval/_devs.sh                                               31  46800292 2026-08-31   ENTRY                                   Map N shards onto the caller's CUDA_VISIBLE_DEVICES. Sourced  
 eval/api_cloze.py                                         1230  2969c063 2026-09-09   ENTRY                                   API-name cloze over two regions of one training domain: reca  
 eval/arc.py                                                 82  5604d421 2026-08-28   registry:eval/run_eval.py               ARC eval: log-likelihood scoring for ARC-Easy and ARC-Challe  
@@ -324,7 +323,7 @@ runs/audit_0904/unmutated_fail.py                           97  b98cd784 2026-09
 runs/audit_0904/walk_tracked_population.py                 105  b98cd784 2026-09-04   none                                    walk_tracked's population vs the name "tracked", and vs each  
 runs/ced_w8_launch.sh                                       34  5c189993 2026-09-23   ledger:runs/prereg.jsonl                CED world-8 formal 30B launch -- the HumanEval gate line, ar  
 runs/corpus_secret_scan_0905.sh                             36  636be48a 2026-09-05   none                                    Launch the corpus secret report on the pod. Report-only: no   
-runs/count_dir.py                                           80  8ccbe10f 2026-09-08   ENTRY                                   Exact token + packed-row count over a corpus directory. Full  
+runs/count_dir.py                                           80  8ccbe10f 2026-09-08   none                                    Exact token + packed-row count over a corpus directory. Full  
 runs/e0_n10.sh                                              85  db03c78e 2026-09-15   none                                    E0/ET/EC stage-2 n=10 paired eval, 8 shards. Runs BOTH bench  
 runs/heval_auto_loop.sh                                    518  e902f52f 2026-09-24   none                                    Auto HumanEval on every new ckpt_v41_ced_0923.pt.stepN, CPU-  
 runs/mem_probe_TEMPLATE.sh                                  73  8c23ea86 2026-09-05   ENTRY                                   TEMPLATE for one cell of the six-cell readout-4 probe (4c's   
@@ -691,7 +690,7 @@ scripts/write_prereg_moe48_30b.py                          300  65d704ac 2026-09
 serve.py                                                   166  0f4337a9 2026-09-02   ENTRY                                   Standalone CPU inference server — no fla dependency.          
 sft.py                                                     231  0b21cdfc 2026-09-07   ENTRY                                   SFT: fine-tune a pretrained HybridLM checkpoint on packed in  
 sft_math.py                                                636  b6c6785f 2026-09-18   ENTRY                                   Stage-2 math SFT: sft.py plus --out (never overwrites ckpt_s  
-tests/__init__.py                                            0  abe92dc1 2026-09-16   facts:facts/data_quality.json           NO PURPOSE LINE                                               
+tests/__init__.py                                            0  abe92dc1 2026-09-16   none                                    NO PURPOSE LINE                                               
 tests/test_l2_fit_alignment.py                             121  5356534c 2026-09-16   none                                    Small-scale end-to-end fit: de's #397 ledger loader -> our h  
 tests/test_l2_quality_head.py                              269  426df02c 2026-09-16   none                                    Known-answer checks for the L2 quality head losses (no encod  
 third_party/deepseek_v41_ref/verify_ref.py                  43  abe92dc1 2026-09-16   none                                    Verify the vendored DeepSeek-V4.1 reference snapshot against  
@@ -702,8 +701,8 @@ v41f_l2/l2_quality_head.py                                 302  426df02c 2026-09
 v41f_l2/train_l2.py                                        149  488daaa7 2026-09-16   none                                    L2 quality head training entry point.                         
 
 ==============================================================================================================================================================================================
-Total: 684 files, 388 entry points, 607 BFS-reachable, 582 citation edges, 77 unreachable (0 DELETE, 13 KEEP)
-Readability debt: 19 of 684 files have NO PURPOSE LINE (2.8%) -- no docstring and no leading comment saying what the file is for
+Total: 683 files, 387 entry points, 604 BFS-reachable, 579 citation edges, 79 unreachable (0 DELETE, 13 KEEP)
+Readability debt: 19 of 683 files have NO PURPOSE LINE (2.8%) -- no docstring and no leading comment saying what the file is for
 
 Unreachable after checking all 7 edge kinds (ENTRY, import, registry, docs, facts, ledger, comment) -- deletion candidates, and each still needs a
 fixed-point run before it is deleted:
@@ -739,6 +738,7 @@ fixed-point run before it is deleted:
   runs/audit_0904/unmutated_fail.py                       
   runs/audit_0904/walk_tracked_population.py              
   runs/corpus_secret_scan_0905.sh                         
+  runs/count_dir.py                                       
   runs/e0_n10.sh                                          
   runs/heval_auto_loop.sh                                 
   runs/recount_cot_ot.sh                                  
@@ -777,6 +777,7 @@ fixed-point run before it is deleted:
   scripts/n7c_score_prefix.py                             
   scripts/test_attn_res_fp32_logits.py                    KEEP (green from repo root; the only check that --attn_res_fp32_logits is not inert)
   scripts/verify_endpoint_ckpt.py                         
+  tests/__init__.py                                       
   tests/test_l2_fit_alignment.py                          
   tests/test_l2_quality_head.py                           
   third_party/deepseek_v41_ref/verify_ref.py              
