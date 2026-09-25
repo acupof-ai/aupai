@@ -6688,10 +6688,18 @@ def check_ckpt_facts_sources_present(root):
 
 
 def _broken_ckpt_facts_sources():
-    """The real candidates listing with every KEEP line deleted: the checkpoints
-    fb ruled to keep at 14:15Z become unkept deletion candidates, and the facts
-    that cite them must FAIL. runs/ is not linked in a shaped world, so it is
-    copied in first (2.2M) -- the same copy-before-mutate rule as docs/."""
+    """A fact citing a gone checkpoint with NO disclosure must FAIL. Two real mutations, both
+    needed after the 2026-09-25 emptyDir accounting:
+
+    1. strip every KEEP line from the newest listing, so carried claims no longer exempt names;
+    2. delete the 2026-09-16 gone-disclosure sentence from one REAL fact whose source checkpoint
+       was lost in that event (facts/moe.json).
+
+    Either alone is insufficient today: after the accounting the lost-source facts disclose the
+    loss in their own uncertainty/boundary, so stripping KEEP leaves WARN, and keeping KEEP skips
+    the name before the note is read. Both together recreate an undisclosed dead source -- the
+    defect this check exists for. runs/ is copied (not linked) before mutation, the same
+    copy-before-mutate rule as docs/."""
     import shutil
     d = _tmp_repo_shaped()
     runs = os.path.join(d, "runs")
@@ -6706,6 +6714,22 @@ def _broken_ckpt_facts_sources():
     assert len(lines) < sum(1 for _ in open(path, encoding="utf-8")), \
         "broken world found no KEEP lines to strip"
     open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    # Mutation 2: remove the real 2026-09-16 disclosure from one real fact that cites a lost
+    # checkpoint. The sentence runs from its [absent] marker to the word 'unrecoverable'. facts/
+    # is a SYMLINK to the real tree in a shaped world, so copy it to a real dir first or the
+    # mutation writes through into the repo.
+    facts_link = os.path.join(d, "facts")
+    if os.path.islink(facts_link):
+        os.unlink(facts_link)
+    elif os.path.isdir(facts_link):
+        shutil.rmtree(facts_link)
+    shutil.copytree(os.path.join(ROOT, "facts"), facts_link)
+    moe = os.path.join(d, "facts", "moe.json")
+    raw = open(moe, encoding="utf-8").read()
+    pat = re.compile(r" \[absent\] since 2026-09-16:.*?unrecoverable")
+    n_disclosed = len(pat.findall(raw))
+    assert n_disclosed >= 1, "broken world found no 2026-09-16 disclosure to strip in moe.json"
+    open(moe, "w", encoding="utf-8").write(pat.sub("", raw))
     return d
 
 
