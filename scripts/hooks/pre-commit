@@ -1118,6 +1118,13 @@ def main():
         # problems that can never score. The selftest pins signature/self handling, solution
         # normalisation rejection, and the generated-test contract without data or pytest.
         "scripts/rl_code_pool.py",
+        # 3b: real ultra_l3 unconsumed-tail SFT-B funnel. Registered because its identity is
+        # the exact seed-42 train.py shuffle: a tail slice that does not match the permutation
+        # silently selects already-consumed rows, and a loose marker floods false positives.
+        # The selftest pins the permutation/slice identity, the barber arrow marker, a benign
+        # "actually best" comment staying clean, and the statement/code shape extractor; no
+        # corpus or subprocess.
+        "scripts/sftb_ultra3_tail_funnel.py",
         # Shard-by-shard comparator for the parallel-vs-serial exact pass (3b). Registered
         # because `_parallel_exact_pass`'s "byte-identical to the serial pass" is a docstring
         # claim over the code that decides a multi-GB corpus's exact bytes. The selftest drives
@@ -1708,6 +1715,11 @@ def main():
         # row must close with and without --started. Measured over all 8 combinations of
         # (retracted, --started, later minute): retraction was not the variable, being closed was.
         "scripts/test_exp_done_retracted.py",
+        # exp.py explicit un-retraction. Six worlds; the two load-bearing refusals are a BARE
+        # `done` on a retracted row (must refuse -- no exact row named) and, at fold level, a
+        # markerless ok after a retraction (union-merge reorder must stay dropped). The happy
+        # path needs an exact --started AND an `unretracts` marker the writer sets.
+        "scripts/test_exp_unretract.py",
         # run_ddp.sh's launcher gate (de-60): a direct call writes no experiments row, takes no
         # card claim and arms no monitor. Six worlds, and four are the narrowness: an EMPTY marker
         # must refuse (`-n` instead of `-z` passes it, and an exported-but-unset variable is what a
@@ -2085,6 +2097,8 @@ def main():
         # the BIASED score passed all 8 -- the first version recomputed both candidate gates and
         # asserted they differ, which is a fact about softmax, not about the module.
         "scripts/test_moe_module.py",
+        # router_score softmax|sigmoid known-answer gates (V3 independence, bitwise softmax)
+        "scripts/test_moe_router_score.py",
         # The MoE step profiler. In SELFTEST_FILES and NOT in NEEDS_DATA because its --selftest
         # needs no card: it asserts the shape constants still match arm D's launch line, that the
         # parity (top_k+shared)*expert_ffn == ffn_hidden holds -- the whole "equal active FLOPs"
@@ -2806,6 +2820,7 @@ def main():
         # already covered here.
         "scripts/exp.py": {"scripts/test_exp_done_retracted.py", "scripts/test_exp_amend.py",
                            "scripts/test_exp_done_started.py", "scripts/test_exp_fold_agree.py",
+                           "scripts/test_exp_unretract.py",
                            "scripts/test_ledger_field_writers.py"},
         # run_ddp.sh had the same gap as exp.py: the subject of two tests and the key of none, so
         # both ran only when someone edited the test. de-60 measured what that costs -- adding the
@@ -2961,7 +2976,8 @@ def main():
                      "scripts/test_mem_defaults_frozen.py",
                      "scripts/test_moe_defaults_frozen.py",
                      "scripts/test_moe_latent.py",
-                     "scripts/test_moe_module.py"},                          # 48.9s
+                     "scripts/test_moe_module.py",
+                     "scripts/test_moe_router_score.py"},             # router_score switch
         "scripts/loader.py": {"scripts/test_arch_compat.py", "scripts/test_sft_pack.py",
                               "scripts/test_eval_base_prompt_format.py",
                               "scripts/test_serve_history.py"},              # 22.0s

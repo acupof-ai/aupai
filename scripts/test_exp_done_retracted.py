@@ -115,18 +115,18 @@ print(f"  {'ok  ' if ok else 'BUG '} bare `done` on a closed-but-NOT-retracted r
                        f"rows={[(x.get('started'), x['status'], x.get('cmd')) for x in rows]}"))
 shutil.rmtree(d)
 
-# 3. RETRACTED, --started given. This path exits inside pick_open_row, which used to say only
-#    "Open rows: none" -- true, and useless: it reads identically for a name nobody started and
-#    for the row the caller is holding, already closed. Both paths must name the state found.
+# 3. RETRACTED, --started given -> EXPLICIT UN-RETRACTION (2026-09-25 contract). An exact
+#    --started names the row deliberately; `done` now appends a marked revival and the fold
+#    shows the corrected ok result. A bare `done` (case 1) is still refused -- the marker and
+#    the exact --started are what separate a reversal from a union-merge-reordered old ok.
 d, st = world()
-r = run(d, "--name", "zz_done_retr", "--started", st, "--status", "ok", "--result", "corrected")
+r = run(d, "--name", "zz_done_retr", "--started", st, "--status", "ok", "--result", "28/164")
 rows = folded(d, "zz_done_retr")
 out = r.stdout + r.stderr
-ok = (r.returncode != 0 and "retracted" in out and "Open rows: none" not in out
-      and len(rows) == 1 and rows[0]["status"] == "retracted")
+ok = (r.returncode == 0 and len(rows) == 1 and rows[0]["status"] == "ok"
+      and rows[0]["result"] == "28/164" and bool(rows[0].get("unretracts")))
 bad += 0 if ok else 1
-print(f"  {'ok  ' if ok else 'BUG '} `done --started` on a retracted row names the STATE, not "
-      f"just the absence"
+print(f"  {'ok  ' if ok else 'BUG '} `done --started <exact>` on a retracted row UN-RETRACTS it"
       + ("" if ok else f" -- rc={r.returncode} {out.strip()[:150]}"))
 shutil.rmtree(d)
 
