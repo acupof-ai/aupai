@@ -1244,6 +1244,65 @@
       },
       "uncertainty": "The variant sweep used 96 rows and a handful of header constructions; it bounds the sensitivity, it does not identify which construction a human would call correct. The shipped choice is the repo's own strip_docstring because that function already exists and is used elsewhere in eval/, not because 66 is privileged over 61 or 65.",
       "boundary": "This records the fragility of one derived column, not a change to any score: every row's klass/detail still reproduces the official pass/fail exactly. Kinds of 'completion' that no header construction in this sweep can express without also loosening the check are not covered."
+    },
+    {
+      "id": "v41.bf16_no_master_copy_update_granularity_0925",
+      "value": "Does bf16 in-place storage suppress parameter updates in v41_ced_0923? MEASURED: it does NOT stop them, but it sets a per-element THRESHOLD whose effect is severe at the tail learning rate. CONTROL FIRST (required): the same checkpoint compared with itself gives 0 of 3,255,530,048 elements changed and rel_l2 exactly 0.000e+00 in all 13 parameter groups, so the comparison cannot manufacture movement. TAIL WINDOW (37000->37500, 500 steps, Muon lr 5.50e-4 -> 5.16e-4): MoE w13 elements changed 9.56%, rel_l2 6.73e-3; w2 11.26%/7.04e-3; attn qg 20.89%/1.05e-2; attn kv 19.38%/9.69e-3; attn o 20.64%/1.03e-2; router 7.53%/1.86e-3; embed+head 35.22%/4.73e-3; total 10.96%. Second tail pair 37500->38000: total 10.39%; 38000->38146 (146 steps): 8.60%. MID WINDOW (17500->18000, 500 steps, Muon lr 9.39e-3 -> 9.20e-3, i.e. 17.44x higher): total 69.41% moved; w13 67.34%/rel_l2 4.05e-1; attn qg 99.61%/5.00e-1; attn kv 99.47%/4.01e-1. THE DISCRIMINATOR -- moved-elements by |w| decile of w13 (1e's test, stated before it ran): a signed random walk that accumulates would give a FLAT profile; in-place round-to-nearest with no residual makes each step face a RELATIVE half-ulp, so an element moves only if that step's update exceeds half its ulp, giving a profile that collapses as |w| grows. Observed at the tail: deciles 1-10 = 60.57, 26.07, 7.80, 1.12, 0.011, 0.005, 0.001, 0.000, 0.000, 0.000 percent -- monotone collapse, and deciles 5-10 (the larger half of the weights) did not move AT ALL in 500 steps. Observed at the mid window: 70.38, 69.68, 69.06, 68.64, 67.49, 67.58, 66.41, 65.65, 65.47, 63.00 percent -- nearly FLAT. Same monotone collapse in attn qg at the tail (97.81% in decile 1 down to exactly 0.000% in deciles 7-10). So the tail-|w| elements DO move and the large-|w| ones do not, and the boundary is the lr-dependent update size against the bf16 ulp. STRUCTURE: there is NO fp32 master copy. The checkpoint's `model` holds 219 bf16 + 12 fp32 tensors (the 12 fp32 are exactly blocks.*.ffn.expert_bias, 48-dim each -- and expert_bias is the one group that changes 100% of its elements at every window, rel_l2 up to 2.9e-1, because it is stored exactly). Muon's only state entry is `mb`, a MOMENTUM BUFFER, in bf16; the three AdamW groups carry fp32 exp_avg/exp_avg_sq. RESPONSE IS SUPERLINEAR IN lr: 17.44x lr gives 60.1x rel_l2 for w13, an exponent of 1.43, where a linear response would give 17.44x -- what a threshold produces when a growing fraction of single steps is being discarded at the low end. OPEN QUESTION (not a conclusion): whether this means 'the second half of pretraining is ineffective for large-magnitude weights'. The measurement supports the mechanism and its lr-dependence; it does NOT measure whether the unmoved large-|w| elements needed to move, nor any effect on loss or on HumanEval. Answering it needs a probe of what the update WOULD have been without bf16 (e.g. an fp32 shadow run), which has not been done.",
+      "measured": "2026-09-25",
+      "source": "read-only torch.load(mmap=True, map_location='cpu') over adjacent checkpoints; pod ckpt_v41_ced_0923.pt.step37000/37500/38000 and the suffixless ckpt_v41_ced_0923.pt (internal step=38146), plus backups ckpt_v41_ced_0923.pt.step17500/18000 copied from /data01/aupai_backup/v41_ced_0923/ to /data00/aupai_work/tmp66/ and sha256-verified against the originals (bba35a5099b9e9ef... and 99180324e4ad626a...) before use, then deleted; scripts/ckpt_update_granularity.py holds the comparison and the control; lr values read from each checkpoint's own opt[*].param_groups[*].lr, not from a schedule file",
+      "status": "measured",
+      "config": {
+        "ckpt": "ckpt_v41_ced_0923.pt",
+        "cmp": "adjacent checkpoints, mmap CPU, read-only",
+        "groups": 13,
+        "elements": 3255530048,
+        "windows": [
+          {
+            "from": 37000,
+            "to": 37500,
+            "steps": 500,
+            "muon_lr": [
+              0.0005500763,
+              0.0005159527
+            ],
+            "total_moved_pct": 10.96
+          },
+          {
+            "from": 37500,
+            "to": 38000,
+            "steps": 500,
+            "muon_lr": [
+              0.0005159527,
+              0.0005008239
+            ],
+            "total_moved_pct": 10.39
+          },
+          {
+            "from": 38000,
+            "to": 38146,
+            "steps": 146,
+            "muon_lr": [
+              0.0005008239,
+              null
+            ],
+            "total_moved_pct": 8.6
+          },
+          {
+            "from": 17500,
+            "to": 18000,
+            "steps": 500,
+            "muon_lr": [
+              0.009389059,
+              0.009200108
+            ],
+            "total_moved_pct": 69.41
+          }
+        ],
+        "control": "same ckpt vs itself -> 0 moved, rel_l2 0.0",
+        "dtype_storage": "model: 219 bf16 + 12 fp32; Muon state mb: bf16; AdamW exp_avg/exp_avg_sq: fp32"
+      },
+      "uncertainty": "The 500-step windows are checkpoint-to-checkpoint, not per-step: the per-step update is not measured and any 'per step' figure in the analysis is a sqrt(500) extrapolation, which assumes independent steps -- and the finding that steps are DISCARDED below a threshold is evidence that assumption fails. The lr exponents and ratios (17.44x lr -> 60.1x rel_l2) compare two windows that differ in more than lr (warmdown shape, optimizer state, position in training), so the superlinearity is consistent with the threshold mechanism but is not identified as its sole cause. Deciles are computed per tensor and pooled, so a tensor with a narrow |w| range contributes its own ordering; the collapse is large enough to survive that. One checkpoint pair (38000->38146) spans 146 steps, not 500, and is reported separately rather than normalised. LISTING SNAPSHOT: ckpt_v41_ced_0923.pt and its step37000/step17500 siblings were written 2026-09-23..25, newer than the runs/pod_ckpt_candidates_*.txt listing (2026-09-25 06:06Z) that ckpt_facts_sources_present compares against, so they read [absent] until the listing is refreshed -- this note is the interim unblock that check prescribes, not a claim about them.",
+      "boundary": "This is a measurement of STORAGE GRANULARITY and its lr dependence, not a training result: no loss, no val, and no HumanEval number is explained by it, and no claim is made that moving more parameters would improve any of them. It does not cover the embedding/head (bf16, moved 24.89-35.22%) or the fp32 expert_bias beyond noting they behave differently. The GPU pass@8 baseline and the RL-gate question are separate work and are not part of this entry."
     }
   ]
 }
