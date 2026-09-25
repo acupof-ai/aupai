@@ -22,7 +22,9 @@ def _bf16_neighbors(x):
     x (lower <= x <= upper), and the fractional position of x in [lower, upper]. Works for
     negative values because the bf16 bit order is monotonic numerically: bit-1 / bit+1 give
     the two surrounding grid points regardless of sign. Exact-representable points collapse
-    (step 0)."""
+    (step 0). Callers bound peak memory by passing CHUNKS, never a whole optimizer group at
+    once: every tensor here is x-sized and a stacked MoE group is ~2.0e9 elements (8 GiB
+    fp32 each, ~15 live temporaries)."""
     x = x.float()
     b = x.to(torch.bfloat16)
     bv = b.float()
@@ -57,10 +59,18 @@ def stochastic_round_bf16(x, generator):
 
 class StochasticRounder:
     """One reproducible generator per (rank, device kind). Seeded so each DDP rank has an
-    independent but replayable cast stream."""
+    independent but replayable cast stream.
 
-    def __init__(self, seed=20260925, rank=0):
+    round() casts in flat blocks of `chunk_elems`: a stacked MoE optimizer group is ~2.0e9
+    elements (12 layers x 48 experts of one same-shape weight), and _bf16_neighbors holds
+    roughly fifteen x-sized temporaries, so casting the group at once needs tens of GiB at
+    opt.step when the card is already near full. Blocking bounds the temporaries to the
+    block (2e6 elements => a few tens of MiB each); element order is fixed, so a replay with
+    the same seed/chunk reproduces byte-for-byte."""
+
+    def __init__(self, seed=20260925, rank=0, chunk_elems=2_000_000):
         self.seed = int(seed) + int(rank)
+        self.chunk_elems = int(chunk_elems)
         self._gens = {}
 
     def generator(self, device):
@@ -70,4 +80,32 @@ class StochasticRounder:
         return self._gens[key]
 
     def round(self, x):
-        return stochastic_round_bf16(x, self.generator(x.device))
+        n = x.numel()
+        if n <= self.chunk_elems:
+            return stochastic_round_bf16(x, self.generator(x.device))
+        flat = x.reshape(-1)
+        out = torch.empty_like(flat, dtype=torch.bfloat16, device=x.device)
+        gen = self.generator(x.device)
+        for lo in range(0, n, self.chunk_elems):
+            blk = flat[lo : lo + self.chunk_elems]
+            lower, upper, frac = _bf16_neighbors(blk)
+            draw = torch.rand(blk.shape, dtype=torch.float32, device=x.device, generator=gen)
+            out[lo : lo + self.chunk_elems] = torch.where(draw < frac, upper, lower).to(
+                torch.bfloat16
+            )
+        return out.view_as(x)
+
+    def apply(self, w, update):
+        """New bf16 weight = stochastic_round_bf16(w - update), computed in fp32 BLOCKS.
+
+        `w` is the bf16 parameter, `update` its bf16 Muon step (lr*X + lr*wd*w*mask). The fp32
+        candidate exists only inside one block at a time, which is what bounds opt.step peak on
+        the stacked MoE group."""
+        n = w.numel()
+        wf, uf = w.reshape(-1).float(), update.reshape(-1).float()
+        out = torch.empty(n, dtype=torch.bfloat16, device=w.device)
+        gen = self.generator(w.device)
+        for lo in range(0, n, self.chunk_elems):
+            cand = wf[lo : lo + self.chunk_elems] - uf[lo : lo + self.chunk_elems]
+            out[lo : lo + self.chunk_elems] = stochastic_round_bf16(cand, gen).reshape(-1)
+        return out.view_as(w)
