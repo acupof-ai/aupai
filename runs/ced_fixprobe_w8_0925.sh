@@ -11,9 +11,11 @@
 # Both PRs must be merged and pushed before this script can launch (--router_score is unknown to
 # train.py until ci's PR lands). save_every 500; --max_steps 3000.
 #
-# NOT STARTED. The go is the controller's.
-cd /work/aupai || exit 1
-export NGPU=8
+# NOT STARTED. The go is the controller's. Portable across the two H20 hosts (1e 2026-09-25):
+# resolves the repo from the script location, so no host path is written in.
+set -euo pipefail
+cd "$(dirname "$0")/.." || exit 1
+export NGPU=${NGPU:-8}
 exec python3 scripts/harness.py launch v41_ced_fixprobe_0925 \
   --training --class incremental --gate-timeout 3000 \
   --hypothesis "CED with the two post-0923 fixes (stochastic bf16 rounding + per-expert sigmoid router) trains 3000 steps without router top-1 collapse and with nonzero sub-ULP weight movement; same mix/recipe/seed as v41_ced_0923, two flags the only delta" \
