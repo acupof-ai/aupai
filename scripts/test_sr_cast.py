@@ -88,9 +88,9 @@ def _selftest():
     test_neighbors_bracket()
     test_expectation_unbiased()
     test_repeated_sub_ulp_accumulates()
-    rounder = StochasticRounder(seed=1, rank=3)
+    rounder = StochasticRounder(seed=4)
     a = rounder.round(torch.randn(5))
-    b = StochasticRounder(seed=1, rank=3).round(torch.randn(5))
+    b = StochasticRounder(seed=4).round(torch.randn(5))
     assert a.dtype == torch.bfloat16 and b.dtype == torch.bfloat16
     print("sr_cast OK: neighbours bracket, E[cast]=x, N*delta accumulates, round-nearest freezes")
 
