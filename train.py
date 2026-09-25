@@ -1371,22 +1371,20 @@ def build_optimizers(model, cfg, master=None):
     only -- lr_scale is applied in set_schedule, so a resume cannot keep a stale scale.
 
     cfg.stochastic_round (SFT only): Muon writes Bernoulli-round to bf16 with fp32 mb, and the
-    embed/scalar/head/router AdamW groups use StochasticAdamW, all sharing one per-rank
-    StochasticRounder. Pretraining leaves the flag unset and every path below is the old one."""
+    embed/scalar/head/router AdamW groups use StochasticAdamW, all sharing one
+    StochasticRounder seeded identically on every rank. Pretraining leaves the flag unset and every path below is the old one."""
     sr = bool(getattr(cfg, "stochastic_round", False))
     assert not (sr and master is not None), (
         "stochastic_round replaces the fp32 master; running both doubles the master memory and "
         "defeats the option. Pick one.")
     if sr:
-        # PER-RANK SEED, per the 1e order (2026-09-25). DDP has all-reduced the gradients, so
-        # the deterministic part of every rank's update is identical; the cast draws are not.
-        # Independent zero-mean draws across ranks therefore act as R parallel rounding samples,
-        # and the gradient all-reduce couples the replicas into one consensus trajectory whose
-        # effective rounding noise is ~1/R (same-seed draws would be fully correlated and buy
-        # nothing). Replicas do drift between syncs (consensus SGD; bounded by the averaging),
-        # and every stream replays exactly from Cfg.seed+rank.
-        _rank = dist.get_rank() if (dist.is_available() and dist.is_initialized()) else 0
-        rounder = StochasticRounder(seed=cfg.seed, rank=_rank)
+        # ONE seed on every rank. DDP syncs gradients, never weights: all ranks apply the same
+        # all-reduced update to replicas that must stay bit-identical. Per-rank draws round each
+        # replica differently, and nothing pulls them back together, so the difference is a pure
+        # random walk that grows with the step count, and rank 0 saves a model the other ranks
+        # never trained. Same seed + identical grads
+        # give identical casts, so the replicas never diverge.
+        rounder = StochasticRounder(seed=cfg.seed)
     else:
         rounder = None
     muon, embed, scalar, arq, head = [], [], [], [], []
