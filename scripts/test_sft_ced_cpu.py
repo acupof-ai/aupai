@@ -292,7 +292,8 @@ def _selftest():
     assert "Cfg.stochastic_round = args.stochastic_round" in src, (
         "the SR flag must reach Cfg/build_optimizers")
     train_src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
-    assert "self._rounder.round(W)" in train_src, "Muon must Bernoulli-round its fp32 write"
+    assert "self._rounder.apply(W, T)" in train_src, (
+        "Muon must Bernoulli-round w-update in fp32 blocks")
     assert "class StochasticAdamW" in train_src, "embed/scalar groups need the SR AdamW"
     print("sft_ced_cpu selftest: linear-to-zero + cosine-unchanged + kind/epoch + SR wiring OK")
 
