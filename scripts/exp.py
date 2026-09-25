@@ -73,10 +73,18 @@ def fold(evs):
         # The docstring above says "two terminal events for one run: the later one wins", which
         # was written when `ok` and `fail` were the only terminals and disagreed only about
         # outcome. Retraction disagrees about VALIDITY: it is a statement about the other event,
-        # so it cannot be outvoted by it. Un-retracting takes an explicit `done`, which appends
-        # a new event a human chose to write.
+        # so it cannot be outvoted by that same old event.
+        #
+        # The contract: an EXPLICIT un-retraction revives a retracted row, and nothing else does.
+        # A human re-closes the exact row with `done --started <its started>`; that event carries
+        # `unretracts` (written by `done`) naming the withdrawn result, so the fold lets it win. A
+        # plain ok/fail with no marker stays dropped: under a union merge it can be the SAME old
+        # terminal re-ordered after the retraction, and letting a markerless one win would
+        # un-retract silently -- the failure this terminal-by-kind rule was written for. The
+        # retraction itself is untouched in the raw log; the revived folded row is what reads on.
         if prev is not None and prev.get("status") == "retracted" and r.get("status") != "retracted":
-            continue
+            if not r.get("unretracts"):
+                continue
         # A MONITOR'S CLOSE IS NOT A RESULT, so it loses to a human's regardless of position.
         # Reported by 4c 2026-09-07 and reproduced on a three-event fixture: a run closed by hand
         # with `val 2.884 at step 2000, control 2.877 / stop rule 4 tripped` and closed by its
@@ -336,6 +344,14 @@ def pick_open_row(name, started, verb):
                 # fabricates a base from None (the de-46 orphan), and a fabricated row loses the
                 # cmd and hypothesis this close must inherit. The caller re-derives whether the
                 # exception applies -- it owns the --reason check and the refusal text.
+                # THE EXPLICIT UN-RETRACTION PATH (2026-09-25): `done --started <exact>` on a
+                # retracted row revives it. This branch runs only when the caller supplied a
+                # --started that matches THIS folded row exactly, so the intent is explicit and
+                # cannot re-pick a different attempt; `done` then writes an event marked
+                # `unretracts`, which is the only kind fold() lets beat a retraction. A BARE
+                # `done` is refused in the caller, because without --started it cannot name the row.
+                if verb == "closing" and closed[-1]["status"] == "retracted":
+                    return closed[-1]
                 if (verb == "closing" and closed[-1]["status"] != "retracted"
                         and _closed_only_by_monitor(name, started)):
                     return closed[-1]
@@ -619,12 +635,26 @@ def main():
         # event is built -- so it must exist before that path can be skipped, which is every
         # normal `done`.
         _reclassifies = None
+        # Set only on the explicit un-retraction path (a retracted base picked by exact
+        # --started). The event is marked `unretracts`; see fold().
+        _unretracts = None
+        if base is not None and base.get("status") == "retracted":
+            # pick_open_row returns a retracted row ONLY for an exact --started match, so this is
+            # the explicit revival 1e specified -- a bare `done` never reaches here (it is refused
+            # in the closed-row branch below). The withdrawn result is named on the new event so a
+            # reader can check the reversal against the still-present retraction.
+            if not a.started:
+                sys.exit(
+                    f"{a.name} ({base.get('started')}) is retracted. Un-retracting needs an "
+                    f"explicit `done --started {base.get('started')!r}` naming the exact row."
+                )
+            _unretracts = dict(base)
         # TWO PATHS REACH A MONITOR-CLOSED ROW and both must demand --reason (de-70). With
         # --started, pick_open_row returns the closed row itself, so `base` is non-None and the
         # closed-row branch below never runs; without it, `base` is None and that branch does the
         # work. Checking here covers the first: `base` is a row whose status is terminal, which an
         # open row's never is, so the condition cannot fire on an ordinary close.
-        if base is not None and base.get("status") not in (None, "", "running"):
+        elif base is not None and base.get("status") not in (None, "", "running"):
             _reclassifies = dict(base)
             if not a.reason:
                 sys.exit(
@@ -721,9 +751,11 @@ def main():
                     base = dict(_r)      # inherit cmd, hypothesis, started: this is the SAME run
                     _reclassifies = _r   # printed below, so the caller sees what was overridden
                 else:
-                    _how = ("A retraction is terminal by kind -- record the corrected result as a "
-                            "NEW run (`start` under its own name, then `done`), and if only the "
-                            "reading is missing use `amend`."
+                    _how = ("If the same run genuinely stands after all, un-retract it explicitly "
+                            "with `done --started "
+                            f"{_r.get('started')!r} --status ok --result '<corrected>'`; a genuinely "
+                            "new attempt gets a NEW run (`start`), and if only the reading is "
+                            "missing use `amend` (which does not revive a retracted row)."
                             if _r["status"] == "retracted" else
                             "Re-close it explicitly with --started "
                             f"{_r.get('started')!r}, or `start` a new run if this is a new attempt.")
@@ -772,6 +804,18 @@ def main():
                 "writer": _reclassifies.get("writer"),
             }
             ev.pop("writer", None)
+        if _unretracts is not None:
+            # STRIP THE RETRACTION FIELDS OFF THE REVIVED ROW. The folded revival is an `ok`
+            # result again, not an ok result still tagged with a withdrawn-reason; leaving them on
+            # would let a reader see both verdicts on one folded row. The raw retraction event is
+            # untouched, so the history is not lost -- it is exactly what `unretracts` points at.
+            for k in ("retracted_reason", "retracted_result", "retracted_at", "superseded_by"):
+                ev.pop(k, None)
+            ev["unretracts"] = {
+                "status": _unretracts.get("status"),
+                "result": _unretracts.get("retracted_result", _unretracts.get("result", "")),
+                "retracted_at": _unretracts.get("retracted_at", ""),
+            }
         append(ev)
         if _reclassifies is not None:
             print(f"logged done: {a.name} -> {a.result}\n"
@@ -779,6 +823,11 @@ def main():
                   f"({_reclassifies.get('status')} / "
                   f"{str(_reclassifies.get('result'))[:50]}) -- its event is untouched; the fold "
                   f"now shows this one. Reason: {a.reason}")
+        elif _unretracts is not None:
+            print(f"logged done: {a.name} ({a.started}) -> {a.result}\n"
+                  f"  UN-RETRACTED -- the retraction (was "
+                  f"{str(_unretracts.get('retracted_result', _unretracts.get('result', '')))[:50]}) "
+                  f"stays in the log as history; the fold now shows this result.")
         else:
             print(f"logged done: {a.name} -> {a.result}")
     elif a.action == "note":
