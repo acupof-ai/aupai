@@ -163,6 +163,59 @@ What would test it: measure the SFT-A-trained checkpoint's completion-length dis
 3. **`runtime_error` (45) and the 3 non-cap `syntax_error` are the classes where a code-idiom SFT has a concrete, plausible mechanism** (input guards, token-level syntax).
 4. **The 15 mixed tasks are the RL-relevant set** — reachable sometimes, so amplification is possible; the 128 always-wrong are not, on this evidence.
 
+## 6b. GPU pass@8 baseline for the RL gate (FINAL checkpoint)
+
+Run on cards 1-6 of the training pod, before the SFT start.
+
+**The greedy control passes.** The n=1, T=0.0 GPU arm reads **28/164 = 17.07%** and matches the
+CPU table's FINAL row **task for task** — that agreement is what makes the sampling arm
+comparable to everything else here.
+
+| arm | value |
+|---|---|
+| greedy pass@1 (GPU control) | 28/164 = 17.07% |
+| **pass@8 (T=0.8, n=8)** | **36/164 = 21.95%** |
+| delta (RL-gate baseline) | **+4.88 pt** |
+| total correct samples | 135/1312 = 10.29% |
+
+Coverage verified before computing: **164 distinct tasks x exactly 8 samples, no overlap, none
+missing**. Both `--queue_dir` and `--shard_i/--shard_n` were passed, which could in principle
+double-shard; measured, it did not.
+
+**The estimator.** `1 - C(n-c,k)/C(n,k)` with **n = k = 8 is unbiased** — brute-forced over
+`c ~ Binomial(8,p)` for p ∈ {0, 0.05, 0.1, 0.2, 0.5}, where the expectation equals `1-(1-p)^8`
+to ~1e-16. I first reported it as degenerate on the reasoning that its per-task value is only 0
+or 1; that reasoning was wrong, and 1e corrected it. What is true is that **variance at n=k is
+higher** than at n=32, k=8, so the comparison rests on fewer effective outcomes than 1,312
+samples suggests.
+
+**The delta is not 8 tasks moving one way — it is 12 in and 4 out.**
+
+- **Wrong under greedy, right in ≥1 sample (12):** 8 (3/8), 14 (1/8), 16 (1/8), 18 (3/8),
+  21 (1/8), 24 (1/8), 25 (1/8), 43 (4/8), 49 (3/8), 52 (1/8), 55 (6/8), 96 (1/8).
+- **Right under greedy, wrong in all 8 (4):** 0, 44, 47, 76.
+
+By type, using the same classifier as §4:
+
+| | gained | lost |
+|---|---|---|
+| number_theory | **4** (24, 25, 49, 96) | 1 (76) |
+| string_transform | 2 (14, 18) | 0 |
+| collection_transform | 2 (43, 52) | 0 |
+| arithmetic_basics | 1 (8) | 0 |
+| counting_histogram | 1 (16) | 0 |
+| float_geometry | 1 (21) | 1 (0) |
+| dynamic_programming | 1 (55) | 0 |
+| base_and_bits | 0 | 1 (44) |
+| sorting_select | 0 | 1 (47) |
+
+`number_theory` has the largest net movement (+3), consistent with §4a's finding that it is
+thin in the SFT-A sources — but this measurement does not establish that link, and the same
+table shows `float_geometry` both gaining and losing.
+
+**This is a control, not a gate result.** The RL gate requires `pass@8 - pass@1 >= 15 pt`
+**after SFT**; this is the pre-SFT base reading. Nothing here predicts the post-SFT number.
+
 ## 7. Reproduction
 
 - Classifier and finish detector: `/tmp/audit4.py`, `/tmp/decisive2.py`, `/tmp/oracle.py` were scratch scripts on the pod and are **not** committed. The table's `klass`/`detail` fields reproduce the official score exactly for all 492 rows (`verdict_agrees_with_saved_ok`), and the header records each rule in words.
