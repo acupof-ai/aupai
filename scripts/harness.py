@@ -28178,6 +28178,8 @@ _UNFROZEN_ALLOWLIST = {
     # the value changes the routing function, which is exactly why the launch line must state
     # it and why MoEFFN keeps the softmax default bitwise for old checkpoints.
     "router_score",
+    # train_health cadences: read-only monitoring, no computation of the trained function changes.
+    "health_every", "health_lens_every",
     # The arm's LABEL, not part of what it trains: it names the rows in runs/memory_diag.jsonl and
     # changes no computation. Deliberately unfrozen because it MUST differ between arms -- freezing
     # it would refuse the second arm's launch, which is the opposite of the intent. It is also the
