@@ -294,6 +294,16 @@ class Cfg:
     # constant, is what the mechanism points at.
     warmdown = 0.65
     final_lr_frac = 0.05
+    # LR decay shape after warmup. "cosine" is the pretraining schedule (warmdown window +
+    # final_lr_frac floor); "linear" decays to ZERO over every post-warmup step and ignores
+    # warmdown/final_lr_frac. The CED code-SFT user order 2026-09-25: 5% linear warmup then
+    # linear to 0 over the whole remaining run. Default keeps every pretraining launch byte-
+    # identical; only sft_math's --lr_decay selects linear.
+    lr_decay = "cosine"
+    # Fractional warmup for short SFT runs: None means ABSOLUTE warmup in `warmup` steps (the
+    # pretraining path, where a fixed step count is the measured choice). When set, warmup is
+    # round(frac*total) steps, resolved per call in lr_mult because total arrives there.
+    warmup_frac = None
     clip = 1.0
     val_frac = 0.05
     seed = 42
@@ -3045,9 +3055,21 @@ def warmdown_start(total, cfg):
     return total - max(1, int(cfg.warmdown * total))
 
 
+def _warmup_steps(cfg, total):
+    if cfg.warmup_frac is not None:
+        return max(1, round(float(cfg.warmup_frac) * total))
+    return cfg.warmup
+
+
 def lr_mult(step, total, cfg):
-    if step < cfg.warmup:
-        return (step + 1) / cfg.warmup
+    wu = _warmup_steps(cfg, total)
+    if step < wu:
+        return (step + 1) / wu
+    if cfg.lr_decay == "linear":
+        # Linear from full LR at the end of warmup to ZERO at the last step.
+        if total <= wu:
+            return 0.0
+        return max(0.0, (total - step) / (total - wu))
     wd_start = warmdown_start(total, cfg)
     wd_steps = total - wd_start
     if step < wd_start:
