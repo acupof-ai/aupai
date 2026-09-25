@@ -245,9 +245,19 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
                 f.write(_seatbelt_profile(workdir))
             argv = ["/usr/bin/sandbox-exec", "-f", prof] + argv
         elif lvl == "bwrap":
+            # BIND THE INTERPRETER'S REAL TREE, not just /usr. A GitHub-hosted runner's
+            # CPython lives under /opt/hostedtoolcache (a symlinked, non-/usr prefix), and
+            # pytest/site-packages sit under it; with only /usr bound the sandbox cannot
+            # exec python at all and every code-reward rollout silently scores 0. Bind the
+            # sys.executable prefix (and /opt generally, where such toolchains live),
+            # /tmp, /etc and /dev in addition to the standard libc dirs.
             argv = ["bwrap", "--unshare-all", "--die-with-parent", "--ro-bind", "/usr", "/usr",
                     "--ro-bind-try", "/lib", "/lib", "--ro-bind-try", "/lib64", "/lib64",
-                    "--ro-bind-try", "/bin", "/bin", "--proc", "/proc", "--dev", "/dev",
+                    "--ro-bind-try", "/bin", "/bin",
+                    "--ro-bind-try", "/etc", "/etc",
+                    "--ro-bind-try", "/opt", "/opt",
+                    "--ro-bind-try", "/tmp", "/tmp",
+                    "--proc", "/proc", "--dev", "/dev",
                     "--bind", workdir, workdir, "--chdir", workdir] + argv
         elif lvl == "nsjail":
             argv = ["nsjail", "-Mo", "--really_quiet", "--disable_proc", "-N",
