@@ -123,6 +123,14 @@ def _check_ranks_share_seed():
 
 def main():
     _check_ranks_share_seed()
+    # apply() must be byte-identical blockwise vs whole-group for one seed: the memory fix
+    # slices w/update into blocks and must not change which draw each element gets.
+    _w = torch.randn(300003, dtype=torch.bfloat16)
+    _u = (torch.randn(300003) * 1e-3).bfloat16()
+    assert torch.equal(
+        StochasticRounder(seed=20260925, chunk_elems=10**9).apply(_w, _u),
+        StochasticRounder(seed=20260925, chunk_elems=131072).apply(_w, _u),
+    ), "blocked apply must match whole-group apply element-for-element"
     # ── Muon ─────────────────────────────────────────────────────────────────────
     # All three arms start from the SAME bf16 grid values; the oracle carries them in fp32.
     base = (1.0 + 0.5 * torch.rand(4, 64, 32, generator=torch.Generator().manual_seed(3))).bfloat16()
