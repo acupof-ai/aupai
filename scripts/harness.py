@@ -28129,6 +28129,11 @@ _UNFROZEN_ALLOWLIST = {
     # and scripts/test_muon_ns_shard.py pins bit-parity, so on/off is an execution-speed
     # knob like fp8, not a recipe or architecture key.
     "muon_ns_shard",
+    # option B (1e order 2026-09-25): stochastic fp32->bf16 optimizer writeback with fp32 Muon
+    # momentum. SFT always on; the 3-hour CED fix probe decides whether the 30B retrain takes
+    # it, so it is an arm during the probe like fp32_master, not settled recipe. MOVE IT INTO
+    # _FROZEN_KEYS the day the probe passes and the retrain launches with it.
+    "stochastic_round",
     "no_static_graph", "no_bucket_view",  # DDP A/B, do not touch Cfg
     "val_every", "val_batches",  # validation cadence, not architecture
     # An A/B arm, like no_attn_res: it exists to take two values, so freezing it would

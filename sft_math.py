@@ -113,6 +113,10 @@ def main():
                         help="warmup as a fraction of total steps (e.g. 0.05); overrides the "
                              "resumed ckpt's absolute warmup. None keeps absolute warmup")
     parser.add_argument("--no_fp8", action="store_true")
+    parser.add_argument("--stochastic_round", action="store_true",
+                        help="bf16 weights with fp32 candidate Bernoulli-rounded on write, fp32 "
+                             "Muon momentum (1e option B). The model is cast bf16 even with "
+                             "--no_fp8; without this flag --no_fp8 keeps fp32 weights")
     # Spelled --no-grad_ckpt (hyphen) to match train.py, whose BooleanOptionalAction
     # generates that form (ead2d2b). Two entry points spelling the same switch differently
     # is a trap a person walks into once per script; the underscore form is kept for one
@@ -345,6 +349,13 @@ def main():
     if fp8:
         raw_model = raw_model.to(torch.bfloat16)
         convert_to_fp8_compute(raw_model)
+    elif args.stochastic_round and amp:
+        # Option B runs bf16 compute without fp8: weights must be bf16, or --no_fp8 leaves the
+        # checkpoint cast fp32 and doubles static memory (the B48/B4 OOM root cause).
+        raw_model = raw_model.to(torch.bfloat16)
+    Cfg.stochastic_round = args.stochastic_round
+    if args.stochastic_round:
+        assert not fp8, "stochastic_round is the bf16 (--no_fp8) path, not the fp8 path"
     if is_main:
         from train import HAS_FA
 
