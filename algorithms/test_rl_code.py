@@ -44,12 +44,26 @@ from rlvr_generate import generate  # noqa: E402
 from rlvr_trainer import seq_logprob  # noqa: E402
 
 FAILS = []
+SKIPPED = []
 
 
 def check(name, cond, detail=""):
     print(("ok  " if cond else "FAIL") + " " + name + (f" -- {detail}" if detail and not cond else ""))
     if not cond:
         FAILS.append(f"{name}: {detail}")
+
+
+def isolation_available():
+    """True only when generated code can run under a real sandbox on THIS host.
+
+    GitHub runners are non-root Linux with no bwrap/nsjail/firejail, so
+    detect_level() is rlimits_only there and code_reward refuses (correctly). The
+    reward-execution assertions then SKIP and are COUNTED rather than pretending to
+    run -- the same NEEDS_DATA discipline as test_stdin_reward_known. They run for
+    real on a developer Mac (seatbelt) and on root/pod Linux (sandbox_exec).
+    """
+    from isolate import detect_level
+    return detect_level() != "rlimits_only"
 
 
 # ---------------------------------------------------------------- 1. advantage
@@ -97,17 +111,25 @@ STDIN_ROW = {"kind": "stdin", "prompt": STDIN_PROMPT, "cases": STDIN_CASES}
 
 
 def test_reward():
-    # call-style: correct continuation 1, wrong 0, via the real isolated pytest run.
     good = program_source(CALL_PROMPT, "    return a + b\n")
     bad = program_source(CALL_PROMPT, "    return a - b\n")
     check("call prompt+correct continuation parses", bool(good), repr(good))
-    check("call correct solution rewards 1", score_row(CALL_ROW, good) == 1.0)
-    check("call wrong solution rewards 0", score_row(CALL_ROW, bad) == 0.0)
-
-    # stdin: whole script piped the case input.
     good_s = program_source(STDIN_PROMPT, "\nn = int(input())\nprint(n * 2)\n")
     bad_s = program_source(STDIN_PROMPT, "\nn = int(input())\nprint(n)\n")
     check("stdin prompt+continuation parses", bool(good_s), repr(good_s))
+
+    if not isolation_available():
+        msg = ("no process isolation on this host (code reward correctly refuses); the "
+               "call/stdin 1-vs-0 and ALLOW_UNISOLATED assertions SKIP here and run on a "
+               "seatbelt Mac or root/pod Linux")
+        SKIPPED.append(msg)
+        print("SKIP " + msg)
+        return
+
+    # call-style: correct continuation 1, wrong 0, via the real isolated pytest run.
+    check("call correct solution rewards 1", score_row(CALL_ROW, good) == 1.0)
+    check("call wrong solution rewards 0", score_row(CALL_ROW, bad) == 0.0)
+    # stdin: whole script piped the case input.
     check("stdin correct script rewards 1", score_row(STDIN_ROW, good_s) == 1.0)
     check("stdin wrong script rewards 0", score_row(STDIN_ROW, bad_s) == 0.0)
 
@@ -200,9 +222,17 @@ def test_full_round():
           good_code.strip() in decoded, repr(decoded[:60]))
 
     gens = [good_ids, bad_ids]
-    rewards = [score_row(STDIN_ROW, program_source(STDIN_PROMPT, vocab.decode(g)))
-               for g in gens]
-    check("round rewards are [1, 0] (mixed group)", rewards == [1.0, 0.0], str(rewards))
+    if isolation_available():
+        rewards = [score_row(STDIN_ROW, program_source(STDIN_PROMPT, vocab.decode(g)))
+                   for g in gens]
+        check("round rewards are [1, 0] (mixed group)", rewards == [1.0, 0.0], str(rewards))
+    else:
+        # No sandbox on this host: the executor path SKIPS, but the model/loss graph still
+        # has to run, so use the binary rewards the sandbox would have produced (the two
+        # continuations are a known passing/failing pair). Counted as a skip, not a pass.
+        SKIPPED.append("full-round reward execution (no isolation host); fixed [1,0] used")
+        rewards = [1.0, 0.0]
+        print("SKIP full-round sandbox reward execution; driving the graph with fixed [1,0]")
 
     with torch.no_grad():
         old_lp, _, _ = seq_logprob(model, prompt_ids, gens, 2,
@@ -313,8 +343,10 @@ def main():
         for f in FAILS:
             print("  -", f)
         sys.exit(1)
-    print("\nrl_code trainer tests OK: advantage hand-computed, call+stdin reward 1/0 "
-          "through the real sandbox, generate->reward->loss->step round on CPU")
+    print(f"\nrl_code trainer tests OK: advantage hand-computed, generate->reward->loss->step "
+          f"round on CPU, SR unbiasedness{', call+stdin reward 1/0 through the real sandbox' if not SKIPPED else ''}")
+    for s in SKIPPED:
+        print(f"  SKIPPED (counted): {s}")
 
 
 if __name__ == "__main__":

@@ -160,6 +160,12 @@ jobs:
         with: { python-version: "3.11", cache: pip, cache-dependency-path: ".github/workflows/ci.yml" }
       - run: pip install ruff tokenizers numpy pytest scipy detect-secrets transformers
       - run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      # bubblewrap so the code-RL reward selftests (algorithms/test_rl_code.py) execute
+      # model rollouts under REAL isolation on the runner: with it absent detect_level()
+      # falls to rlimits_only and code_reward correctly refuses, which would only SKIP the
+      # required correct=1/wrong=0 reward assertions. The hosted VM supports unprivileged
+      # user namespaces; apt makes the binary present on images that dropped it.
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap && which bwrap
       - run: python scripts/harness.py ci-selftests --shard ${{ matrix.shard }}/3 --timeout 300
       # scripts/test_e2e.py is deliberately NOT here. It needs a GPU, so on a runner it could
       # only re-check the mix and the vocabulary that harness check already covers, and exit 0
