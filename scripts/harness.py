@@ -28178,6 +28178,11 @@ _UNFROZEN_ALLOWLIST = {
     # readout 4's stop rule fires, the finding is that the balancer failed at this scale with
     # the paper's gamma; a retune is a separate registered row, not an amendment to this one.
     "moe_bias_gamma", "moe_balance_alpha",
+    # The MoE router affinity function: softmax (V2, default) vs sigmoid (V3 §2.1.2). It is
+    # a per-arm ARCHITECTURE choice recorded in cfg and the checkpoint, not a post-hoc knob:
+    # the value changes the routing function, which is exactly why the launch line must state
+    # it and why MoEFFN keeps the softmax default bitwise for old checkpoints.
+    "router_score",
     # The arm's LABEL, not part of what it trains: it names the rows in runs/memory_diag.jsonl and
     # changes no computation. Deliberately unfrozen because it MUST differ between arms -- freezing
     # it would refuse the second arm's launch, which is the opposite of the intent. It is also the
