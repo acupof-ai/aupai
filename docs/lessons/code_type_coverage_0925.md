@@ -8,8 +8,9 @@ source: runs/code_type_coverage_0925.jsonl (8 datasets, one classifier); superse
 
 Follow-up to `docs/lessons/humaneval_problem_types_0925.md`, which measured five datasets and
 recorded two limitations: the pretrain column was a single shard of one domain, and the RL
-column covered only the finished part of the pool. Both are closed here — and closing them
-**moves two verdicts**.
+column covered only the finished part of the pool. Both are closed here. Every domain in the
+gate mix (`data/mix_v41_gate.json`) now has a measured column, plus the full post-dedup RL
+pool. **One verdict moved, and the exposure analysis below weakens the framework it sat in.**
 
 Same classifier, same rule as before: **absolute rate per 1000 sampled rows**, not
 share-of-classified (whose denominator is whatever the classifier could label, 55%..100%
@@ -40,12 +41,75 @@ Columns: `code_if` / `sc2` / `apps` are the three SFT-A code sources; `RL (dedup
 9,535 survivors of the pool's global dedup; `starcoder` / `ultra_l2` / `ultra_l3` are three
 pretrain code domains.
 
+## 1b. The whole gate mix, with weights, and what exposure does and does not predict
+
+The authoritative domain list is `data/mix_v41_gate.json` (1e: scan exactly this list). The
+gate mix is **six domains**, and all six now have a measured column:
+
+| domain | weight | note |
+|---|---|---|
+| `code_ultra_l2_dc` | 0.4720 | whole-repository code |
+| `code_ultra_l3_noexec_dc` | 0.3146 | synthetic task-shaped text |
+| `math_owm_stage2_dc` | 0.0800 | math word problems / exposition |
+| `code_py_starcoder_dc` | 0.0734 | whole-repository code |
+| `en_c4_stage2_dc` | 0.0450 | English web prose |
+| `cot_dc` | 0.0150 | math reasoning chains with worked solutions |
+
+Code is 0.860 of the mix across three domains. `code_keep_p1_dc` and `code_py_rp1t_dc` were
+removed from the mix at the 0920 rebalance and are **not scanned**.
+
+**Weighted exposure** — the sum of `weight x rate/1000` over the mix — is the closest thing
+this data can give to "has the model seen this shape". It is an indicator, not a measurement:
+every mix domain is measured in `files` mode, so a rate is *topics per document*, and a
+document that mentions a count is not a problem that requires counting.
+
+| type | HE pass | HE rate | weighted exposure | code-only | ratio | reading |
+|---|---|---|---|---|---|---|
+| scenario_simulation | 0% | 61.0 | 21.8 | 12.7 | **36%** | thin |
+| counting_histogram | 0% | 54.9 | 54.7 | 54.3 | **100%** | **at parity, still 0%** |
+| arithmetic_basics | 13% | 91.5 | 77.6 | 75.0 | 85% | ~parity |
+| string_parse | 14% | 42.7 | 34.8 | 34.7 | 82% | ~parity |
+| sorting_select | 15% | 146.3 | 93.8 | 90.4 | 64% | thin |
+| float_geometry | 17% | 73.2 | 119.2 | 113.4 | **163%** | supplied, still 17% |
+| number_theory | 20% | 109.8 | 36.6 | 34.8 | 33% | thin |
+| string_transform | 21% | 146.3 | 79.8 | 79.2 | 55% | thin |
+| dynamic_programming | 21% | 48.8 | 13.9 | 11.9 | **28%** | thin |
+| base_and_bits | 25% | 24.4 | 24.3 | 23.5 | 100% | at parity |
+| collection_transform | 27% | 164.6 | 253.3 | 251.9 | **154%** | supplied |
+| bracket_nesting | 28% | 36.6 | 4.9 | 4.7 | **13%** | **thinnest exposure, best pass rate** |
+
+**Exposure does not explain the pass rates, and the table is the evidence.** Read the two
+ends:
+
+- The **thinnest-exposure type is the best-passing one.** `bracket_nesting` sits at 13% of
+  HumanEval's rate and passes 28% — the highest of the twelve. It is a two-line depth counter
+  with an obvious invariant.
+- The type with the **highest exposure fails below the median.** `float_geometry` at 163% of
+  HumanEval's rate passes 17%.
+- Of the two types that never pass, one is **at parity** (`counting_histogram`, 100%) and the
+  other is thin (`scenario_simulation`, 36%). Exposure separates them; pass rate does not.
+
+So "the model has not seen this shape" is **not** a sufficient explanation for the 0% rows,
+and for `counting_histogram` it is now a poor one. What survives is the pairing: exposure
+tells you about the supply of *topics*, and the pass rate is governed by something the
+topical rate does not capture — most plausibly whether the model has had to *produce* the
+shape under supervision. That is a claim about the SFT pack, not about the corpus, and this
+table cannot test it. Stated as a question to answer rather than a conclusion.
+
+**A caveat that has to travel with the exposure column:** `en_c4_stage2_dc` is English prose
+(a BBQ-class advertisement is a real row), so its non-prose type counts are the classifier
+firing on ordinary English rather than evidence of code tasks. It is 4.5% of the mix, and the
+`code-only` column excludes it; the two columns differ by at most 9.1 per 1000 across the
+twelve types (that maximum is counting_histogram, whose en_c4 rate is only 8.5), so the
+qualitative reading above holds either way. Its `scenario_simulation` rate of 201.5 is the
+single largest number in the raw table and is the most misleading one.
+
 ## 2. Two verdicts move
 
 `docs/lessons/humaneval_problem_types_0925.md` §4a put four types in **缺数据 (short of
 data)**. Two of them do not survive the fuller coverage.
 
-### counting_histogram: short of data → **supplied by some sources, thin in SFT-A**
+### counting_histogram: short of data → supplied upstream → **and at parity by weight (third and final revision)**
 
 | source | rate |
 |---|---|
@@ -63,13 +127,16 @@ Two independent sources exceed HumanEval's rate, one of them by 1.7x. So this ty
 not a corpus gap. The earlier verdict was reached on the three SFT-A sources plus a partial
 RL scan; both of the sources that clear it were missing from that picture.
 
-This also sharpens §5.1 of the type study, which said counting's 0% had two live
-explanations (cannot-count vs under-supplied) and that the data did not separate them. The
-data still does not separate them — but the "under-supplied" half is now weaker, because the
-supply exists upstream. **The 0% is more likely a capability or prompting effect than a
-corpus gap, and it is now the leading candidate for that reading.** Not yet a conclusion:
-the RL pool is not SFT-A, and whether the model has seen this type is a question about the
-pack, not about the corpus.
+**And with the mix weights applied it goes further than that** (§1b): counting's weighted
+exposure is 54.7 against HumanEval's own 54.9, i.e. **100% — at parity**, not merely
+"present upstream". The two revisions should be read in order: the raw per-source table made
+it look absent; the weights show it is supplied at exactly the rate HumanEval tests it. So
+the under-supplied half of the original explanation does not survive, and **§5.1 of the type
+study is superseded: counting's 0% is not explained by the corpus.**
+
+This is the clearest single entry in the table for the report's overall reading: a type at
+parity exposure and 0% pass rate. What remains is a question about the pack — whether the
+model had to *produce* counting tasks under supervision — which this data cannot test.
 
 ### sorting_select: short of data → **SFT-A under-samples it**
 
