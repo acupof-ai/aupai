@@ -2270,6 +2270,13 @@ class MoEFFN(nn.Module):
                              torch.zeros(self.n_routed, dtype=torch.long), persistent=False)
         self.register_buffer("micro_forwards", torch.zeros((), dtype=torch.long),
                              persistent=False)
+        # TRAINING-HEALTH WINDOW (scripts/train_health.py), its own counters so it never shares a
+        # reset with readout 4 or the balancer. In v41_ced_0923 readout 4 (layer 0, load only) read
+        # 94% of experts used at step 10900 while the top-1 affinity sat at ~0.996: load cannot see
+        # a one-hot gate. h_sums = (renormalized top-1 gate share, router-logit L2 norm, rows),
+        # each summed over rows. Non-persistent: no checkpoint key changes.
+        self.register_buffer("h_load", torch.zeros(self.n_routed, dtype=torch.float32), persistent=False)
+        self.register_buffer("h_sums", torch.zeros(3, dtype=torch.float32), persistent=False)
         # The sequence-wise balance loss for the current forward, read by train.py and added to
         # the loss there. Kept as an attribute rather than returned so Block.forward's signature
         # and the AttnRes sublayer protocol stay unchanged.
@@ -2485,6 +2492,10 @@ class MoEFFN(nn.Module):
                 self.windows += 1
                 self.micro_tokens_per_expert.copy_(counts)
                 self.micro_forwards += 1
+                self.h_load += counts.float()
+                self.h_sums[0] += gate.max(-1).values.sum()
+                self.h_sums[1] += logits.norm(dim=-1).sum()
+                self.h_sums[2] += n
         # OFFSETS ARE CUMULATIVE ENDS, and int32 -- the op's convention, measured by tilerl.
         offs = torch.cumsum(counts, 0).to(torch.int32)
         # ONE CAST, ONE PLACE, for every expert matmul in this module (tilerl's review,

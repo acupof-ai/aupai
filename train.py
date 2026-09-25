@@ -470,6 +470,11 @@ class Cfg:
     allow_partial_cursor = False
     anneal_frac = 0.10  # last fraction of tokens uses each domain's "anneal" weight (MiniCPM-style)
     val_every = 500  # 0 = epoch end only
+    # scripts/train_health.py: every component, every layer, one row per window to
+    # runs/train_health.jsonl and a HEALTH ALARM line per broken rule. 0 = off. The logit lens
+    # (one val sequence through every block) runs on its own, sparser cadence.
+    health_every = 100
+    health_lens_every = 1000
     val_batches = 20
     val_batches_full = 100  # fixed prefix, so the epoch-end number is comparable across runs
     val_rows_max = 5000  # per mix domain; validation only ever reads a prefix
@@ -3372,6 +3377,10 @@ def main():
         "--save_every", type=int, required=True,
         help="write a resumable checkpoint (opt+step) every N steps; the t38 resume test and the 16h interval both need this tunable",
     )
+    parser.add_argument("--health_every", type=int, default=None,
+                        help="train_health window in optimizer steps (Cfg default 100; 0 = off)")
+    parser.add_argument("--health_lens_every", type=int, default=None,
+                        help="logit-lens cadence in optimizer steps (Cfg default 1000; 0 = off)")
     parser.add_argument("--name", type=str, default="pretrain", help="runs/<name>.log, ckpt_<name>.pt")
     parser.add_argument(
         "--untie_head", action="store_true",
@@ -4283,6 +4292,17 @@ def main():
                              [(m, m.detach().clone()) for _, m in master.pairs] if master else None)
                 for _m in _masters:
                     _m.pull_grads()
+                # TRAINING HEALTH (scripts/train_health.py). The probe is taken here, with the grads
+                # still present and the weights not yet stepped; the row is built after the balancer
+                # and the master push, so it reads the weights the next forward will use.
+                _hd = Cfg.health_every > 0 and (step + 1) % Cfg.health_every == 0
+                if _hd:
+                    import sys as _hsys  # noqa: PLC0415  (main's own `import sys` is conditional)
+
+                    if os.path.join(ROOT, "scripts") not in _hsys.path:
+                        _hsys.path.insert(0, os.path.join(ROOT, "scripts"))
+                    import train_health  # noqa: PLC0415
+                _hprobe = train_health.before_step(raw_model) if (_hd and is_main) else None
                 _sp.start("opt")
                 for opt in optimizers:
                     opt.step()
@@ -4329,6 +4349,28 @@ def main():
                     _sp.stop("balance")
                 for _m in _masters:
                     _m.push()
+                if _hd:
+                    # collect_moe is a collective: every rank, unconditionally. Only the rest is rank 0's,
+                    # and only the write is guarded, for moe_diag's reason: a diagnostic must not kill the run.
+                    _hrow = {"name": args.name, "step": step + 1, "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                             "moe": train_health.collect_moe(raw_model, ddp)}
+                    if is_main:
+                        try:
+                            _hrow["layer"], _hrow["opt"] = train_health.after_step(_hprobe, optimizers)
+                            _hrow["loss"] = float(loss.detach())
+                            _hrow["grad_norm"] = float(grad_norm)
+                            if Cfg.health_lens_every > 0 and (step + 1) % Cfg.health_lens_every == 0:
+                                _xl, _yl = Xva[:1].to(device), Yva[:1].to(device)
+                                _hrow["lens"] = train_health.logit_lens(
+                                    raw_model, _xl, _yl, doc_cu_seqlens(_xl, eos_id) if Cfg.doc_mask else None,
+                                    lambda h, y: LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)(
+                                        weight, h.to(weight.dtype).reshape(-1, h.shape[-1]), y.reshape(-1)),
+                                    amp_dtype)
+                            train_health.write(os.path.join(ROOT, "runs", "train_health.jsonl"), _hrow, runlog)
+                        except Exception as _e:  # noqa: BLE001
+                            runlog(f"step {step + 1}/{total_steps} train_health FAILED, run continues: "
+                                   f"{type(_e).__name__}: {_e}")
+                    _hprobe = None
                 if probe is not None and is_main:
                     if probe[1] is None:
                         # Say it, or the next reader takes the missing line for a dropped
