@@ -269,6 +269,7 @@
     "scripts/verify_dc_residual.py": 0.1,
     "scripts/verify_fetch.py": 0.0,
     "scripts/write_mix_500m.py": 8.7,
-    "v41f_l2/l2_census_scan.py": 0.2
+    "v41f_l2/l2_census_scan.py": 0.2,
+    "scripts/problem_types.py": 0.1
   }
 }
