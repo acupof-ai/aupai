@@ -2463,6 +2463,14 @@ def main():
         # one save_every block. The heavy four-segment bit-exact training run lives in ci.yml,
         # not here, the same split as test_p1_train_resume_smoke.
         "scripts/test_ced_resume_cpu.py",
+        # CED code-SFT smoke gate (de, 2026-09-25). The fast selftest is model-free: linear
+        # decay-to-zero shape, the pretraining cosine left unchanged, and the sft_math source
+        # markers (Cfg.kind="sft", epoch-boundary saves, --lr_decay/--warmup_frac). The heavy
+        # real-sft_math d512/L4 CED+MoE run lives in ci.yml, same split as the resume gate.
+        "scripts/test_sft_ced_cpu.py",
+        # SFT-A HumanEval RL gate aggregation (de, 2026-09-25): pure-jsonl per-task any() hit
+        # rate; selftest pins the 2/3 known answer and the unequal-sample-count refusal.
+        "eval/humaneval_hitrate.py",
         # The checkpoint-deletion predicates. Registered because this file's output is what
         # someone reads before deleting 6 GB, and BOTH of its failures so far were silent: the
         # first version scored three predicates and printed a well-formed listing that offered
@@ -2510,6 +2518,22 @@ def main():
         # (evaluate() over injected lists, zero network) and pins GO only on all-pass, exit 2 on
         # a fabricated IN_PROGRESS/QUEUED check, fail>pending, cancel/empty/unknown fail closed.
         "scripts/pr_merge_gate.py",
+        # The problem-type classifier shared by the HumanEval / SFT-A / RL-pool / pretrain
+        # coverage study (66). Registered because its output IS the study's measurement: a
+        # label whose signals never fire silently reports a type as absent from a dataset, and
+        # the first hand-audit found exactly that shape -- a too-literal pattern (`valid date`
+        # missing "the date is valid") filed a parsing task as a string transform. The selftest
+        # asserts every type is reachable, every type carries signals, and PRIORITY is a total
+        # order over TYPES. Pure strings, no tokenizer, no corpus. ~0.05s.
+        "scripts/problem_types.py",
+        # Read-only replay of the RL pool's global dedup (66). Registered because the pool
+        # builder it mirrors CONSUMES its inputs -- re-running it to check a number rewrites
+        # the production pool -- so this is the only way the pool's survivor count is
+        # checkable without mutating it, and genB (c61ac333) found the provenance did not
+        # resolve at all. The selftest exercises the rule on a fixture whose answer is known
+        # by construction (whitespace+case normalisation, max-test-count survivor), so a
+        # replay that kept everything would not pass. Pure strings, no pool needed. ~0.05s.
+        "scripts/rl_pool_dedup_replay.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
@@ -2915,7 +2939,13 @@ def main():
                      # is the 2026-09-05 failure that cost all five E1 arms, and the test catches
                      # it; nothing was asking. ~0.6s.
                      "datagen/build_s_inject.py",
-                     "scripts/moe_diag.py"},                                # 54.0s
+                     "scripts/moe_diag.py",
+                     # CED code-SFT smoke: its selftest calls train.lr_mult and must red if the
+                     # linear/cosine schedule moves; the heavy run is CI-only. ~0.1s.
+                     "scripts/test_sft_ced_cpu.py"},                                # 54.0s
+        # sft_math.py gained Cfg.kind="sft", --lr_decay/--warmup_frac and epoch-boundary
+        # saves; test_sft_ced_cpu's selftest reads those source markers and reds if any moves.
+        "sft_math.py": {"scripts/test_sft_ced_cpu.py"},                            # 0.1s
         # BOTH FINGERPRINT SOURCES GET THE SAME TRIGGER, and neither had ANY entry in this table
         # before. build_s_inject's world also compares against corpus_fingerprint.fp_dir
         # (build_s_inject.py:249) and build_corpus.CANONICAL_STATS_KEYS (:543), so an edit to
