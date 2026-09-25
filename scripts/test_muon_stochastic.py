@@ -55,6 +55,32 @@ def _run_muon(dtype, sr, seed=20260925, w0=None):
     return w0, w.detach(), mb.dtype
 
 
+def _run_muon_multi(dtype, sr, seed=20260925, base=None):
+    """SEPARATE same-shape parameters in one Muon -- exercises step()'s torch.stack cast site
+    (the real MoE shape: dozens of params stacked), which the single-param arm never reaches."""
+    torch.manual_seed(0)
+    if base is None:
+        base = (1.0 + 0.5 * torch.rand(3, 48, 64, generator=torch.Generator().manual_seed(9))).to(dtype)
+    G0 = torch.ones(3, 48, 64)
+    ws = [base[i].to(dtype).clone() for i in range(3)]
+    rounder = StochasticRounder(seed=seed, rank=0) if sr else None
+    opt = Muon(
+        ws,
+        lr=LR,
+        momentum=0.0,
+        ns_steps=5,
+        weight_decay=0.0,
+        stochastic_round=sr,
+        momentum_dtype=torch.float32 if sr else None,
+        rounder=rounder,
+    )
+    for _ in range(N):
+        for w in ws:
+            w.grad = G0[0].to(dtype)
+        opt.step()
+    return base, torch.stack(ws).detach()
+
+
 def _run_adam(dtype, sr, seed=20260925, w0=None):
     torch.manual_seed(0)
     if w0 is None:
@@ -106,6 +132,21 @@ def main():
     assert torch.equal(w_sr, w_sr2), "same seed must replay identical weights"
     _, w_sr3, _ = _run_muon(torch.bfloat16, True, seed=20260926, w0=base)
     assert not torch.equal(w_sr, w_sr3), "different seeds must draw a different stream"
+
+    # ── Stacked-group cast site (the real MoE: several same-shape params) ─────────
+    mb = (1.0 + 0.5 * torch.rand(3, 48, 64, generator=torch.Generator().manual_seed(9))).bfloat16()
+    _, wm_frozen = _run_muon_multi(torch.bfloat16, False, base=mb)
+    _, wm_sr = _run_muon_multi(torch.bfloat16, True, base=mb)
+    assert (wm_frozen != mb).float().mean().item() == 0.0, "stacked RN path must freeze"
+    assert (wm_sr != mb).float().mean().item() > 0.5, "stacked SR path must move"
+    _, wm_sr2 = _run_muon_multi(torch.bfloat16, True, base=mb)
+    assert torch.equal(wm_sr, wm_sr2), "stacked path must replay bit-identically"
+    _, wm_or = _run_muon_multi(torch.float32, False, base=mb.float())
+    dm = wm_sr.float() - mb.float()
+    zm = (dm.mean() - (wm_or - mb.float()).mean()).abs().item() / (
+        dm.std().item() / (dm.numel() ** 0.5) + 1e-12
+    )
+    assert zm < 3.0, f"stacked SR mean off oracle, z={zm:.2f}"
 
     # ── StochasticAdamW ──────────────────────────────────────────────────────────
     # All three arms start from the SAME bf16 grid values; the oracle runs them in fp32.
