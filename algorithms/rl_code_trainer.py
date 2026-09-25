@@ -159,45 +159,15 @@ def score_row(row, source, timeout_call=30, timeout_stdin=10):
     return float(reward_fn(source, row["tests"], timeout=timeout_call))
 
 
-def _sr_bf16_fallback(x, gen=None):
-    """Unbiased fp32 -> bf16 stochastic rounding in the magnitude domain.
+def build_optimizer(params, lr, muon_lr=None, rounder=None):
+    """Muon on 2-D params, AdamW on the rest, all holding bf16 params with no master.
 
-    Temporary local copy until de's scripts/sr_cast.py lands (same algorithm, exact
-    bf16 bit pattern, known-answer gated there): bf16 truncates fp32 to the top 16
-    bits; a truncated lower-half remainder rounds UP with probability equal to its
-    16-bit fraction, so E[round(x)] = x. Magnitude domain because fp32 is
-    sign-magnitude -- adding the bias to the raw signed bit pattern biases negatives.
-    Delete this and `from scripts.sr_cast import stochastic_round_bf16` when #de-SR
-    merges.
+    Muon does its own stochastic-rounded writeback (option B, #717):
+    stochastic_round=True with fp32 momentum, sharing the caller's StochasticRounder
+    so the per-device draw stream is one reproducible sequence. The 1-D AdamW params
+    are stepped in fp32 (_adam_step_fp32) and stochastically rounded back through the
+    same rounder, so sub-ULP updates survive without a fp32 master copy.
     """
-    import torch
-
-    b = x.contiguous().view(torch.int32)
-    sign = b & 0x80000000
-    mag = b & 0x7FFFFFFF
-    lo = mag & 0xFFFF0000
-    rem = (mag & 0xFFFF).to(torch.float32)
-    if gen is None:
-        draw = torch.randint(0, 1 << 16, rem.shape, device=x.device, dtype=torch.int32)
-    else:
-        draw = torch.randint(0, 1 << 16, rem.shape, device=x.device, dtype=torch.int32,
-                             generator=gen)
-    up = (draw.to(torch.float32) < rem).to(torch.int32) * 0x10000
-    rounded = (sign | (lo + up)).view(torch.float32)
-    return rounded.to(torch.bfloat16)
-
-
-def build_optimizer(params, lr, muon_lr=None):
-    """Muon on 2-D params, AdamW on the rest, both holding bf16 params.
-
-    Muon gets stochastic_round=True + fp32 momentum when de's constructor supports
-    it; an older train.Muon falls back to its stock bf16 path (the SR writeback then
-    waits on the merge, which is the only behavior difference). AdamW params (1-D
-    norms/embeddings) are stepped in fp32 and stochastically rounded back by the
-    caller via sr_add_, so their small updates survive without a master copy.
-    """
-    import inspect
-
     import torch
     from train import Muon
 
@@ -205,11 +175,9 @@ def build_optimizer(params, lr, muon_lr=None):
     rest = [p for p in params if p.ndim != 2]
     opts = []
     if matrices:
-        kw = {"lr": muon_lr or lr, "momentum": 0.95, "weight_decay": 0.0}
-        if {"stochastic_round", "momentum_dtype"} <= set(inspect.signature(Muon).parameters):
-            kw["stochastic_round"] = True
-            kw["momentum_dtype"] = torch.float32
-        opts.append(Muon(matrices, **kw))
+        opts.append(Muon(matrices, lr=muon_lr or lr, momentum=0.95, weight_decay=0.0,
+                         stochastic_round=True, momentum_dtype=torch.float32,
+                         rounder=rounder))
     if rest:
         fused = bool(rest) and rest[0].device.type == "cuda"  # fused AdamW is CUDA-only
         opts.append(torch.optim.AdamW(rest, lr=lr, betas=(0.9, 0.95), weight_decay=0.0,
@@ -323,7 +291,14 @@ def main():
             f"(reference solution longer than max_new; call>{MAX_NEW_CALL}, stdin>{MAX_NEW_STDIN})",
             flush=True,
         )
-    optimizers = build_optimizer(list(train_core.parameters()), args.lr, args.muon_lr)
+    # One shared stochastic rounder: Muon and the fp32 AdamW path draw from one
+    # reproducible per-device stream. rank offsets the seed so DDP replicas do not share
+    # draws (sr_cast contract).
+    from sr_cast import StochasticRounder
+
+    rounder = StochasticRounder(seed=20260925, rank=rank if ddp else 0)
+    optimizers = build_optimizer(list(train_core.parameters()), args.lr, args.muon_lr,
+                                 rounder=rounder)
 
     if is_main:
         n_call = sum(1 for r in problems if r.get("kind") != "stdin")
@@ -335,9 +310,12 @@ def main():
         )
 
     def _sr(x):
+        # CPU smoke: SR needs no correctness on the tiny stub, an exact cast keeps the
+        # round-trip simple and is exercised independently by test_sr_cast. GPU training
+        # goes through the shared StochasticRounder.
         if x.device.type != "cuda":
-            return x.to(torch.bfloat16)  # CPU smoke: exact cast, SR is GPU-writeback path
-        return _sr_bf16_fallback(x)
+            return x.to(torch.bfloat16)
+        return rounder.round(x)
 
     tot_groups = tot_degenerate = tot_opt_steps = 0
     tot_truncated = 0  # rollouts that hit max_new with no <eos>; they score 0 like a wrong answer

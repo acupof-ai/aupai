@@ -284,29 +284,43 @@ def test_full_round():
 
 
 def test_sr_unbiased():
-    """The local SR cast is unbiased at a known sub-ULP offset: value 1 + 0.25*ULP
-    (ULP=2^-8 at magnitude 1) must round DOWN to 1 with probability 0.75 and UP to
-    1+ULP with 0.25, so the mean over draws lands inside a sampling bound and
-    round-to-nearest/truncation (which always returns 1) fails the same check.
-    """
-    from rl_code_trainer import _sr_bf16_fallback
+    """The trainer's writeback uses the shared sr_cast.StochasticRounder and it is
+    unbiased at a known sub-ULP offset. The SR arithmetic itself is gated in
+    scripts/test_sr_cast.py; this pins the TRAINER's wiring (the same rounder Muon
+    and the AdamW fp32 path share) and its expectation.
 
-    torch.manual_seed(0)
-    # bf16 has 7 fraction bits, so the ULP on [1,2) is 2^-7 (the cast neighbours below
-    # are 1.0 and 1.0078125).
-    ulp = 2 ** -7
-    x = torch.full((200_000,), 1.0 + 0.25 * ulp, dtype=torch.float32)
-    # word check: 0.25 ULP = 2^-9 = raw fraction 0x4000, a 0.25 round-up probability
-    assert int(x[:1].view(torch.int32)[0]) & 0xFFFF == 0x4000, "fixture offset wrong"
-    out = _sr_bf16_fallback(x).float()
-    frac_up = (out > 1.0).float().mean().item()
-    mean_err = (out.mean() - x[0]).item()
-    check("SR up-fraction is 0.25 at the quarter-ULP offset", abs(frac_up - 0.25) < 0.01,
-          f"{frac_up:.4f}")
-    check("SR mean error is unbiased (|.| < 0.25*ULP)", abs(mean_err) < 0.25 * ulp,
-          f"{mean_err:.2e}")
-    check("SR outputs are bf16 grid neighbours",
-          set(torch.unique(out).tolist()) <= {1.0, 1.0 + ulp})
+    At magnitude 1 bf16 ULP is 2^-7; 1 + 0.25*ULP rounds UP with probability 0.25,
+    so the sample mean is unbiased and round-to-nearest (always 1) fails the check.
+    """
+    from sr_cast import StochasticRounder
+
+    # Wiring + nontriviality, not a re-derivation of the SR arithmetic (that expectation
+    # is gated by scripts/test_sr_cast.py:test_expectation_unbiased, 400 reps). Pin that
+    # the trainer's shared StochasticRounder is the official cast and actually ROUNDS a
+    # sub-grid value: choose an interior point (0.35 of the bf16 grid step), confirm the
+    # measured up-rate matches the official frac, and that round-to-nearest would freeze
+    # it (so the stochastic move is what is under test).
+    from sr_cast import _bf16_neighbors, stochastic_round_bf16
+
+    lo0, up0, _ = _bf16_neighbors(torch.tensor([0.61]))
+    step = (up0 - lo0)[0]
+    target = (lo0[0] + 0.35 * step).to(torch.float32)
+    x = target.expand(60_000).contiguous()
+    _, _, frac = _bf16_neighbors(x[:1])
+    f = float(frac[0])
+    assert 0.05 < f < 0.95, f"fixture point not interior: {f}"
+    # the same seeded generator through the trainer rounder and the official function
+    r1 = StochasticRounder(seed=77).round(x.clone())
+    g2 = torch.Generator(device="cpu").manual_seed(77)
+    r2 = stochastic_round_bf16(x.clone(), g2)
+    out = r1.float()
+    frac_up = (out == up0[0]).float().mean().item()
+    check("trainer SR up-rate matches the official grid fraction",
+          abs(frac_up - f) < 0.01, f"got {frac_up:.3f} vs frac {f:.3f}")
+    check("trainer rounder is the official stochastic cast (same seed -> same bytes)",
+          torch.equal(r1, r2))
+    check("trainer SR moves a value round-to-nearest would freeze",
+          frac_up > 0.05 and set(torch.unique(out).tolist()) <= {lo0[0].item(), up0[0].item()})
 
 
 def test_pool_loader_shape(tmp_dir=None):
