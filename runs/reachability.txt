@@ -1,5 +1,5 @@
-TREE: /Users/bytedance/code/aupai-jan1
-POPULATION: 699 .py/.sh files, excluding .git, .ruff_cache, .venv, __pycache__, node_modules
+TREE: /Users/bytedance/code/aupai-jan2
+POPULATION: 684 .py/.sh files, excluding .git, .ruff_cache, .venv, __pycache__, node_modules
 EDGE KINDS CHECKED: ENTRY, import, registry, docs, facts, ledger, comment
 LEDGERS READ: 39 runs/*.jsonl, every field of every row
 
@@ -170,7 +170,7 @@ datagen/ultradata_shards.py                                519  732ea293 2026-09
 datagen/validate_l3_stub_sample.py                          67  3a192fe7 2026-09-12   facts:facts/corpus_supply.json          0e-8 gate: draw a deterministic 200-row sample from the stub  
 datagen/vet_textbooks.py                                   535  9abda56e 2026-09-14   ENTRY                                   True when the line-anchored fence scan ends inside an open f  
 docs/reports/v41_round1/make_figs.py                       109  1a36e18e 2026-09-15   ledger:runs/review.jsonl                Figures for docs/reports/v41_round1/report.md.                
-eval/__init__.py                                            22  af1a34b7 2026-09-02   facts:facts/data_quality.json           Shared helpers for the eval harness.                          
+eval/__init__.py                                            22  af1a34b7 2026-09-02   ledger:runs/review.jsonl                Shared helpers for the eval harness.                          
 eval/_devs.sh                                               31  46800292 2026-08-31   ENTRY                                   Map N shards onto the caller's CUDA_VISIBLE_DEVICES. Sourced  
 eval/api_cloze.py                                         1230  2969c063 2026-09-09   ENTRY                                   API-name cloze over two regions of one training domain: reca  
 eval/arc.py                                                 82  5604d421 2026-08-28   registry:eval/run_eval.py               ARC eval: log-likelihood scoring for ARC-Easy and ARC-Challe  
@@ -300,7 +300,6 @@ probes/t57_outlier.py                                       33  2faa10fe 2026-08
 probes/t71_depth_lr_rule.py                                293  b88de6cc 2026-09-01   ENTRY                                   Does the depth-muP 1/sqrt(L) rule apply to THIS architecture  
 run_ddp.sh                                                 242  a7257ca9 2026-09-23   ENTRY                                   DDP pretraining on all 8 GPUs. Flags: see `python train.py -  
 runs/anneal_arms.sh                                         52  984bce9a 2026-09-08   docs:docs/lessons/gate_failure_incidents.md  The null + seed-noise arms for the anneal reweight (docs/les  
-runs/arm_corr_run.sh                                        54  8e78664a 2026-09-05   ledger:runs/review.jsonl                Per-token arm correlation on CARD 7. Grant: runs/card_assign  
 runs/audit_0904/_disk_inv.py                                39  989cf725 2026-09-04   none                                    NO PURPOSE LINE                                               
 runs/audit_0904/audit_fact_sources.py                      142  745c6a09 2026-09-04   none                                    Audit instrument: does every facts/*.json entry's cited sour  
 runs/audit_0904/audit_fact_values.py                       197  6f24df1e 2026-09-04   none                                    Audit pass 2: recompute fact VALUES against their cited arti  
@@ -325,26 +324,12 @@ runs/audit_0904/unmutated_fail.py                           97  b98cd784 2026-09
 runs/audit_0904/walk_tracked_population.py                 105  b98cd784 2026-09-04   none                                    walk_tracked's population vs the name "tracked", and vs each  
 runs/ced_w8_launch.sh                                       34  5c189993 2026-09-23   ledger:runs/prereg.jsonl                CED world-8 formal 30B launch -- the HumanEval gate line, ar  
 runs/corpus_secret_scan_0905.sh                             36  636be48a 2026-09-05   none                                    Launch the corpus secret report on the pod. Report-only: no   
-runs/count_dir.py                                           80  8ccbe10f 2026-09-08   none                                    Exact token + packed-row count over a corpus directory. Full  
+runs/count_dir.py                                           80  8ccbe10f 2026-09-08   ENTRY                                   Exact token + packed-row count over a corpus directory. Full  
 runs/e0_n10.sh                                              85  db03c78e 2026-09-15   none                                    E0/ET/EC stage-2 n=10 paired eval, 8 shards. Runs BOTH bench  
-runs/e1_close_shape_row.sh                                  14  6e8e95e7 2026-09-05   none                                    Close e1_kda_shape_fault's ledger row on the pod.             
-runs/e1_v14_build.sh                                        10  b1f794fa 2026-09-04   none                                    v14 agentic SFT pack, rebuilt under the write gate with the   
-runs/en_c4_30b_shared.sh                                    21  b4095851 2026-09-07   none                                    58's caution: a recount that only adds the terminator agrees  
 runs/heval_auto_loop.sh                                    518  e902f52f 2026-09-24   none                                    Auto HumanEval on every new ckpt_v41_ced_0923.pt.stepN, CPU-  
-runs/kda_shape_launch.sh                                    20  aebe8328 2026-09-05   none                                    Shape-fault probe on CARD 5. Grant: runs/card_assignment.jso  
 runs/mem_probe_TEMPLATE.sh                                  73  8c23ea86 2026-09-05   ENTRY                                   TEMPLATE for one cell of the six-cell readout-4 probe (4c's   
 runs/mem_probe_base.sh                                      73  8c23ea86 2026-09-05   ENTRY                                   TEMPLATE for one cell of the six-cell readout-4 probe (4c's   
-runs/mem_probe_bn.sh                                        73  8c23ea86 2026-09-05   ledger:runs/review.jsonl                TEMPLATE for one cell of the six-cell readout-4 probe (4c's   
-runs/mem_probe_l2.sh                                        73  8c23ea86 2026-09-05   none                                    TEMPLATE for one cell of the six-cell readout-4 probe (4c's   
-runs/mem_probe_sel2.sh                                      73  8c23ea86 2026-09-05   none                                    TEMPLATE for one cell of the six-cell readout-4 probe (4c's   
-runs/mem_probe_sel2_l2.sh                                   73  8c23ea86 2026-09-05   none                                    TEMPLATE for one cell of the six-cell readout-4 probe (4c's   
-runs/mem_probe_sel3.sh                                      73  8c23ea86 2026-09-05   none                                    TEMPLATE for one cell of the six-cell readout-4 probe (4c's   
 runs/recount_cot_ot.sh                                      27  ae6829c2 2026-09-07   none                                    NO PURPOSE LINE                                               
-runs/recount_rc2.sh                                          6  b4095851 2026-09-07   none                                    NO PURPOSE LINE                                               
-runs/recount_t44.sh                                          7  b4095851 2026-09-07   none                                    NO PURPOSE LINE                                               
-runs/restamp_cot_ot.py                                      41  cdaf37ab 2026-09-07   none                                    Restamp cot_open_thoughts: tokens_kept was the per-row token  
-runs/restamp_en_c4_30b.py                                   46  b4095851 2026-09-07   ledger:runs/review.jsonl                Re-stamp en_c4_30b: 645,640,484 -> 646,669,989, exactly one   
-runs/resume1_30b.sh                                         83  eecdd60d 2026-09-07   none                                    Resume 1 of 1.5b-a0.2b-e48_30b, from ckpt_1.5b-a0.2b-e48_30b  
 runs/s_inject_pod_build.sh                                  22  5d21ac88 2026-09-05   ledger:runs/review.jsonl                Build experiment-1's injection shards ON THE POD, so the arm  
 runs/stage2_timing_calib.sh                                 23  ac79db63 2026-09-14   docs:docs/lessons/v41_r3_fullrun_retro_0914.md  Timing calibration ONLY -- do NOT run until r3 finishes (fb   
 runs/token_cache_move_0905.sh                               57  27609f07 2026-09-05   none                                    Copy all 22 token cache groups (247.8 GB) from the overlay t  
@@ -706,7 +691,7 @@ scripts/write_prereg_moe48_30b.py                          300  65d704ac 2026-09
 serve.py                                                   166  0f4337a9 2026-09-02   ENTRY                                   Standalone CPU inference server — no fla dependency.          
 sft.py                                                     231  0b21cdfc 2026-09-07   ENTRY                                   SFT: fine-tune a pretrained HybridLM checkpoint on packed in  
 sft_math.py                                                636  b6c6785f 2026-09-18   ENTRY                                   Stage-2 math SFT: sft.py plus --out (never overwrites ckpt_s  
-tests/__init__.py                                            0  abe92dc1 2026-09-16   none                                    NO PURPOSE LINE                                               
+tests/__init__.py                                            0  abe92dc1 2026-09-16   facts:facts/data_quality.json           NO PURPOSE LINE                                               
 tests/test_l2_fit_alignment.py                             121  5356534c 2026-09-16   none                                    Small-scale end-to-end fit: de's #397 ledger loader -> our h  
 tests/test_l2_quality_head.py                              269  426df02c 2026-09-16   none                                    Known-answer checks for the L2 quality head losses (no encod  
 third_party/deepseek_v41_ref/verify_ref.py                  43  abe92dc1 2026-09-16   none                                    Verify the vendored DeepSeek-V4.1 reference snapshot against  
@@ -717,8 +702,8 @@ v41f_l2/l2_quality_head.py                                 302  426df02c 2026-09
 v41f_l2/train_l2.py                                        149  488daaa7 2026-09-16   none                                    L2 quality head training entry point.                         
 
 ==============================================================================================================================================================================================
-Total: 699 files, 387 entry points, 608 BFS-reachable, 583 citation edges, 91 unreachable (0 DELETE, 13 KEEP)
-Readability debt: 21 of 699 files have NO PURPOSE LINE (3.0%) -- no docstring and no leading comment saying what the file is for
+Total: 684 files, 388 entry points, 607 BFS-reachable, 582 citation edges, 77 unreachable (0 DELETE, 13 KEEP)
+Readability debt: 19 of 684 files have NO PURPOSE LINE (2.8%) -- no docstring and no leading comment saying what the file is for
 
 Unreachable after checking all 7 edge kinds (ENTRY, import, registry, docs, facts, ledger, comment) -- deletion candidates, and each still needs a
 fixed-point run before it is deleted:
@@ -754,22 +739,9 @@ fixed-point run before it is deleted:
   runs/audit_0904/unmutated_fail.py                       
   runs/audit_0904/walk_tracked_population.py              
   runs/corpus_secret_scan_0905.sh                         
-  runs/count_dir.py                                       
   runs/e0_n10.sh                                          
-  runs/e1_close_shape_row.sh                              
-  runs/e1_v14_build.sh                                    
-  runs/en_c4_30b_shared.sh                                
   runs/heval_auto_loop.sh                                 
-  runs/kda_shape_launch.sh                                
-  runs/mem_probe_l2.sh                                    
-  runs/mem_probe_sel2.sh                                  
-  runs/mem_probe_sel2_l2.sh                               
-  runs/mem_probe_sel3.sh                                  
   runs/recount_cot_ot.sh                                  
-  runs/recount_rc2.sh                                     
-  runs/recount_t44.sh                                     
-  runs/restamp_cot_ot.py                                  
-  runs/resume1_30b.sh                                     
   runs/token_cache_move_0905.sh                           
   runs/v41_gate_0911_resume_w8.sh                         
   runs/v41_gate_0922.sh                                   
@@ -805,7 +777,6 @@ fixed-point run before it is deleted:
   scripts/n7c_score_prefix.py                             
   scripts/test_attn_res_fp32_logits.py                    KEEP (green from repo root; the only check that --attn_res_fp32_logits is not inert)
   scripts/verify_endpoint_ckpt.py                         
-  tests/__init__.py                                       
   tests/test_l2_fit_alignment.py                          
   tests/test_l2_quality_head.py                           
   third_party/deepseek_v41_ref/verify_ref.py              
@@ -814,7 +785,7 @@ fixed-point run before it is deleted:
   v41f_l2/l2_quality_head.py                              
   v41f_l2/train_l2.py                                     
 
-NO PURPOSE LINE (21):
+NO PURPOSE LINE (19):
   datagen/fable5/analyse_fable5.py
   datagen/fable5/clean_fable5.py
   datagen/p1/deploy_head.py
@@ -827,8 +798,6 @@ NO PURPOSE LINE (21):
   datagen/sft_math_share.py
   runs/audit_0904/_disk_inv.py
   runs/recount_cot_ot.sh
-  runs/recount_rc2.sh
-  runs/recount_t44.sh
   scripts/de108/check_ragged_gather_backward.py
   scripts/de108/check_ragged_varlen_flash.py
   scripts/de108/check_split_softmax_combine.py
