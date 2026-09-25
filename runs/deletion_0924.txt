@@ -62,3 +62,8 @@ DELETED batch2 44 entries 2026-09-24T12:32:38Z
 # Batch 3 laptop: 43 git worktrees, all clean, ahead=0 (HEAD ancestor of origin/main), no lsof/tmux cwd. 3.68GB total du before remove. Removed with 'git worktree remove' (no --force); 15 named branches deleted (14 -d, 1 -D verified main ancestor), rest detached. 1 skipped: aupai-ci (tmux pane cwd). 18 ahead and 15 dirty untouched (reported separately).
 LAPTOPWT 43-merged-worktrees 3.68G
 DELETED batch3 43 entries 2026-09-24T12:32:38Z
+# Batch 4 pod /work/aupai (container view): 3 pod-only script leftovers, user authorized via 1e 2026-09-25 ("就你说了算"). None tracked on main, none running, no lsof handle. Two are v41f-retirement leftovers pod_push never removes; their bytes are byte-identical (sha256) to the git blobs deleted in #694 commit e67aa73b, so recoverable from history. audit_caches_0e.py was NEVER committed and has NO persistent backup; it was read once to record its pre-delete sha, nothing was retained. Training v41_ced_0923 checkpoints (6) untouched.
+PODSCRIPT probes/v41f_stepd_longrun.py 17782B sha256=5c8693bfa34a19d855dfaafdefc22fee5759fd0ec388a9a7caa8db1bd158cd3b git=e67aa73b^:probes/v41f_stepd_longrun.py
+PODSCRIPT scripts/v41f_param_count.py 15279B sha256=7793a0e8b066aa4da96249f8548f8460402390d02d410c91475aba6dc97d1254 git=e67aa73b^:scripts/v41f_param_count.py
+PODSCRIPT audit_caches_0e.py 1280B sha256=c5ebcfa673a1872791211aa835485ada97be4f956ad58bb364d28bd846815b64 never-committed no-persistent-backup
+DELETED batch4 3 entries 2026-09-25T07:26:00Z
