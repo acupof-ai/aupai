@@ -75,16 +75,14 @@ TEST_NAME = "test_solution.py"
 # the test, not the implementation: seeded randomness inside the code under test is fine,
 # an unseeded draw in the assertion is not.
 NONDETERMINISM = (
-    (r"\btime\.time\(|\bdatetime\.now\(|\bdate\.today\(|\btime\.monotonic\(",
-     "wall clock: the assertion depends on when it runs"),
-    (r"\brandom\.(?!seed)\w+\(|\bnp\.random\.(?!seed)\w+\(",
-     "unseeded random in the test"),
-    (r"assert\s+[\w.\[\]()]+\s*==\s*[-+]?\d+\.\d{6,}",
-     "exact equality against a long float literal"),
-    (r"\bos\.environ\b|\bsocket\.|\brequests\.|\burllib\b",
-     "environment or network dependence"),
-    (r"\bid\(|\bhash\(",
-     "identity or hash: PYTHONHASHSEED varies"),
+    (
+        r"\btime\.time\(|\bdatetime\.now\(|\bdate\.today\(|\btime\.monotonic\(",
+        "wall clock: the assertion depends on when it runs",
+    ),
+    (r"\brandom\.(?!seed)\w+\(|\bnp\.random\.(?!seed)\w+\(", "unseeded random in the test"),
+    (r"assert\s+[\w.\[\]()]+\s*==\s*[-+]?\d+\.\d{6,}", "exact equality against a long float literal"),
+    (r"\bos\.environ\b|\bsocket\.|\brequests\.|\burllib\b", "environment or network dependence"),
+    (r"\bid\(|\bhash\(", "identity or hash: PYTHONHASHSEED varies"),
 )
 
 
@@ -103,8 +101,17 @@ def _runner_argv(tests):
     try:
         import pytest  # noqa: F401
 
-        return [sys.executable, "-I", "-m", "pytest", "-q", "-p", "no:cacheprovider",
-                "--no-header", TEST_NAME]
+        return [
+            sys.executable,
+            "-I",
+            "-m",
+            "pytest",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "--no-header",
+            TEST_NAME,
+        ]
     except ImportError:
         return [sys.executable, "-I", "-m", "unittest", "-q", TEST_NAME.removesuffix(".py")]
 
@@ -117,8 +124,7 @@ def _runner_argv(tests):
 # suite caught it on the pod (every genuine pass scored 0.0), which is the only reason this
 # comment exists. MEASURED raw stdout: '.  [100%]\n1 passed in 0.00s\n' (2026-09-02).
 # The `=` is therefore optional, and the count regex does the real work.
-_SUMMARY = re.compile(r"^=*\s*(?P<body>[^=\n]*?\d+\s+\w+[^=\n]*?)\s+in\s+[\d.]+s[^=\n]*=*\s*$",
-                      re.M)
+_SUMMARY = re.compile(r"^=*\s*(?P<body>[^=\n]*?\d+\s+\w+[^=\n]*?)\s+in\s+[\d.]+s[^=\n]*=*\s*$", re.M)
 _NOTESTS = re.compile(r"^=*\s*no tests ran\s+in\s+[\d.]+s.*$", re.M)
 _COUNT = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpassed|deselected)")
 
@@ -175,24 +181,207 @@ def verdict(rc, timed_out, stdout):
         return False, f"summary_mismatch: rc 0 but summary counts {bad} failed/error"
     if not counts.get("passed", 0):
         skipped = counts.get("skipped", 0)
-        return False, (f"rc 0 with no test passed ({skipped} skipped)" if skipped
-                       else "rc 0 with no test passed")
+        return False, (
+            f"rc 0 with no test passed ({skipped} skipped)" if skipped else "rc 0 with no test passed"
+        )
     return True, f"{counts['passed']} passed"
+
+
+def _norm_stdout(text):
+    """Line-normalise stdout for exact comparison: drop trailing whitespace on
+    every line, then drop leading/trailing blank lines. NO fuzzy matching and
+    NO whitespace-inside-line normalisation -- two tokens separated by one space
+    vs two is a real difference for this exact reward."""
+    lines = [ln.rstrip() for ln in (text or "").split("\n")]
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    return lines
+
+
+def _lines_close(got, expected, rel_tol, abs_tol):
+    """Exact line equality; numeric tokens compared within tolerance ONLY when
+    the case sets a tolerance. Both lines must tokenise to the same count and
+    every non-numeric token must match verbatim."""
+    if got == expected:
+        return True
+    if rel_tol is None and abs_tol is None:
+        return False
+    import math
+
+    gt, et = got.split(), expected.split()
+    if len(gt) != len(et):
+        return False
+    for a, b in zip(gt, et):
+        if a == b:
+            continue
+        try:
+            fa, fb = float(a), float(b)
+        except ValueError:
+            return False
+        if not math.isclose(fa, fb, rel_tol=rel_tol or 0.0, abs_tol=abs_tol or 0.0):
+            return False
+    return True
+
+
+def score_stdin(code, cases, timeout=10, executor=None, level=None, workdir=None, generated=False):
+    """Binary reward for a stdin->stdout program, one process per case.
+
+    `cases` is a list of {"input": str, "output": str, optionally "rel_tol"/
+    "abs_tol": float} dicts. `code` is a complete program that reads sys.stdin
+    and prints; it is written to solution.py and run as `python solution.py`
+    (no pytest). The process gets the case input on stdin; its stdout must match
+    after per-line trailing-whitespace strip. Float tolerance applies only to a
+    case that declares it (numeric tokens within isclose, verbatim elsewhere).
+
+    generated=True (the reward_fn_* rollout path) refuses to run under
+    ALLOW_UNISOLATED=1; generated=False is the offline builder path executing a
+    dataset's own trusted references (isolate still records its level).
+
+    Returns the same evidence shape as score(). Every case must pass for 1.0; a
+    timeout/nonzero-rc/any mismatch is 0.0. Used for the APPS/TACO stdin-style
+    problems that the import-pytest contract cannot score.
+    """
+    if generated:
+        _assert_generated_isolated()
+    ex = executor or _isolate_run
+    if ex is None:
+        raise RuntimeError("no executor: pass executor=... for stdin scoring")
+    if not cases:
+        return {
+            "reward": 0.0,
+            "level": level,
+            "rc": None,
+            "reason": "no cases",
+            "stdout": "",
+            "stderr": "",
+            "timed_out": False,
+            "risk": [],
+            "passed_cases": 0,
+            "n_cases": 0,
+        }
+    own = workdir is None
+    workdir = workdir or tempfile.mkdtemp(prefix="reward_stdin.")
+    try:
+        with open(os.path.join(workdir, IMPL_NAME), "w", encoding="utf-8") as f:
+            f.write(code)
+        passed = 0
+        last = ""
+        lvl_used = level
+        timed = False
+        for i, case in enumerate(cases):
+            r = ex(
+                None,
+                workdir=workdir,
+                timeout=timeout,
+                level=level,
+                argv=[sys.executable, "-I", IMPL_NAME],
+                stdin_data=case["input"],
+            )
+            lvl_used = r["level"]
+            if r["timed_out"]:
+                return {
+                    "reward": 0.0,
+                    "level": lvl_used,
+                    "rc": -1,
+                    "reason": f"timeout case {i}",
+                    "stdout": r["stdout"][-2000:],
+                    "stderr": r["stderr"][-2000:],
+                    "timed_out": True,
+                    "risk": [],
+                    "passed_cases": passed,
+                    "n_cases": len(cases),
+                }
+            timed = timed or r["timed_out"]
+            if r["rc"] != 0:
+                return {
+                    "reward": 0.0,
+                    "level": lvl_used,
+                    "rc": r["rc"],
+                    "reason": f"rc {r['rc']} case {i}",
+                    "stdout": r["stdout"][-2000:],
+                    "stderr": r["stderr"][-2000:],
+                    "timed_out": False,
+                    "risk": [],
+                    "passed_cases": passed,
+                    "n_cases": len(cases),
+                }
+            got = _norm_stdout(r["stdout"])
+            want = _norm_stdout(case["output"])
+            if len(got) != len(want) or not all(
+                _lines_close(g, w, case.get("rel_tol"), case.get("abs_tol")) for g, w in zip(got, want)
+            ):
+                last = f"stdout mismatch case {i}"
+                return {
+                    "reward": 0.0,
+                    "level": lvl_used,
+                    "rc": 0,
+                    "reason": last,
+                    "stdout": r["stdout"][-2000:],
+                    "stderr": r["stderr"][-2000:],
+                    "timed_out": False,
+                    "risk": [],
+                    "passed_cases": passed,
+                    "n_cases": len(cases),
+                }
+            passed += 1
+        return {
+            "reward": 1.0,
+            "level": lvl_used,
+            "rc": 0,
+            "reason": f"{passed}/{len(cases)} cases passed",
+            "stdout": "",
+            "stderr": "",
+            "timed_out": False,
+            "risk": [],
+            "passed_cases": passed,
+            "n_cases": len(cases),
+        }
+    finally:
+        if own:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _assert_generated_isolated():
+    """A model ROLLOUT must never execute under the trusted-reference escape hatch.
+
+    ALLOW_UNISOLATED=1 exists for offline builders (scripts/rl_code_pool.py) executing the
+    dataset's own trusted references with only rlimits. RL rollout code is untrusted, so the
+    reward entry points refuse to run when that switch is on, instead of silently scoring
+    generated code unisolated (1e order 2026-09-25).
+    """
+    if os.environ.get("ALLOW_UNISOLATED") == "1":
+        raise RuntimeError(
+            "ALLOW_UNISOLATED=1 is set on the generated-code reward path: that switch is only "
+            "for offline builders executing a dataset's trusted references (generated=False). "
+            "Unset it before scoring model rollouts; generated code needs real isolation."
+        )
+
+
+def reward_fn_stdin(code, cases, timeout=10, executor=None, level=None, workdir=None):
+    """1.0 iff every stdin/stdout case passes. See score_stdin."""
+    return score_stdin(
+        code, cases, timeout=timeout, executor=executor, level=level, workdir=workdir, generated=True
+    )["reward"]
 
 
 def reward_fn(code, tests, timeout=30, executor=None, level=None, workdir=None):
     """1.0 if every test passes, else 0.0. See the module docstring for the contract."""
-    return score(code, tests, timeout=timeout, executor=executor, level=level,
-                 workdir=workdir)["reward"]
+    return score(
+        code, tests, timeout=timeout, executor=executor, level=level, workdir=workdir, generated=True
+    )["reward"]
 
 
-def score(code, tests, timeout=30, executor=None, level=None, workdir=None):
+def score(code, tests, timeout=30, executor=None, level=None, workdir=None, generated=False):
     """reward_fn plus the evidence: {reward, level, rc, stdout, stderr, timed_out, risk}.
 
     The dict is what a rollout record carries. `level` in particular: a reward earned under
     rlimits_only and one earned under a namespace are different measurements (the vocab_id
     reasoning), so the level travels with the number instead of being logged separately.
     """
+    if generated:
+        _assert_generated_isolated()
     ex = executor or _isolate_run
     if ex is None:
         raise RuntimeError(
@@ -213,10 +402,16 @@ def score(code, tests, timeout=30, executor=None, level=None, workdir=None):
             f.write(tests)
         r = ex(None, workdir=workdir, timeout=timeout, level=level, argv=_runner_argv(tests))
         passed, reason = verdict(r["rc"], r["timed_out"], r["stdout"])
-        return {"reward": 1.0 if passed else 0.0, "level": r["level"], "rc": r["rc"],
-                "reason": reason,
-                "stdout": r["stdout"][-2000:], "stderr": r["stderr"][-2000:],
-                "timed_out": r["timed_out"], "risk": nondeterminism_risk(tests)}
+        return {
+            "reward": 1.0 if passed else 0.0,
+            "level": r["level"],
+            "rc": r["rc"],
+            "reason": reason,
+            "stdout": r["stdout"][-2000:],
+            "stderr": r["stderr"][-2000:],
+            "timed_out": r["timed_out"],
+            "risk": nondeterminism_risk(tests),
+        }
     finally:
         if own:
             shutil.rmtree(workdir, ignore_errors=True)
@@ -228,35 +423,60 @@ def score(code, tests, timeout=30, executor=None, level=None, workdir=None):
 # Same two classes as algorithms/test_rlvr_reward_suite.py.
 
 _GOOD_IMPL = "def add(a, b):\n    return a + b\n"
-_GOOD_TEST = ("from solution import add\n\n\n"
-              "def test_add():\n    assert add(2, 3) == 5\n    assert add(-1, 1) == 0\n")
+_GOOD_TEST = (
+    "from solution import add\n\n\ndef test_add():\n    assert add(2, 3) == 5\n    assert add(-1, 1) == 0\n"
+)
 
 SHOULD = [
     (_GOOD_IMPL, _GOOD_TEST, 1.0, "correct implementation passes its tests"),
     ("def add(a, b):\n    return a - b\n", _GOOD_TEST, 0.0, "wrong implementation fails"),
-    ("def add(a, b):\n    return a + b\n", "from solution import add\n\n\n"
-     "def test_add():\n    assert add(2, 3) == 6\n", 0.0, "test disagrees with correct code"),
+    (
+        "def add(a, b):\n    return a + b\n",
+        "from solution import add\n\n\ndef test_add():\n    assert add(2, 3) == 6\n",
+        0.0,
+        "test disagrees with correct code",
+    ),
     ("def add(a, b:\n    return a\n", _GOOD_TEST, 0.0, "syntax error is not a pass"),
     ("", _GOOD_TEST, 0.0, "empty implementation: ImportError is not a pass"),
     (_GOOD_IMPL, "", 0.0, "empty test file collects zero tests, which cannot pass"),
-    (_GOOD_IMPL, "from solution import add\n\n\ndef test_a():\n    assert add(1, 1) == 2\n\n\n"
-     "def test_b():\n    assert add(1, 1) == 3\n", 0.0,
-     "one of two tests fails -> 0.0, no partial credit"),
-    ("import time\n\n\ndef add(a, b):\n    time.sleep(120)\n    return a + b\n",
-     _GOOD_TEST, 0.0, "a hang is a failure, not a hang"),
-    (_GOOD_IMPL + "\nraise SystemExit(0)\n", _GOOD_TEST, 0.0,
-     "import-time SystemExit(0) does not buy a pass"),
+    (
+        _GOOD_IMPL,
+        "from solution import add\n\n\ndef test_a():\n    assert add(1, 1) == 2\n\n\n"
+        "def test_b():\n    assert add(1, 1) == 3\n",
+        0.0,
+        "one of two tests fails -> 0.0, no partial credit",
+    ),
+    (
+        "import time\n\n\ndef add(a, b):\n    time.sleep(120)\n    return a + b\n",
+        _GOOD_TEST,
+        0.0,
+        "a hang is a failure, not a hang",
+    ),
+    (
+        _GOOD_IMPL + "\nraise SystemExit(0)\n",
+        _GOOD_TEST,
+        0.0,
+        "import-time SystemExit(0) does not buy a pass",
+    ),
     # The defence, as a case: the model rewrites the test file, and it does not help.
-    ("import pathlib\n"
-     "pathlib.Path('test_solution.py').write_text('def test_x():\\n    assert True\\n')\n"
-     "def add(a, b):\n    return a - b\n", _GOOD_TEST, 0.0,
-     "a rollout that overwrites the tests at import time still fails: tests are written "
-     "after code, and the runner reads them from disk"),
+    (
+        "import pathlib\n"
+        "pathlib.Path('test_solution.py').write_text('def test_x():\\n    assert True\\n')\n"
+        "def add(a, b):\n    return a - b\n",
+        _GOOD_TEST,
+        0.0,
+        "a rollout that overwrites the tests at import time still fails: tests are written "
+        "after code, and the runner reads them from disk",
+    ),
     # And the subtler form: sabotage the assertion by shadowing what it compares.
-    ("def add(a, b):\n    return a - b\n\n\n"
-     "class _Always:\n"
-     "    def __eq__(self, other):\n        return True\n",
-     _GOOD_TEST, 0.0, "defining an always-equal class does not make a wrong add pass"),
+    (
+        "def add(a, b):\n    return a - b\n\n\n"
+        "class _Always:\n"
+        "    def __eq__(self, other):\n        return True\n",
+        _GOOD_TEST,
+        0.0,
+        "defining an always-equal class does not make a wrong add pass",
+    ),
     # A test file that exits at module level is not a pass. MEASURED, and the measurement
     # corrected me: I first wrote this as a GAP documenting reward 1.0 on the reasoning that
     # sys.exit(0) yields rc 0. pytest actually raises INTERNALERROR during collection and
@@ -264,27 +484,36 @@ SHOULD = [
     # documented an exploit that does not exist and, worse, would have flagged as CHANGED
     # the first time anyone read it -- a documented non-fact is a false alarm with a
     # citation. Run the case before writing down what it does.
-    (_GOOD_IMPL,
-     "import sys\nfrom solution import add\n\n\n"
-     "def test_add():\n    assert add(2, 3) == 5\n\n\nsys.exit(0)\n",
-     0.0, "sys.exit(0) at test-module level: pytest INTERNALERRORs, rc 3, no tests ran"),
+    (
+        _GOOD_IMPL,
+        "import sys\nfrom solution import add\n\n\n"
+        "def test_add():\n    assert add(2, 3) == 5\n\n\nsys.exit(0)\n",
+        0.0,
+        "sys.exit(0) at test-module level: pytest INTERNALERRORs, rc 3, no tests ran",
+    ),
     # THE EXPLOIT, closed by fb ruling (c) 2026-09-02 and kept as a SHOULD so it cannot come
     # back. It was a GAP documenting reward 1.0: every test skipping gives `2 skipped in
     # 0.30s` at rc 0, so a WRONG implementation earned full reward -- and it survived the
     # write-order defence entirely, because the model never has to touch the test file if the
     # task ships tests that skip. rc alone cannot see it; the summary line can.
-    ("def add(a, b):\n    return a - b\n",
-     "from solution import add\n\n\n"
-     "def test_a():\n    import pytest\n    pytest.skip('hard')\n\n\n"
-     "def test_b():\n    import pytest\n    pytest.skip('also hard')\n",
-     0.0, "EVERY test skipped -> rc 0 but nothing passed -> 0.0, not 1.0"),
+    (
+        "def add(a, b):\n    return a - b\n",
+        "from solution import add\n\n\n"
+        "def test_a():\n    import pytest\n    pytest.skip('hard')\n\n\n"
+        "def test_b():\n    import pytest\n    pytest.skip('also hard')\n",
+        0.0,
+        "EVERY test skipped -> rc 0 but nothing passed -> 0.0, not 1.0",
+    ),
     # And the other side of that line, which is why the criterion is "at least one passed"
     # and not "no skips": a real pass beside a skip is a pass.
-    (_GOOD_IMPL,
-     "from solution import add\n\n\n"
-     "def test_add():\n    assert add(2, 3) == 5\n\n\n"
-     "def test_skipped():\n    import pytest\n    pytest.skip('not implemented')\n",
-     1.0, "1 passed, 1 skipped -> 1.0: a skip beside a real pass does not void it"),
+    (
+        _GOOD_IMPL,
+        "from solution import add\n\n\n"
+        "def test_add():\n    assert add(2, 3) == 5\n\n\n"
+        "def test_skipped():\n    import pytest\n    pytest.skip('not implemented')\n",
+        1.0,
+        "1 passed, 1 skipped -> 1.0: a skip beside a real pass does not void it",
+    ),
 ]
 
 GAP = [
@@ -296,21 +525,91 @@ GAP = [
     # arguably wrong (the code worked). NOT decided here: whether a miner should keep such
     # pairs at all is 3b's call, and inventing a rule for it in the reward would be the
     # improvisation fb's ruling on the skip hole deliberately avoided.
-    (_GOOD_IMPL,
-     "import pytest\nfrom solution import add\n\n\n"
-     "@pytest.mark.xfail\ndef test_add():\n    assert add(2, 3) == 5\n",
-     0.0, 0.0,
-     "an xfail-marked test that PASSES reports `1 xpassed`, not `1 passed`, so the reward "
-     "is 0.0 on a correct implementation. Defensible -- the task declared the test expected "
-     "to fail -- but a miner shipping xfail markers would silently zero good rollouts. "
-     "Raise with 3b before the first RL step rather than special-casing it here"),
-    (_GOOD_IMPL,
-     "from solution import add\n\n\n"
-     "def test_add():\n    assert add(2, 3) == 5\n\n\n"
-     "def test_deselected():\n    assert add(1, 1) == 2\n",
-     1.0, 1.0,
-     "a plain two-test file passes; recorded beside the xfail case as the control that the "
-     "summary parser is not simply rejecting multi-test files"),
+    (
+        _GOOD_IMPL,
+        "import pytest\nfrom solution import add\n\n\n"
+        "@pytest.mark.xfail\ndef test_add():\n    assert add(2, 3) == 5\n",
+        0.0,
+        0.0,
+        "an xfail-marked test that PASSES reports `1 xpassed`, not `1 passed`, so the reward "
+        "is 0.0 on a correct implementation. Defensible -- the task declared the test expected "
+        "to fail -- but a miner shipping xfail markers would silently zero good rollouts. "
+        "Raise with 3b before the first RL step rather than special-casing it here",
+    ),
+    (
+        _GOOD_IMPL,
+        "from solution import add\n\n\n"
+        "def test_add():\n    assert add(2, 3) == 5\n\n\n"
+        "def test_deselected():\n    assert add(1, 1) == 2\n",
+        1.0,
+        1.0,
+        "a plain two-test file passes; recorded beside the xfail case as the control that the "
+        "summary parser is not simply rejecting multi-test files",
+    ),
+]
+
+
+STDIN_SHOULD = [
+    # score_stdin known answers (3b, 2026-09-25). Each drives a whole script with
+    # piped stdin, so -- like SHOULD -- they run only in the full (non-detector)
+    # selftest on a host with process isolation. The dataset-scale 50+50 gate is
+    # algorithms/test_stdin_reward_known.py (NEEDS_DATA); these are the tiny
+    # synthetic answers that stay runnable by hand on every change.
+    (
+        "import sys\na,b=map(int,sys.stdin.read().split())\nprint(a+b)\n",
+        [{"input": "1 2\n", "output": "3\n"}, {"input": "10 20\n", "output": "30\n"}],
+        1.0,
+        "correct stdin script passes every case",
+    ),
+    (
+        "import sys\na,b=map(int,sys.stdin.read().split())\nprint(a+b)\n",
+        [{"input": "1 2\n", "output": "3   \n"}],
+        1.0,
+        "trailing whitespace per line is stripped",
+    ),
+    ("print(999)\n", [{"input": "1 2\n", "output": "3\n"}], 0.0, "wrong stdout is a failure"),
+    (
+        "import sys\na,b=map(int,sys.stdin.read().split())\nsys.stdout.write(str(a+b)+'X')\n",
+        [{"input": "1 2\n", "output": "3\n"}],
+        0.0,
+        "one extra byte on stdout is a failure (the mutant shape)",
+    ),
+    (
+        "import sys\nsys.stderr.write('boom')\nsys.exit(1)\n",
+        [{"input": "\n", "output": "\n"}],
+        0.0,
+        "nonzero rc is a failure even with empty output",
+    ),
+    (
+        "while True:\n    pass\n",
+        [{"input": "\n", "output": ""}],
+        0.0,
+        "an infinite loop times out to 0.0 (timed_out asserted by the caller)",
+    ),
+    (
+        "print(1.0000000000000002)\n",
+        [{"input": "", "output": "1.0\n"}],
+        0.0,
+        "float formatting differs: exact compare is 0, no implicit tolerance",
+    ),
+    (
+        "print(1.0000000000000002)\n",
+        [{"input": "", "output": "1.0\n", "rel_tol": 1e-6, "abs_tol": 1e-6}],
+        1.0,
+        "the same output passes when the CASE declares numeric tolerance",
+    ),
+    (
+        "print('x 1')\n",
+        [{"input": "", "output": "x 1\n", "rel_tol": 1e-6, "abs_tol": 1e-6}],
+        1.0,
+        "tolerance never touches non-numeric tokens, which must match verbatim",
+    ),
+    (
+        "print('1 2')\n",
+        [{"input": "", "output": "1 3\n", "rel_tol": 1e-6, "abs_tol": 1e-6}],
+        0.0,
+        "a differing number under tolerance is still a failure",
+    ),
 ]
 
 
@@ -330,27 +629,49 @@ def _detector_cases():
     # every genuine pass. Invented fixtures test the fixture writer's assumptions; the shape
     # that reaches the code has to come from the code.
     vcases = [
-        (0, ".                                     [100%]\n1 passed in 0.00s\n", True,
-         "REAL -q output: no `=` decoration at all"),
-        (0, "..                                    [100%]\n2 passed in 0.01s\n", True,
-         "REAL -q, two tests"),
-        (0, "ss                                    [100%]\n2 skipped in 0.30s\n", False,
-         "REAL -q, ALL skipped at rc 0 -> NOT a pass"),
-        (1, ".F                                    [100%]\n1 failed, 1 passed in 0.12s\n",
-         False, "REAL -q, rc 1 -> fail"),
-        (0, ".s                                    [100%]\n1 passed, 1 skipped in 0.02s\n",
-         True, "REAL -q, a skip beside a real pass is still a pass"),
+        (
+            0,
+            ".                                     [100%]\n1 passed in 0.00s\n",
+            True,
+            "REAL -q output: no `=` decoration at all",
+        ),
+        (0, "..                                    [100%]\n2 passed in 0.01s\n", True, "REAL -q, two tests"),
+        (
+            0,
+            "ss                                    [100%]\n2 skipped in 0.30s\n",
+            False,
+            "REAL -q, ALL skipped at rc 0 -> NOT a pass",
+        ),
+        (
+            1,
+            ".F                                    [100%]\n1 failed, 1 passed in 0.12s\n",
+            False,
+            "REAL -q, rc 1 -> fail",
+        ),
+        (
+            0,
+            ".s                                    [100%]\n1 passed, 1 skipped in 0.02s\n",
+            True,
+            "REAL -q, a skip beside a real pass is still a pass",
+        ),
         # And the decorated shape, which is what pytest prints without -q -- kept so the
         # parser kegs working if _runner_argv ever drops -q.
         (0, "===== 1 passed in 0.01s =====", True, "decorated (non-q) shape still parses"),
         (0, "===== 2 passed, 1 skipped in 0.31s =====", True, "decorated, passed beside skip"),
-        (0, "===== 1 failed, 1 passed in 0.12s =====", False,
-         "rc 0 contradicting its own summary -> summary_mismatch"),
+        (
+            0,
+            "===== 1 failed, 1 passed in 0.12s =====",
+            False,
+            "rc 0 contradicting its own summary -> summary_mismatch",
+        ),
         (5, "no tests ran in 0.01s\n", False, "no tests ran -> fail"),
-        (0, "nothing that looks like a summary", False,
-         "rc 0 with no summary line -> summary_mismatch, never an implied pass"),
-        (0, "INTERNALERROR> boom\n1 passed in 0.01s\n", False,
-         "INTERNALERROR outweighs a passed count"),
+        (
+            0,
+            "nothing that looks like a summary",
+            False,
+            "rc 0 with no summary line -> summary_mismatch, never an implied pass",
+        ),
+        (0, "INTERNALERROR> boom\n1 passed in 0.01s\n", False, "INTERNALERROR outweighs a passed count"),
         (0, "1 xpassed in 0.01s\n", False, "xpassed is not passed"),
     ]
     for rc, out, want, note in vcases:
@@ -372,11 +693,15 @@ def _detector_cases():
     print(f"  {'ok  ' if ok else 'BUG '} an unparseable summary is None, and None scores 0")
 
     print("== nondeterminism detector ==")
-    det = [        ("def test_x():\n    assert 1 == 1\n", [], "clean"),
+    det = [
+        ("def test_x():\n    assert 1 == 1\n", [], "clean"),
         ("import time\ndef test_x():\n    assert time.time() > 0\n", 1, "wall clock"),
         ("import random\ndef test_x():\n    assert random.random() < 1\n", 1, "unseeded random"),
-        ("import random\nrandom.seed(0)\ndef test_x():\n    assert True\n", 0,
-         "random.seed alone is NOT flagged"),
+        (
+            "import random\nrandom.seed(0)\ndef test_x():\n    assert True\n",
+            0,
+            "random.seed alone is NOT flagged",
+        ),
         ("def test_x():\n    assert compute() == 0.333333333\n", 1, "long float equality"),
     ]
     bugs = 0
@@ -386,7 +711,54 @@ def _detector_cases():
         ok = (n == 0) if want == 0 or want == [] else (n >= 1)
         bugs += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'BUG '} {n} risk(s)  {note}")
+    print("== generated-code isolation guard (1e 2026-09-25) ==")
+    guard_bugs = _generated_isolation_guard_cases()
+    if guard_bugs:
+        for b in guard_bugs:
+            bugs += 1
+            print("  BUG  " + b)
+    else:
+        print("  ok   reward_fn/reward_fn_stdin refuse ALLOW_UNISOLATED=1; trusted path clear")
     return bugs, len(vcases) + 2 + len(det)
+
+
+def _generated_isolation_guard_cases():
+    """1e order 2026-09-25: the reward_fn_* rollout entry points refuse
+    ALLOW_UNISOLATED=1; the generated=False trusted-reference builder path and
+    the bare score() default do not (a fake executor proves the guard fires
+    before any execution)."""
+    saved = os.environ.get("ALLOW_UNISOLATED")
+    os.environ["ALLOW_UNISOLATED"] = "1"
+
+    def _fake_executor(*a, **k):  # never reached when the guard works
+        return {"level": "fake", "rc": 1, "stdout": "", "stderr": "", "timed_out": False}
+
+    bugs = []
+    for fn, args in (
+        (reward_fn, (_GOOD_IMPL, _GOOD_TEST)),
+        (reward_fn_stdin, ("print(1)\n", [{"input": "", "output": "1\n"}])),
+    ):
+        try:
+            fn(*args, timeout=2, executor=_fake_executor)
+            bugs.append(f"{fn.__name__} ran unisolated on generated code")
+        except RuntimeError:
+            pass
+    # trusted-reference path must clear the guard (a failed exec result is fine here)
+    try:
+        score_stdin(
+            "print(1)\n",
+            [{"input": "", "output": "1\n"}],
+            timeout=2,
+            executor=_fake_executor,
+            generated=False,
+        )
+    except RuntimeError:
+        bugs.append("score_stdin generated=False trusted path was refused")
+    if saved is None:
+        os.environ.pop("ALLOW_UNISOLATED", None)
+    else:
+        os.environ["ALLOW_UNISOLATED"] = saved
+    return bugs
 
 
 def _run_suite(level=None):
@@ -402,10 +774,17 @@ def _run_suite(level=None):
         got = reward_fn(code, tests, timeout=20, level=level)
         ok = got == cur
         flags += 0 if ok else 1
-        print(f"  {'as-documented' if ok else 'CHANGED      '} {got:.1f} "
-              f"(documented {cur:.1f}) {note[:70]}")
+        print(f"  {'as-documented' if ok else 'CHANGED      '} {got:.1f} (documented {cur:.1f}) {note[:70]}")
+    print("== STDIN_SHOULD (mismatch = bug) ==")
+    for code, cases, exp, note in STDIN_SHOULD:
+        r = score_stdin(code, cases, timeout=4, level=level)
+        ok = r["reward"] == exp
+        if "infinite loop" in note:
+            ok = ok and r["timed_out"]
+        bugs += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'BUG '} {r['reward']:.1f} want {exp:.1f}  {note}")
     dbugs, dn = _detector_cases()
-    return bugs + dbugs, flags, dn
+    return bugs + dbugs, flags, dn + len(STDIN_SHOULD)
 
 
 def _selftest(detector_only=False):
@@ -416,8 +795,7 @@ def _selftest(detector_only=False):
         # everywhere. The exemption belongs to the assertions that need a sandbox, not to
         # the file -- the same granularity the hook's own NEEDS_DATA comment argues for.
         bugs, n = _detector_cases()
-        print(f"{n} sandbox-free cases: {bugs} bug(s) (reward cases skipped: they need "
-              f"process isolation)")
+        print(f"{n} sandbox-free cases: {bugs} bug(s) (reward cases skipped: they need process isolation)")
         return 1 if bugs else 0
     lvl = None
     if detect_level is not None:
@@ -426,14 +804,16 @@ def _selftest(detector_only=False):
     bugs, flags, dn = _run_suite(level=lvl)
     # A suite where nothing ever fails is not a suite: both classes must be non-empty and
     # the negative cases must actually have produced 0.0 above.
-    assert any(e == 0.0 for *_, e, _ in ((c, t, e, n) for c, t, e, n in SHOULD)), \
+    assert any(e == 0.0 for *_, e, _ in ((c, t, e, n) for c, t, e, n in SHOULD)), (
         "SHOULD has no negative case"
+    )
     assert len(SHOULD) >= 10 and len(GAP) >= 2, "the suite shrank"
-    print(f"\n{len(SHOULD)} SHOULD, {len(GAP)} GAP, {dn} sandbox-free cases: "
-          f"{bugs} bug(s), {flags} flag(s)")
+    print(f"\n{len(SHOULD)} SHOULD, {len(GAP)} GAP, {dn} sandbox-free cases: {bugs} bug(s), {flags} flag(s)")
     if bugs:
-        print("FAIL: a SHOULD case did not match. The reward is what the model optimises "
-              "against, so a blind spot here becomes training signal.")
+        print(
+            "FAIL: a SHOULD case did not match. The reward is what the model optimises "
+            "against, so a blind spot here becomes training signal."
+        )
     return 1 if bugs else 0
 
 
@@ -475,27 +855,38 @@ def _roundtrip(path, limit=None, level=None):
             ok += 1
         else:
             bad += 1
-            failures.append((i, r.get("impl_path", "?"),
-                             ("TIMEOUT" if res["timed_out"] else f"rc {res['rc']}: "
-                              + (res["stderr"] or res["stdout"]).strip()[-160:])))
+            failures.append(
+                (
+                    i,
+                    r.get("impl_path", "?"),
+                    (
+                        "TIMEOUT"
+                        if res["timed_out"]
+                        else f"rc {res['rc']}: " + (res["stderr"] or res["stdout"]).strip()[-160:]
+                    ),
+                )
+            )
         if risk:
             unstable.append((i, r.get("impl_path", "?"), risk))
         if (i + 1) % 200 == 0:
-            print(f"  {i + 1}/{len(rows)}  {ok} pass  {bad} fail  "
-                  f"{len(unstable)} unstable", flush=True)
+            print(f"  {i + 1}/{len(rows)}  {ok} pass  {bad} fail  {len(unstable)} unstable", flush=True)
     rate = ok / len(rows)
     print(f"\nround trip: {ok}/{len(rows)} = {rate:.4%}")
-    print(f"unstable (detector fired, reward may differ between rollouts): "
-          f"{len(unstable)}/{len(rows)} = {len(unstable) / len(rows):.2%}")
+    print(
+        f"unstable (detector fired, reward may differ between rollouts): "
+        f"{len(unstable)}/{len(rows)} = {len(unstable) / len(rows):.2%}"
+    )
     for i, p, why in failures[:15]:
         print(f"  FAIL row {i} {p}: {why}")
     for i, p, risk in unstable[:10]:
         print(f"  UNSTABLE row {i} {p}: {', '.join(risk)}")
     if rate < 0.999:
-        print(f"\nBELOW THE 0830v1 GATE (99.9%). Reporting the number, not moving the "
-              f"threshold: {len(rows) - ok} pairs the miner ran green score 0.0 here, and "
-              f"each is either a defect in this reward or a pair the miner should not have "
-              f"kept. Read the failures above before the first RL step.")
+        print(
+            f"\nBELOW THE 0830v1 GATE (99.9%). Reporting the number, not moving the "
+            f"threshold: {len(rows) - ok} pairs the miner ran green score 0.0 here, and "
+            f"each is either a defect in this reward or a pair the miner should not have "
+            f"kept. Read the failures above before the first RL step."
+        )
         return 1
     print("\nGATE PASSED: >=99.9% of ground-truth pairs score 1.0.")
     return 0
@@ -504,8 +895,11 @@ def _roundtrip(path, limit=None, level=None):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--selftest", action="store_true")
-    ap.add_argument("--selftest-detector", action="store_true",
-                    help="only the assertions that need no sandbox (the commit hook runs this)")
+    ap.add_argument(
+        "--selftest-detector",
+        action="store_true",
+        help="only the assertions that need no sandbox (the commit hook runs this)",
+    )
     ap.add_argument("--roundtrip", metavar="PAIRS_JSONL")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--level", default=None, help="force an isolation level (default: detect)")

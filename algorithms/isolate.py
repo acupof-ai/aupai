@@ -182,11 +182,16 @@ def _rlimits(cpu_s, mem_bytes):
     return pre
 
 
-def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=None):
+def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=None,
+        stdin_data=None):
     """Execute `code` (a str) or `argv` (a list) under isolation. Returns a dict.
 
     Keys: level, rc, stdout, stderr, timed_out, isolates. `level` is the level actually
     used -- callers record it, they do not assume it.
+
+    stdin_data: optional text piped to the process's stdin (one string). Used by the
+    stdin/stdout code reward that feeds problem input to a full script; None leaves
+    stdin closed, the behaviour every existing caller depends on.
     """
     lvl = level or detect_level()
     if lvl == "rlimits_only" and os.environ.get("ALLOW_UNISOLATED") != "1":
@@ -227,9 +232,10 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
                          else a for a in (argv[1:] if argv else [])]
                 inner = [a for a in inner if a not in ("-I",)]
                 rc, out, err = run_sandboxed(code, timeout=timeout, files=files,
-                                            argv=inner, site="pytest" in inner)
+                                            argv=inner, site="pytest" in inner,
+                                            stdin=stdin_data)
             else:
-                rc, out, err = run_sandboxed(code, timeout=timeout)
+                rc, out, err = run_sandboxed(code, timeout=timeout, stdin=stdin_data)
             return {"level": lvl, "rc": rc, "stdout": out, "stderr": err,
                     "timed_out": err == "TIMEOUT", "isolates": ISOLATES[lvl]}
 
@@ -251,13 +257,16 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
             argv = ["firejail", "--quiet", "--net=none", "--private=" + workdir,
                     "--nogroups", "--"] + argv
 
-        p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        p = subprocess.Popen(argv, stdin=subprocess.PIPE if stdin_data is not None else None,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              cwd=workdir, preexec_fn=_rlimits(cpu_s, mem_mb * 1024 * 1024),
                              env={"PATH": "/usr/bin:/bin", "PYTHONIOENCODING": "utf-8",
                                   "HOME": workdir, "TMPDIR": workdir})
         timed_out = False
         try:
-            out, err = p.communicate(timeout=timeout)
+            out, err = p.communicate(
+                input=stdin_data.encode("utf-8") if stdin_data is not None else None,
+                timeout=timeout)
         except subprocess.TimeoutExpired:
             # The process group, not the leader: a child holds the pipes open and
             # communicate() blocks forever otherwise (the lesson sandbox_exec:85 records).
