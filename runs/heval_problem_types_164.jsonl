@@ -1,0 +1,165 @@
+{"_header": 1, "kind": "humaneval_problem_types", "classifier": "scripts/problem_types.py", "rows": "one per task; 164 tasks", "audit": "two independent 21-row samples read by hand: 16/21 then 20/21; 3 of the 5 first-round disagreements were the auditor's error, 2 were fixed in the classifier (see docs/lessons/humaneval_problem_types_0925.md)", "rule": "weighted literal signal patterns per type; top-1 type, plus type2 when within 0.6 of top-1; scores are the raw match counts", "boundary": "row != problem; this is a per-TASK label for HumanEval, where one row IS one distinct problem"}
+{"task_id": "HumanEval/0", "entry_point": "has_close_elements", "type": "float_geometry", "type2": null, "scores": {"float_geometry": 6, "collection_transform": 1}}
+{"task_id": "HumanEval/1", "entry_point": "separate_paren_groups", "type": "bracket_nesting", "type2": null, "scores": {"bracket_nesting": 13, "string_transform": 2, "collection_transform": 1}}
+{"task_id": "HumanEval/2", "entry_point": "truncate_number", "type": "float_geometry", "type2": null, "scores": {"float_geometry": 12, "sorting_select": 2}}
+{"task_id": "HumanEval/3", "entry_point": "below_zero", "type": "scenario_simulation", "type2": null, "scores": {"collection_transform": 1, "scenario_simulation": 4}}
+{"task_id": "HumanEval/4", "entry_point": "mean_absolute_deviation", "type": "float_geometry", "type2": null, "scores": {"float_geometry": 33, "collection_transform": 2, "arithmetic_basics": 6}}
+{"task_id": "HumanEval/5", "entry_point": "intersperse", "type": "collection_transform", "type2": null, "scores": {"collection_transform": 1}}
+{"task_id": "HumanEval/6", "entry_point": "parse_nested_parens", "type": "bracket_nesting", "type2": null, "scores": {"bracket_nesting": 23, "string_parse": 6, "sorting_select": 1, "string_transform": 1}}
+{"task_id": "HumanEval/7", "entry_point": "filter_by_substring", "type": "collection_transform", "type2": "string_transform", "scores": {"string_transform": 6, "collection_transform": 7}}
+{"task_id": "HumanEval/8", "entry_point": "sum_product", "type": "arithmetic_basics", "type2": null, "scores": {"collection_transform": 1, "arithmetic_basics": 8}}
+{"task_id": "HumanEval/9", "entry_point": "rolling_max", "type": "collection_transform", "type2": null, "scores": {"sorting_select": 1, "collection_transform": 3}}
+{"task_id": "HumanEval/10", "entry_point": "make_palindrome", "type": "string_transform", "type2": null, "scores": {"string_transform": 14}}
+{"task_id": "HumanEval/11", "entry_point": "string_xor", "type": "string_transform", "type2": null, "scores": {"base_and_bits": 4, "string_transform": 10}}
+{"task_id": "HumanEval/12", "entry_point": "longest", "type": "collection_transform", "type2": null, "scores": {"collection_transform": 1}}
+{"task_id": "HumanEval/13", "entry_point": "greatest_common_divisor", "type": "number_theory", "type2": null, "scores": {"number_theory": 9}}
+{"task_id": "HumanEval/14", "entry_point": "all_prefixes", "type": "string_transform", "type2": null, "scores": {"string_transform": 5, "collection_transform": 1}}
+{"task_id": "HumanEval/15", "entry_point": "string_sequence", "type": "string_parse", "type2": "arithmetic_basics", "scores": {"string_parse": 3, "string_transform": 1, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/16", "entry_point": "count_distinct_characters", "type": "counting_histogram", "type2": "string_transform", "scores": {"counting_histogram": 4, "string_transform": 3}}
+{"task_id": "HumanEval/17", "entry_point": "parse_music", "type": "string_parse", "type2": null, "scores": {"string_parse": 18, "string_transform": 2, "collection_transform": 1}}
+{"task_id": "HumanEval/18", "entry_point": "how_many_times", "type": "string_transform", "type2": "counting_histogram", "scores": {"counting_histogram": 7, "string_transform": 9}}
+{"task_id": "HumanEval/19", "entry_point": "sort_numbers", "type": "sorting_select", "type2": null, "scores": {"string_parse": 7, "sorting_select": 16, "string_transform": 2}}
+{"task_id": "HumanEval/20", "entry_point": "find_closest_elements", "type": "sorting_select", "type2": "float_geometry", "scores": {"float_geometry": 9, "sorting_select": 12, "collection_transform": 1}}
+{"task_id": "HumanEval/21", "entry_point": "rescale_to_unit", "type": "float_geometry", "type2": null, "scores": {"float_geometry": 10, "sorting_select": 4, "collection_transform": 2}}
+{"task_id": "HumanEval/22", "entry_point": "filter_integers", "type": "collection_transform", "type2": null, "scores": {"collection_transform": 5}}
+{"task_id": "HumanEval/23", "entry_point": "strlen", "type": "string_transform", "type2": null, "scores": {"string_transform": 3}}
+{"task_id": "HumanEval/24", "entry_point": "largest_divisor", "type": "number_theory", "type2": null, "scores": {"number_theory": 4, "sorting_select": 2}}
+{"task_id": "HumanEval/25", "entry_point": "factorize", "type": "number_theory", "type2": null, "scores": {"number_theory": 16, "sorting_select": 4, "counting_histogram": 8, "collection_transform": 1, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/26", "entry_point": "remove_duplicates", "type": "collection_transform", "type2": null, "scores": {"collection_transform": 7}}
+{"task_id": "HumanEval/27", "entry_point": "flip_case", "type": "string_transform", "type2": null, "scores": {"string_transform": 6}}
+{"task_id": "HumanEval/28", "entry_point": "concatenate", "type": "collection_transform", "type2": null, "scores": {"string_transform": 1, "collection_transform": 10}}
+{"task_id": "HumanEval/29", "entry_point": "filter_by_prefix", "type": "collection_transform", "type2": null, "scores": {"collection_transform": 7}}
+{"task_id": "HumanEval/30", "entry_point": "get_positive", "type": "collection_transform", "type2": null, "scores": {"collection_transform": 4}}
+{"task_id": "HumanEval/31", "entry_point": "is_prime", "type": "number_theory", "type2": null, "scores": {"number_theory": 4}}
+{"task_id": "HumanEval/32", "entry_point": "find_zero", "type": "collection_transform", "type2": "float_geometry", "scores": {"float_geometry": 9, "sorting_select": 2, "collection_transform": 15, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/33", "entry_point": "sort_third", "type": "sorting_select", "type2": null, "scores": {"number_theory": 6, "sorting_select": 12}}
+{"task_id": "HumanEval/34", "entry_point": "unique", "type": "sorting_select", "type2": null, "scores": {"sorting_select": 10, "collection_transform": 1}}
+{"task_id": "HumanEval/35", "entry_point": "max_element", "type": "sorting_select", "type2": "collection_transform", "scores": {"sorting_select": 1, "collection_transform": 1}}
+{"task_id": "HumanEval/36", "entry_point": "fizz_buzz", "type": "counting_histogram", "type2": null, "scores": {"number_theory": 3, "counting_histogram": 6}}
+{"task_id": "HumanEval/37", "entry_point": "sort_even", "type": "sorting_select", "type2": "collection_transform", "scores": {"sorting_select": 12, "collection_transform": 9}}
+{"task_id": "HumanEval/38", "entry_point": "decode_cyclic", "type": "string_transform", "type2": null, "scores": {"string_transform": 18, "collection_transform": 2}}
+{"task_id": "HumanEval/39", "entry_point": "prime_fib", "type": "dynamic_programming", "type2": "number_theory", "scores": {"dynamic_programming": 4, "number_theory": 4, "sorting_select": 2}}
+{"task_id": "HumanEval/40", "entry_point": "triples_sum_to_zero", "type": "collection_transform", "type2": "arithmetic_basics", "scores": {"collection_transform": 2, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/41", "entry_point": "car_race_collision", "type": "scenario_simulation", "type2": null, "scores": {"scenario_simulation": 9}}
+{"task_id": "HumanEval/42", "entry_point": "incr_list", "type": "collection_transform", "type2": null, "scores": {"collection_transform": 1}}
+{"task_id": "HumanEval/43", "entry_point": "pairs_sum_to_zero", "type": "collection_transform", "type2": "arithmetic_basics", "scores": {"collection_transform": 2, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/44", "entry_point": "change_base", "type": "base_and_bits", "type2": "string_parse", "scores": {"string_parse": 3, "base_and_bits": 5, "string_transform": 1, "arithmetic_basics": 1}}
+{"task_id": "HumanEval/45", "entry_point": "triangle_area", "type": "float_geometry", "type2": null, "scores": {"float_geometry": 8}}
+{"task_id": "HumanEval/46", "entry_point": "fib4", "type": "dynamic_programming", "type2": null, "scores": {"dynamic_programming": 17, "sorting_select": 2, "collection_transform": 1}}
+{"task_id": "HumanEval/47", "entry_point": "median", "type": "sorting_select", "type2": null, "scores": {"sorting_select": 19, "collection_transform": 1}}
+{"task_id": "HumanEval/48", "entry_point": "is_palindrome", "type": "string_transform", "type2": null, "scores": {"string_transform": 4}}
+{"task_id": "HumanEval/49", "entry_point": "modp", "type": "number_theory", "type2": null, "scores": {"number_theory": 3}}
+{"task_id": "HumanEval/50", "entry_point": "decode_shift", "type": "string_transform", "type2": null, "scores": {"string_transform": 20}}
+{"task_id": "HumanEval/51", "entry_point": "remove_vowels", "type": "string_transform", "type2": null, "scores": {"string_transform": 23}}
+{"task_id": "HumanEval/52", "entry_point": "below_threshold", "type": "collection_transform", "type2": null, "scores": {"collection_transform": 3}}
+{"task_id": "HumanEval/53", "entry_point": "add", "type": "arithmetic_basics", "type2": null, "scores": {"arithmetic_basics": 6}}
+{"task_id": "HumanEval/54", "entry_point": "same_chars", "type": "string_transform", "type2": null, "scores": {"string_transform": 4}}
+{"task_id": "HumanEval/55", "entry_point": "fib", "type": "dynamic_programming", "type2": null, "scores": {"dynamic_programming": 4, "sorting_select": 2}}
+{"task_id": "HumanEval/56", "entry_point": "correct_bracketing", "type": "bracket_nesting", "type2": null, "scores": {"bracket_nesting": 12, "string_transform": 1}}
+{"task_id": "HumanEval/57", "entry_point": "monotonic", "type": "collection_transform", "type2": "sorting_select", "scores": {"sorting_select": 8, "string_transform": 2, "collection_transform": 13}}
+{"task_id": "HumanEval/58", "entry_point": "common", "type": "sorting_select", "type2": "collection_transform", "scores": {"sorting_select": 8, "collection_transform": 5, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/59", "entry_point": "largest_prime_factor", "type": "number_theory", "type2": null, "scores": {"number_theory": 12, "sorting_select": 6}}
+{"task_id": "HumanEval/60", "entry_point": "sum_to_n", "type": "arithmetic_basics", "type2": null, "scores": {"arithmetic_basics": 2}}
+{"task_id": "HumanEval/61", "entry_point": "correct_bracketing", "type": "bracket_nesting", "type2": null, "scores": {"bracket_nesting": 12, "string_transform": 1}}
+{"task_id": "HumanEval/62", "entry_point": "derivative", "type": "collection_transform", "type2": null, "scores": {"collection_transform": 18}}
+{"task_id": "HumanEval/63", "entry_point": "fibfib", "type": "dynamic_programming", "type2": null, "scores": {"dynamic_programming": 17, "sorting_select": 2, "collection_transform": 1}}
+{"task_id": "HumanEval/64", "entry_point": "vowels_count", "type": "string_transform", "type2": null, "scores": {"string_parse": 3, "string_transform": 8, "arithmetic_basics": 4}}
+{"task_id": "HumanEval/65", "entry_point": "circular_shift", "type": "string_transform", "type2": null, "scores": {"string_transform": 1}}
+{"task_id": "HumanEval/66", "entry_point": "digitSum", "type": "arithmetic_basics", "type2": null, "scores": {"string_transform": 3, "arithmetic_basics": 6}}
+{"task_id": "HumanEval/67", "entry_point": "fruit_distribution", "type": "scenario_simulation", "type2": null, "scores": {"string_transform": 2, "scenario_simulation": 5, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/68", "entry_point": "pluck", "type": "collection_transform", "type2": null, "scores": {"sorting_select": 6, "collection_transform": 14, "scenario_simulation": 4}}
+{"task_id": "HumanEval/69", "entry_point": "search", "type": "counting_histogram", "type2": null, "scores": {"counting_histogram": 12, "collection_transform": 1}}
+{"task_id": "HumanEval/70", "entry_point": "strange_sort_list", "type": "sorting_select", "type2": null, "scores": {"sorting_select": 7, "collection_transform": 1}}
+{"task_id": "HumanEval/71", "entry_point": "triangle_area", "type": "float_geometry", "type2": null, "scores": {"float_geometry": 33, "arithmetic_basics": 4}}
+{"task_id": "HumanEval/72", "entry_point": "will_it_fly", "type": "scenario_simulation", "type2": "bracket_nesting", "scores": {"bracket_nesting": 6, "sorting_select": 3, "collection_transform": 1, "scenario_simulation": 10, "arithmetic_basics": 6}}
+{"task_id": "HumanEval/73", "entry_point": "smallest_change", "type": "collection_transform", "type2": null, "scores": {"dynamic_programming": 3, "sorting_select": 1, "counting_histogram": 2, "collection_transform": 6}}
+{"task_id": "HumanEval/74", "entry_point": "total_match", "type": "collection_transform", "type2": null, "scores": {"collection_transform": 3}}
+{"task_id": "HumanEval/75", "entry_point": "is_multiply_prime", "type": "number_theory", "type2": null, "scores": {"number_theory": 7, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/76", "entry_point": "is_simple_power", "type": "number_theory", "type2": null, "scores": {"number_theory": 6, "arithmetic_basics": 1}}
+{"task_id": "HumanEval/77", "entry_point": "iscube", "type": "float_geometry", "type2": "number_theory", "scores": {"number_theory": 2, "float_geometry": 3}}
+{"task_id": "HumanEval/78", "entry_point": "hex_key", "type": "number_theory", "type2": "base_and_bits", "scores": {"string_parse": 4, "number_theory": 12, "base_and_bits": 12, "string_transform": 2, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/79", "entry_point": "decimal_to_binary", "type": "base_and_bits", "type2": null, "scores": {"base_and_bits": 12, "string_transform": 3}}
+{"task_id": "HumanEval/80", "entry_point": "is_happy", "type": "string_transform", "type2": null, "scores": {"string_transform": 3}}
+{"task_id": "HumanEval/81", "entry_point": "numerical_letter_grade", "type": "collection_transform", "type2": null, "scores": {"dynamic_programming": 1, "collection_transform": 2}}
+{"task_id": "HumanEval/82", "entry_point": "prime_length", "type": "number_theory", "type2": "string_transform", "scores": {"number_theory": 4, "string_transform": 3}}
+{"task_id": "HumanEval/83", "entry_point": "starts_one_ends", "type": "counting_histogram", "type2": null, "scores": {"counting_histogram": 3, "arithmetic_basics": 1}}
+{"task_id": "HumanEval/84", "entry_point": "solve", "type": "arithmetic_basics", "type2": "base_and_bits", "scores": {"number_theory": 3, "base_and_bits": 8, "string_transform": 1, "arithmetic_basics": 13}}
+{"task_id": "HumanEval/85", "entry_point": "add", "type": "arithmetic_basics", "type2": "collection_transform", "scores": {"collection_transform": 5, "arithmetic_basics": 8}}
+{"task_id": "HumanEval/86", "entry_point": "anti_shuffle", "type": "sorting_select", "type2": null, "scores": {"sorting_select": 7, "string_transform": 3}}
+{"task_id": "HumanEval/87", "entry_point": "get_row", "type": "sorting_select", "type2": "collection_transform", "scores": {"sorting_select": 15, "string_transform": 2, "collection_transform": 12}}
+{"task_id": "HumanEval/88", "entry_point": "sort_array", "type": "sorting_select", "type2": "collection_transform", "scores": {"sorting_select": 15, "string_transform": 2, "collection_transform": 9, "arithmetic_basics": 4}}
+{"task_id": "HumanEval/89", "entry_point": "encrypt", "type": "string_transform", "type2": null, "scores": {"string_transform": 15, "collection_transform": 2}}
+{"task_id": "HumanEval/90", "entry_point": "next_smallest", "type": "sorting_select", "type2": null, "scores": {"sorting_select": 11, "collection_transform": 3}}
+{"task_id": "HumanEval/91", "entry_point": "is_bored", "type": "scenario_simulation", "type2": "string_parse", "scores": {"string_parse": 7, "counting_histogram": 3, "string_transform": 1, "scenario_simulation": 8, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/92", "entry_point": "any_int", "type": "arithmetic_basics", "type2": null, "scores": {"arithmetic_basics": 7}}
+{"task_id": "HumanEval/93", "entry_point": "encode", "type": "string_transform", "type2": null, "scores": {"string_transform": 17}}
+{"task_id": "HumanEval/94", "entry_point": "skjkasdkd", "type": "number_theory", "type2": "arithmetic_basics", "scores": {"number_theory": 7, "sorting_select": 2, "collection_transform": 1, "arithmetic_basics": 6}}
+{"task_id": "HumanEval/95", "entry_point": "check_dict_case", "type": "collection_transform", "type2": null, "scores": {"collection_transform": 12}}
+{"task_id": "HumanEval/96", "entry_point": "count_up_to", "type": "number_theory", "type2": null, "scores": {"number_theory": 4, "collection_transform": 1}}
+{"task_id": "HumanEval/97", "entry_point": "multiply", "type": "arithmetic_basics", "type2": null, "scores": {"number_theory": 3, "arithmetic_basics": 11}}
+{"task_id": "HumanEval/98", "entry_point": "count_upper", "type": "counting_histogram", "type2": null, "scores": {"counting_histogram": 12, "string_transform": 3, "collection_transform": 3}}
+{"task_id": "HumanEval/99", "entry_point": "closest_integer", "type": "float_geometry", "type2": null, "scores": {"float_geometry": 17, "counting_histogram": 3, "string_transform": 1}}
+{"task_id": "HumanEval/100", "entry_point": "make_a_pile", "type": "collection_transform", "type2": "scenario_simulation", "scores": {"sorting_select": 2, "collection_transform": 3, "scenario_simulation": 3, "arithmetic_basics": 1}}
+{"task_id": "HumanEval/101", "entry_point": "words_string", "type": "string_parse", "type2": null, "scores": {"string_parse": 6, "string_transform": 2, "collection_transform": 1}}
+{"task_id": "HumanEval/102", "entry_point": "choose_num", "type": "arithmetic_basics", "type2": null, "scores": {"arithmetic_basics": 8}}
+{"task_id": "HumanEval/103", "entry_point": "rounded_avg", "type": "float_geometry", "type2": null, "scores": {"base_and_bits": 4, "float_geometry": 16}}
+{"task_id": "HumanEval/104", "entry_point": "unique_digits", "type": "sorting_select", "type2": null, "scores": {"number_theory": 3, "sorting_select": 12, "collection_transform": 3}}
+{"task_id": "HumanEval/105", "entry_point": "by_length", "type": "sorting_select", "type2": null, "scores": {"sorting_select": 12, "string_transform": 6, "collection_transform": 3, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/106", "entry_point": "f", "type": "number_theory", "type2": null, "scores": {"number_theory": 11, "collection_transform": 4, "arithmetic_basics": 4}}
+{"task_id": "HumanEval/107", "entry_point": "even_odd_palindrome", "type": "string_transform", "type2": "counting_histogram", "scores": {"counting_histogram": 6, "string_transform": 9, "arithmetic_basics": 3}}
+{"task_id": "HumanEval/108", "entry_point": "count_nums", "type": "collection_transform", "type2": "arithmetic_basics", "scores": {"counting_histogram": 2, "collection_transform": 6, "arithmetic_basics": 6}}
+{"task_id": "HumanEval/109", "entry_point": "move_one_ball", "type": "sorting_select", "type2": "collection_transform", "scores": {"sorting_select": 14, "counting_histogram": 4, "collection_transform": 10}}
+{"task_id": "HumanEval/110", "entry_point": "exchange", "type": "collection_transform", "type2": "scenario_simulation", "scores": {"collection_transform": 4, "scenario_simulation": 3}}
+{"task_id": "HumanEval/111", "entry_point": "histogram", "type": "counting_histogram", "type2": null, "scores": {"string_parse": 3, "counting_histogram": 31, "string_transform": 1, "collection_transform": 3}}
+{"task_id": "HumanEval/112", "entry_point": "reverse_delete", "type": "string_transform", "type2": null, "scores": {"string_transform": 9}}
+{"task_id": "HumanEval/113", "entry_point": "odd_count", "type": "counting_histogram", "type2": null, "scores": {"number_theory": 3, "counting_histogram": 9, "string_transform": 3, "collection_transform": 4, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/114", "entry_point": "minSubArraySum", "type": "dynamic_programming", "type2": null, "scores": {"dynamic_programming": 15, "sorting_select": 1, "collection_transform": 2, "arithmetic_basics": 4}}
+{"task_id": "HumanEval/115", "entry_point": "max_fill", "type": "scenario_simulation", "type2": null, "scores": {"counting_histogram": 4, "collection_transform": 4, "scenario_simulation": 18, "arithmetic_basics": 4}}
+{"task_id": "HumanEval/116", "entry_point": "sort_array", "type": "sorting_select", "type2": "base_and_bits", "scores": {"base_and_bits": 13, "sorting_select": 15, "counting_histogram": 3, "collection_transform": 1}}
+{"task_id": "HumanEval/117", "entry_point": "select_words", "type": "string_transform", "type2": null, "scores": {"string_transform": 3, "collection_transform": 1}}
+{"task_id": "HumanEval/118", "entry_point": "get_closest_vowel", "type": "string_transform", "type2": null, "scores": {"counting_histogram": 3, "string_transform": 8}}
+{"task_id": "HumanEval/119", "entry_point": "match_parens", "type": "bracket_nesting", "type2": null, "scores": {"bracket_nesting": 11, "string_transform": 3, "collection_transform": 4}}
+{"task_id": "HumanEval/120", "entry_point": "maximum", "type": "sorting_select", "type2": null, "scores": {"sorting_select": 10, "collection_transform": 5}}
+{"task_id": "HumanEval/121", "entry_point": "solution", "type": "arithmetic_basics", "type2": null, "scores": {"collection_transform": 2, "arithmetic_basics": 6}}
+{"task_id": "HumanEval/122", "entry_point": "add_elements", "type": "arithmetic_basics", "type2": null, "scores": {"collection_transform": 3, "arithmetic_basics": 10}}
+{"task_id": "HumanEval/123", "entry_point": "get_odd_collatz", "type": "sorting_select", "type2": "dynamic_programming", "scores": {"dynamic_programming": 11, "sorting_select": 12, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/124", "entry_point": "valid_date", "type": "string_parse", "type2": null, "scores": {"string_parse": 12, "string_transform": 2}}
+{"task_id": "HumanEval/125", "entry_point": "split_words", "type": "counting_histogram", "type2": "string_transform", "scores": {"counting_histogram": 3, "string_transform": 3, "collection_transform": 1}}
+{"task_id": "HumanEval/126", "entry_point": "is_sorted", "type": "sorting_select", "type2": null, "scores": {"sorting_select": 7, "collection_transform": 4}}
+{"task_id": "HumanEval/127", "entry_point": "intersection", "type": "number_theory", "type2": null, "scores": {"number_theory": 12}}
+{"task_id": "HumanEval/128", "entry_point": "prod_signs", "type": "arithmetic_basics", "type2": "collection_transform", "scores": {"collection_transform": 6, "arithmetic_basics": 8}}
+{"task_id": "HumanEval/129", "entry_point": "minPath", "type": "dynamic_programming", "type2": "arithmetic_basics", "scores": {"dynamic_programming": 8, "sorting_select": 2, "collection_transform": 3, "arithmetic_basics": 5}}
+{"task_id": "HumanEval/130", "entry_point": "tri", "type": "dynamic_programming", "type2": null, "scores": {"dynamic_programming": 19, "collection_transform": 1}}
+{"task_id": "HumanEval/131", "entry_point": "digits", "type": "arithmetic_basics", "type2": "number_theory", "scores": {"number_theory": 6, "arithmetic_basics": 7}}
+{"task_id": "HumanEval/132", "entry_point": "is_nested", "type": "bracket_nesting", "type2": null, "scores": {"bracket_nesting": 9, "string_transform": 5}}
+{"task_id": "HumanEval/133", "entry_point": "sum_squares", "type": "float_geometry", "type2": null, "scores": {"float_geometry": 9, "collection_transform": 2, "arithmetic_basics": 4}}
+{"task_id": "HumanEval/134", "entry_point": "check_if_last_char_is_a_letter", "type": "string_transform", "type2": null, "scores": {"string_transform": 3}}
+{"task_id": "HumanEval/135", "entry_point": "can_arrange", "type": "collection_transform", "type2": null, "scores": {"sorting_select": 2, "collection_transform": 9}}
+{"task_id": "HumanEval/136", "entry_point": "largest_smallest_integers", "type": "sorting_select", "type2": "collection_transform", "scores": {"sorting_select": 12, "collection_transform": 8}}
+{"task_id": "HumanEval/137", "entry_point": "compare_one", "type": "float_geometry", "type2": null, "scores": {"string_parse": 3, "float_geometry": 9, "string_transform": 1}}
+{"task_id": "HumanEval/138", "entry_point": "is_equal_to_sum_even", "type": "arithmetic_basics", "type2": null, "scores": {"arithmetic_basics": 4}}
+{"task_id": "HumanEval/139", "entry_point": "special_factorial", "type": "number_theory", "type2": null, "scores": {"number_theory": 8}}
+{"task_id": "HumanEval/140", "entry_point": "fix_spaces", "type": "string_transform", "type2": null, "scores": {"string_transform": 5}}
+{"task_id": "HumanEval/141", "entry_point": "file_name_check", "type": "string_parse", "type2": "string_transform", "scores": {"string_parse": 7, "string_transform": 5}}
+{"task_id": "HumanEval/142", "entry_point": "sum_squares", "type": "collection_transform", "type2": "arithmetic_basics", "scores": {"number_theory": 2, "collection_transform": 7, "arithmetic_basics": 6}}
+{"task_id": "HumanEval/143", "entry_point": "words_in_sentence", "type": "string_parse", "type2": "string_transform", "scores": {"string_parse": 6, "number_theory": 4, "string_transform": 6}}
+{"task_id": "HumanEval/144", "entry_point": "simplify", "type": "string_parse", "type2": null, "scores": {"string_parse": 3, "string_transform": 1}}
+{"task_id": "HumanEval/145", "entry_point": "order_by_points", "type": "sorting_select", "type2": "arithmetic_basics", "scores": {"sorting_select": 11, "collection_transform": 3, "arithmetic_basics": 10}}
+{"task_id": "HumanEval/146", "entry_point": "specialFilter", "type": "counting_histogram", "type2": null, "scores": {"counting_histogram": 11, "collection_transform": 3}}
+{"task_id": "HumanEval/147", "entry_point": "get_max_triples", "type": "dynamic_programming", "type2": null, "scores": {"dynamic_programming": 3, "collection_transform": 1, "arithmetic_basics": 1}}
+{"task_id": "HumanEval/148", "entry_point": "bf", "type": "scenario_simulation", "type2": null, "scores": {"sorting_select": 4, "collection_transform": 4, "scenario_simulation": 12}}
+{"task_id": "HumanEval/149", "entry_point": "sorted_list_sum", "type": "sorting_select", "type2": null, "scores": {"sorting_select": 20, "string_transform": 2, "collection_transform": 7}}
+{"task_id": "HumanEval/150", "entry_point": "x_or_y", "type": "number_theory", "type2": null, "scores": {"number_theory": 4}}
+{"task_id": "HumanEval/151", "entry_point": "double_the_difference", "type": "arithmetic_basics", "type2": null, "scores": {"collection_transform": 1, "arithmetic_basics": 6}}
+{"task_id": "HumanEval/152", "entry_point": "compare", "type": "scenario_simulation", "type2": null, "scores": {"collection_transform": 3, "scenario_simulation": 11, "arithmetic_basics": 2}}
+{"task_id": "HumanEval/153", "entry_point": "Strongest_Extension", "type": "scenario_simulation", "type2": null, "scores": {"counting_histogram": 3, "string_transform": 2, "collection_transform": 2, "scenario_simulation": 9}}
+{"task_id": "HumanEval/154", "entry_point": "cycpattern_check", "type": "string_transform", "type2": null, "scores": {"string_transform": 2}}
+{"task_id": "HumanEval/155", "entry_point": "even_odd_count", "type": "number_theory", "type2": "counting_histogram", "scores": {"number_theory": 3, "counting_histogram": 3}}
+{"task_id": "HumanEval/156", "entry_point": "int_to_mini_roman", "type": "base_and_bits", "type2": null, "scores": {"base_and_bits": 5, "string_transform": 1}}
+{"task_id": "HumanEval/157", "entry_point": "right_angle_triangle", "type": "float_geometry", "type2": null, "scores": {"float_geometry": 20}}
+{"task_id": "HumanEval/158", "entry_point": "find_max", "type": "sorting_select", "type2": null, "scores": {"sorting_select": 6, "string_transform": 2, "collection_transform": 1}}
+{"task_id": "HumanEval/159", "entry_point": "eat", "type": "scenario_simulation", "type2": null, "scores": {"collection_transform": 1, "scenario_simulation": 14}}
+{"task_id": "HumanEval/160", "entry_point": "do_algebra", "type": "collection_transform", "type2": null, "scores": {"collection_transform": 3}}
+{"task_id": "HumanEval/161", "entry_point": "solve", "type": "string_transform", "type2": null, "scores": {"string_transform": 7}}
+{"task_id": "HumanEval/162", "entry_point": "string_to_md5", "type": "base_and_bits", "type2": "string_transform", "scores": {"base_and_bits": 8, "string_transform": 6}}
+{"task_id": "HumanEval/163", "entry_point": "generate_integers", "type": "number_theory", "type2": "sorting_select", "scores": {"number_theory": 3, "sorting_select": 3}}

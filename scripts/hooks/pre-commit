@@ -2510,6 +2510,14 @@ def main():
         # (evaluate() over injected lists, zero network) and pins GO only on all-pass, exit 2 on
         # a fabricated IN_PROGRESS/QUEUED check, fail>pending, cancel/empty/unknown fail closed.
         "scripts/pr_merge_gate.py",
+        # The problem-type classifier shared by the HumanEval / SFT-A / RL-pool / pretrain
+        # coverage study (66). Registered because its output IS the study's measurement: a
+        # label whose signals never fire silently reports a type as absent from a dataset, and
+        # the first hand-audit found exactly that shape -- a too-literal pattern (`valid date`
+        # missing "the date is valid") filed a parsing task as a string transform. The selftest
+        # asserts every type is reachable, every type carries signals, and PRIORITY is a total
+        # order over TYPES. Pure strings, no tokenizer, no corpus. ~0.05s.
+        "scripts/problem_types.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
