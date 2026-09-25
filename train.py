@@ -996,11 +996,12 @@ class Muon(torch.optim.Optimizer):
                 X = X.reshape(*_lead, X.shape[-2], X.shape[-1])
                 mask = (grads * weights) >= 0
                 if is_sr:
-                    # Option B: build the new weight in fp32; step() Bernoulli-casts it to bf16.
-                    # Nothing here writes weights in place -- the whole point is that the fp32
-                    # candidate, not the bf16 one, is what gets rounded.
-                    w_new = weights.float() - lr * X.float() - lr * wd * weights.float() * mask
-                    return w_new, momentums
+                    # Option B, MEMORY-AWARE. Return the bf16 UPDATE T (never the fp32 new
+                    # weights): the stacked MoE group is ~2.0e9 elements, so an fp32 w_new plus
+                    # its expression temporaries is tens of GiB at opt.step (the 0925 probe
+                    # OOM). NS's direction is bf16 anyway, so no precision is kept by promoting
+                    # it here. step() computes w - T in fp32 IN BLOCKS and Bernoulli-casts.
+                    return (lr * X + lr * wd * weights * mask).to(torch.bfloat16), momentums
                 weights.sub_(lr * X.to(weights.dtype) + lr * wd * weights * mask)
                 return weights, momentums
 
@@ -1065,10 +1066,10 @@ class Muon(torch.optim.Optimizer):
                 W = p.unsqueeze(0)
                 G = g.unsqueeze(0)
                 M = mb.unsqueeze(0)
-                W, M = fn(G, W, M, lr_t, mom_t, wd_t)
+                T, M = fn(G, W, M, lr_t, mom_t, wd_t)
                 if self._sr:
-                    W = self._rounder.round(W)
-                p.data.copy_(W[0])
+                    T = self._rounder.apply(W, T)
+                p.data.copy_(T[0])
                 mb.copy_(M[0])
             else:
                 W = torch.stack(sg["params"])
@@ -1095,14 +1096,15 @@ class Muon(torch.optim.Optimizer):
                     mlist = [torch.empty_like(Ml) for _ in range(world)]
                     dist.all_gather(wlist, Wl.contiguous())
                     dist.all_gather(mlist, Ml.contiguous())
-                    W = torch.cat(wlist, dim=0)
+                    T = torch.cat(wlist, dim=0)
                     M = torch.cat(mlist, dim=0)
                 else:
-                    W, M = fn(G, W, M, lr_t, mom_t, wd_t)
+                    T, M = fn(G, W, M, lr_t, mom_t, wd_t)
                 if self._sr:
-                    W = self._rounder.round(W)
+                    # fn returned the bf16 UPDATE; combine with the original W in fp32 blocks.
+                    T = self._rounder.apply(W, T)
                 for i, p in enumerate(sg["params"]):
-                    p.data.copy_(W[i])
+                    p.data.copy_(T[i])
                     sg["mbs"][i].copy_(M[i])
 
 
