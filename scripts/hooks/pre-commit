@@ -1718,6 +1718,11 @@ def main():
         # row must close with and without --started. Measured over all 8 combinations of
         # (retracted, --started, later minute): retraction was not the variable, being closed was.
         "scripts/test_exp_done_retracted.py",
+        # exp.py explicit un-retraction. Six worlds; the two load-bearing refusals are a BARE
+        # `done` on a retracted row (must refuse -- no exact row named) and, at fold level, a
+        # markerless ok after a retraction (union-merge reorder must stay dropped). The happy
+        # path needs an exact --started AND an `unretracts` marker the writer sets.
+        "scripts/test_exp_unretract.py",
         # run_ddp.sh's launcher gate (de-60): a direct call writes no experiments row, takes no
         # card claim and arms no monitor. Six worlds, and four are the narrowness: an EMPTY marker
         # must refuse (`-n` instead of `-z` passes it, and an exported-but-unset variable is what a
@@ -2809,6 +2814,7 @@ def main():
         # already covered here.
         "scripts/exp.py": {"scripts/test_exp_done_retracted.py", "scripts/test_exp_amend.py",
                            "scripts/test_exp_done_started.py", "scripts/test_exp_fold_agree.py",
+                           "scripts/test_exp_unretract.py",
                            "scripts/test_ledger_field_writers.py"},
         # run_ddp.sh had the same gap as exp.py: the subject of two tests and the key of none, so
         # both ran only when someone edited the test. de-60 measured what that costs -- adding the
