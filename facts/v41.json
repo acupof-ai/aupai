@@ -1121,6 +1121,55 @@
       "status": "measured"
     },
     {
+      "id": "v41.rl_code_pool_supply_0925",
+      "value": "Post-SFT executable CODE RL problem pool built 2026-09-25 (1e task), aligned to algorithms/code_reward.py reward_fn(code, tests): each row is {prompt (HumanEval-shaped def signature+docstring, raw continuation, no ChatML), impl (reference solution written to solution.py), tests (pytest `from solution import fn`, fn(*args)==expected), source, difficulty, entry, n_tests, license, attribution}; a row is kept only when its reference passes all generated tests. RESULT: only 27 usable NEW problems survive, 0 from APPS. Funnel (scripts/rl_code_pool.py, pytest 9.1.1, stdlib-import header injected per 1e order): APPS train 5000 -> 2714 call-style with per-call list args (2286 stdin/stdout excluded) -> 2703 hit the two-layer SFT-A dedup (question-text hash OR signature+fn_name hash) -> 0 kept. TACO train 25,443 -> 2695 list-arg call-style (22,748 stdin/stdout; fn_name present but stdin-encoded, incl. all 200 novel GeeksforGeeks) -> 2647 SFT-A dedup hits -> 60 reference failures across 49 tried-all + 11 no passing -> 27 kept, ALL leetcode (EASY 8 / MEDIUM 5 / MEDIUM_HARD 14). The dedup is real overlap, not a loose hash: of TACO's 3244 fn_name call-style problems, 3006 have a question text EXACTLY present in APPS train (TACO republishes APPS's codewars/leetcode set); only 238 are genuinely novel (200 gfg + 38 leetcode), and the 200 gfg are stdin-encoded so unscoreable under the current import-test contract. Reference pass rate where a candidate existed: 367/378 (97%) on APPS first-500 after the stdlib header (math/collections/itertools/heapq/functools/re/string/bisect + typing future-annotations; fixes missing-import references that otherwise fail ~30%), 27 of ~87 novel+executable TACO problems.",
+      "measured": "2026-09-25",
+      "source": "digest Linux box /data00/home/chenkailun.c/aupai-cimap/wt-3b-sfta, ALLOW_UNISOLATED=1 (trusted references, not model rollouts), taskset 0-15; artifacts pod /work/aupai/data/rl/code_pool/{rl_code_taco.jsonl,rl_code_apps.jsonl,*_stats.json}",
+      "config": {
+        "builder": "scripts/rl_code_pool.py",
+        "builder_sha256": "2130201592aa0c9c0c95a9cd532de5f268aa10f83b6ac6a706504689257231d9",
+        "decontam_ngram_n": 13,
+        "decontam_fp_inputs": "302aa793f7067462",
+        "sfta_dedup_signature_layer": 2819,
+        "sfta_dedup_question_layer": 3115,
+        "max_test_cases": 20,
+        "max_solutions_tried": 5,
+        "pytest": "9.1.1",
+        "artifacts": {
+          "rl_code_taco.jsonl": "d4ee1b45042fbee12f3f9d858dd81cb8c314a86085aadc08250f2355494001d8",
+          "rl_code_apps.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "rl_code_taco_stats.json": "6f3c28849042fbee12f3f9d858dd81cb8c314a86085aadc08250f2355494001d8",
+          "rl_code_apps_stats.json": "b16157a19897891397008ad4e82a9f726980b006ee378b39060eebfa28e90b19"
+        },
+        "sources": {
+          "apps": "codeparrot/apps train MIT 5000",
+          "taco": "BAAI/TACO train 25443 apache-2.0 overall; HackerRank excluded per 1e order (0 list-arg call-style hit it anyway); CC BY crawled kept with per-row attribution; sc2-exec ODC-By dropped from RL (only ~2.9% carry separate tests and none import from solution)"
+        },
+        "taco_funnel": {
+          "total": 25443,
+          "list_arg_call_style": 2695,
+          "stdin_stdout": 22748,
+          "sfta_dedup": 2647,
+          "ngram_prompt": 2,
+          "ref_failed_tries": 49,
+          "no_passing_reference": 11,
+          "kept": 27
+        },
+        "apps_funnel": {
+          "total": 5000,
+          "list_arg_call_style": 2714,
+          "stdin_stdout": 2286,
+          "sfta_dedup": 2703,
+          "ngram_prompt": 2,
+          "ngram_tests": 1,
+          "kept": 0
+        }
+      },
+      "uncertainty": "Counts are exact for the downloaded files (APPS train.jsonl 107,101,272 B/5000 rows; TACO 9 parquets, 25,443 rows = 9x2827). Exact-question overlap (3006/3244) is a separate full-rescan, not the builder's hash-layer count (2647); the two differ because the builder also requires list-arg IO and applies the signature layer. Pass/fail is trusted-reference execution, NOT model rollouts; the later GRPO-gradient filter (keep only problems the SFT model gets right on some but not all of 8 samples, 1e order) has not run -- it needs the SFT checkpoint and will shrink the 27 further. The stdlib-import header is a fixed prepend of stdlib modules only; solutions needing third-party or unknown symbols fail and are counted in ref failures.",
+      "boundary": "27 problems is a SUPPLY result for the importable-pytest + SFT-dedup + reference-passes contract, not a claim that no other code RL data exists. The large excluded buckets are recoverable only by changing a contract: ~25k TACO + 2.3k APPS stdin/stdout problems need a subprocess stdin/stdout driver added to code_reward (1e noted, de's future work); the 3006 TACO-in-APPS problems are correctly barred from RL because SFT-A trained them. No model has trained on this pool.",
+      "status": "measured"
+    },
+    {
       "id": "v41.muon_ns_shard_no_gain_ced_0925",
       "value": "Sharding Muon Newton-Schulz across the 8 DDP ranks along the stacked same-shape matrix-instance axis (--muon_ns_shard, all_gather concat; n==1 lone dense matrices and uneven instance counts fall back) gave NO wall-time gain on the v41_ced_0923 world-8 / 48-MoE-expert run. StepProfiler opt region: flag OFF 639.78 ms mean (100 samples steps 25050-30000, range 639.0-640.9) vs flag ON 635.87 ms mean (3 samples steps 30050/30100/30150, 635.7-636.0) = -3.91 ms / -0.61%, inside the noise of the measurement. The full step got SLOWER: post-compile steady s/step wide window 3.79 s OFF (steps 25040-25140, n=12) vs 4.14 s ON (steps 30040-30150, n=12) = +0.35 s / +9.2%, because the per-rank list all_gather of the 48-expert updated weight + momentum buffers costs more than the saved orthogonalisation. Rolled back to flag-off per the >=0.4 s opt saving criterion (1e, 2026-09-25); resumed from the step30180 interrupt checkpoint and s/step returned to a 3.80 s steady mean (steps 30250-30450, n=17). Training loss/gnorm/lr stayed continuous across on and off (no numeric divergence); the sharded path was proven bit-identical on CPU gloo world2/4 (PR #697).",
       "measured": "2026-09-24",
@@ -1132,7 +1181,7 @@
         "moe_top_k": 3,
         "moe_shared": 1,
         "moe_expert_ffn": 1728,
-        "model": "CED d1024 L12 h8 ff6912, 46 MoE layers with stacked same-shape expert matrices are the shardable instance axis; lone n==1 dense 2-D params are not sharded",
+        "model": "CED d1024 L12 h8 ff6912, 12 MoE blocks (--layers 12 --moe_layers 0-11, 6 encoder + 6 decoder); the shardable instance axis is the 48 stacked same-shape expert matrices per MoE block (6 experts/rank at world 8), not layers; lone n==1 dense 2-D params are not sharded",
         "flag": "--muon_ns_shard default off; shard n/w instances per rank then dist.all_gather list over NCCL (gloo in the parity test); uneven n%world and n<world fall back",
         "opt_region_ms_off": 639.78,
         "opt_region_ms_on": 635.87,
