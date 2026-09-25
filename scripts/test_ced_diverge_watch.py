@@ -105,6 +105,45 @@ def t_loss_mean_window():
     assert feed(d2, pairs) is None
 
 
+def t_duplicate_steps_counted_once():
+    # The step-450 false kill: the [main] line is emitted twice per step on a world run
+    # (rank echo + runlog duplicate). A window/g-run that counts LINES double-counts each
+    # step, so 50 lines span only ~25 steps and warmup losses fill the window. Distinct steps
+    # only: feeding every step twice must behave exactly like feeding it once.
+    # Loss window: low gnorm so the loss path is what we read; 4 distinct steps fed twice
+    # must put exactly 4 (not 8) losses in the window.
+    def run(dup):
+        d = DivergeDetector(g_thresh=99.0, loss_window=50, loss_thresh=3.0)
+        pairs = [(s, 1.0, 0.5) for s in range(0, 40, 10)]
+        if dup:
+            pairs = [p for q in pairs for p in (q, q)]
+        return d, feed(d, pairs)
+    d_once, r_once = run(False)
+    d_dup, r_dup = run(True)
+    assert r_once is None and r_dup is None
+    assert len(d_once.losses) == 4 and len(d_dup.losses) == 4, (
+        f"window must count distinct steps: once={len(d_once.losses)} dup={len(d_dup.losses)}"
+    )
+
+    # gnorm consecutive: a repeated SAME step interleaved into a run must NOT advance the count.
+    d = DivergeDetector(g_thresh=10.0, g_consec=3)
+    assert d.feed(10, 3.0, 20.0) is None
+    assert d.feed(10, 3.0, 20.0) is None  # echo of step 10, not a second high step
+    assert d.feed(20, 3.0, 20.0) is None
+    assert d.feed(20, 3.0, 20.0) is None
+    assert "consecutive" in d.feed(30, 3.0, 20.0)  # third DISTINCT high step trips it
+
+
+def t_from_step_arms_detector():
+    # high loss/gnorm below from_step are ignored; the rules arm only at/after it.
+    det = DivergeDetector(g_thresh=10.0, g_consec=1, loss_window=1, loss_thresh=3.0, from_step=600)
+    assert det.feed(10, 9.0, 99.0) is None  # would trip both rules if armed
+    assert det.feed(590, 9.0, 99.0) is None
+    assert "nonfinite" in det.feed(600, float("nan"), 0.5)  # nonfinite still arms at the boundary
+    det2 = DivergeDetector(g_thresh=10.0, g_consec=1, from_step=600)
+    assert det2.feed(600, 1.0, 20.0) is not None  # high gnorm arms exactly at 600
+
+
 def t_nonfinite_fires():
     det = DivergeDetector()
     assert "nonfinite" in det.feed(1, float("nan"), 0.5)
@@ -191,10 +230,10 @@ def t_live_history_is_ignored_new_lines_watch():
             p = _run_live(log, max_stale=20.0, out_path=out, extra=["--no_mem"])
             time.sleep(0.6)
             assert p.poll() is None, "watchdog fired on pre-attach history (must seek EOF)"
-            # append a NEW diverged sequence -> must trigger on the third new line
+            # append a NEW diverged sequence over three DISTINCT steps -> triggers on the third
             with open(log, "a") as a:
-                for g in (15.0, 16.0, 17.0):
-                    a.write(f"step 14010/38146 40% [main] | loss 3.5 | gnorm {g}\n")
+                for s, g in ((14010, 15.0), (14020, 16.0), (14030, 17.0)):
+                    a.write(f"step {s}/38146 40% [main] | loss 3.5 | gnorm {g}\n")
                     a.flush()
                     time.sleep(0.15)
             assert _wait_exit(p) == 2
@@ -341,12 +380,41 @@ def t_live_mem_read_fault_is_exit3():
         assert "MEM READ ERROR" in txt
 
 
+def t_live_from_step_ignores_early_runaway():
+    # LIVE tail (not just --once) must honor --from_step: a runaway below the arm step must
+    # not signal; only a high gnorm at/after the arm step trips. This is the r2 attach shape.
+    with tempfile.TemporaryDirectory() as d:
+        log = os.path.join(d, "l.log")
+        with open(log, "w") as f:
+            f.write("step 1/38146 0% [main] | loss 8.0 | gnorm 5000.0\n")
+        with open(os.path.join(d, "o.txt"), "w") as out:
+            p = _run_live(
+                log, max_stale=20.0, out_path=out,
+                extra=["--no_mem", "--from_step", "600", "--g_consec", "1"],
+            )
+            time.sleep(0.5)
+            assert p.poll() is None, "live watchdog fired below --from_step"
+            with open(log, "a") as a:
+                a.write("step 590/38146 1% [main] | loss 8.0 | gnorm 5000.0\n")
+                a.flush()
+                time.sleep(0.4)
+            assert p.poll() is None, "fired at step 590 < 600"
+            with open(log, "a") as a:
+                a.write("step 600/38146 1% [main] | loss 8.0 | gnorm 5000.0\n")
+                a.flush()
+            assert _wait_exit(p) == 2
+        with open(os.path.join(d, "o.txt")) as got:
+            assert "at step 600" in got.read()
+
+
 TESTS = [
     t_parse_progress,
     t_healthy_silent,
     t_gnorm_consecutive,
     t_val_line_does_not_break_count,
     t_loss_mean_window,
+    t_duplicate_steps_counted_once,
+    t_from_step_arms_detector,
     t_nonfinite_fires,
     t_scan_broken_raises,
     t_cmdline_nul_separated,
