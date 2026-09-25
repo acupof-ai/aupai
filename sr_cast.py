@@ -59,8 +59,9 @@ def stochastic_round_bf16(x, generator):
 
 
 class StochasticRounder:
-    """One reproducible generator per device. Under DDP pass the same seed and rank on every
-    rank, or the replicas diverge; rank only offsets the seed for single-process tests.
+    """One reproducible generator per device, seeded by `seed` alone. There is deliberately no
+    rank argument: DDP replicas must draw identical casts or they diverge, and a per-rank seed
+    was written twice on 2026-09-25 (#717 build_optimizers, #714 rl_code_trainer).
 
     round() casts in flat blocks of `chunk_elems`: a stacked MoE optimizer group is ~2.0e9
     elements (12 layers x 48 experts of one same-shape weight), and _bf16_neighbors holds
@@ -69,8 +70,8 @@ class StochasticRounder:
     block (2e6 elements => a few tens of MiB each); element order is fixed, so a replay with
     the same seed/chunk reproduces byte-for-byte."""
 
-    def __init__(self, seed=20260925, rank=0, chunk_elems=2_000_000):
-        self.seed = int(seed) + int(rank)
+    def __init__(self, seed=20260925, chunk_elems=2_000_000):
+        self.seed = int(seed)
         self.chunk_elems = int(chunk_elems)
         self._gens = {}
 

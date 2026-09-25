@@ -442,9 +442,9 @@ def test_rounder_seed_rank_independent():
           r0.seed == RL_SR_SEED and r3.seed == RL_SR_SEED,
           f"{r0.seed} {r3.seed}")
 
-    # The per-rank-seed regression must be caught: StochasticRounder(seed, rank=3)
+    # The per-rank-seed regression must be caught: a seed offset by the rank (seed + 3)
     # seeds differently and therefore draws differently.
-    bad = StochasticRounder(seed=RL_SR_SEED, rank=3)
+    bad = StochasticRounder(seed=RL_SR_SEED + 3)
     check("a rank-offset seed genuinely diverges (the guard has discriminating power)",
           not torch.equal(bad.round(x.clone()), out0))
 
