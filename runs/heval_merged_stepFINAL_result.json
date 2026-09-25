@@ -1,0 +1,15 @@
+{
+  "humaneval": {
+    "benchmark": "humaneval",
+    "n": 1,
+    "tasks_total": 164,
+    "full_pass": 28,
+    "full_denom": 164,
+    "full_rate": 0.170732,
+    "clean_pass": 28,
+    "clean_denom": 156,
+    "clean_rate": 0.179487,
+    "empty": 0,
+    "shards": 11
+  }
+}
