@@ -101,6 +101,51 @@ def program_source(prompt, completion):
     return longest_parseable(text)
 
 
+#: The exact header scripts/rl_code_pool.py prepends to every reference it executes
+#: (FUTURE + STD_IMPORTS). Stripped as one fixed prefix, not by line category: a
+#: solution body can itself begin with an import. Kept in sync deliberately; the
+#: pool builder is the single producer of these rows.
+IMPL_HEADER = (
+    "from __future__ import annotations\n"
+    "import math\n"
+    "import re\n"
+    "import string\n"
+    "import bisect\n"
+    "import heapq\n"
+    "import itertools\n"
+    "import functools\n"
+    "import collections\n"
+    "from collections import Counter, defaultdict, deque\n"
+    "from functools import lru_cache, reduce, partial, cached_property\n"
+    "from heapq import heappush, heappop, heapify, nlargest, nsmallest\n"
+    "from itertools import permutations, combinations, product, accumulate, chain, groupby\n"
+)
+
+
+def solution_body(row):
+    """The reference solution the model would have to continue, minus the builder's
+    fixed prepended header (that header is never part of a continuation prompt).
+    """
+    impl = row.get("impl") or ""
+    return impl[len(IMPL_HEADER):] if impl.startswith(IMPL_HEADER) else impl
+
+
+def filter_rows_by_solution_len(rows, len_fn, call_cap, stdin_cap):
+    """Split rows into (kept, dropped) by reference-solution length <= mode's max_new.
+
+    1e order 2026-09-25: stdin max_new is p90 of solution length, so the ~10% of
+    rows whose correct answer is longer than the cap CANNOT be completed and would
+    always score 0 for a right answer -- a wrong reward. They are removed before RL.
+    `len_fn(body) -> int` is injected (gate tokenizer in training, a char counter in
+    tests), so this has no tokenizer dependency here.
+    """
+    kept, dropped = [], []
+    for r in rows:
+        cap = stdin_cap if r.get("kind") == "stdin" else call_cap
+        (kept if len_fn(solution_body(r)) <= cap else dropped).append(r)
+    return kept, dropped
+
+
 def score_row(row, source, timeout_call=30, timeout_stdin=10):
     """Binary reward for one reconstructed program against one pool row.
 
@@ -153,6 +198,7 @@ def build_optimizer(params, lr, muon_lr=None):
     """
     import inspect
 
+    import torch
     from train import Muon
 
     matrices = [p for p in params if p.ndim == 2]
@@ -161,12 +207,13 @@ def build_optimizer(params, lr, muon_lr=None):
     if matrices:
         kw = {"lr": muon_lr or lr, "momentum": 0.95, "weight_decay": 0.0}
         if {"stochastic_round", "momentum_dtype"} <= set(inspect.signature(Muon).parameters):
-            import torch
             kw["stochastic_round"] = True
             kw["momentum_dtype"] = torch.float32
         opts.append(Muon(matrices, **kw))
     if rest:
-        opts.append(torch.optim.AdamW(rest, lr=lr, betas=(0.9, 0.95), weight_decay=0.0, fused=True))
+        fused = bool(rest) and rest[0].device.type == "cuda"  # fused AdamW is CUDA-only
+        opts.append(torch.optim.AdamW(rest, lr=lr, betas=(0.9, 0.95), weight_decay=0.0,
+                                      fused=fused))
     return opts
 
 
@@ -258,9 +305,24 @@ def main():
         model = DDP(model, device_ids=[local], bucket_cap_mb=100, gradient_as_bucket_view=True)
 
     tok = load_tokenizer(os.path.join(ROOT, "data", "tokenizer.json"), cfg)
-    problems = load_code_pool(args.pool_dir)
-    if not problems:
+    all_rows = load_code_pool(args.pool_dir)
+    if not all_rows:
         raise SystemExit(f"no code RL rows under {args.pool_dir}")
+    # Drop rows whose reference solution is longer than the mode's max_new: they cannot
+    # be completed within the cap, so a correct continuation would be truncated to 0 --
+    # a wrong reward (1e order 2026-09-25). Basis: MAX_NEW_STDIN is the pool body p90.
+    def _n_body_tokens(body):
+        return len(tok.encode(body).ids)
+    problems, too_long = filter_rows_by_solution_len(
+        all_rows, _n_body_tokens, MAX_NEW_CALL, MAX_NEW_STDIN)
+    if not problems:
+        raise SystemExit(f"all {len(all_rows)} rows exceed the max_new length caps")
+    if is_main:
+        print(
+            f"length filter: kept {len(problems)}, dropped {len(too_long)} "
+            f"(reference solution longer than max_new; call>{MAX_NEW_CALL}, stdin>{MAX_NEW_STDIN})",
+            flush=True,
+        )
     optimizers = build_optimizer(list(train_core.parameters()), args.lr, args.muon_lr)
 
     if is_main:
