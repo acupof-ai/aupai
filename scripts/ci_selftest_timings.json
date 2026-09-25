@@ -273,7 +273,12 @@
     "scripts/problem_types.py": 0.1,
     "scripts/rl_pool_dedup_replay.py": 0.1,
     "scripts/test_exp_unretract.py": 0.5,
+    "scripts/test_muon_stochastic.py": 15.0,
+    "scripts/test_sr_cast.py": 4.0,
     "scripts/test_moe_router_score.py": 6.0,
     "scripts/train_health.py": 3.0
+  },
+  "_estimated": {
+    "2026-09-25 de option B": "sr_cast.py and scripts/test_muon_stochastic.py are laptop-CPU times (M-series, 3.0s/12.8s), not CI-measured; replace at the next ci-selftests timing regeneration."
   }
 }
