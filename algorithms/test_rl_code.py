@@ -40,6 +40,8 @@ from rl_code_trainer import (  # noqa: E402
     score_row,
     solution_body,
 )
+from code_reward import score as call_score  # noqa: E402
+from code_reward import score_stdin  # noqa: E402
 from rlvr_generate import generate  # noqa: E402
 from rlvr_trainer import seq_logprob  # noqa: E402
 
@@ -127,11 +129,25 @@ def test_reward():
         return
 
     # call-style: correct continuation 1, wrong 0, via the real isolated pytest run.
-    check("call correct solution rewards 1", score_row(CALL_ROW, good) == 1.0)
-    check("call wrong solution rewards 0", score_row(CALL_ROW, bad) == 0.0)
+    # Use score()/score_stdin() (the evidence-returning layer), not the scalar
+    # reward_fn wrappers, so a CI sandbox failure reports WHY (rc/reason/stderr/level)
+    # instead of a bare 0 -- a wrong answer and a sandbox that cannot start must be
+    # distinguishable from the test output.
+    rc_good = call_score(good, CALL_TESTS, timeout=30)
+    check("call correct solution rewards 1", rc_good["reward"] == 1.0,
+          f"{rc_good['reason']} rc={rc_good['rc']} level={rc_good['level']} "
+          f"err={rc_good.get('stderr','')[-300:]}")
+    rc_bad = call_score(bad, CALL_TESTS, timeout=30)
+    check("call wrong solution rewards 0", rc_bad["reward"] == 0.0,
+          f"{rc_bad['reason']} rc={rc_bad['rc']}")
     # stdin: whole script piped the case input.
-    check("stdin correct script rewards 1", score_row(STDIN_ROW, good_s) == 1.0)
-    check("stdin wrong script rewards 0", score_row(STDIN_ROW, bad_s) == 0.0)
+    rs_good = score_stdin(good_s, STDIN_CASES, timeout=10)
+    check("stdin correct script rewards 1", rs_good["reward"] == 1.0,
+          f"{rs_good['reason']} rc={rs_good['rc']} level={rs_good['level']} "
+          f"out={rs_good.get('stdout','')[-120:]} err={rs_good.get('stderr','')[-300:]}")
+    rs_bad = score_stdin(bad_s, STDIN_CASES, timeout=10)
+    check("stdin wrong script rewards 0", rs_bad["reward"] == 0.0,
+          f"{rs_bad['reason']} rc={rs_bad['rc']}")
 
     # Non-code continuation (prose) reconstructs to empty -> 0, never an error.
     check("prose continuation scores 0", score_row(CALL_ROW, "the answer is five") == 0.0)
