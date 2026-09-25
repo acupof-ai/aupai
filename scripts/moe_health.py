@@ -281,7 +281,10 @@ def _selftest():
     bm = layer_metrics(gsat, bias, k)
     check(bm["top1"] >= COLLAPSED_TOP1_FLOOR,
           f"bias must not lower un-biased top1, got {bm['top1']:.3f}")
-    check(bm["n_zero"] <= e - k, f"bias should spread selection off the hot column, n_zero={bm['n_zero']}")
+    # load max/mean reads 16.0 without the bias and 1.13 with it (genB): the bias really moved
+    # selection, so a top1 that stays at the floor is the affinity's, not the selection's.
+    check(bm["load_max_over_mean"] < 2.0,
+          f"bias should spread selection off the hot column, load max/mean={bm['load_max_over_mean']:.2f}")
 
     # 5. invariance: metric is deterministic and dtype tolerant (bf16 affinity still classified)
     h2 = layer_metrics(uni.to(torch.bfloat16).float(), None, k)
