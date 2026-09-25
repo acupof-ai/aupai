@@ -421,11 +421,40 @@ def test_shared_net_gate():
         os.environ.update(orig_env)
 
 
+def test_rounder_seed_rank_independent():
+    """Every DDP rank's SR rounder must use the SAME seed.
+
+    DDP all-reduces gradients but never synchronizes weights, so a per-rank SR seed
+    rounds the same update differently on each replica and they random-walk apart with
+    nothing reconverging them; rank 0 would save a model no other rank trained. A
+    rounder built "as rank 3" must be byte-identical in its draws to the rank-0 one,
+    and a rounder that seeds by rank (the bug) must fail this.
+    """
+    from rl_code_trainer import RL_SR_SEED, build_rounder
+    from sr_cast import StochasticRounder
+
+    x = torch.randn(4096, dtype=torch.float32)
+    r0 = build_rounder()                       # what main() builds on rank 0
+    r3 = build_rounder()                       # the same call on rank 3
+    out0, out3 = r0.round(x.clone()), r3.round(x.clone())
+    check("code-RL rounder seed is identical across ranks", torch.equal(out0, out3))
+    check("build_rounder uses the fixed shared seed",
+          r0.seed == RL_SR_SEED and r3.seed == RL_SR_SEED,
+          f"{r0.seed} {r3.seed}")
+
+    # The per-rank-seed regression must be caught: StochasticRounder(seed, rank=3)
+    # seeds differently and therefore draws differently.
+    bad = StochasticRounder(seed=RL_SR_SEED, rank=3)
+    check("a rank-offset seed genuinely diverges (the guard has discriminating power)",
+          not torch.equal(bad.round(x.clone()), out0))
+
+
 def main():
     test_advantage()
     test_reward()
     test_full_round()
     test_sr_unbiased()
+    test_rounder_seed_rank_independent()
     test_pool_loader_shape()
     test_length_filter()
     test_shared_net_gate()
