@@ -8,11 +8,13 @@
 #   bf16 (--no_fp8 --stochastic_round) with activation checkpointing (sft_math's
 #   --grad_ckpt default ON). Option B (1e 2026-09-25): weights bf16, fp32 w+delta
 #   Bernoulli-rounded on write, fp32 Muon momentum; no fp32 master (that OOM'd at 93 GiB).
-#   Est. peak ~49 GiB; step-1 peak > 85 GiB stops the run.
-#   seq 4096 from the pack, BATCH 4/rank (no accumulation: sft_math has none; global 32
-#   rows ~131K tokens/step). The user's "default 48" was read as a GLOBAL batch; 48 was
-#   actually per-rank rows, which extrapolates past the 96 GB H20 at B4x4096 -- corrected
-#   to 4/rank by the controller 2026-09-25 (1e: stop the run if step-1 peak > 85 GiB).
+#   Measured card-7 single-rank 3-step probe 2026-09-25 (nvidia-smi memory.used): B4 peak
+#   89.77 GiB (> 85 gate, rejected), B3 peak 84.66 GiB (passes). 1e ruling 2026-09-25
+#   (option a): run B3/rank, lr_scale unchanged.
+#   seq 4096 from the pack, BATCH 3/rank (no accumulation: sft_math has none; global 24
+#   rows ~98K tokens/step). The user's "default 48" was read as a GLOBAL batch; 48 was
+#   actually per-rank rows, which extrapolates past the 96 GB H20 at B4x4096; B4 was
+#   corrected then B3 set by the controller 2026-09-25 (step-1 peak > 85 GiB stops the run).
 # Read points: .epoch1 and .epoch2 at each epoch end, each scored by
 # eval/sft_a_humaneval.sh; the higher HumanEval is the kept one.
 #
@@ -28,7 +30,7 @@ cd "$(dirname "$0")/.." || exit 1
 EPOCHS=${EPOCHS:-2}
 LR_SCALE=${LR_SCALE:-0.1}
 WARMUP_FRAC=${WARMUP_FRAC:-0.05}
-BATCH=${BATCH:-4}
+BATCH=${BATCH:-3}
 NGPU=${NGPU:-8}
 NAME=${NAME:-sft_a_0925}
 RESUME=${RESUME:-/work/aupai/ckpt_v41_ced_0923.pt}
