@@ -12,6 +12,7 @@ import os
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
+import contextlib
 import copy
 import datetime
 import glob
@@ -1919,6 +1920,31 @@ def _env_fp():
     return env_fingerprint()
 
 
+def _atomic_torch_save(ck, path):
+    """Write a checkpoint so a kill (SIGTERM/OOM/power) during the write can never truncate the
+    existing checkpoint: torch.save streams into a temp file in the SAME directory, fsyncs it,
+    then atomically renames over the target. A reader therefore sees only the old complete file
+    or the new complete file, never a half-written one. Bought 2026-09-25: a watchdog SIGTERM
+    landed inside a plain torch.save to the final path and left interrupt.step452 as 8.99GB with
+    no zip central directory, so the resume could not load. Same-directory temp is required:
+    os.replace is atomic only within one filesystem. A hard SIGKILL skips Python cleanup and
+    leaks the ckpt-tmp-* file; mkstemp gives each write a unique name, so the next save is not
+    blocked and the straggler is safe to remove."""
+    directory = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix="ckpt-tmp-", dir=directory)
+    os.close(fd)
+    try:
+        torch.save(ck, tmp)
+        with open(tmp, "rb+") as f:  # flush+fsync: bytes are on disk before the rename publishes
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
 def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     """The ONLY way a checkpoint is written, so no writer can forget the vocabulary.
 
@@ -2120,7 +2146,7 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
             ck["row_cursor"] = dict(cur)  # no step (run-end save): the plan is complete
         ck["row_cursor_srcfp"] = dict(fps or {})
         ck["row_cursor_seed"] = _seed if _seed is not None else _sample_seed()
-    torch.save(ck, path)
+    _atomic_torch_save(ck, path)
 
 
 def vocab_fingerprint(tok):
