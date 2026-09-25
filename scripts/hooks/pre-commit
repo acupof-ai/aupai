@@ -1539,6 +1539,16 @@ def main():
         # (eval/code_zh.py's --selfcheck executes solutions in a root sandbox; registered in
         # NEEDS_DATA below, not here.)
         "fone.py",
+        # de option B (2026-09-25): the stochastic fp32->bf16 rounding library's known-answer
+        # gate (the library sr_cast.py is the subject; it carries no selftest itself). Pins the
+        # grid neighbours, E[cast]=x, accumulation of N sub-ULP steps, and that the
+        # round-to-nearest control moves NOTHING on the same inputs -- a known-answer pair, so a
+        # broken cast cannot pass by rounding correctly.
+        "scripts/test_sr_cast.py",
+        # de option B at the optimizer seam: real train.Muon/StochasticAdamW steps, RN arm must
+        # freeze, SR arm must track the fp32 oracle within 3 sigma, mb must be fp32, replay
+        # bit-identical. A deleted SR writeback reddens it (mutation-tested).
+        "scripts/test_muon_stochastic.py",
         # e1-42's equal-token gap. 0.1s, CPU, NO POD ACCESS in --selftest: its five fixtures are
         # the real val curves, so the known answers run anywhere. Registered because the mistake it
         # exists to prevent already happened once -- the five gaps were handed to me as the MoE-vs-
@@ -2887,6 +2897,9 @@ def main():
                      "scripts/test_mem_defaults_frozen.py",
                      "scripts/test_moe_defaults_frozen.py",
                      "scripts/test_muon_3d.py",
+                     # option B lives in train.py's Muon/StochasticAdamW; the gate reads those
+                     # classes by importing train, so any train.py edit is when it must run.
+                     "scripts/test_muon_stochastic.py",
                      "scripts/test_mix_val_frac.py",
                      "scripts/test_mix_anneal_and_cursor.py",
                      # build_mix compares the mix's _derived_against triple with the resuming
