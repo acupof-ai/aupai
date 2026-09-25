@@ -61,6 +61,7 @@ def main():
         setattr(Cfg, k, v)  # architecture comes from the checkpoint, never the live Cfg
     Cfg.batch = args.batch
     Cfg.epochs = args.epochs
+    Cfg.kind = "sft"  # checkpoint marker read by score_matrix.classify / RL resume gate
     Cfg.grad_ckpt = True  # required for stability (removing it causes NaN)
 
     torch.manual_seed(Cfg.seed)
