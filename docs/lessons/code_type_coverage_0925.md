@@ -25,7 +25,7 @@ reproducible from the file length.
 |---|---|---|---|---|---|---|---|---|---|
 | scenario_simulation | 0% | 61.0 | 8.5\* | 9.5\* | 32.5\* | 29.9\* | 17.5\* | 13.5\* | 2.0\* |
 | counting_histogram | 0% | 54.9 | 24.0\* | 27.0\* | 44.5 | **70.5** | 32.5\* | 42.0 | **93.0** |
-| arithmetic_basics | 13% | 91.5 | 35.5\* | 45.5\* | 104.0 | **302.0** | 57.5\* | 64.0\* | 72.5 |
+| arithmetic_basics | 13% | 91.5 | 35.5\* | 45.5\* | 104.0 | **302.1** | 57.5\* | 64.0\* | 72.5 |
 | string_parse | 14% | 42.7 | 38.0 | 73.5 | 29.5\* | 6.0\* | 66.0 | 46.5 | 24.0\* |
 | sorting_select | 15% | 146.3 | 36.0\* | 50.0\* | 106.0\* | **170.1** | 58.0\* | 77.0\* | 139.0 |
 | float_geometry | 17% | 73.2 | 106.5 | 75.5 | 64.5 | 63.1 | 111.0 | 112.0 | 98.0 |
@@ -38,7 +38,7 @@ reproducible from the file length.
 | **unclassified** | — | 0.0 | 448.5 | 95.5 | 70.5 | 0.0 | 348.0 | 271.0 | **2.0** |
 
 Columns: `code_if` / `sc2` / `apps` are the three SFT-A code sources; `RL (dedup)` is all
-9,535 survivors of the pool's global dedup; `starcoder` / `ultra_l2` / `ultra_l3` are three
+9,531 survivors of the pool's global dedup; `starcoder` / `ultra_l2` / `ultra_l3` are three
 pretrain code domains.
 
 ## 1b. The whole gate mix, with weights, and what exposure does and does not predict
@@ -104,7 +104,7 @@ twelve types (that maximum is counting_histogram, whose en_c4 rate is only 8.5),
 qualitative reading above holds either way. Its `scenario_simulation` rate of 201.5 is the
 single largest number in the raw table and is the most misleading one.
 
-## 2. Two verdicts move
+## 2. Verdicts: which of the earlier ones survive
 
 `docs/lessons/humaneval_problem_types_0925.md` §4a put four types in **缺数据 (short of
 data)**. Two of them do not survive the fuller coverage.
@@ -115,7 +115,7 @@ data)**. Two of them do not survive the fuller coverage.
 |---|---|
 | HumanEval | 54.9 |
 | **ultra_l3_noexec** | **93.0** |
-| **RL pool** | **70.5** |
+| **RL pool** | **70.4** |
 | apps | 44.5 |
 | ultra_l2 | 42.0 |
 | starcoder | 32.5 |
@@ -143,17 +143,23 @@ model had to *produce* counting tasks under supervision — which this data cann
 | source | rate |
 |---|---|
 | HumanEval | 146.3 |
-| **RL pool** | **170.1** |
-| ultra_l3 | 139.0 |
+| **RL pool** | **170.2** |
+| ultra_l3 | 139.0 (below HumanEval) |
 | apps | 106.0 |
 | ultra_l2 | 77.0 |
 | starcoder | 58.0 |
 | sc2 | 50.0 |
 | code_if | 36.0 |
 
-The RL pool and ultra_l3 both exceed HumanEval, and the three SFT-A sources run 36–106, i.e.
-the SFT-A side is 1.4–4x thinner than every other source. This was already flagged as
-"mixed" in §4b; it now resolves to under-sampling.
+**Only the RL pool clears HumanEval** (170.2 vs 146.3). `ultra_l3` is 139.0, i.e. *below*
+HumanEval — an earlier draft of this section said both exceed it, which is wrong and was
+corrected in review (genB c61ac333). Every other source is below: `ultra_l2` 77.0, `apps`
+106.0, `starcoder` 58.0, `sc2` 50.0, `code_if` 36.0.
+
+The verdict is unchanged, on the stronger form of the same fact: the three SFT-A sources run
+36–106, so **the SFT-A side is 1.4–4x thinner than every non-SFT-A source**, and 1.4x
+thinner than the only one that clears HumanEval. This was flagged as "mixed" in §4b; it
+resolves to under-sampling.
 
 ### The two that stay
 
@@ -182,13 +188,25 @@ separate question about the mix, and this table does not answer it.
 - **Read-only throughout.** sc2 and apps were rebuilt into `/tmp` by importing the production
   renderer (`scripts/sfta_render_external.py`) as a module with `OUT_DIR` rebound; rebuilt
   sizes match production exactly (49,599 / 10,776), which is what makes them comparable to
-  the pack. The RL pool was **filtered in memory** by the builder's own rule
-  (`sha1(norm_text(prompt))`, survivor = max test count, `scripts/rl_code_pool.py`) because
-  the builder consumes the files it reads; the reproduction is verified against the
-  committed stats — 9,535 survivors and per-file counts (27 / 182 / 9,326) match exactly.
-  Nothing was written under the pod repo.
-- **RL pool = 9,535 after dedup, and the dedup is real**: 131 within-file and 378
-  cross-file duplicates dropped. The earlier 27 + 539 partial scan is superseded.
+  the pack. The RL pool was **filtered in memory** rather than by re-running the builder,
+  because `scripts/rl_code_pool.py` **consumes the files it reads** (its second pass rewrites
+  each file in place, keeping only the winners) — running it to check a number would mutate
+  the production pool. Nothing was written under the pod repo.
+- **The RL reproduction is now in the tree.** `scripts/rl_pool_dedup_replay.py` implements the
+  builder's own rule (`sha1(norm_text(prompt))`, survivor = the max-test-count row) and exits
+  non-zero when the replay does not reproduce the stats; `--selftest` exercises the rule on a
+  fixture whose answer is known by construction, so a replay that kept everything would not
+  pass. The pool's stats snapshot is committed at `runs/rl_pool_global_dedup_stats_0925.json`.
+  **The raw TACO/APPS source files are pod-only and are not in the tree**, so replaying
+  requires the pod; what is checkable here is the rule and the counts it produced.
+- **The RL pool moved while this work was in flight.** The column was first measured at
+  **9,535** survivors; the pool was rewritten at 15:28 on 2026-09-25 and is now **9,531**
+  (per-file 27 / 0 / 182 / 9,322), with the dedup's own drop counters reset to 0 because the
+  rewrite now happens upstream. The numbers in this table are the re-run against the
+  rewritten pool. Four rows moved and **no verdict changed** — the re-run reproduces all
+  twelve types within one row — but the earlier 9,535 figure and its "131 within-file / 378
+  cross-file dropped" are about a pool state that no longer exists on disk. An earlier version
+  of this section cited the stats file's 9,535 as if it were static.
 - **Row ≠ problem**, unchanged: pretrain rows are whole FILES and one repository contributes
   many code_if pairs. Fine rankings are not supported; 5–8x supply differences are.
 - **apps is measured on the original question text.** The renderer keeps only the starter
