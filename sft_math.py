@@ -543,6 +543,8 @@ def main():
     )
     flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
     weight = raw_model.head.weight[: raw_model.cfg.vocab]
+    if amp:
+        torch.cuda.reset_peak_memory_stats(device)
 
     for ep in range(Cfg.epochs):
         model.train()
@@ -650,6 +652,12 @@ def main():
                 t0 = time.time()
             if _stop and step >= _stop:
                 break
+            if is_main and step == 1 and amp:
+                # The 85 GiB launch gate (1e 2026-09-25) needs a step-1 number. allocated, not
+                # reserved: reserved includes the caching allocator's held-but-unused pool.
+                peak_gb = torch.cuda.max_memory_allocated(device) / 2**30
+                runlog(f"step1 peak allocated {peak_gb:.2f} GiB (gate: stop if > 85)")
+                print(f"step1 peak allocated {peak_gb:.2f} GiB", flush=True)
         # Epoch-boundary read points for eval (CED code-SFT user order 2026-09-25: score each
         # epoch end, keep the higher HumanEval). Only a FULLY consumed epoch is written: under
         # --max_steps/--stop_after the boundary step is never reached, so no misnamed file.
