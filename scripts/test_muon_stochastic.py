@@ -37,7 +37,7 @@ def _run_muon(dtype, sr, seed=20260925, w0=None):
         w0 = (1.0 + 0.5 * torch.rand(n, out, inn)).to(dtype)  # all in one ULP bin [1, 1.5)
     G0 = torch.ones(n, out, inn)  # constant positive grad -> NS keeps every entry same sign
     w = w0.to(dtype).clone()
-    rounder = StochasticRounder(seed=seed, rank=0) if sr else None
+    rounder = StochasticRounder(seed=seed) if sr else None
     opt = Muon(
         [w],
         lr=LR,
@@ -63,7 +63,7 @@ def _run_muon_multi(dtype, sr, seed=20260925, base=None):
         base = (1.0 + 0.5 * torch.rand(3, 48, 64, generator=torch.Generator().manual_seed(9))).to(dtype)
     G0 = torch.ones(3, 48, 64)
     ws = [base[i].to(dtype).clone() for i in range(3)]
-    rounder = StochasticRounder(seed=seed, rank=0) if sr else None
+    rounder = StochasticRounder(seed=seed) if sr else None
     opt = Muon(
         ws,
         lr=LR,
@@ -88,7 +88,7 @@ def _run_adam(dtype, sr, seed=20260925, w0=None):
     G0 = 0.01 * torch.ones(128, 128)
     w = w0.to(dtype).clone()
     if sr:
-        rounder = StochasticRounder(seed=seed, rank=0)
+        rounder = StochasticRounder(seed=seed)
         opt = StochasticAdamW([w], rounder, lr=1e-3, betas=(0.9, 0.95), weight_decay=0.0)
     else:
         opt = torch.optim.AdamW([w], lr=1e-3, betas=(0.9, 0.95), weight_decay=0.0)
