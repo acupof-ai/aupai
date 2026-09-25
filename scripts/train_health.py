@@ -224,6 +224,11 @@ def _selftest():
 
     def window(scale):
         m = MoEFFN(cfg)
+        # the training path casts the whole model to bf16 and back; the window counters must
+        # come out fp64 or the ratios saturate (v41_ced_fixprobe_0925, logit_norm 32.000)
+        m.to(torch.bfloat16)
+        assert m.h_sums.dtype == torch.float64 and m.h_load.dtype == torch.float64, (m.h_sums.dtype,)
+        m.float()
         with torch.no_grad():
             m.router.weight.mul_(scale)
         m.train()
