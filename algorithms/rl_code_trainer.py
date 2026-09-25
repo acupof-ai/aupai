@@ -185,6 +185,21 @@ def build_optimizer(params, lr, muon_lr=None, rounder=None):
     return opts
 
 
+RL_SR_SEED = 20260925
+
+
+def build_rounder(seed=RL_SR_SEED):
+    """The trainer's single StochasticRounder.
+
+    Deliberately takes NO rank: every DDP rank must share one SR seed because DDP
+    synchronizes gradients, not weights (see the call site). Factored out so the
+    rank-independence is a unit test rather than a line inside main().
+    """
+    from sr_cast import StochasticRounder
+
+    return StochasticRounder(seed=seed)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--resume", required=True, help="SFT checkpoint")
@@ -292,11 +307,12 @@ def main():
             flush=True,
         )
     # One shared stochastic rounder: Muon and the fp32 AdamW path draw from one
-    # reproducible per-device stream. rank offsets the seed so DDP replicas do not share
-    # draws (sr_cast contract).
-    from sr_cast import StochasticRounder
-
-    rounder = StochasticRounder(seed=20260925, rank=rank if ddp else 0)
+    # reproducible per-device stream. ONE SEED ACROSS ALL DDP RANKS: DDP all-reduces
+    # gradients but never synchronizes WEIGHTS, so a per-rank SR seed would round the
+    # same update differently on every replica and they would random-walk apart forever
+    # with nothing pulling them back -- rank 0 would then save a model no other rank
+    # trained (the same bug #717 fixed in train.py, see test_muon_stochastic).
+    rounder = build_rounder()
     optimizers = build_optimizer(list(train_core.parameters()), args.lr, args.muon_lr,
                                  rounder=rounder)
 
