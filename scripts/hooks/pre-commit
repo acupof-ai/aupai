@@ -2088,6 +2088,8 @@ def main():
         # the BIASED score passed all 8 -- the first version recomputed both candidate gates and
         # asserted they differ, which is a fact about softmax, not about the module.
         "scripts/test_moe_module.py",
+        # router_score softmax|sigmoid known-answer gates (V3 independence, bitwise softmax)
+        "scripts/test_moe_router_score.py",
         # The MoE step profiler. In SELFTEST_FILES and NOT in NEEDS_DATA because its --selftest
         # needs no card: it asserts the shape constants still match arm D's launch line, that the
         # parity (top_k+shared)*expert_ffn == ffn_hidden holds -- the whole "equal active FLOPs"
@@ -2960,7 +2962,8 @@ def main():
                      "scripts/test_mem_defaults_frozen.py",
                      "scripts/test_moe_defaults_frozen.py",
                      "scripts/test_moe_latent.py",
-                     "scripts/test_moe_module.py"},                          # 48.9s
+                     "scripts/test_moe_module.py",
+                     "scripts/test_moe_router_score.py"},             # router_score switch
         "scripts/loader.py": {"scripts/test_arch_compat.py", "scripts/test_sft_pack.py",
                               "scripts/test_eval_base_prompt_format.py",
                               "scripts/test_serve_history.py"},              # 22.0s
