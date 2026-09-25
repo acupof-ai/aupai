@@ -113,6 +113,10 @@ def main():
                         help="warmup as a fraction of total steps (e.g. 0.05); overrides the "
                              "resumed ckpt's absolute warmup. None keeps absolute warmup")
     parser.add_argument("--no_fp8", action="store_true")
+    parser.add_argument("--stochastic_round", action="store_true",
+                        help="bf16 weights with fp32 candidate Bernoulli-rounded on write, fp32 "
+                             "Muon momentum (1e option B). The model is cast bf16 even with "
+                             "--no_fp8; without this flag --no_fp8 keeps fp32 weights")
     # Spelled --no-grad_ckpt (hyphen) to match train.py, whose BooleanOptionalAction
     # generates that form (ead2d2b). Two entry points spelling the same switch differently
     # is a trap a person walks into once per script; the underscore form is kept for one
@@ -345,6 +349,16 @@ def main():
     if fp8:
         raw_model = raw_model.to(torch.bfloat16)
         convert_to_fp8_compute(raw_model)
+    elif args.stochastic_round and amp:
+        # Option B runs bf16 compute without fp8: weights must be bf16, or --no_fp8 leaves the
+        # checkpoint cast fp32 and doubles static memory (the B48/B4 OOM root cause).
+        raw_model = raw_model.to(torch.bfloat16)
+    Cfg.stochastic_round = args.stochastic_round
+    if args.stochastic_round:
+        assert not fp8, "stochastic_round is the bf16 (--no_fp8) path, not the fp8 path"
+        assert amp, ("stochastic_round needs CUDA bf16 compute: on CPU the model is fp32, and "
+                     "Bernoulli-casting every write to bf16 then back into fp32 would quantize "
+                     "every parameter. Pass it on a GPU run only")
     if is_main:
         from train import HAS_FA
 
@@ -532,6 +546,8 @@ def main():
     )
     flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
     weight = raw_model.head.weight[: raw_model.cfg.vocab]
+    if amp:
+        torch.cuda.reset_peak_memory_stats(device)
 
     for ep in range(Cfg.epochs):
         model.train()
@@ -639,6 +655,12 @@ def main():
                 t0 = time.time()
             if _stop and step >= _stop:
                 break
+            if is_main and step == 1 and amp:
+                # The 85 GiB launch gate (1e 2026-09-25) needs a step-1 number. allocated, not
+                # reserved: reserved includes the caching allocator's held-but-unused pool.
+                peak_gb = torch.cuda.max_memory_allocated(device) / 2**30
+                runlog(f"step1 peak allocated {peak_gb:.2f} GiB (gate: stop if > 85)")
+                print(f"step1 peak allocated {peak_gb:.2f} GiB", flush=True)
         # Epoch-boundary read points for eval (CED code-SFT user order 2026-09-25: score each
         # epoch end, keep the higher HumanEval). Only a FULLY consumed epoch is written: under
         # --max_steps/--stop_after the boundary step is never reached, so no misnamed file.
