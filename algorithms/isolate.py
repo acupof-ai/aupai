@@ -129,6 +129,38 @@ def detect_level():
     return "rlimits_only"
 
 
+def _bwrap_netns_ok():
+    """Whether bwrap can build a private net namespace on THIS host.
+
+    `bwrap --unshare-all` unshares the network namespace and brings up loopback,
+    which needs CAP_NET_ADMIN inside the user namespace. A non-root GitHub-hosted
+    runner grants user namespaces but not that cap, so bwrap dies before exec with
+    `loopback: Failed RTM_NEWADDR: Operation not permitted` (measured in CI run
+    36143768948, 2026-09-25). Probe once with a throwaway `true`; when it fails the
+    caller uses --share-net (host network stack), which keeps the filesystem/pid
+    isolation but does NOT isolate the network -- the returned isolates map then
+    reports net=False rather than claiming isolation the sandbox does not have.
+    """
+    if not shutil.which("bwrap") or platform.system() == "Darwin":
+        return False
+    cache = globals().get("_BW_NETNS")
+    if cache is not None:
+        return cache
+    probe = ["bwrap", "--unshare-all", "--die-with-parent", "--ro-bind", "/usr", "/usr",
+             "--ro-bind-try", "/lib", "/lib", "--ro-bind-try", "/lib64", "/lib64",
+             "--ro-bind-try", "/bin", "/bin", "--", "true"]
+    try:
+        r = subprocess.run(probe, capture_output=True, timeout=15)
+        ok = r.returncode == 0
+    except Exception:
+        ok = False
+    globals()["_BW_NETNS"] = ok
+    return ok
+
+
+_BW_NETNS = None
+
+
 # macOS Seatbelt profile. Three traps, each of which produced a wrong reading before it was
 # understood; each is a case in _selftest so the trap cannot come back silently.
 #
@@ -248,10 +280,16 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
             # BIND THE INTERPRETER'S REAL TREE, not just /usr. A GitHub-hosted runner's
             # CPython lives under /opt/hostedtoolcache (a symlinked, non-/usr prefix), and
             # pytest/site-packages sit under it; with only /usr bound the sandbox cannot
-            # exec python at all and every code-reward rollout silently scores 0. Bind the
-            # sys.executable prefix (and /opt generally, where such toolchains live),
-            # /tmp, /etc and /dev in addition to the standard libc dirs.
-            argv = ["bwrap", "--unshare-all", "--die-with-parent", "--ro-bind", "/usr", "/usr",
+            # exec python at all and every code-reward rollout silently scores 0. Bind
+            # /opt, /etc and /tmp in addition to the standard libc dirs.
+            #
+            # NET: --unshare-all brings up a private-loopback net namespace, which needs
+            # CAP_NET_ADMIN the hosted runner lacks; on such a host use --share-net and
+            # report net=False in the result (fs/pid isolation still holds). See
+            # _bwrap_netns_ok for the measured RTM_NEWADDR failure.
+            net = [] if _bwrap_netns_ok() else ["--share-net"]
+            argv = ["bwrap", "--unshare-all", "--die-with-parent", *net,
+                    "--ro-bind", "/usr", "/usr",
                     "--ro-bind-try", "/lib", "/lib", "--ro-bind-try", "/lib64", "/lib64",
                     "--ro-bind-try", "/bin", "/bin",
                     "--ro-bind-try", "/etc", "/etc",
@@ -286,10 +324,13 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
                 pass
             out, err = p.communicate()
             timed_out = True
+        iso = dict(ISOLATES[lvl])
+        if lvl == "bwrap" and not _bwrap_netns_ok():
+            iso["net"] = False  # --share-net: host network stack, no network isolation
         return {"level": lvl, "rc": -1 if timed_out else p.returncode,
                 "stdout": (out or b"").decode("utf-8", "replace"),
                 "stderr": (err or b"").decode("utf-8", "replace")[-2000:],
-                "timed_out": timed_out, "isolates": ISOLATES[lvl]}
+                "timed_out": timed_out, "isolates": iso}
     finally:
         if own_dir:
             shutil.rmtree(workdir, ignore_errors=True)
