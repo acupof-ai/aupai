@@ -30,12 +30,15 @@ sys.path.insert(0, os.path.dirname(HERE))
 os.environ.pop("ALLOW_UNISOLATED", None)
 
 from rl_code_trainer import (  # noqa: E402
+    IMPL_HEADER,
     _adam_step_fp32,
+    filter_rows_by_solution_len,
     gspo_code_loss,
     group_advantage,
     load_code_pool,
     program_source,
     score_row,
+    solution_body,
 )
 from rlvr_generate import generate  # noqa: E402
 from rlvr_trainer import seq_logprob  # noqa: E402
@@ -277,12 +280,34 @@ def test_pool_loader_shape(tmp_dir=None):
           len(rows) == 1 and rows[0]["prompt"] == "p", str(len(rows)))
 
 
+def test_length_filter():
+    # The filter must measure the solution BODY (the fixed prepended header stripped),
+    # use each mode's own cap, and keep/drop without mutating the rows.
+    long = "x" * 300
+    rows = [
+        {"kind": "stdin", "impl": IMPL_HEADER + "n=1\n", "prompt": "s"},   # body tiny -> keep
+        {"kind": "stdin", "impl": IMPL_HEADER + long, "prompt": "s"},      # body 300 > 562? no
+        {"kind": "call", "impl": IMPL_HEADER + "def f():\n    return 1", "prompt": "c"},
+    ]
+    # force a clear drop: call cap is smaller than a long body
+    rows.append({"kind": "call", "impl": IMPL_HEADER + long, "prompt": "c2"})
+    kept, dropped = filter_rows_by_solution_len(rows, len, call_cap=25, stdin_cap=562)
+    check("header stripped before measuring", solution_body(rows[0]) == "n=1\n")
+    check("length filter keeps short call/stdin, drops the long call row",
+          len(kept) == 3 and len(dropped) == 1 and dropped[0]["prompt"] == "c2",
+          f"{len(kept)}/{len(dropped)}")
+    # A row WITHOUT the header is measured whole (no silent strip).
+    k2, _ = filter_rows_by_solution_len([{"impl": "print(1)"}], len, 20, 562)
+    check("headerless row measured whole", len(k2) == 1)
+
+
 def main():
     test_advantage()
     test_reward()
     test_full_round()
     test_sr_unbiased()
     test_pool_loader_shape()
+    test_length_filter()
     if FAILS:
         print(f"\n{len(FAILS)} FAIL:")
         for f in FAILS:
