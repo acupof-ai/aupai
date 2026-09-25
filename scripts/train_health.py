@@ -274,6 +274,10 @@ def _selftest():
     assert not any("overriding" in a for a in alarms({"moe": {"0": pref}}))
     assert over["argmax_selected"] == 0.0 and over["top1"] < 0.9, over
     assert any("overriding" in a for a in alarms({"moe": {"0": over}})), alarms({"moe": {"0": over}})
+    # a zeroed router ties every affinity; a tied first choice is served, so this must read 1.0
+    # (index-based argmax read 0.0 here on the CI runner, #724)
+    tie, _ = window(1.0, lambda m: m.router.weight.zero_(), ones)
+    assert tie["argmax_selected"] == 1.0, tie
 
     # 2. The 0923 shape: a bias that forces the load flat does not lower the un-biased top-1.
     load = torch.full((48,), 100.0)
