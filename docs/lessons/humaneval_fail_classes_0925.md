@@ -20,7 +20,7 @@ Raw table with the completion text, one row per task x step: `runs/heval_fail_cl
 
 The other half of the same claim, from the length side: the 164 canonical HumanEval bodies tokenize to **median 46 / p90 108 / max 251** tokens, and **0 of 164 exceed 280**. The correct completions the model does produce are **median 20 / p90 58 / max 125** tokens. Both the reference solutions and the model's own successes fit the budget with room to spare.
 
-So the failures are not a length or budget problem, and "the model ran out of room" is not the mechanism. For 28 of the 96 capped rows the model never even completed a syntactically valid body for its entry point; for the other 68 it completed one and kept writing, and the completed body was already wrong. The 68+28 is the whole capped set.
+So the failures are not a length or budget problem, and "the model ran out of room" is not the mechanism. For 30 of the 96 capped rows the model never even completed a syntactically valid body for its entry point; for the other 66 it completed one and kept writing, and the completed body was already wrong. The 66+30 is the whole capped set.
 
 ## 2. Classes, by explicit criteria
 
@@ -121,7 +121,7 @@ SFT A is `sft_mixA_0924.pt` (6617 rows, 143,687 examples; `facts/v41.json#v41.sf
 | `timeout` (1) | n/a | One unbounded `while`. |
 | empty output (0) | n/a | Nothing to fix. |
 
-**The stopping behaviour is the strongest lever, and it is not the cap.** 96 capped rows: 68 completed the function and then kept writing, 28 never completed it at all (the 68+28 is the whole capped set). The model's correct answers run 20 tokens median, so it can stop when the answer is done. SFT A is raw continuation with `EOS` supervision, so it teaches "stop when the answer is done" directly — plausibly the single highest-value effect, but §2's orthogonality is a warning: reducing `max_new` failures does not by itself move `logic_wrong`.
+**The stopping behaviour is the strongest lever, and it is not the cap.** 96 capped rows: 66 completed the function and then kept writing, 30 never completed it at all (the 66+30 is the whole capped set). The model's correct answers run 20 tokens median, so it can stop when the answer is done. SFT A is raw continuation with `EOS` supervision, so it teaches "stop when the answer is done" directly — plausibly the single highest-value effect, but §2's orthogonality is a warning: reducing `max_new` failures does not by itself move `logic_wrong`.
 
 ### Hypothesis to be tested, not a conclusion: does SFT A teach writing *longer*?
 
