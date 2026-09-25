@@ -131,13 +131,14 @@ Bold = more than 25% below HumanEval's rate for that type.
 | `string_parse` | 14% | sc2 73.5, pretrain 66 — above HE | **数据多照样错,** at 7 tasks the sample is small. |
 | `float_geometry` | 17% | code_if 106.5, pretrain 111 — above HE | **数据多照样错.** |
 
-### 4c. Counterexample worth keeping: supply is not the whole story
+### 4c. Counterexample worth keeping: supply is not the whole story (not a verdict)
 
 `bracket_nesting` is **the best-passing type (28%) with the worst supply** (1.0–15.0 per 1000
 outside HumanEval, i.e. 2.4–37x below HE). It is a two-line depth counter with an obvious
 invariant. Conversely `collection_transform` is the best-supplied type in every dataset and
 only mid-table on pass rate (27%). Neither direction is reliable on its own — which is why
-§4a and §4b are separated by supply, not by pass rate alone.
+§4a and §4b are separated by supply, not by pass rate alone. This pair is recorded as a
+confounder, **not** as a third verdict: it is not a class of tasks to act on.
 
 ## 5. What the numbers do not support
 
