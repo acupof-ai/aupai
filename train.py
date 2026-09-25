@@ -32,6 +32,7 @@ import torch.distributed as dist
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint  # noqa: F401  (used via torch.utils.checkpoint.checkpoint)
+from sr_cast import StochasticRounder  # small-LR bf16 writeback (option B)
 from tokenizers import Tokenizer
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -486,6 +487,10 @@ class Cfg:
     # all_gather the updates. Default off: bit-parity is pinned by scripts/test_muon_ns_shard.py,
     # and a mid-run toggle changes no math but has to be proven before a gate run uses it.
     muon_ns_shard = False
+    # Option B (1e ruling 2026-09-25): bf16 weights, fp32 w+delta Bernoulli-rounded on write,
+    # fp32 Muon momentum. Default off; the post-ced short experiment and the 30B retrain pass
+    # --stochastic_round. SFT (sft_math.py) sets this from its own flag.
+    stochastic_round = False
     # AdamW (embedding + 1D params) — batch-scaled per nanochat
     embed_lr = 0.1
     embed_betas = (0.8, 0.995)
@@ -890,7 +895,17 @@ POLAR_EXPRESS = [
 class Muon(torch.optim.Optimizer):
     """Nesterov momentum + Polar Express orthogonalization + cautious weight decay."""
 
-    def __init__(self, params, lr=0.02, momentum=0.95, ns_steps=5, weight_decay=0.28):
+    def __init__(
+        self,
+        params,
+        lr=0.02,
+        momentum=0.95,
+        ns_steps=5,
+        weight_decay=0.28,
+        stochastic_round=False,
+        momentum_dtype=None,
+        rounder=None,
+    ):
         # Read ONCE, here, not per step: hasattr rather than getattr-with-default, because
         # getattr returns the same False whether the field is missing or present-and-False, so
         # a renamed field would make the arm silently run the baseline while still reporting as
@@ -906,9 +921,24 @@ class Muon(torch.optim.Optimizer):
         # param) and a group whose n is not a positive multiple of world cannot shard and fall
         # back to the all-instances path. Default off; opt-in via --muon_ns_shard.
         self._ns_shard = bool(getattr(Cfg, "muon_ns_shard", False))
+        # Option B (1e ruling, 2026-09-25). At SFT LRs the bf16 write discards sub-half-ULP
+        # updates: measured 0.1-10% of elements move per step under round-to-nearest. With
+        # stochastic_round the write is computed in fp32 and Bernoulli-cast to bf16 by distance
+        # to the two grid points, so E[w_new] is the exact fp32 value and sub-ULP updates
+        # accumulate without a 12 GB fp32 master. momentum_dtype=torch.float32 keeps `mb` at full
+        # precision (~6 GB, 2B params x 4 B vs 2 B); the SFT line passes both, pretraining passes
+        # neither.
+        self._sr = bool(stochastic_round)
+        self._momentum_dtype = momentum_dtype  # None -> mb follows the grad dtype (pretraining)
+        assert not (self._sr and self._ns_shard), (
+            "stochastic_round + muon_ns_shard: each rank's generator casts independently, so an "
+            "all-gathered W would differ across ranks. Pick one.")
+        if self._sr:
+            assert rounder is not None, "stochastic_round needs a StochasticRounder"
+        self._rounder = rounder
         defaults = dict(lr=lr, momentum=momentum, ns_steps=ns_steps, weight_decay=weight_decay)
         super().__init__(params, defaults)
-        self._compiled = {}  # (shape, ns_steps, tall, device) -> compiled function
+        self._compiled = {}  # (shape, ns_steps, tall, device, sr) -> compiled function
         self._scalar_tensors = {}
 
     def _get_scalar_tensors(self, device):
@@ -920,8 +950,8 @@ class Muon(torch.optim.Optimizer):
             )
         return self._scalar_tensors[device]
 
-    def _get_compiled(self, shape, ns_steps, tall, device):
-        key = (shape, ns_steps, tall, device)
+    def _get_compiled(self, shape, ns_steps, tall, device, sr):
+        key = (shape, ns_steps, tall, device, sr)
         if key not in self._compiled:
             coeffs = POLAR_EXPRESS[:ns_steps]
             a_coeffs = [c[0] for c in coeffs]
@@ -939,9 +969,15 @@ class Muon(torch.optim.Optimizer):
                 b_c=b_coeffs,
                 c_c=c_coeffs,
                 is_tall=tall,
+                is_sr=sr,
             ):
-                momentums.lerp_(grads, 1 - momentum)
-                g = grads.lerp(momentums, momentum)
+                momentums.lerp_(grads.to(momentums.dtype), 1 - momentum)
+                if is_sr:
+                    # fp32 mb must feed g in fp32 or its extra precision dies at the lerp -- the
+                    # EMA accumulated sub-bf16-epsilon history only matters through this g.
+                    g = grads.float().lerp(momentums.float(), momentum)
+                else:
+                    g = grads.lerp(momentums, momentum)
                 X = g.bfloat16()
                 # FLATTEN TO ONE BATCH DIMENSION. baddbmm is strictly 3-D, and step() stacks
                 # same-shape params, so a 2-D weight arrives here as (n, out, in) and a 3-D one
@@ -972,6 +1008,13 @@ class Muon(torch.optim.Optimizer):
                         X = torch.baddbmm(a_c[i] * X, B, X, beta=1.0, alpha=1.0)
                 X = X.reshape(*_lead, X.shape[-2], X.shape[-1])
                 mask = (grads * weights) >= 0
+                if is_sr:
+                    # Option B, MEMORY-AWARE. Return the bf16 UPDATE T (never the fp32 new
+                    # weights): the stacked MoE group is ~2.0e9 elements, so an fp32 w_new plus
+                    # its expression temporaries is tens of GiB at opt.step (the 0925 probe
+                    # OOM). NS's direction is bf16 anyway, so no precision is kept by promoting
+                    # it here. step() computes w - T in fp32 IN BLOCKS and Bernoulli-casts.
+                    return (lr * X + lr * wd * weights * mask).to(torch.bfloat16), momentums
                 weights.sub_(lr * X.to(weights.dtype) + lr * wd * weights * mask)
                 return weights, momentums
 
@@ -1005,7 +1048,8 @@ class Muon(torch.optim.Optimizer):
                 sg["grads"].append(p.grad)
                 st = self.state[p]
                 if "mb" not in st:
-                    st["mb"] = torch.zeros_like(p.grad)
+                    mb_dtype = self._momentum_dtype if self._momentum_dtype is not None else p.grad.dtype
+                    st["mb"] = torch.zeros(p.grad.shape, dtype=mb_dtype, device=p.grad.device)
                 sg["mbs"].append(st["mb"])
 
         for shape, sg in shape_groups.items():
@@ -1031,18 +1075,20 @@ class Muon(torch.optim.Optimizer):
             wd_t.fill_(sg["wd"])
             if n == 1:
                 p, g, mb = sg["params"][0], sg["grads"][0], sg["mbs"][0]
-                fn = self._get_compiled(shape, sg["ns_steps"], tall, device)
+                fn = self._get_compiled(shape, sg["ns_steps"], tall, device, self._sr)
                 W = p.unsqueeze(0)
                 G = g.unsqueeze(0)
                 M = mb.unsqueeze(0)
-                W, M = fn(G, W, M, lr_t, mom_t, wd_t)
-                p.data.copy_(W[0])
+                T, M = fn(G, W, M, lr_t, mom_t, wd_t)
+                if self._sr:
+                    T = self._rounder.apply(W, T)
+                p.data.copy_(T[0])
                 mb.copy_(M[0])
             else:
                 W = torch.stack(sg["params"])
                 G = torch.stack(sg["grads"])
                 M = torch.stack(sg["mbs"])
-                fn = self._get_compiled(shape, sg["ns_steps"], tall, device)
+                fn = self._get_compiled(shape, sg["ns_steps"], tall, device, self._sr)
                 # Shard the INSTANCE axis across ranks: DDP has all-reduced G, so every rank
                 # holds the identical stacked G/W/M; each rank runs NS on its own n/w
                 # instances, then all_gather concatenates. NS, the momentum lerp and the
@@ -1063,13 +1109,61 @@ class Muon(torch.optim.Optimizer):
                     mlist = [torch.empty_like(Ml) for _ in range(world)]
                     dist.all_gather(wlist, Wl.contiguous())
                     dist.all_gather(mlist, Ml.contiguous())
-                    W = torch.cat(wlist, dim=0)
+                    T = torch.cat(wlist, dim=0)
                     M = torch.cat(mlist, dim=0)
                 else:
-                    W, M = fn(G, W, M, lr_t, mom_t, wd_t)
+                    T, M = fn(G, W, M, lr_t, mom_t, wd_t)
+                if self._sr:
+                    # fn returned the bf16 UPDATE; combine with the original W in fp32 blocks.
+                    T = self._rounder.apply(W, T)
                 for i, p in enumerate(sg["params"]):
-                    p.data.copy_(W[i])
+                    p.data.copy_(T[i])
                     sg["mbs"][i].copy_(M[i])
+
+
+class StochasticAdamW(torch.optim.Optimizer):
+    """AdamW whose bf16 parameter write is Bernoulli-rounded from the fp32 candidate (option B).
+
+    Moments are allocated in fp32 explicitly even when the parameter is bf16 (the stock kernel
+    allocates them in the parameter's dtype), and the write is computed in fp32 then cast with
+    the same per-rank generator stream as Muon's. Eager, elementwise -- the embed/head/scalar
+    groups it owns are ~2% of the step's FLOPs; pretraining never constructs it.
+    """
+
+    def __init__(self, params, rounder, lr, betas, weight_decay, eps=1e-8):
+        defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+        super().__init__(params, defaults)
+        self._rounder = rounder
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = closure() if closure is not None else None
+        for group in self.param_groups:
+            b1, b2 = group["betas"]
+            lr, wd, eps = group["lr"], group["weight_decay"], group["eps"]
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                st = self.state[p]
+                if "step" not in st:
+                    st["step"] = 0
+                    st["m"] = torch.zeros_like(p, dtype=torch.float32, device=p.device)
+                    st["v"] = torch.zeros_like(p, dtype=torch.float32, device=p.device)
+                st["step"] += 1
+                g = p.grad
+                m, v = st["m"], st["v"]
+                m.mul_(b1).add_(g.float(), alpha=1 - b1)
+                v.mul_(b2).addcmul_(g.float(), g.float(), value=1 - b2)
+                bc1 = 1 - b1 ** st["step"]
+                bc2 = 1 - b2 ** st["step"]
+                # Exact stock AdamW decoupled form (m_hat and v_hat bias-corrected, eps AFTER
+                # the correction), so the only delta vs the fused kernel is the write cast.
+                m_hat = m / bc1
+                v_hat = v / bc2
+                w = p.float()
+                cand = w - lr * (m_hat / (v_hat.sqrt() + eps) + wd * w)
+                p.copy_(self._rounder.round(cand))
+        return loss
 
 
 def doc_cu_seqlens(idx, eos_id):
@@ -1289,7 +1383,25 @@ class TableMaster:
 def build_optimizers(model, cfg, master=None):
     """Muon for 2D matrices; AdamW for embeddings, 1D norm gains, and (low lr, wd=0) for the 3D
     short-conv kernels (were mis-routed to the 15x scalar lr) and AttnRes pseudo-queries. Base LRs
-    only -- lr_scale is applied in set_schedule, so a resume cannot keep a stale scale."""
+    only -- lr_scale is applied in set_schedule, so a resume cannot keep a stale scale.
+
+    cfg.stochastic_round (SFT only): Muon writes Bernoulli-round to bf16 with fp32 mb, and the
+    embed/scalar/head/router AdamW groups use StochasticAdamW, all sharing one
+    StochasticRounder seeded identically on every rank. Pretraining leaves the flag unset and every path below is the old one."""
+    sr = bool(getattr(cfg, "stochastic_round", False))
+    assert not (sr and master is not None), (
+        "stochastic_round replaces the fp32 master; running both doubles the master memory and "
+        "defeats the option. Pick one.")
+    if sr:
+        # ONE seed on every rank. DDP syncs gradients, never weights: all ranks apply the same
+        # all-reduced update to replicas that must stay bit-identical. Per-rank draws round each
+        # replica differently, and nothing pulls them back together, so the difference is a pure
+        # random walk that grows with the step count, and rank 0 saves a model the other ranks
+        # never trained. Same seed + identical grads
+        # give identical casts, so the replicas never diverge.
+        rounder = StochasticRounder(seed=cfg.seed)
+    else:
+        rounder = None
     muon, embed, scalar, arq, head = [], [], [], [], []
     mem, mem_sel = [], []
     moe_router = []
@@ -1380,6 +1492,13 @@ def build_optimizers(model, cfg, master=None):
             arq.append(q)
         else:
             scalar.append(q)
+    def _adam(params, lr, betas, weight_decay):
+        if sr:
+            return StochasticAdamW(params, rounder, lr=lr, betas=betas, weight_decay=weight_decay)
+        return torch.optim.AdamW(
+            params, lr=lr, betas=betas, weight_decay=weight_decay, fused=True
+        )
+
     opts = [
         Muon(
             muon,
@@ -1387,35 +1506,27 @@ def build_optimizers(model, cfg, master=None):
             momentum=cfg.muon_momentum,
             ns_steps=cfg.muon_ns_steps,
             weight_decay=cfg.muon_wd,
+            stochastic_round=sr,
+            momentum_dtype=torch.float32 if sr else None,
+            rounder=rounder,
         ),
-        torch.optim.AdamW(
-            embed, lr=cfg.embed_lr, betas=cfg.embed_betas, weight_decay=cfg.embed_wd, fused=True
-        ),
-        torch.optim.AdamW(
-            scalar,
-            lr=cfg.scalar_lr,
-            betas=cfg.scalar_betas,
-            weight_decay=cfg.scalar_wd,
-            fused=True,
-        ),
+        _adam(embed, lr=cfg.embed_lr, betas=cfg.embed_betas, weight_decay=cfg.embed_wd),
+        _adam(scalar, lr=cfg.scalar_lr, betas=cfg.scalar_betas, weight_decay=cfg.scalar_wd),
     ]
     # Appended AFTER the three fixed groups, like arq: eval and analysis code indexes opts[0]
     # (Muon) and opts[1] (embed), and inserting a group earlier would silently repoint every one
     # of those readings -- including scripts/embed_norm_sdr.py, which reads ck["opt"][1].
     if head:
         opts.append(
-            torch.optim.AdamW(
-                head, lr=cfg.head_lr, betas=cfg.embed_betas, weight_decay=cfg.embed_wd, fused=True
-            )
+            _adam(head, lr=cfg.head_lr, betas=cfg.embed_betas, weight_decay=cfg.embed_wd)
         )
     if arq:
         opts.append(
-            torch.optim.AdamW(
+            _adam(
                 arq,
                 lr=getattr(cfg, "attn_res_lr", 0.01),
                 betas=cfg.scalar_betas,
                 weight_decay=0.0,
-                fused=True,
             )
         )
     # THE ROUTER'S GROUP, appended for the same reason arq and head are: eval and analysis code
@@ -1443,12 +1554,11 @@ def build_optimizers(model, cfg, master=None):
         if _r_lr <= 0:
             _r_lr = float(getattr(cfg, "attn_res_lr", 0.01))
         opts.append(
-            torch.optim.AdamW(
+            _adam(
                 moe_router,
                 lr=_r_lr,
                 betas=cfg.scalar_betas,
                 weight_decay=0.0,
-                fused=True,
             )
         )
     # THE SELECTOR'S LR DECIDES WHETHER THERE ARE ONE OR TWO GROUPS. <= 0 is the sentinel for
@@ -3198,6 +3308,7 @@ def main():
         "ced": "CED: bottom ced_enc_layers encoder; every decoder layer projects its global KV from H_{L/2} with its own W_KV/W_Z",
         "ced_kc_norm": "QK-norm: per-head F.rms_norm of the CED decoder global entry keys W_KV(H_6); off keeps old checkpoints byte-identical",
         "muon_ns_shard": "Muon: shard Newton-Schulz over DDP ranks along stacked same-shape instances and all_gather (bit-identical; default off)",
+        "stochastic_round": "option B: fp32 candidate Bernoulli-rounded into bf16 weights on every optimizer write, fp32 Muon momentum (default off; 1e order 2026-09-25)",
     }.items():
         parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
                             default=None, required=name in RECIPE_REQUIRED, help=help_)

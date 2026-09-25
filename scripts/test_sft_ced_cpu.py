@@ -285,7 +285,17 @@ def _selftest():
     assert 'Cfg.kind = "sft"' in src, "sft_math must stamp Cfg.kind on every save"
     assert '".epoch"' in src or ".epoch{ep + 1}" in src, "epoch-boundary save missing"
     assert "--warmup_frac" in src and "--lr_decay" in src
-    print("sft_ced_cpu selftest: linear-to-zero + cosine-unchanged + kind/epoch markers OK")
+    # Option B wiring (1e 2026-09-25): the SFT line must cast bf16 on --no_fp8 and pass the
+    # flag to Cfg so build_optimizers builds the SR path. A line deleted here is a silent revert
+    # to the fp32-weights OOM path or to frozen round-to-nearest.
+    assert "--stochastic_round" in src, "sft_math must expose --stochastic_round"
+    assert "Cfg.stochastic_round = args.stochastic_round" in src, (
+        "the SR flag must reach Cfg/build_optimizers")
+    train_src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+    assert "self._rounder.apply(W, T)" in train_src, (
+        "Muon must Bernoulli-round w-update in fp32 blocks")
+    assert "class StochasticAdamW" in train_src, "embed/scalar groups need the SR AdamW"
+    print("sft_ced_cpu selftest: linear-to-zero + cosine-unchanged + kind/epoch + SR wiring OK")
 
 
 if __name__ == "__main__":
