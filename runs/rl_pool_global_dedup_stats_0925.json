@@ -1,0 +1,25 @@
+{
+ "rule": "global exact-prompt dedup across rl_code_* pool files; key=sha1(norm_text(prompt)); survivor=max(test count); tie priority=call-style, apps, taco",
+ "builder_sha256": "1847931ee14da9000721047d1a91cc83cab7788bbdca9ba907b3089fe731d8cc",
+ "files": {
+  "rl_code_apps.jsonl": 0,
+  "rl_code_taco.jsonl": 27,
+  "rl_code_apps_stdin.jsonl": 182,
+  "rl_code_taco_stdin.jsonl": 9322
+ },
+ "within_file_dropped": 0,
+ "cross_file_dropped": 0,
+ "per_file_within_dropped": {
+  "rl_code_apps.jsonl": 0,
+  "rl_code_taco.jsonl": 0,
+  "rl_code_apps_stdin.jsonl": 0,
+  "rl_code_taco_stdin.jsonl": 0
+ },
+ "per_file_cross_dropped": {
+  "rl_code_apps.jsonl": 0,
+  "rl_code_taco.jsonl": 0,
+  "rl_code_apps_stdin.jsonl": 0,
+  "rl_code_taco_stdin.jsonl": 0
+ },
+ "unique_total": 9531
+}

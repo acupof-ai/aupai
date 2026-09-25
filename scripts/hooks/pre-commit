@@ -2526,6 +2526,14 @@ def main():
         # asserts every type is reachable, every type carries signals, and PRIORITY is a total
         # order over TYPES. Pure strings, no tokenizer, no corpus. ~0.05s.
         "scripts/problem_types.py",
+        # Read-only replay of the RL pool's global dedup (66). Registered because the pool
+        # builder it mirrors CONSUMES its inputs -- re-running it to check a number rewrites
+        # the production pool -- so this is the only way the pool's survivor count is
+        # checkable without mutating it, and genB (c61ac333) found the provenance did not
+        # resolve at all. The selftest exercises the rule on a fixture whose answer is known
+        # by construction (whitespace+case normalisation, max-test-count survivor), so a
+        # replay that kept everything would not pass. Pure strings, no pool needed. ~0.05s.
+        "scripts/rl_pool_dedup_replay.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
