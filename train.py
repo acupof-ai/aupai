@@ -254,6 +254,14 @@ class Cfg:
     # control loop, not a learning rate: it never enters an optimizer.
     moe_bias_gamma = 0.001    # aux-loss-free bias step, applied to the SIGN of the load error
     moe_balance_alpha = 1e-4  # sequence-wise balance loss (eq. 17), complementary to the bias
+    # Router affinity function. "softmax" (default) is the DeepSeek-V2 style normalized
+    # across all experts and keeps every existing checkpoint bit-identical. "sigmoid" is the
+    # DeepSeek-V3 aux-loss-free router (arXiv 2412.19437 §2.1.2): each expert's affinity is
+    # an independent sigmoid s=sigmoid(u.e), top-k is chosen on (s + expert_bias), and the
+    # gate is s renormalized only WITHIN the selected experts; the bias enters selection but
+    # never the gate. Switching this changes the routing function, so it is recorded in cfg
+    # and the checkpoint, not inferred.
+    router_score = "softmax"
     # <=0 means "the dense lr", resolved in build_optimizers. The flag exists so the value is
     # recorded in the launch line and ck["cfg"] rather than living in a default nobody reads --
     # same reason mem_sel_lr exists, and the memory collapse is why it must never be the
@@ -3311,6 +3319,11 @@ def main():
         help="resume even if the checkpoint's environment fingerprint differs (container restart, package change)",
     )
     parser.add_argument("--no_attn_res", action="store_true", help="disable AttnRes (A/B measurement)")
+    parser.add_argument(
+        "--router_score", choices=["softmax", "sigmoid"], default=None,
+        help="MoE router affinity: softmax (V2, default, old checkpoints bit-identical) or "
+             "sigmoid (V3 aux-loss-free, arXiv 2412.19437 §2.1.2: independent per-expert "
+             "sigmoids; bias selects only; gate renormalizes within the selected top-k)")
     parser.add_argument("--conv_doc_isolated", action="store_true",
                         help="mask the KDA short_conv at document boundaries so cu isolates "
                              "documents in the conv too (eff.kda_document_isolation_violated); "
