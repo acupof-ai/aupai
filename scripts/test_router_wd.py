@@ -8,7 +8,6 @@ import torch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "")
-import train  # noqa: E402
 from train import Cfg, HybridLM, build_optimizers, reapply_router_wd  # noqa: E402
 
 Cfg.d, Cfg.heads, Cfg.layers, Cfg.ffn_hidden, Cfg.vocab, Cfg.seq = 64, 2, 2, 128, 100, 16
