@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Watch a live training run's router-logit scale and stop on a 3-point monotonic rise.
+"""Watch a live training run's router-logit scale; alert when std_c_median crosses a threshold.
 
-Background monitor for the v41_ced_0926 30B retrain (de, 1e order 2026-09-26). The fixprobe
-showed the router logit scale can run away with lr + weight_decay 0; the retrain dropped the
-router lr to 0.001. The open question is whether the cross-expert logit std re-grows over the
-38K-step run. Every --step-every (default 2000) checkpoint this runs the CPU-ONLY
-scripts/router_logit_stats.py (nice/ionice, no GPU, safe beside the live world-8 run), appends
-one JSON line per checkpoint, and exits nonzero the moment std_c_median rises over THREE
-consecutive measured points -- the agreed signal to stop and add a scale bound (router
-weight_decay / z-loss / --router_logit_cap).
+Background monitor for the v41_ced_0926 30B retrain (de, 1e order 2026-09-26). Every
+--step-every (default 2000) checkpoint it runs the CPU-ONLY scripts/router_logit_stats.py
+(nice/ionice, no GPU, safe beside the live world-8 run), appends one JSON line per checkpoint,
+and exits nonzero when std_c_median exceeds --alert-std (default 8.0, prereg amendment 8 hard
+line 2026-09-26). The earlier 3-point-rise stop was retired in that amendment: the rise is the
+pre-MoE RMSNorm gain reweighting the router input (causal A/B/C: n2.g=1 drops std_c 4.91->0.86,
+router-row normalization leaves it bit-identical), while online routing stays functional, so the
+rise alone is not a stop -- only the absolute hard line is. monotonic_rise() stays as a pure
+helper but no longer triggers.
 
 It only ever inspects checkpoints and appends to a jsonl. It never signals or touches the run.
 Bring the jsonl back to runs/ in the repo after the run (pod-only artifacts do not count).
@@ -18,7 +19,7 @@ Bring the jsonl back to runs/ in the repo after the run (pod-only artifacts do n
         --ckpt-glob '/work/aupai/ckpt_v41_ced_0926.pt.step*' \
         --out runs/router_scale_0926.jsonl --max-iters 400 --poll-s 120
 
-    python3 scripts/watch_router_scale.py --selftest     # monotonic/parse logic, no pod
+    python3 scripts/watch_router_scale.py --selftest     # parse logic, no pod
 """
 import argparse
 import glob
@@ -165,6 +166,9 @@ def main():
                     help="local path of the probe to push to the pod /tmp each cycle")
     ap.add_argument("--max-iters", type=int, default=400,
                     help="hard iteration cap so a background loop cannot run forever")
+    ap.add_argument("--alert-std", type=float, default=8.0,
+                    help="exit nonzero when a new point's std_c_median exceeds this "
+                         "(prereg amendment 8 hard line, default 8.0)")
     ap.add_argument("--local-dir", default="",
                     help="local mode: probe checkpoints already copied under this dir (no pod)")
     ap.add_argument("--pod-bin", default=os.environ.get("POD_BIN", "") or
@@ -271,10 +275,9 @@ def main():
             if rec is None:
                 continue  # probe still running; check again next poll
             done.add(step)
-            pts = load_points(a.out)
-            if monotonic_rise(pts):
-                m = [(p["step"], p["std_c_median"]) for p in pts[-3:]]
-                print(f"MONOTONIC_RISE over {m}: stop and add a router scale bound", flush=True)
+            if rec["std_c_median"] > a.alert_std:
+                print(f"STD_HARD_LINE step {step} std_c_median {rec['std_c_median']} "
+                      f"> {a.alert_std} (prereg amendment 8): stop", flush=True)
                 return 2
         if a.once:
             return 0
@@ -284,7 +287,8 @@ def main():
 
 
 def _selftest():
-    # monotonic rise detection
+    # monotonic_rise is retained as a pure helper but no longer triggers a stop; prereg amendment
+    # 8 retired the rise rule in favour of the absolute --alert-std hard line. Keep its invariants.
     base = [{"step": s, "std_c_median": v} for s, v in ((2000, 3.0), (4000, 4.0), (6000, 5.0))]
     assert monotonic_rise(base)
     assert not monotonic_rise(base[:2])
