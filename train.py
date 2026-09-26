@@ -264,6 +264,9 @@ class Cfg:
     # never the gate. Switching this changes the routing function, so it is recorded in cfg
     # and the checkpoint, not inferred.
     router_score = "softmax"
+    # Router logit softcap C (z := C*tanh(z/C) before softmax/sigmoid). 0 = off; changes what a
+    # block computes so it lands in ck["cfg"]. See model.MoEFFN for the saturation measurement.
+    router_logit_cap = 0.0
     # <=0 means "the dense lr", resolved in build_optimizers. The flag exists so the value is
     # recorded in the launch line and ck["cfg"] rather than living in a default nobody reads --
     # same reason mem_sel_lr exists, and the memory collapse is why it must never be the
@@ -3470,6 +3473,14 @@ def main():
         help="MoE router affinity: softmax (V2, default, old checkpoints bit-identical) or "
              "sigmoid (V3 aux-loss-free, arXiv 2412.19437 §2.1.2: independent per-expert "
              "sigmoids; bias selects only; gate renormalizes within the selected top-k)")
+    parser.add_argument(
+        "--router_logit_cap", type=float, default=None,
+        help="MoE router logit softcap C: z := C*tanh(z/C) before softmax/sigmoid; 0 (or unset) "
+             "= off, bit-identical to every checkpoint without it. Bounds the affinity argument to "
+             "+-C for the whole run so routing cannot see extreme/dead scores. It does NOT shrink "
+             "raw weights and does NOT restore gradient to an already-saturated weight (the cap "
+             "derivative is sech^2(z/C), ~0 at |z|>>C); bound weight growth itself via router "
+             "weight_decay or a z-loss. Suggested 12 (sigmoid span [6e-6, 0.999994]).")
     parser.add_argument("--conv_doc_isolated", action="store_true",
                         help="mask the KDA short_conv at document boundaries so cu isolates "
                              "documents in the conv too (eff.kda_document_isolation_violated); "
