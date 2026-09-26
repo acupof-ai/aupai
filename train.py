@@ -272,6 +272,7 @@ class Cfg:
     # same reason mem_sel_lr exists, and the memory collapse is why it must never be the
     # expert lr (facts/memory_layers.json#mem.m1_key_usage_collapse).
     moe_router_lr = -1.0
+    moe_router_wd = 0.0       # decoupled AdamW weight decay on the router rows; 0 = the pre-0926 behaviour
     # The ARM ID written into runs/moe_diag.jsonl ("e1", "e1b"). Empty is refused whenever
     # moe_experts is set, for the reason mem_arm is: it is the only field recording which arm
     # wrote a row, the ledger is append-only, and readout 3 compares E1b against E1.
@@ -1562,7 +1563,7 @@ def build_optimizers(model, cfg, master=None):
                 moe_router,
                 lr=_r_lr,
                 betas=cfg.scalar_betas,
-                weight_decay=0.0,
+                weight_decay=float(getattr(cfg, "moe_router_wd", 0.0) or 0.0),
             )
         )
     # THE SELECTOR'S LR DECIDES WHETHER THERE ARE ONE OR TWO GROUPS. <= 0 is the sentinel for
@@ -1627,6 +1628,20 @@ def build_optimizers(model, cfg, master=None):
     for opt, nm in zip(opts, _names, strict=False):
         opt.aupai_group = nm
     return opts
+
+
+def reapply_router_wd(optimizers, cfg):
+    """load_state_dict restores param_group hyperparameters, so a router wd set on a resume line
+    would silently come back as the checkpoint's value (0.0 before 0926). Called right after the
+    optimizer-state load; returns the value applied, or None when there is no router group."""
+    wd = float(getattr(cfg, "moe_router_wd", 0.0) or 0.0)
+    hit = None
+    for opt in optimizers:
+        if getattr(opt, "aupai_group", "") == "moe_router":
+            for g in opt.param_groups:
+                g["weight_decay"] = g["initial_wd"] = wd
+            hit = wd
+    return hit
 
 
 def set_schedule(optimizers, step, total, cfg, lr_scale=1.0):
@@ -3319,6 +3334,7 @@ def main():
         "mem_lr": "sparse memory: lr for the Adagrad group holding the keys and value table",
         "mem_wd": "sparse memory: weight decay on that group (0: decay falls hardest on the rows read least)",
         "mem_sel_lr": "sparse memory: separate lr for the SELECTOR (query + keys); <=0 keeps one group at mem_lr, which is what M1/M2/M3 ran",
+        "moe_router_wd": "MoE: decoupled AdamW weight decay on the router rows (0 = off, the pre-0926 behaviour). Re-applied after an optimizer-state resume. 0.1 bounds row growth measured in v41_ced_0926 (row RMS +32% over steps 2000-6000 at lr 1e-3)",
         "moe_router_lr": "MoE: lr for the router's AdamW group; <=0 means attn_res_lr (0.01), this repo's AdamW rate for a small learned mixing map -- NOT muon_lr, which is the EXPERT group's own rate and is what ruling (f) excludes",
         "moe_bias_gamma": "MoE: aux-loss-free bias step size, applied to the SIGN of the load error (0.001, pre-registered from facts/moe.json, NOT tuned after seeing a curve)",
         "moe_balance_alpha": "MoE: sequence-wise balance loss coefficient (1e-4, complementary to the bias, not an alternative)",
@@ -4002,6 +4018,7 @@ def main():
     if args.resume and "opt" in ck:
         for opt, sd in zip(optimizers, ck["opt"], strict=True):
             opt.load_state_dict(sd)  # momentum/moments continue instead of restarting from 0
+        reapply_router_wd(optimizers, Cfg)
 
     if args.loop:
         # N7 Stage D: TRAIN with blocks LO..HI visited twice, from step 0.
