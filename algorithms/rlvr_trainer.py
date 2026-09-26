@@ -83,6 +83,24 @@ def seq_logprob(model, prompt_ids, gen_ids_list, group_size, max_new, ddp, devic
     return seq_lp, gen_t, mask
 
 
+def group_advantage(rewards, normalize_std=True, eps=1e-8):
+    """Within-group advantage: mean-subtracted, optionally divided by the group std.
+
+    The math GSPO path divides by std (normalize_std=True). The code RL path does
+    NOT (1e order 2026-09-25): its rewards are binary 0/1, a std division is just a
+    per-group rescale that inflates near-tied groups, and a constant group must
+    land at exactly 0 either way. A constant group returns zeros at any eps, which
+    is the degenerate-group contract the trainer drops groups on.
+    """
+    import torch
+
+    r = torch.as_tensor(rewards, dtype=torch.float32)
+    adv = r - r.mean()
+    if normalize_std:
+        adv = adv / (r.std() + eps)
+    return adv
+
+
 def gspo_loss(
     model,
     ref_model,
@@ -97,6 +115,7 @@ def gspo_loss(
     clip_eps=0.2,
     kl_beta=0.02,
     old_lp=None,
+    normalize_adv=True,
 ):
     """GSPO (arXiv 2507.18071): sequence-level importance ratio + sequence-level clip.
 
@@ -108,8 +127,7 @@ def gspo_loss(
     """
     import torch
 
-    r = torch.tensor(rewards, device=device)
-    adv = (r - r.mean()) / (r.std() + 1e-8)  # 0 when every reward is equal
+    adv = group_advantage(rewards, normalize_std=normalize_adv).to(device)
     seq_lp, gen_t, mask = seq_logprob(model, prompt_ids, gen_ids_list, group_size, max_new, ddp, device, amp)
     with torch.no_grad():
         ref_lp, _, _ = seq_logprob(ref_model, prompt_ids, gen_ids_list, group_size, max_new, ddp, device, amp)

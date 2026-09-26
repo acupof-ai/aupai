@@ -193,6 +193,9 @@ def main():
             class _Cfg2:
                 warmup, warmdown, final_lr_frac = 20, 0.65, 0.05
                 seed, batch, epochs = 1, 8, 1
+                # The shipped step-0 block logs the SFT decay/warmup shape; the stub Cfg must
+                # carry them or executing the real block reds on a missing attribute.
+                lr_decay, warmup_frac = "cosine", None
 
             lines = []
             SCALE, BASE = 0.1, 0.01
@@ -200,9 +203,12 @@ def main():
                 "is_main": True,
                 "runlog": lambda m: lines.append(str(m)),
                 "json": __import__("json"),
+                "os": __import__("os"),
                 "sys": sys,
-                "args": type("A", (), {"lr_scale": SCALE, "stop_after": 40})(),
+                "args": type("A", (), {"lr_scale": SCALE, "stop_after": 40,
+                                      "out": "ckpt_x.pt"})(),
                 "total_steps": 1024,
+                "steps_per_epoch": 1024,
                 "Cfg": _Cfg2,
                 "set_schedule": _sched,
                 "optimizers": [_FakeOpt([{"initial_lr": BASE, "initial_wd": 0.1, "lr": 0.0,
