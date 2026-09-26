@@ -6688,10 +6688,18 @@ def check_ckpt_facts_sources_present(root):
 
 
 def _broken_ckpt_facts_sources():
-    """The real candidates listing with every KEEP line deleted: the checkpoints
-    fb ruled to keep at 14:15Z become unkept deletion candidates, and the facts
-    that cite them must FAIL. runs/ is not linked in a shaped world, so it is
-    copied in first (2.2M) -- the same copy-before-mutate rule as docs/."""
+    """A fact citing a gone checkpoint with NO disclosure must FAIL. Two real mutations, both
+    needed after the 2026-09-25 emptyDir accounting:
+
+    1. strip every KEEP line from the newest listing, so carried claims no longer exempt names;
+    2. delete the 2026-09-16 gone-disclosure sentence from one REAL fact whose source checkpoint
+       was lost in that event (facts/moe.json).
+
+    Either alone is insufficient today: after the accounting the lost-source facts disclose the
+    loss in their own uncertainty/boundary, so stripping KEEP leaves WARN, and keeping KEEP skips
+    the name before the note is read. Both together recreate an undisclosed dead source -- the
+    defect this check exists for. runs/ is copied (not linked) before mutation, the same
+    copy-before-mutate rule as docs/."""
     import shutil
     d = _tmp_repo_shaped()
     runs = os.path.join(d, "runs")
@@ -6706,6 +6714,22 @@ def _broken_ckpt_facts_sources():
     assert len(lines) < sum(1 for _ in open(path, encoding="utf-8")), \
         "broken world found no KEEP lines to strip"
     open(path, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    # Mutation 2: remove the real 2026-09-16 disclosure from one real fact that cites a lost
+    # checkpoint. The sentence runs from its [absent] marker to the word 'unrecoverable'. facts/
+    # is a SYMLINK to the real tree in a shaped world, so copy it to a real dir first or the
+    # mutation writes through into the repo.
+    facts_link = os.path.join(d, "facts")
+    if os.path.islink(facts_link):
+        os.unlink(facts_link)
+    elif os.path.isdir(facts_link):
+        shutil.rmtree(facts_link)
+    shutil.copytree(os.path.join(ROOT, "facts"), facts_link)
+    moe = os.path.join(d, "facts", "moe.json")
+    raw = open(moe, encoding="utf-8").read()
+    pat = re.compile(r" \[absent\] since 2026-09-16:.*?unrecoverable")
+    n_disclosed = len(pat.findall(raw))
+    assert n_disclosed >= 1, "broken world found no 2026-09-16 disclosure to strip in moe.json"
+    open(moe, "w", encoding="utf-8").write(pat.sub("", raw))
     return d
 
 
@@ -28105,6 +28129,11 @@ _UNFROZEN_ALLOWLIST = {
     # and scripts/test_muon_ns_shard.py pins bit-parity, so on/off is an execution-speed
     # knob like fp8, not a recipe or architecture key.
     "muon_ns_shard",
+    # option B (1e order 2026-09-25): stochastic fp32->bf16 optimizer writeback with fp32 Muon
+    # momentum. SFT always on; the 3-hour CED fix probe decides whether the 30B retrain takes
+    # it, so it is an arm during the probe like fp32_master, not settled recipe. MOVE IT INTO
+    # _FROZEN_KEYS the day the probe passes and the retrain launches with it.
+    "stochastic_round",
     "no_static_graph", "no_bucket_view",  # DDP A/B, do not touch Cfg
     "val_every", "val_batches",  # validation cadence, not architecture
     # An A/B arm, like no_attn_res: it exists to take two values, so freezing it would
@@ -28140,6 +28169,8 @@ _UNFROZEN_ALLOWLIST = {
     # lr (muon_lr) in build_optimizers, which is ruling (f), and the resolved value reaches
     # ck["cfg"], so an omitted flag trains the registered default rather than an unknown rate.
     "moe_router_lr",
+    # Router weight decay: the same optimizer-knob class as moe_router_lr (0926 router-scale remedy).
+    "moe_router_wd",
     # THE BALANCER'S TWO CONSTANTS. Here rather than frozen because they are not architecture:
     # gamma is a step size on a control loop and alpha scales a loss term, and neither changes
     # the parameter count or which parameters a token reaches. Both are PRE-REGISTERED in
@@ -28149,6 +28180,17 @@ _UNFROZEN_ALLOWLIST = {
     # readout 4's stop rule fires, the finding is that the balancer failed at this scale with
     # the paper's gamma; a retune is a separate registered row, not an amendment to this one.
     "moe_bias_gamma", "moe_balance_alpha",
+    # The MoE router affinity function: softmax (V2, default) vs sigmoid (V3 §2.1.2). It is
+    # a per-arm ARCHITECTURE choice recorded in cfg and the checkpoint, not a post-hoc knob:
+    # the value changes the routing function, which is exactly why the launch line must state
+    # it and why MoEFFN keeps the softmax default bitwise for old checkpoints.
+    "router_score",
+    # The router logit softcap C*tanh(z/C) changes the routing function. Classified like
+    # router_score: a per-arm architecture/recipe choice recorded in cfg and the checkpoint,
+    # not resume-pinned; 0 = off keeps every cap-less checkpoint bitwise.
+    "router_logit_cap",
+    # train_health cadences: read-only monitoring, no computation of the trained function changes.
+    "health_every", "health_lens_every",
     # The arm's LABEL, not part of what it trains: it names the rows in runs/memory_diag.jsonl and
     # changes no computation. Deliberately unfrozen because it MUST differ between arms -- freezing
     # it would refuse the second arm's launch, which is the opposite of the intent. It is also the

@@ -1118,6 +1118,13 @@ def main():
         # problems that can never score. The selftest pins signature/self handling, solution
         # normalisation rejection, and the generated-test contract without data or pytest.
         "scripts/rl_code_pool.py",
+        # 3b: real ultra_l3 unconsumed-tail SFT-B funnel. Registered because its identity is
+        # the exact seed-42 train.py shuffle: a tail slice that does not match the permutation
+        # silently selects already-consumed rows, and a loose marker floods false positives.
+        # The selftest pins the permutation/slice identity, the barber arrow marker, a benign
+        # "actually best" comment staying clean, and the statement/code shape extractor; no
+        # corpus or subprocess.
+        "scripts/sftb_ultra3_tail_funnel.py",
         # Shard-by-shard comparator for the parallel-vs-serial exact pass (3b). Registered
         # because `_parallel_exact_pass`'s "byte-identical to the serial pass" is a docstring
         # claim over the code that decides a multi-GB corpus's exact bytes. The selftest drives
@@ -1532,6 +1539,16 @@ def main():
         # (eval/code_zh.py's --selfcheck executes solutions in a root sandbox; registered in
         # NEEDS_DATA below, not here.)
         "fone.py",
+        # de option B (2026-09-25): the stochastic fp32->bf16 rounding library's known-answer
+        # gate (the library sr_cast.py is the subject; it carries no selftest itself). Pins the
+        # grid neighbours, E[cast]=x, accumulation of N sub-ULP steps, and that the
+        # round-to-nearest control moves NOTHING on the same inputs -- a known-answer pair, so a
+        # broken cast cannot pass by rounding correctly.
+        "scripts/test_sr_cast.py",
+        # de option B at the optimizer seam: real train.Muon/StochasticAdamW steps, RN arm must
+        # freeze, SR arm must track the fp32 oracle within 3 sigma, mb must be fp32, replay
+        # bit-identical. A deleted SR writeback reddens it (mutation-tested).
+        "scripts/test_muon_stochastic.py",
         # e1-42's equal-token gap. 0.1s, CPU, NO POD ACCESS in --selftest: its five fixtures are
         # the real val curves, so the known answers run anywhere. Registered because the mistake it
         # exists to prevent already happened once -- the five gaps were handed to me as the MoE-vs-
@@ -1708,6 +1725,11 @@ def main():
         # row must close with and without --started. Measured over all 8 combinations of
         # (retracted, --started, later minute): retraction was not the variable, being closed was.
         "scripts/test_exp_done_retracted.py",
+        # exp.py explicit un-retraction. Six worlds; the two load-bearing refusals are a BARE
+        # `done` on a retracted row (must refuse -- no exact row named) and, at fold level, a
+        # markerless ok after a retraction (union-merge reorder must stay dropped). The happy
+        # path needs an exact --started AND an `unretracts` marker the writer sets.
+        "scripts/test_exp_unretract.py",
         # run_ddp.sh's launcher gate (de-60): a direct call writes no experiments row, takes no
         # card claim and arms no monitor. Six worlds, and four are the narrowness: an EMPTY marker
         # must refuse (`-n` instead of `-z` passes it, and an exported-but-unset variable is what a
@@ -1791,6 +1813,8 @@ def main():
         # -- so a commit staging several of these pays real seconds. That is the price of the
         # gate, not a defect; the alternative was 19 tests nobody ran.
         "algorithms/test_gspo_ratio.py",
+        "algorithms/test_rl_code.py",
+        "algorithms/test_rl_code_ced_smoke.py",
         "algorithms/test_rlvr_reward_suite.py",
         "datagen/test_near_dedup_known.py",
         "datagen/test_parallel_exact_identity.py",
@@ -1980,6 +2004,12 @@ def main():
         # union world and overwrite somebody's amendment without saying so.
         "scripts/prereg_merge.py",
         "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
+        # Atomic checkpoint write (de, 1e order 2026-09-26). Its acceptance is a known-answer
+        # world: a torch.save that dies after streaming bytes must leave the prior checkpoint
+        # loadable and unlink its temp. A plain torch.save to the final path passes every normal
+        # save/load and only truncates when a kill lands mid-write -- exactly what corrupted
+        # interrupt.step452. Subject is _atomic_torch_save in train.py (also in its map).
+        "scripts/test_atomic_save.py",
         # The p1 attention path: partial RoPE, HCA, and the pool_per_doc lift out of CSA. CPU,
         # ~2s. Registered in the same commit as the file, the same deadlock check_sft_ready
         # below records. Every world is a perturbation test because all three ways this path
@@ -2083,6 +2113,14 @@ def main():
         # the BIASED score passed all 8 -- the first version recomputed both candidate gates and
         # asserted they differ, which is a fact about softmax, not about the module.
         "scripts/test_moe_module.py",
+        # router_score softmax|sigmoid known-answer gates (V3 independence, bitwise softmax)
+        "scripts/test_moe_router_score.py",
+        # --router_logit_cap C*tanh(z/C) switch on known logits (off bitwise, bounded huge logits,
+        # near-identity small, known value at C). Without this a deleted cap in _route reads fine.
+        "scripts/test_router_logit_cap.py",
+        # in-training health: collapsed/uniform router through the real MoEFFN, the 0923 bias
+        # shape, frozen/live optimizer step, layer grad spike, logit lens
+        "scripts/train_health.py",
         # The MoE step profiler. In SELFTEST_FILES and NOT in NEEDS_DATA because its --selftest
         # needs no card: it asserts the shape constants still match arm D's launch line, that the
         # parity (top_k+shared)*expert_ffn == ffn_hidden holds -- the whole "equal active FLOPs"
@@ -2090,6 +2128,12 @@ def main():
         # -- and that each documented region is actually recorded. The GPU-only equivalence check
         # is behind --equiv and the hook does not run it.
         "scripts/profile_moe_step.py",
+        # Offline router saturation stats (std after common-mode removal, dead fraction, gateT1).
+        # The runlog logit_norm is dominated by a negative common mode and cannot diagnose it; the
+        # pure router_stats is known-answer gated here (equal/negative-mean/one-hot/soft).
+        "scripts/router_logit_stats.py",
+        # 30B router-scale watcher: pure 3-point monotonic-rise/parse/truncation gate.
+        "scripts/watch_router_scale.py",
         # One Muon step on a 3-D parameter. Registered SEPARATELY from test_moe_module because
         # the gap it closes is a gap that file has by construction: test_moe_module asserts
         # which optimizer GROUP each parameter lands in and never calls .step(), so group
@@ -2131,6 +2175,13 @@ def main():
         # from the up-projection, down-projection per dispatched row instead of per token) have
         # identical shapes to the correct code and were caught only by counting projection calls.
         "scripts/test_moe_latent.py",
+        # Reusable MoE router-health acceptance tool (--selftest, no GPU/ckpt needed). Five
+        # synthetic worlds are the known-answer gate that the metrics separate a healthy
+        # near-uniform router from a softmax-saturated top-1 collapse -- and that a selection
+        # bias which spreads the counts still leaves un-biased top-1 ~1 (the exact shape
+        # measured on v41_ced_0923, facts/moe.json). A threshold that lets both states pass is
+        # the mutant this guards against.
+        "scripts/moe_health.py",
         # The per-domain val_frac override. Registered here AND on train.py's trigger list below,
         # because the defect it guards lands in build_mix and not in this file: the 5% val split
         # came off the FRONT of every domain including an injection shard whose row count IS the
@@ -2463,6 +2514,14 @@ def main():
         # one save_every block. The heavy four-segment bit-exact training run lives in ci.yml,
         # not here, the same split as test_p1_train_resume_smoke.
         "scripts/test_ced_resume_cpu.py",
+        # CED code-SFT smoke gate (de, 2026-09-25). The fast selftest is model-free: linear
+        # decay-to-zero shape, the pretraining cosine left unchanged, and the sft_math source
+        # markers (Cfg.kind="sft", epoch-boundary saves, --lr_decay/--warmup_frac). The heavy
+        # real-sft_math d512/L4 CED+MoE run lives in ci.yml, same split as the resume gate.
+        "scripts/test_sft_ced_cpu.py",
+        # SFT-A HumanEval RL gate aggregation (de, 2026-09-25): pure-jsonl per-task any() hit
+        # rate; selftest pins the 2/3 known answer and the unequal-sample-count refusal.
+        "eval/humaneval_hitrate.py",
         # The checkpoint-deletion predicates. Registered because this file's output is what
         # someone reads before deleting 6 GB, and BOTH of its failures so far were silent: the
         # first version scored three predicates and printed a well-formed listing that offered
@@ -2510,6 +2569,22 @@ def main():
         # (evaluate() over injected lists, zero network) and pins GO only on all-pass, exit 2 on
         # a fabricated IN_PROGRESS/QUEUED check, fail>pending, cancel/empty/unknown fail closed.
         "scripts/pr_merge_gate.py",
+        # The problem-type classifier shared by the HumanEval / SFT-A / RL-pool / pretrain
+        # coverage study (66). Registered because its output IS the study's measurement: a
+        # label whose signals never fire silently reports a type as absent from a dataset, and
+        # the first hand-audit found exactly that shape -- a too-literal pattern (`valid date`
+        # missing "the date is valid") filed a parsing task as a string transform. The selftest
+        # asserts every type is reachable, every type carries signals, and PRIORITY is a total
+        # order over TYPES. Pure strings, no tokenizer, no corpus. ~0.05s.
+        "scripts/problem_types.py",
+        # Read-only replay of the RL pool's global dedup (66). Registered because the pool
+        # builder it mirrors CONSUMES its inputs -- re-running it to check a number rewrites
+        # the production pool -- so this is the only way the pool's survivor count is
+        # checkable without mutating it, and genB (c61ac333) found the provenance did not
+        # resolve at all. The selftest exercises the rule on a fixture whose answer is known
+        # by construction (whitespace+case normalisation, max-test-count survivor), so a
+        # replay that kept everything would not pass. Pure strings, no pool needed. ~0.05s.
+        "scripts/rl_pool_dedup_replay.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
@@ -2526,6 +2601,11 @@ def main():
         # an exemption, so the broken one says so and names its first error line.
         "scripts/test_e2e.py": "asserts `set E2E_GPU=<idx>` at import; the pod's cards are shared and it will not pick one",
         "datagen/test_scan_math_contamination.py": "needs data/corpus/math/ape210k_000.jsonl at import (gitignored corpus); IndexError on the glob",
+        # 3b 2026-09-25: known-answer gate for code_reward.score_stdin. Selects 50 stdin
+        # problems per source and executes their reference solutions, so it needs the
+        # gitignored multi-GB APPS jsonl and TACO parquets and is CPU-minutes long; it
+        # runs by hand on the digest box (ALLOW_UNISOLATED=1), not at commit time.
+        "algorithms/test_stdin_reward_known.py": "needs gitignored multi-GB APPS/TACO raw data and executes dataset references; run by hand on the digest box",
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
         # The format-SFT packer's boundary known-answer test (ruling C, 2026-09-09):
         # asserts the split-encode invariants on the REAL tokenizer, because the
@@ -2775,6 +2855,7 @@ def main():
         # already covered here.
         "scripts/exp.py": {"scripts/test_exp_done_retracted.py", "scripts/test_exp_amend.py",
                            "scripts/test_exp_done_started.py", "scripts/test_exp_fold_agree.py",
+                           "scripts/test_exp_unretract.py",
                            "scripts/test_ledger_field_writers.py"},
         # run_ddp.sh had the same gap as exp.py: the subject of two tests and the key of none, so
         # both ran only when someone edited the test. de-60 measured what that costs -- adding the
@@ -2825,6 +2906,9 @@ def main():
         # ALONE would have meant it runs only when someone edits the test -- the gap this table
         # exists to close, and the one my own guard fell into before (registered-guard-never-asked).
         "train.py": {"scripts/test_arch_compat.py", "scripts/test_plan_length.py",
+                     # _atomic_torch_save lives in train.py; a save edit is exactly when the
+                     # kill-during-save gate must run.
+                     "scripts/test_atomic_save.py",
                      # Its subject is train.py's cache-path accessor, read out of the file
                      # by source span -- so a train.py edit is exactly when it must run.
                      # It was ONLY in SELFTEST_FILES, so nothing launched it on the
@@ -2841,6 +2925,9 @@ def main():
                      "scripts/test_mem_defaults_frozen.py",
                      "scripts/test_moe_defaults_frozen.py",
                      "scripts/test_muon_3d.py",
+                     # option B lives in train.py's Muon/StochasticAdamW; the gate reads those
+                     # classes by importing train, so any train.py edit is when it must run.
+                     "scripts/test_muon_stochastic.py",
                      "scripts/test_mix_val_frac.py",
                      "scripts/test_mix_anneal_and_cursor.py",
                      # build_mix compares the mix's _derived_against triple with the resuming
@@ -2910,7 +2997,13 @@ def main():
                      # is the 2026-09-05 failure that cost all five E1 arms, and the test catches
                      # it; nothing was asking. ~0.6s.
                      "datagen/build_s_inject.py",
-                     "scripts/moe_diag.py"},                                # 54.0s
+                     "scripts/moe_diag.py",
+                     # CED code-SFT smoke: its selftest calls train.lr_mult and must red if the
+                     # linear/cosine schedule moves; the heavy run is CI-only. ~0.1s.
+                     "scripts/test_sft_ced_cpu.py"},                                # 54.0s
+        # sft_math.py gained Cfg.kind="sft", --lr_decay/--warmup_frac and epoch-boundary
+        # saves; test_sft_ced_cpu's selftest reads those source markers and reds if any moves.
+        "sft_math.py": {"scripts/test_sft_ced_cpu.py"},                            # 0.1s
         # BOTH FINGERPRINT SOURCES GET THE SAME TRIGGER, and neither had ANY entry in this table
         # before. build_s_inject's world also compares against corpus_fingerprint.fp_dir
         # (build_s_inject.py:249) and build_corpus.CANONICAL_STATS_KEYS (:543), so an edit to
@@ -2924,7 +3017,11 @@ def main():
                      "scripts/test_mem_defaults_frozen.py",
                      "scripts/test_moe_defaults_frozen.py",
                      "scripts/test_moe_latent.py",
-                     "scripts/test_moe_module.py"},                          # 48.9s
+                     "scripts/test_moe_module.py",
+                     "scripts/test_moe_router_score.py",             # router_score switch
+                     "scripts/test_router_logit_cap.py",             # router logit softcap
+                     "scripts/router_logit_stats.py",                # offline saturation probe
+                     "scripts/train_health.py"},                     # h_load/h_sums counters
         "scripts/loader.py": {"scripts/test_arch_compat.py", "scripts/test_sft_pack.py",
                               "scripts/test_eval_base_prompt_format.py",
                               "scripts/test_serve_history.py"},              # 22.0s
@@ -2977,6 +3074,8 @@ def main():
         "filters/pass2_garbage.py": {"filters/test_l0_garbage_known.py"},
         "filters/pass3_garbage.py": {"filters/test_l0_garbage_known.py"},
         "algorithms/rlvr_trainer.py": {"algorithms/test_gspo_ratio.py"},
+        "algorithms/rl_code_trainer.py": {"algorithms/test_rl_code.py",
+                                          "algorithms/test_rl_code_ced_smoke.py"},
         "datagen/l2_code_chunk_pool.py": {"datagen/test_l2_code_chunks_edges.py"},
         "datagen/l3_rubric.py": {"datagen/test_l3_label_pipeline.py"},
         "datagen/l3_stratified_sample.py": {"datagen/test_l3_label_pipeline.py"},
