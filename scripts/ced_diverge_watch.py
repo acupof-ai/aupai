@@ -116,25 +116,38 @@ def parse_step_line(line):
 
 
 class DivergeDetector:
-    def __init__(self, g_thresh=10.0, g_consec=3, loss_window=50, loss_thresh=3.0):
+    def __init__(self, g_thresh=10.0, g_consec=3, loss_window=50, loss_thresh=3.0, from_step=None):
         self.g_thresh = g_thresh
         self.g_consec = g_consec
         self.loss_thresh = loss_thresh
         self.losses = collections.deque(maxlen=loss_window)
         self._g_run = 0
         self.last_step = None
+        # Arm only at/after this step (live tail honors it; --once also filters at scan time).
+        # A watchdog attached to a cold start must not judge warmup lines written before the arm.
+        self.from_step = from_step
+        # Count DISTINCT STEPS, not log lines. The [main] progress line is written more than
+        # once per step on a world run (rank echo + runlog duplicate); counting lines filled the
+        # loss window in half the real steps and ran the gnorm counter on echoes. That was the
+        # step-450 false kill: a 50-LINE window over a duplicated log held ~25 warmup steps.
+        self._last_seen_step = None
 
     def feed(self, step, loss, gnorm):
         """Return a reason string on divergence, else None. One trigger, then sticky."""
         import math
 
+        if self.from_step is not None and step < self.from_step:
+            return None
+        if self._last_seen_step is not None and step <= self._last_seen_step:
+            return None  # duplicate/echo of an already-counted step
         if not (math.isfinite(loss) and math.isfinite(gnorm)):
             return f"nonfinite at step {step} (loss={loss} gnorm={gnorm})"
+        self._last_seen_step = step
         if gnorm > self.g_thresh:
             self._g_run += 1
             if self._g_run >= self.g_consec:
                 return (
-                    f"gnorm {gnorm:g} > {self.g_thresh:g} for {self._g_run} consecutive lines, at step {step}"
+                    f"gnorm {gnorm:g} > {self.g_thresh:g} for {self._g_run} consecutive steps, at step {step}"
                 )
         else:
             self._g_run = 0
@@ -230,7 +243,13 @@ def main():
         help="seconds to wait for the log to first appear (launch race)",
     )
     ap.add_argument("--once", action="store_true", help="scan whole file once, do not tail")
-    ap.add_argument("--from_step", type=int, default=None, help="once: only feed steps >= N")
+    ap.add_argument(
+        "--from_step",
+        type=int,
+        default=None,
+        help="arm log rules only at/after this step, in BOTH --once and live tail. A watchdog "
+        "attached near a cold start otherwise judges warmup lines (the step-450 false kill)",
+    )
     ap.add_argument("--to_step", type=int, default=None, help="once: only feed steps < N")
     ap.add_argument(
         "--mem_thresh_gib",
@@ -251,7 +270,9 @@ def main():
     ap.add_argument("--dry_run", action="store_true", help="report triggers, send no signal")
     args = ap.parse_args()
 
-    det = DivergeDetector(args.g_thresh, args.g_consec, args.loss_window, args.loss_thresh)
+    det = DivergeDetector(
+        args.g_thresh, args.g_consec, args.loss_window, args.loss_thresh, from_step=args.from_step
+    )
 
     def act(reason):
         print(f"WATCHDOG TRIGGER {args.name}: {reason}", flush=True)

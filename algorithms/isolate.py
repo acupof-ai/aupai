@@ -129,6 +129,46 @@ def detect_level():
     return "rlimits_only"
 
 
+def _bwrap_netns_ok():
+    """Whether bwrap can build a private net namespace on THIS host.
+
+    `bwrap --unshare-all` unshares the network namespace and brings up loopback,
+    which needs CAP_NET_ADMIN inside the user namespace. A non-root GitHub-hosted
+    runner only gets that cap once kernel.apparmor_restrict_unprivileged_userns is
+    relaxed; before that bwrap died with `setting up uid map: Permission denied`
+    (and, earlier, `loopback: Failed RTM_NEWADDR`). Probe once with a throwaway
+    `true`. Cached.
+
+    A False here is a HARD FAILURE for untrusted code by default: falling back to
+    the host network stack would let generated code reach the network during RL on
+    the pod. run() only uses --share-net when AUPAI_SANDBOX_ALLOW_SHARED_NET=1 is
+    set explicitly (the CI selftest sets it); otherwise it raises.
+    """
+    if not shutil.which("bwrap") or platform.system() == "Darwin":
+        return False
+    cache = globals().get("_BW_NETNS")
+    if cache is not None:
+        return cache
+    probe = ["bwrap", "--unshare-all", "--die-with-parent", "--ro-bind", "/usr", "/usr",
+             "--ro-bind-try", "/lib", "/lib", "--ro-bind-try", "/lib64", "/lib64",
+             "--ro-bind-try", "/bin", "/bin", "--", "true"]
+    try:
+        r = subprocess.run(probe, capture_output=True, timeout=15)
+        ok = r.returncode == 0
+    except Exception:
+        ok = False
+    globals()["_BW_NETNS"] = ok
+    return ok
+
+
+_BW_NETNS = None
+
+
+class SharedNetNotPermitted(RuntimeError):
+    """bwrap cannot isolate the network and no shared-net override was given."""
+
+
+
 # macOS Seatbelt profile. Three traps, each of which produced a wrong reading before it was
 # understood; each is a case in _selftest so the trap cannot come back silently.
 #
@@ -182,13 +222,19 @@ def _rlimits(cpu_s, mem_bytes):
     return pre
 
 
-def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=None):
+def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=None,
+        stdin_data=None):
     """Execute `code` (a str) or `argv` (a list) under isolation. Returns a dict.
 
     Keys: level, rc, stdout, stderr, timed_out, isolates. `level` is the level actually
     used -- callers record it, they do not assume it.
+
+    stdin_data: optional text piped to the process's stdin (one string). Used by the
+    stdin/stdout code reward that feeds problem input to a full script; None leaves
+    stdin closed, the behaviour every existing caller depends on.
     """
     lvl = level or detect_level()
+    _net_isolated = True  # every level except the explicit bwrap --share-net override
     if lvl == "rlimits_only" and os.environ.get("ALLOW_UNISOLATED") != "1":
         raise Unisolated(
             "REFUSING: this host offers no process isolation (no bwrap/nsjail/firejail, "
@@ -227,9 +273,10 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
                          else a for a in (argv[1:] if argv else [])]
                 inner = [a for a in inner if a not in ("-I",)]
                 rc, out, err = run_sandboxed(code, timeout=timeout, files=files,
-                                            argv=inner, site="pytest" in inner)
+                                            argv=inner, site="pytest" in inner,
+                                            stdin=stdin_data)
             else:
-                rc, out, err = run_sandboxed(code, timeout=timeout)
+                rc, out, err = run_sandboxed(code, timeout=timeout, stdin=stdin_data)
             return {"level": lvl, "rc": rc, "stdout": out, "stderr": err,
                     "timed_out": err == "TIMEOUT", "isolates": ISOLATES[lvl]}
 
@@ -239,9 +286,45 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
                 f.write(_seatbelt_profile(workdir))
             argv = ["/usr/bin/sandbox-exec", "-f", prof] + argv
         elif lvl == "bwrap":
-            argv = ["bwrap", "--unshare-all", "--die-with-parent", "--ro-bind", "/usr", "/usr",
+            # BIND THE INTERPRETER'S REAL TREE, not just /usr. A GitHub-hosted runner's
+            # CPython lives under /opt/hostedtoolcache (a symlinked, non-/usr prefix), and
+            # pytest/site-packages sit under it; with only /usr bound the sandbox cannot
+            # exec python at all and every code-reward rollout silently scores 0.
+            #
+            # /tmp IS A PRIVATE TMPFS, never a read-only bind of the host /tmp: on a shared
+            # box (the pod) the host /tmp can hold another task's temp files, and a ro-bind
+            # would expose them to generated code. The interpreter only needs /usr, /opt and
+            # /etc; scratch gets an empty tmpfs.
+            #
+            # NET IS ISOLATED BY DEFAULT. --unshare-all builds a private net namespace and
+            # brings up loopback; a host that cannot (no CAP_NET_ADMIN / AppArmor-blocked
+            # userns) must FAIL for untrusted code, because silently sharing the host stack
+            # would let RL-generated code reach the network mid-run. Only an explicit
+            # AUPAI_SANDBOX_ALLOW_SHARED_NET=1 (the CI selftest) falls back to --share-net,
+            # and the result then reports isolates.net=False.
+            if not _bwrap_netns_ok():
+                if os.environ.get("AUPAI_SANDBOX_ALLOW_SHARED_NET") != "1":
+                    raise SharedNetNotPermitted(
+                        "bwrap cannot build an isolated network namespace on this host "
+                        "(no CAP_NET_ADMIN / unprivileged user namespaces blocked), so "
+                        "running untrusted code is REFUSED rather than silently sharing the "
+                        "host network. Fix the host (e.g. "
+                        "sysctl kernel.apparmor_restrict_unprivileged_userns=0) or set "
+                        "AUPAI_SANDBOX_ALLOW_SHARED_NET=1 to run with --share-net "
+                        "(network NOT isolated; result reports isolates.net=False).")
+                net = ["--share-net"]
+                _net_isolated = False
+            else:
+                net = []
+                _net_isolated = True
+            argv = ["bwrap", "--unshare-all", "--die-with-parent", *net,
+                    "--ro-bind", "/usr", "/usr",
                     "--ro-bind-try", "/lib", "/lib", "--ro-bind-try", "/lib64", "/lib64",
-                    "--ro-bind-try", "/bin", "/bin", "--proc", "/proc", "--dev", "/dev",
+                    "--ro-bind-try", "/bin", "/bin",
+                    "--ro-bind-try", "/etc", "/etc",
+                    "--ro-bind-try", "/opt", "/opt",
+                    "--tmpfs", "/tmp",
+                    "--proc", "/proc", "--dev", "/dev",
                     "--bind", workdir, workdir, "--chdir", workdir] + argv
         elif lvl == "nsjail":
             argv = ["nsjail", "-Mo", "--really_quiet", "--disable_proc", "-N",
@@ -251,13 +334,16 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
             argv = ["firejail", "--quiet", "--net=none", "--private=" + workdir,
                     "--nogroups", "--"] + argv
 
-        p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        p = subprocess.Popen(argv, stdin=subprocess.PIPE if stdin_data is not None else None,
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              cwd=workdir, preexec_fn=_rlimits(cpu_s, mem_mb * 1024 * 1024),
                              env={"PATH": "/usr/bin:/bin", "PYTHONIOENCODING": "utf-8",
                                   "HOME": workdir, "TMPDIR": workdir})
         timed_out = False
         try:
-            out, err = p.communicate(timeout=timeout)
+            out, err = p.communicate(
+                input=stdin_data.encode("utf-8") if stdin_data is not None else None,
+                timeout=timeout)
         except subprocess.TimeoutExpired:
             # The process group, not the leader: a child holds the pipes open and
             # communicate() blocks forever otherwise (the lesson sandbox_exec:85 records).
@@ -267,10 +353,13 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
                 pass
             out, err = p.communicate()
             timed_out = True
+        iso = dict(ISOLATES[lvl])
+        if lvl == "bwrap" and not _net_isolated:
+            iso["net"] = False  # --share-net override: host network stack, not isolated
         return {"level": lvl, "rc": -1 if timed_out else p.returncode,
                 "stdout": (out or b"").decode("utf-8", "replace"),
                 "stderr": (err or b"").decode("utf-8", "replace")[-2000:],
-                "timed_out": timed_out, "isolates": ISOLATES[lvl]}
+                "timed_out": timed_out, "isolates": iso}
     finally:
         if own_dir:
             shutil.rmtree(workdir, ignore_errors=True)
