@@ -28169,6 +28169,8 @@ _UNFROZEN_ALLOWLIST = {
     # lr (muon_lr) in build_optimizers, which is ruling (f), and the resolved value reaches
     # ck["cfg"], so an omitted flag trains the registered default rather than an unknown rate.
     "moe_router_lr",
+    # Router weight decay: the same optimizer-knob class as moe_router_lr (0926 router-scale remedy).
+    "moe_router_wd",
     # THE BALANCER'S TWO CONSTANTS. Here rather than frozen because they are not architecture:
     # gamma is a step size on a control loop and alpha scales a loss term, and neither changes
     # the parameter count or which parameters a token reaches. Both are PRE-REGISTERED in
