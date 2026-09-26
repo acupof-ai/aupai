@@ -15,13 +15,17 @@ export CUDA_VISIBLE_DEVICES=
 # to a scratch tree before running it, so by then BASH_SOURCE points there, not at the repo.
 SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)
 REPO_ROOT=$(cd "$SELF_DIR/.." && pwd)
-NAME=v41_ced_0923
-CK=/work/aupai/ckpt_v41_ced_0923.pt
+NAME=${NAME:-v41_ced_0923}
+CK=${CK:-/work/aupai/ckpt_${NAME}.pt}
+# Run-scoped state and result names. Empty for v41_ced_0923 so its existing files keep their
+# names; any other run gets its own, or its steps would read as done from 0923's DONE list and
+# its merged results would overwrite 0923's heval_merged_step<N> files.
+SFX=""; [ "$NAME" = v41_ced_0923 ] || SFX="_${NAME}"
 PAT=${PAT:-$(basename "$CK")}
-LOCK=/work/aupai/runs/heval_auto.lock
-DONE=/work/aupai/runs/heval_auto.done
-FAILED=/work/aupai/runs/heval_auto.failed
-GIVEUP=/work/aupai/runs/heval_auto.giveup
+LOCK=/work/aupai/runs/heval_auto${SFX}.lock
+DONE=/work/aupai/runs/heval_auto${SFX}.done
+FAILED=/work/aupai/runs/heval_auto${SFX}.failed
+GIVEUP=/work/aupai/runs/heval_auto${SFX}.giveup
 MERGE_RETRIES=3
 SHARDS=11
 THREADS=8
@@ -105,7 +109,7 @@ fsize() { wc -c < "$1" 2>/dev/null || echo 0; }
 
 done_and_produced() {
   grep -qx "$1" "$DONE" 2>/dev/null || return 1
-  [ -f "runs/heval_merged_step$1_result.json" ]
+  [ -f "runs/heval_merged${SFX}_step$1_result.json" ]
 }
 
 # step_wanted <n> -- is this checkpoint's step one this loop scores? Pure arithmetic, so the
@@ -229,6 +233,17 @@ if [ "${1:-}" = "--selftest" ]; then
   step_wanted 37500; _st "off-grid final checkpoint (above threshold)" 0 $?
   step_wanted 37000; _st "off-grid, below the threshold" 1 $?
   TOTAL_STEPS=$_st_saved_total
+
+  # --- run scoping: another run's name must not read 0923's DONE list or result files. The
+  # rule is read from the script's own top-level `SFX=` line and executed, never re-typed here:
+  # a grep for its text would also match this comment block and could not fail.
+  _st_rule=$(grep '^SFX=' "$0")
+  _st "exactly one top-level SFX rule" 1 "$(printf '%s\n' "$_st_rule" | grep -c .)"
+  _st "0926 gets its own suffix" "_v41_ced_0926" "$(NAME=v41_ced_0926; eval "$_st_rule"; echo "$SFX")"
+  _st "0923 keeps the unsuffixed names" "" "$(NAME=v41_ced_0923; eval "$_st_rule"; echo "$SFX")"
+  ( cd "$d" && SFX=_v41_ced_0926 && echo 6000 > "$DONE.x" && DONE="$DONE.x" && : > "runs/heval_merged_step6000_result.json" \
+      && done_and_produced 6000 ); _st "0926 does not count 0923's result file as its own" 1 $?
+  rm -f "$DONE.x"
 
   # --- done_and_produced: the step12000 shape is the first of these.
   run_dp() { ( cd "$d" && DONE="$DONE" ; done_and_produced "$1" ); }
@@ -455,7 +470,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   # early takes the next task instead of idling while the slowest peer drains its fixed slice.
   # --shard_i/--shard_n still NAME the worker (the merge needs 0..k contiguous); only the
   # selection changes.
-  qdir="runs/heval_q_${tag}"
+  qdir="runs/heval_q${SFX}_${tag}"
   rm -rf "$qdir"; mkdir -p "$qdir"
   # NWORK is the number actually launched, and it is what the merge glob is matched against.
   # A worker is dropped when its node lacks memory for the weights, and the drop must not leave
@@ -478,7 +493,7 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
       --ckpt "$ckf" --device cpu --threads "$THREADS" --rstrip_nl \
       --queue_dir "$qdir" \
       --shard_i "$nwork" --shard_n "$SHARDS" --run "ced_s${tag}_rstrip_sh$nwork" --force \
-      > "runs/heval_auto_${tag}_sh${nwork}.log" 2>&1 < /dev/null &
+      > "runs/heval_auto${SFX}_${tag}_sh${nwork}.log" 2>&1 < /dev/null &
     nwork=$((nwork + 1))
     i=$((i + 1))
   done
@@ -494,12 +509,12 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
   # The rule is the RESULT FILE, not the merged jsonl (e0_merge_score writes the jsonl first)
   # and not "non-empty" (a partial file is still a file). Only when it exists does the step
   # count as produced.
-  merge_log="runs/heval_auto_merge_${tag}.log"
+  merge_log="runs/heval_auto_merge${SFX}_${tag}.log"
   if python3 eval/e0_merge_score.py --bench humaneval --n 1 \
       --glob "data/eval/preds_humaneval_${base}.rstripnl.shard*of${SHARDS}.ced_s${tag}_rstrip_sh*.jsonl" \
-      --out "runs/heval_merged_step${tag}.jsonl" \
-      --result "runs/heval_merged_step${tag}_result.json" > "$merge_log" 2>&1 \
-      && [ -f "runs/heval_merged_step${tag}_result.json" ]; then
+      --out "runs/heval_merged${SFX}_step${tag}.jsonl" \
+      --result "runs/heval_merged${SFX}_step${tag}_result.json" > "$merge_log" 2>&1 \
+      && [ -f "runs/heval_merged${SFX}_step${tag}_result.json" ]; then
     echo "$tag" >> "$DONE"
     tail -2 "$merge_log"
     echo "=== $(date -u +%H:%M:%SZ) step $tag DONE (result written)"
