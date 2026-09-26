@@ -2115,6 +2115,9 @@ def main():
         "scripts/test_moe_module.py",
         # router_score softmax|sigmoid known-answer gates (V3 independence, bitwise softmax)
         "scripts/test_moe_router_score.py",
+        # --router_logit_cap C*tanh(z/C) switch on known logits (off bitwise, bounded huge logits,
+        # near-identity small, known value at C). Without this a deleted cap in _route reads fine.
+        "scripts/test_router_logit_cap.py",
         # in-training health: collapsed/uniform router through the real MoEFFN, the 0923 bias
         # shape, frozen/live optimizer step, layer grad spike, logit lens
         "scripts/train_health.py",
@@ -2125,6 +2128,10 @@ def main():
         # -- and that each documented region is actually recorded. The GPU-only equivalence check
         # is behind --equiv and the hook does not run it.
         "scripts/profile_moe_step.py",
+        # Offline router saturation stats (std after common-mode removal, dead fraction, gateT1).
+        # The runlog logit_norm is dominated by a negative common mode and cannot diagnose it; the
+        # pure router_stats is known-answer gated here (equal/negative-mean/one-hot/soft).
+        "scripts/router_logit_stats.py",
         # One Muon step on a 3-D parameter. Registered SEPARATELY from test_moe_module because
         # the gap it closes is a gap that file has by construction: test_moe_module asserts
         # which optimizer GROUP each parameter lands in and never calls .step(), so group
@@ -3010,6 +3017,8 @@ def main():
                      "scripts/test_moe_latent.py",
                      "scripts/test_moe_module.py",
                      "scripts/test_moe_router_score.py",             # router_score switch
+                     "scripts/test_router_logit_cap.py",             # router logit softcap
+                     "scripts/router_logit_stats.py",                # offline saturation probe
                      "scripts/train_health.py"},                     # h_load/h_sums counters
         "scripts/loader.py": {"scripts/test_arch_compat.py", "scripts/test_sft_pack.py",
                               "scripts/test_eval_base_prompt_format.py",
