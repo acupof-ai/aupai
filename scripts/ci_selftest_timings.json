@@ -282,6 +282,7 @@
     "scripts/ve_row_norms.py": 1.1,
     "scripts/verify_dc_residual.py": 0.1,
     "scripts/verify_fetch.py": 0.0,
+    "scripts/watch_router_scale.py": 1.5,
     "scripts/write_mix_500m.py": 8.7,
     "v41f_l2/l2_census_scan.py": 0.2
   }
