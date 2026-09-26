@@ -106,8 +106,14 @@ PROBE_WRAPPER = "/tmp/run_router_scale_probe.sh"
 
 def push_file_pod(local_path, remote_path, pod_bin):
     """Write a local file onto the pod through the single-string pod contract using base64.
-    /tmp is wiped on container restart (measured: the probe vanished between 30B relaunches), so
-    the monitor must re-push the probe every cycle rather than assume it persists."""
+    The monitor writes AND reads through the SAME view: `~/bin/pod` is `crictl exec` INSIDE the
+    container, whose /tmp is the container overlay fs (device 1048807, measured 2026-09-26). The
+    host (`tn exec`) has a DIFFERENT /tmp (device 65026 on /dev/vda2): a pod-written file is
+    invisible there and vice versa. An earlier "the probe vanished, container must have restarted"
+    diagnosis was wrong -- the run's torchrun held etime 6h28m and old /tmp files persisted; the
+    file had been written via pod and checked via tn exec, i.e. looked for in the other /tmp. The
+    per-cycle re-push below is kept anyway: it is cheap idempotence and a genuine container
+    restart really does recreate the overlay /tmp."""
     import base64
     with open(local_path, "rb") as fh:
         b64 = base64.b64encode(fh.read()).decode()
@@ -120,8 +126,9 @@ def push_file_pod(local_path, remote_path, pod_bin):
 
 
 def run_probe_pod(ckpt, n_seq, work_txt, pod_bin, probe_local):
-    """Re-push the probe (pod /tmp is not durable), write a quote-free wrapper, launch it
-    detached with setsid. Returns (pid, work_txt); the caller polls work_txt for the layers."""
+    """Re-push the probe (idempotent; see the two-/tmp note on push_file_pod), write a
+    quote-free wrapper, launch it detached with setsid. Returns (pid, work_txt); the caller
+    polls work_txt for the layers."""
     push_file_pod(probe_local, PROBE_REMOTE, pod_bin)
     wrapper = (
         "#!/bin/bash\nset -e\ncd /work/aupai\n"
@@ -227,8 +234,9 @@ def main():
             work = f"/tmp/rls_scale_{a.name}_{step}.txt"
             # Fire-and-forget: launch the detached probe once, then on later polls merely collect
             # the work file. A slow probe (up to ~an hour under contention) never trips a timeout
-            # or blocks the loop. Re-push the probe each launch because pod /tmp is wiped on
-            # container restart.
+            # or blocks the loop. Re-push the probe each launch (cheap idempotence); write and
+            # read both go through the container-view pod wrapper -- see push_file_pod for the
+            # distinct host/container /tmp that produced the earlier false "restart" diagnosis.
             if not a.local_dir and step not in launching:
                 # Skip launch if a probe for this step is ALREADY running or already producing
                 # layers (started by hand or an earlier monitor run). Two identical probes write
