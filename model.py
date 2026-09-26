@@ -2115,6 +2115,21 @@ class MoEFFN(nn.Module):
         if rs not in ("softmax", "sigmoid"):
             raise ValueError(f"router_score must be 'softmax' or 'sigmoid', got {rs!r}")
         self.router_score = rs
+        # OPTIONAL LOGIT SOFTCAP applied before softmax/sigmoid: z := cap*tanh(z/cap). 0 = off
+        # (default; bit-identical to every checkpoint trained without it). Measured 2026-09-26 on
+        # v41_ced_fixprobe r2 step3000: router row norms grow init ~1 -> ~11 at lr 0.01 / wd 0,
+        # driving per-token cross-expert logit std to 50-100 so 93-96% of experts sit at
+        # sigmoid < -6 (dead). WHAT THE CAP DOES: bounds the affinity ARGUMENT to +-cap for the
+        # whole run, so routing cannot see arbitrarily extreme scores. WHAT IT DOES NOT DO: shrink
+        # the raw router weights, or restore gradient to an already-saturated weight -- d/dz of
+        # cap*tanh(z/cap) is sech^2(z/cap), ~0.42 at |z|=cap but ~2.3e-7 at z=100/cap=12. It
+        # prevents NEW saturation from worsening; bound weight growth itself needs router
+        # weight_decay or a router z-loss (a different mechanism). Applied in BOTH branches because
+        # softmax saturates to one-hot on the same scale-up (the v41_ced_0923 collapse); see
+        # _route.
+        self.router_logit_cap = float(getattr(cfg, "router_logit_cap", 0.0) or 0.0)
+        if self.router_logit_cap < 0:
+            raise ValueError(f"router_logit_cap must be >= 0 (0 = off), got {self.router_logit_cap}")
         w = int(getattr(cfg, "moe_expert_ffn", 0) or 0)
         # THE LATENT VARIANT, off unless moe_latent is set (prereg moe_0905 amendment 13). The
         # routed experts run in a PROJECTED width: down-project d -> d_latent once per token,
@@ -2439,6 +2454,9 @@ class MoEFFN(nn.Module):
         Returns (affinity [n,E], sel [n,k], gate [n,k]); affinity is detached-free so the
         router gradient (and the sequence-wise balance loss) still flows.
         """
+        if self.router_logit_cap > 0:
+            c = self.router_logit_cap
+            logits = c * torch.tanh(logits / c)
         if self.router_score == "sigmoid":
             affinity = torch.sigmoid(logits)
         else:

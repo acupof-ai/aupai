@@ -28183,6 +28183,10 @@ _UNFROZEN_ALLOWLIST = {
     # the value changes the routing function, which is exactly why the launch line must state
     # it and why MoEFFN keeps the softmax default bitwise for old checkpoints.
     "router_score",
+    # The router logit softcap C*tanh(z/C) changes the routing function. Classified like
+    # router_score: a per-arm architecture/recipe choice recorded in cfg and the checkpoint,
+    # not resume-pinned; 0 = off keeps every cap-less checkpoint bitwise.
+    "router_logit_cap",
     # train_health cadences: read-only monitoring, no computation of the trained function changes.
     "health_every", "health_lens_every",
     # The arm's LABEL, not part of what it trains: it names the rows in runs/memory_diag.jsonl and
