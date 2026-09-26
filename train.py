@@ -3334,7 +3334,7 @@ def main():
         "mem_lr": "sparse memory: lr for the Adagrad group holding the keys and value table",
         "mem_wd": "sparse memory: weight decay on that group (0: decay falls hardest on the rows read least)",
         "mem_sel_lr": "sparse memory: separate lr for the SELECTOR (query + keys); <=0 keeps one group at mem_lr, which is what M1/M2/M3 ran",
-        "moe_router_wd": "MoE: decoupled AdamW weight decay on the router rows (0 = off, the pre-0926 behaviour). Re-applied after an optimizer-state resume. 0.1 bounds row growth measured in v41_ced_0926 (row RMS +32% over steps 2000-6000 at lr 1e-3)",
+        "moe_router_wd": "MoE: decoupled AdamW weight decay on the router rows (0 = off, the pre-0926 behaviour). Re-applied after an optimizer-state resume. 0.1 bounds row growth measured in v41_ced_0926 (row RMS +32 percent over steps 2000-6000 at lr 1e-3)",
         "moe_router_lr": "MoE: lr for the router's AdamW group; <=0 means attn_res_lr (0.01), this repo's AdamW rate for a small learned mixing map -- NOT muon_lr, which is the EXPERT group's own rate and is what ruling (f) excludes",
         "moe_bias_gamma": "MoE: aux-loss-free bias step size, applied to the SIGN of the load error (0.001, pre-registered from facts/moe.json, NOT tuned after seeing a curve)",
         "moe_balance_alpha": "MoE: sequence-wise balance loss coefficient (1e-4, complementary to the bias, not an alternative)",
