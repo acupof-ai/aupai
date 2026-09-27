@@ -187,6 +187,7 @@
     "scripts/rl_code_pool.py": 0.1,
     "scripts/rl_pool_dedup_replay.py": 0.1,
     "scripts/router_logit_stats.py": 2.5,
+    "scripts/spike_step_domains.py": 1.5,
     "scripts/sft_hf_control.py": 5.1,
     "scripts/sftb_ultra3_tail_funnel.py": 0.1,
     "scripts/stale_claims.py": 0.0,
