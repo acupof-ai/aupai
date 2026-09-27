@@ -17,13 +17,9 @@ MBPP_GRID=${MBPP_GRID:-4000}
 MAX_ITER=${MAX_ITER:-2000}
 POLL=${POLL:-120}
 SHARDS=11
-G0="2,3,4,5,8,9,10,11";       G1="14,15,16,17,18,19,20,21"
-G2="22,23,24,25,26,27,28,29"; G3="30,31,32,33,34,35,36,37"
-G4="38,39,40,41,42,43,44,45"; G5="46,47,48,49,50,51,52,53"
-G6="54,55,56,57,58,59,60,61"; G7="64,65,68,69,70,71,72,73"
-G8="90,91,92,93,94,95,96,97"; G9="98,99,100,101,102,103,104,105"
-G10="106,107,108,109,110,111,112,113"
-G_NODE="0 0 0 0 0 0 0 0 1 1 1"
+# MBPP workers take node1 cores 114-179, six each: heval_auto_loop pins its 11 workers to 2-113,
+# and sharing those cores halved both runs (measured 2026-09-27).
+MB_BASE=114; MB_W=6; MB_NODE=1
 
 owes() {  # owes <step> -> prints each missing artifact path
   local s=$1
@@ -63,9 +59,9 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
     run="mbpp_s${step}"
     i=0
     while [ "$i" -lt "$SHARDS" ]; do
-      eval "cores=\$G$i"; node=$(echo $G_NODE | cut -d" " -f$((i + 1)))
-      setsid nohup numactl --physcpubind="$cores" --membind="$node" \
-        nice -n 5 python3 eval/mbpp_gen.py --ckpt "$ckf" --device cpu --threads 8 --run "$run" \
+      lo=$((MB_BASE + i * MB_W))
+      setsid nohup numactl --physcpubind="$lo-$((lo + MB_W - 1))" --membind="$MB_NODE" \
+        nice -n 5 python3 eval/mbpp_gen.py --ckpt "$ckf" --device cpu --threads "$MB_W" --run "$run" \
         --shard_i "$i" --shard_n "$SHARDS" --no_clean --force > "runs/mbpp_${NAME}_${step}_sh$i.log" 2>&1 < /dev/null 9>&- &
       i=$((i + 1))
     done
