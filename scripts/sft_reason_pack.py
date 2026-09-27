@@ -77,7 +77,8 @@ def decontaminate(rows, text_key, dec):
     return clean, dropped, hits
 
 
-def build(in_dir, verified_dir, heldout_n, seed, cot_cap, codeif_cap, code_repeat):
+def build(in_dir, verified_dir, heldout_n, seed, cot_cap, codeif_cap, code_repeat,
+          hard_frac_cap):
     cot = list(read_jsonl(os.path.join(in_dir, "cot_reason.jsonl")))[:cot_cap or None]
     code_if = list(read_jsonl(os.path.join(in_dir, "code_if_short.jsonl")))[:codeif_cap or None]
     verified = []
@@ -90,7 +91,8 @@ def build(in_dir, verified_dir, heldout_n, seed, cot_cap, codeif_cap, code_repea
             # problem_qid is shared by that problem's solutions; qid is per-solution.
             verified.append({"prompt": r["question"], "output": r["solution"],
                              "source": f"verified_{r['source']}", "qid": r["qid"],
-                             "problem_qid": r.get("problem_qid", r["qid"].split("#")[0])})
+                             "problem_qid": r.get("problem_qid", r["qid"].split("#")[0]),
+                             "difficulty": r.get("difficulty")})
 
     dec = load_decontaminator()
     stats = {"raw": {"cot": len(cot), "code_if": len(code_if), "verified_code": len(verified)}}
@@ -118,6 +120,55 @@ def build(in_dir, verified_dir, heldout_n, seed, cot_cap, codeif_cap, code_repea
     write_jsonl(os.path.join(in_dir, "heldout_code.jsonl"), heldout)
     stats["heldout_code_problems"] = len(hold)
     stats["heldout_code_solutions"] = len(heldout)
+
+    # Difficulty mix (1e 2026-09-28): HumanEval is function-level entry-to-medium, so cap the
+    # HARD share. Hard = TACO HARD/VERY_HARD + APPS competition; UNKNOWN counts as non-hard
+    # (not downsampled). Applied to the TRAIN pool after the held-out carve, whole PROBLEM at a
+    # time (all of a problem's solutions go together), only when over the cap; otherwise untouched.
+    HARD = {"HARD", "VERY_HARD", "competition"}
+    train_by_problem = {}
+    for r in ver_train:
+        train_by_problem.setdefault(r["problem_qid"], []).append(r)
+
+    def _is_hard(rows):
+        return all((r.get("difficulty") in HARD) for r in rows) and rows
+
+    hard_pids = [pid for pid, rows in train_by_problem.items() if _is_hard(rows)]
+    diff_counts = {}
+    for rows in train_by_problem.values():
+        key = str(rows[0].get("difficulty"))
+        diff_counts[key] = diff_counts.get(key, 0) + len(rows)
+    stats["train_difficulty_solutions"] = diff_counts
+    total_sols = sum(len(v) for v in train_by_problem.values())
+    hard_sols = sum(len(train_by_problem[p]) for p in hard_pids)
+    stats["hard_frac_before"] = round(hard_sols / max(total_sols, 1), 4)
+
+    dropped_hard_pids = set()
+    if hard_frac_cap and total_sols and hard_sols / total_sols > hard_frac_cap:
+        # Remove whole hard problems (shuffled, seed-fixed) until hard solutions <= cap of the
+        # remaining pool. cap applies to the surviving total, so re-check against the shrinking
+        # denominator (a fixed target from the original total would undershoot after removals).
+        hard_shuf = sorted(hard_pids)
+        rng.shuffle(hard_shuf)
+        cur_hard, cur_total = hard_sols, total_sols
+        for pid in hard_shuf:
+            if not cur_total or cur_hard / cur_total <= hard_frac_cap:
+                break
+            n = len(train_by_problem[pid])
+            dropped_hard_pids.add(pid)
+            cur_hard -= n
+            cur_total -= n
+    stats["hard_problems_dropped"] = len(dropped_hard_pids)
+    if dropped_hard_pids:
+        ver_train = [r for pid, rows in train_by_problem.items() if pid not in dropped_hard_pids
+                     for r in rows]
+        rem_total = sum(1 for pid in train_by_problem if pid not in dropped_hard_pids
+                        for _ in train_by_problem[pid])
+        rem_hard = sum(len(train_by_problem[p]) for p in hard_pids
+                       if p not in dropped_hard_pids)
+        stats["hard_frac_after"] = round(rem_hard / max(rem_total, 1), 4)
+    else:
+        stats["hard_frac_after"] = stats["hard_frac_before"]
 
     # 1e ruling 2026-09-27: no new source. The verified code arm is the only execution-checked
     # data and the target is HumanEval, so after the held-out carve its TRAIN rows are repeated
@@ -165,6 +216,10 @@ def main():
     ap.add_argument("--code-repeat", type=int, default=2,
                     help="repeat the in-SFT verified code rows N times (1e 2026-09-27: no new "
                          "source; code is the only execution-checked arm, repeat 2x to hit mix)")
+    ap.add_argument("--hard-frac-cap", type=float, default=0.25,
+                    help="cap in-SFT hard solutions (TACO HARD/VERY_HARD + APPS competition) at "
+                         "this fraction of the verified train pool; whole-problem downsample, "
+                         "0 disables (1e 2026-09-28)")
     ap.add_argument("--dry", action="store_true", help="assemble + stats only, no token pack")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
@@ -172,7 +227,7 @@ def main():
         return _selftest()
 
     examples, parts, stats = build(a.in_dir, a.verified, a.heldout, a.seed,
-                                   a.cot_cap, a.codeif_cap, a.code_repeat)
+                                   a.cot_cap, a.codeif_cap, a.code_repeat, a.hard_frac_cap)
     total = len(examples)
     stats["total_examples"] = total
     stats["realized_mix_pct"] = {k: round(100 * len(v) / max(total, 1), 1)
@@ -197,7 +252,11 @@ def main():
                                                 "mix": stats["realized_mix_pct"],
                                                 "verified_code_repeat": a.code_repeat,
                                                 "verified_code_unique_rows":
-                                                    stats["verified_code_unique_rows"]})
+                                                    stats["verified_code_unique_rows"],
+                                                "hard_frac_cap": a.hard_frac_cap,
+                                                "hard_frac_after": stats["hard_frac_after"],
+                                                "hard_problems_dropped":
+                                                    stats["hard_problems_dropped"]})
     print("packed ->", a.out)
     return 0
 
