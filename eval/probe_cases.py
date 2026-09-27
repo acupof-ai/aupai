@@ -26,7 +26,7 @@ def main():
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--data", default=os.path.join(ROOT, "eval", "probe_cases.jsonl"))
     ap.add_argument("--out", required=True)
-    ap.add_argument("--max_new", type=int, default=220)
+    ap.add_argument("--max_new", type=int, default=320)
     ap.add_argument("--threads", type=int, default=16)
     args = ap.parse_args()
     torch.set_num_threads(args.threads)
