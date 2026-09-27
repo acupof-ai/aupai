@@ -2143,7 +2143,7 @@
    "id": "cont.sft_reason_v1_code_decontam_0928",
    "value": {
     "question": "Does the reasoning SFT v1 code arm (sandbox-verified TACO+APPS solutions and code_if short answers) carry any HumanEval/MBPP 13-gram, and how many verified rows survive decontamination and the RL held-out carve into SFT?",
-    "headline": "117,510-example reasoning SFT pack: only 3 of 28,187 sandbox-verified TACO/APPS solutions hit a gate 13-gram, all 3 against HumanEval (0 MBPP); code_if had 0. All 3 dropped before the held-out split. 2,000 verified problems (5,429 solutions) carved problem-disjoint for RL, leaving 22,755 unique in-SFT code solutions repeated 2x (45,510 rows, 1e 2026-09-27). Realized mix cot 40.8% / verified code 38.7% / code_if 20.4%.",
+    "headline": "117,510-example reasoning SFT pack: only 3 of 28,187 sandbox-verified TACO/APPS solutions hit a gate 13-gram, all 3 against HumanEval (0 MBPP); code_if had 0. All 3 dropped before the held-out split. 2,000 verified problems (5,429 solutions) carved problem-disjoint for RL, leaving 22,755 unique in-SFT code solutions repeated 2x (45,510 rows, 1e 2026-09-27). Realized mix cot 40.8% / verified code 38.7% / code_if 20.4%. In-SFT train code difficulty: hard (HARD/VERY_HARD/competition) 4,336/22,755 = 19.1%, under the 25% cap, so 0 problems downsampled.",
     "raw_verified": {
      "taco": {
       "seen": 25443,
@@ -2210,10 +2210,32 @@
      "mbpp_holdouts.jsonl": "ccf64ceae9c5403bf50a044cb6d505bfd2a2963ee58338ba2d828f6beab92a9f",
      "module_sha256": "943c19ad30d2ac7d3c419b49c6a936d813b4165bbe2b90cf3dbeca218f272559",
      "note": "same current gate pins as cont.gate_dc_residual_current_0924; Decontaminator.load_default(ROOT), 13-gram."
+    },
+    "difficulty_mix_in_sft_train_pool": {
+     "ruling": "1e 2026-09-28: HumanEval is function-level entry-to-medium; cap HARD share at 25%",
+     "hard_definition": "TACO HARD + VERY_HARD, APPS competition; UNKNOWN_DIFFICULTY treated as non-hard",
+     "solutions_by_difficulty": {
+      "EASY": 8051,
+      "MEDIUM": 2793,
+      "MEDIUM_HARD": 3796,
+      "HARD": 2779,
+      "VERY_HARD": 983,
+      "UNKNOWN_DIFFICULTY": 3439,
+      "APPS_introductory": 78,
+      "APPS_interview": 262,
+      "APPS_competition": 574
+     },
+     "hard_solutions": 4336,
+     "train_unique_solutions": 22755,
+     "hard_frac_before": 0.1906,
+     "hard_frac_cap": 0.25,
+     "hard_problems_dropped": 0,
+     "hard_frac_after": 0.1906,
+     "note": "already under the 25% cap, so NO downsampling and no content change; the rebuilt pack is byte-identical in row/token counts (14,980 rows / 61.37M). Downsample, if ever needed, removes whole problems (all of a problem's solutions together) seed 42."
     }
    },
    "measured": "2026-09-28",
-   "source": "scripts/sft_verify_code.py (CPU isolate sandbox, data/sft_raw/verified/verify_stats.json), scripts/sft_reason_pack.py (data/sft/sft_reason_v1/pack_stats.json), sft_math.py --check_pack; pod container reads 2026-09-28 via ~/bin/pod",
+   "source": "scripts/sft_verify_code.py (CPU isolate sandbox, data/sft_raw/verified/verify_stats.json), scripts/sft_reason_pack.py (data/sft/sft_reason_v1/pack_stats.json), sft_math.py --check_pack; pod container reads 2026-09-28 via ~/bin/pod; difficulty distribution + cap recheck added 2026-09-28 from sft_reason_pack.py pack_stats.json (pack build_stats hard_frac_after 0.1906)",
    "config": {
     "sandbox_timeout_s": 6,
     "sandbox_mem_mb": 1024,
@@ -2228,7 +2250,9 @@
     "cot_cap": 48000,
     "codeif_cap": 24000,
     "seq": 4096,
-    "isolation": "sandbox_exec (chroot+unshare+setpriv uid65534, RLIMIT_NPROC relaxed 64->4096 only)"
+    "isolation": "sandbox_exec (chroot+unshare+setpriv uid65534, RLIMIT_NPROC relaxed 64->4096 only)",
+    "hard_frac_cap": 0.25,
+    "hard_definition": "TACO HARD,VERY_HARD + APPS competition; UNKNOWN non-hard"
    },
    "status": "measured",
    "uncertainty": "The 3-hit zero-vs-MBPP result covers only the scanned CODE problem text, not solutions bodies and not cot_dc (passed through by design). Verification is over each problem's first 8 bundled stdin/stdout cases, capped at 6 solution candidates, so 'verified' means passes those cases -- not exhaustive correctness. function-style problems (non-empty starter_code) and problems without runnable stdin/stdout cases were excluded, not failed. decontam_fp equals the current pins by sha256 of the three gate files; it was not recomputed as a hash of parsed grams in this run.",
