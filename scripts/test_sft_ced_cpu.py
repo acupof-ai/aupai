@@ -164,6 +164,7 @@ def _worker():
         "--warmup_frac",
         "0.05",
         "--no_fp8",
+        "--fp32_master",  # exercise MasterWeights pull/push in the training loop
         "--allow_unstamped_pack",
         "--save_every",
         "1000",  # only epoch saves land
@@ -285,17 +286,56 @@ def _selftest():
     assert 'Cfg.kind = "sft"' in src, "sft_math must stamp Cfg.kind on every save"
     assert '".epoch"' in src or ".epoch{ep + 1}" in src, "epoch-boundary save missing"
     assert "--warmup_frac" in src and "--lr_decay" in src
+    # BOTH fp32-numerics paths must stay exposed and mutually exclusive in sft_math.
+    assert "--fp32_master" in src, "sft_math must expose the fp32 master path (#710)"
+    _ulp_master_case()
     # Option B wiring (1e 2026-09-25): the SFT line must cast bf16 on --no_fp8 and pass the
     # flag to Cfg so build_optimizers builds the SR path. A line deleted here is a silent revert
-    # to the fp32-weights OOM path or to frozen round-to-nearest.
+    # to the fp32-weights OOM path or to frozen round-to-nearest. This is the live launch path.
     assert "--stochastic_round" in src, "sft_math must expose --stochastic_round"
     assert "Cfg.stochastic_round = args.stochastic_round" in src, (
         "the SR flag must reach Cfg/build_optimizers")
+    assert "args.fp32_master and args.stochastic_round" in src, (
+        "sft_math must refuse the two fp32-numerics paths together")
     train_src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+    assert "class StochasticAdamW" in train_src, "embed/scalar groups need the SR AdamW"
     assert "self._rounder.apply(W, T)" in train_src, (
         "Muon must Bernoulli-round w-update in fp32 blocks")
-    assert "class StochasticAdamW" in train_src, "embed/scalar groups need the SR AdamW"
-    print("sft_ced_cpu selftest: linear-to-zero + cosine-unchanged + kind/epoch + SR wiring OK")
+    print("sft_ced_cpu selftest: linear-to-zero + cosine-unchanged + kind/epoch markers + "
+          "bf16 sub-ULP master case + SR wiring OK")
+
+
+def _ulp_master_case():
+    """Known answer (genB #710): why --fp32_master accumulates sub-ULP bf16 SFT updates.
+
+    A same-sign optimizer step strictly below half a bf16 ULP rounds back to the identical
+    bf16 weight on a direct bf16 step, so the update is discarded; an fp32 copy accumulates
+    those sub-ULP steps until they cross a bf16 boundary, then moves the bf16 weight. A broken
+    pull/push that silently trained bf16-only would fail the accumulation assertions.
+    Pinned, deterministic, fixed seed, no GPU.
+    """
+    g = torch.Generator().manual_seed(0)
+    n = 100000
+    w = (1.0 + 15.0 * torch.rand(n, generator=g)).to(torch.bfloat16).float()  # exact bf16 grid
+    exp = torch.floor(torch.log2(w.abs()))
+    ulp = 2.0 ** (exp - 7)                       # bf16 ULP: 7 stored mantissa bits
+    # <=0.5 ULP; a tiny fp32 round-off tail (~1e-5 of elements may land exactly on a boundary)
+    # is tolerated -- the point is that a direct bf16 step moves essentially nothing while the
+    # fp32 accumulation moves nearly everything, a >500x gap below.
+    delta = 0.49 * torch.rand(n, generator=g) * ulp
+    assert float(delta.max() / ulp.max()) < 0.5
+
+    def moved(weight):
+        return float((weight.to(torch.bfloat16).float() != w).float().mean())
+
+    one_direct = moved(w + delta)               # bf16-only storage takes one step
+    acc10 = moved(w + 10 * delta)               # fp32 master accumulates 10 steps
+    acc50 = moved(w + 50 * delta)               # ... 50 steps
+    assert one_direct < 0.002, (
+        f"a sub-half-ULP step must leave ~every bf16 weight bit-identical, got {one_direct}")
+    assert acc10 > 0.5, f"10 accumulated sub-ULP steps must move most bf16 weights, got {acc10}"
+    assert acc50 > 0.8, f"50 accumulated steps must move ~all bf16 weights, got {acc50}"
+    assert acc10 > 100 * one_direct, "the master must move >>100x what a direct bf16 step does"
 
 
 if __name__ == "__main__":
