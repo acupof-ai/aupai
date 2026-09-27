@@ -594,9 +594,14 @@ def main():
         and getattr(LigerFusedLinearCrossEntropyLoss, "__module__", "").startswith("liger_kernel"))
 
     if device.startswith("cuda"):
-        assert is_real_liger, (
+        # Pinned in source position by scripts/test_sft_holdout_gate.py: this guard must stay
+        # after the --check_pack return and before the loss is built.
+        assert LigerFusedLinearCrossEntropyLoss is not None, (
             "the GPU SFT path builds the loss with liger_kernel; it is installed on the pod but "
             "not in the CPU image.")
+        # A symbol that exists but is not the liger_kernel class (a CPU test substitute on a
+        # CUDA run) must not silently take the fused-linear path.
+        assert is_real_liger, "CUDA SFT requires the real liger_kernel FLCE, got a substitute"
         flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
 
         def ce_loss(hidden_flat, targets):
