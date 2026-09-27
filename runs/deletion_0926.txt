@@ -1,0 +1,11 @@
+# 2026-09-26 cleanup by 1e, user order: "清道夫多清理好" (clean up more). Pod container only; nothing here is in git.
+# 0923 interrupt ckpts: identical-size copies remain in host /data01/aupai_backup/v41_ced_0923/ (backup loop MANIFEST carries sha256).
+# fixprobe_0925 step452: the non-atomic save truncated by the watchdog stop (#722 fixed the writer). gate_0922 step8196: retired flat arch interrupt; its step8000 is kept.
+ckpt ckpt_v41_ced_fixprobe_0925.pt.interrupt.step452 8993415168 DELETED 2026-09-26T13:18:25Z
+ckpt ckpt_v41_ced_0923.pt.interrupt.step25052 13021173538 DELETED 2026-09-26T13:18:25Z
+ckpt ckpt_v41_ced_0923.pt.interrupt.step30017 13021173602 DELETED 2026-09-26T13:18:25Z
+ckpt ckpt_v41_ced_0923.pt.interrupt.step30180 13021173602 DELETED 2026-09-26T13:18:25Z
+ckpt ckpt_v41_gate_0922.pt.interrupt.step8196 12974000917 DELETED 2026-09-26T13:18:25Z
+# container /tmp sandbox dirs (ultra3 code-exec leftovers, no process referencing them, none newer than 2026-09-25), deleted 13:17Z:
+tmpdir container:/tmp/u3w.* count=157813 size_kb=1583484 mtime=2026-09-25..2026-09-25
+tmpdir container:/tmp/gq.* count=1000 size_kb=9768 mtime=2026-09-25..2026-09-25
