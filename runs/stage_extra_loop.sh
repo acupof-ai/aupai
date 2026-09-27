@@ -5,7 +5,8 @@
 #   every MBPP_GRID steps:  MBPP sanitized 427, sharded like HumanEval, merged by e0_merge_score
 # MBPP is on a coarser grid because 427 tasks on 11 CPU workers take longer than one save interval.
 # restartable: a step counts as done only when every artifact it owes exists; a rerun redoes the rest.
-# Single instance via flock on fd 9. Iteration cap: MAX_ITER polls.
+# Single instance via flock on fd 9; the MBPP workers close fd 9 so a killed loop frees the lock.
+# mbpp_gen versions its output by --run, so the shard files end in .${run}.jsonl. Iteration cap: MAX_ITER polls.
 export CUDA_VISIBLE_DEVICES=
 NAME=${NAME:-v41_ced_0926}
 CK=${CK:-/work/aupai/ckpt_${NAME}.pt}
@@ -65,12 +66,12 @@ while [ "$iter" -lt "$MAX_ITER" ]; do
       eval "cores=\$G$i"; node=$(echo $G_NODE | cut -d" " -f$((i + 1)))
       setsid nohup numactl --physcpubind="$cores" --membind="$node" \
         nice -n 5 python3 eval/mbpp_gen.py --ckpt "$ckf" --device cpu --threads 8 --run "$run" \
-        --shard_i "$i" --shard_n "$SHARDS" --no_clean --force > "runs/mbpp_${NAME}_${step}_sh$i.log" 2>&1 < /dev/null &
+        --shard_i "$i" --shard_n "$SHARDS" --no_clean --force > "runs/mbpp_${NAME}_${step}_sh$i.log" 2>&1 < /dev/null 9>&- &
       i=$((i + 1))
     done
     wait
     python3 eval/e0_merge_score.py --bench mbpp --n 1 \
-      --glob "data/eval/preds_mbpp_$(basename "$ckf").${run}.shard*of${SHARDS}.jsonl" \
+      --glob "data/eval/preds_mbpp_$(basename "$ckf").${run}.shard*of${SHARDS}.${run}.jsonl" \
       --out "runs/mbpp_merged_${NAME}_step${step}.jsonl" \
       --result "runs/mbpp_merged_${NAME}_step${step}_result.json" > "runs/mbpp_merge_${NAME}_${step}.log" 2>&1
   fi
