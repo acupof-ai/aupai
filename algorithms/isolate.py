@@ -223,8 +223,15 @@ def _rlimits(cpu_s, mem_bytes):
 
 
 def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=None,
-        stdin_data=None):
+        stdin_data=None, nproc=None):
     """Execute `code` (a str) or `argv` (a list) under isolation. Returns a dict.
+
+    nproc (sandbox_exec only): the chroot user's RLIMIT_NPROC fork cap. Leave None for the
+    sandbox default (64). Raise it for a workload that legitimately starts more threads: a
+    stock CPython 3.12 can now need >64 just to START UP inside the chroot (measured on the pod
+    2026-09-27 -- at 64 even `print(1)` failed with setpriv EAGAIN; 4096 ran). This is only the
+    fork-bomb ceiling, not the other axes; the chroot/namespaces/uid-drop/net/fs guarantees are
+    unchanged. Record the value you pass -- it is not comparable across runs at different caps.
 
     Keys: level, rc, stdout, stderr, timed_out, isolates. `level` is the level actually
     used -- callers record it, they do not assume it.
@@ -272,11 +279,13 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
                 inner = ["/work/" + os.path.basename(a) if os.path.isabs(a) or a.endswith(".py")
                          else a for a in (argv[1:] if argv else [])]
                 inner = [a for a in inner if a not in ("-I",)]
+                _nkw = {} if nproc is None else {"nproc": nproc}
                 rc, out, err = run_sandboxed(code, timeout=timeout, files=files,
                                             argv=inner, site="pytest" in inner,
-                                            stdin=stdin_data)
+                                            stdin=stdin_data, **_nkw)
             else:
-                rc, out, err = run_sandboxed(code, timeout=timeout, stdin=stdin_data)
+                _nkw = {} if nproc is None else {"nproc": nproc}
+                rc, out, err = run_sandboxed(code, timeout=timeout, stdin=stdin_data, **_nkw)
             return {"level": lvl, "rc": rc, "stdout": out, "stderr": err,
                     "timed_out": err == "TIMEOUT", "isolates": ISOLATES[lvl]}
 

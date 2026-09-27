@@ -2125,6 +2125,13 @@ def main():
         # pins plan determinism, rows-in-pool, and the exact prefix-count identity vs a ckpt
         # row_cursor (a wrong plan length would silently map a spike to the wrong data).
         "scripts/spike_step_domains.py",
+        # reasoning SFT v1: TACO/APPS sandbox verification (io/solution parse, fn-style gate,
+        # distinct-solution cap), cot prompt/answer split, problem-disjoint held-out split.
+        # Registered because each gates the data the SFT pack is built from; a deleted gate
+        # would pass every normal run and only let an unverified solution through silently.
+        "scripts/sft_verify_code.py",
+        "scripts/sft_reason_prep.py",
+        "scripts/sft_reason_pack.py",
         # in-training health: collapsed/uniform router through the real MoEFFN, the 0923 bias
         # shape, frozen/live optimizer step, layer grad spike, logit lens
         "scripts/train_health.py",
