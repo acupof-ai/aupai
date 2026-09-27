@@ -2138,6 +2138,101 @@
    "status": "measured",
    "uncertainty": "The zero holds for the corpus bytes identified by the build stamps recorded in per_domain_stamp; a rebuild of any domain invalidates that domain's row (its fingerprint changes, so the mismatch is visible rather than silent). The rescan re-derived each domain's shard and row counts from the filesystem and they equal the producer's own stamps, but the stamps themselves were not recomputed from the source parquet, so this measures the kept output, not the conversion that produced it. The stamps were read on the pod 2026-09-24, after the scan, and are recorded here rather than re-derived. The gate files are read on the pod; their sha1 were compared against datagen/holdout.py's REGISTRY_SHA1 pins rather than re-derived.",
    "boundary": "This is an output-side check on the six training corpora. It says nothing about the eval-side surfaces, nothing about any domain outside these six, and nothing about near-duplication or semantic leakage below the 13-word-token exact-match criterion."
+  },
+  {
+   "id": "cont.sft_reason_v1_code_decontam_0928",
+   "value": {
+    "question": "Does the reasoning SFT v1 code arm (sandbox-verified TACO+APPS solutions and code_if short answers) carry any HumanEval/MBPP 13-gram, and how many verified rows survive decontamination and the RL held-out carve into SFT?",
+    "headline": "117,510-example reasoning SFT pack: only 3 of 28,187 sandbox-verified TACO/APPS solutions hit a gate 13-gram, all 3 against HumanEval (0 MBPP); code_if had 0. All 3 dropped before the held-out split. 2,000 verified problems (5,429 solutions) carved problem-disjoint for RL, leaving 22,755 unique in-SFT code solutions repeated 2x (45,510 rows, 1e 2026-09-27). Realized mix cot 40.8% / verified code 38.7% / code_if 20.4%.",
+    "raw_verified": {
+     "taco": {
+      "seen": 25443,
+      "verified_problems": 9921,
+      "verified_solutions": 27014,
+      "no_stdin_io": 4575,
+      "function_style": 2676,
+      "no_passing_solution": 8271
+     },
+     "apps": {
+      "seen": 5000,
+      "verified_problems": 451,
+      "verified_solutions": 1173,
+      "no_stdin_io": 4376,
+      "function_style": 92,
+      "no_passing_solution": 81
+     },
+     "total_verified_problems": 10372,
+     "total_verified_solutions": 28187
+    },
+    "decontam_13gram": {
+     "scope": "CODE problem text only: TACO/APPS questions and code_if prompts. cot_dc is math reasoning and was passed through, not scanned, because it is a decontaminated math corpus with no code-benchmark overlap; that pass-through is a scope choice, not a measured zero on cot.",
+     "verified_code_rows_scanned": 28187,
+     "verified_code_hits": 3,
+     "hits": {
+      "humaneval": 3,
+      "mbpp": 0
+     },
+     "code_if_rows_scanned": 24000,
+     "code_if_hits": 0,
+     "post_decontam_verified_solutions": 28184
+    },
+    "rl_heldout": {
+     "carve": "problem-disjoint, seed 42, all solutions of a held problem move together; carved from the post-decontam verified pool only",
+     "heldout_problems": 2000,
+     "heldout_solutions": 5429,
+     "in_sft_unique_code_solutions": 22755,
+     "code_repeat": 2,
+     "in_sft_code_rows_after_repeat": 45510
+    },
+    "pack": {
+     "examples": 117510,
+     "realized_mix_pct": {
+      "cot_reason": 40.8,
+      "verified_code": 38.7,
+      "code_if_short": 20.4
+     },
+     "cot_rows": 48000,
+     "code_if_rows": 24000,
+     "packed_rows": 14980,
+     "seq": 4096,
+     "total_tokens_m": 61.37,
+     "loss_tokens_m": 33.12,
+     "dropped_over_4097": 112,
+     "padding_tokens_m": 0.31,
+     "vocab_id": "f1f860970d15d623",
+     "holdout_fp": "e252f0f6d82c0237",
+     "artifact": "data/sft/sft_reason_v1/sft_reason_v1.pt",
+     "heldout_artifact": "data/sft/sft_reason_v1/heldout_code.jsonl"
+    },
+    "gate": {
+     "decontam_fp": "302aa793f7067462",
+     "humaneval_164.jsonl": "1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2",
+     "mbpp_holdouts.jsonl": "ccf64ceae9c5403bf50a044cb6d505bfd2a2963ee58338ba2d828f6beab92a9f",
+     "module_sha256": "943c19ad30d2ac7d3c419b49c6a936d813b4165bbe2b90cf3dbeca218f272559",
+     "note": "same current gate pins as cont.gate_dc_residual_current_0924; Decontaminator.load_default(ROOT), 13-gram."
+    }
+   },
+   "measured": "2026-09-28",
+   "source": "scripts/sft_verify_code.py (CPU isolate sandbox, data/sft_raw/verified/verify_stats.json), scripts/sft_reason_pack.py (data/sft/sft_reason_v1/pack_stats.json), sft_math.py --check_pack; pod container reads 2026-09-28 via ~/bin/pod",
+   "config": {
+    "sandbox_timeout_s": 6,
+    "sandbox_mem_mb": 1024,
+    "sandbox_nproc": 4096,
+    "max_cases_per_problem": 8,
+    "max_solution_candidates": 6,
+    "keep_distinct_solutions_per_problem": 3,
+    "ngram": 13,
+    "heldout_problems": 2000,
+    "heldout_seed": 42,
+    "code_repeat": 2,
+    "cot_cap": 48000,
+    "codeif_cap": 24000,
+    "seq": 4096,
+    "isolation": "sandbox_exec (chroot+unshare+setpriv uid65534, RLIMIT_NPROC relaxed 64->4096 only)"
+   },
+   "status": "measured",
+   "uncertainty": "The 3-hit zero-vs-MBPP result covers only the scanned CODE problem text, not solutions bodies and not cot_dc (passed through by design). Verification is over each problem's first 8 bundled stdin/stdout cases, capped at 6 solution candidates, so 'verified' means passes those cases -- not exhaustive correctness. function-style problems (non-empty starter_code) and problems without runnable stdin/stdout cases were excluded, not failed. decontam_fp equals the current pins by sha256 of the three gate files; it was not recomputed as a hash of parsed grams in this run.",
+   "boundary": "This measures the SFT v1 pack as built 2026-09-28. It does not measure HumanEval performance after SFT, does not prove the held-out 2,000 problems are a representative RL sample, and cannot speak to contamination in sources not scanned (cot_dc)."
   }
  ]
 }

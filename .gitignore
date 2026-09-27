@@ -10,6 +10,9 @@ data/sft/*.jsonl.gz
 # qwq_mmlu.parquet (45MB) and gsm8k_zh.json (8.9MB) were committed.
 data/sft/*.parquet
 data/sft/*.json
+# generated reasoning SFT v1 products (pack, held-out RL set, build stats); durable counts live
+# in facts/contamination.json#cont.sft_reason_v1_code_decontam_0928, the bytes are pod-only
+data/sft/sft_reason_v1/
 # raw TACO/APPS downloads for the reasoning SFT pack (2.2 GiB, fetched by
 # scripts/fetch_taco_apps.sh; raw data is never committed)
 data/sft_raw/
