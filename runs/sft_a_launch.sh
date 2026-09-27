@@ -5,12 +5,15 @@
 #   EPOCHS=2 over ALL of data/sft/sfta/sft_mixA_0924.pt, no truncation
 #   LR_SCALE=0.1, first 5% of steps LINEAR warmup, then LINEAR decay to 0 over every
 #     remaining step (--lr_decay linear --warmup_frac 0.05; NOT the pretraining cosine)
-#   bf16 (--no_fp8 --stochastic_round) with activation checkpointing (sft_math's
-#   --grad_ckpt default ON). Option B (1e 2026-09-25): weights bf16, fp32 w+delta
-#   Bernoulli-rounded on write, fp32 Muon momentum; no fp32 master (that OOM'd at 93 GiB).
-#   Measured card-7 single-rank 3-step probes 2026-09-25 (nvidia-smi memory.used): B4 after
-#   the block-fp32 cast fix peaks 84.06 GiB (<= 85 gate, accepted; 81.66 allocator). An
-#   earlier whole-group fp32 cast OOM'd B4 at 89.77 GiB. 1e ruling 2026-09-25: B4 stands.
+#   bf16 (--no_fp8) with activation checkpointing (sft_math's --grad_ckpt default ON).
+#   Numerics: --stochastic_round (Option B, 1e 2026-09-25): weights bf16, fp32 w+delta
+#   Bernoulli-rounded on write, fp32 Muon momentum; this is the live choice because the
+#   alternative --fp32_master (optimizer-owned fp32 weight copies, #710, exact for SFT's
+#   sub-half-ULP ~1e-4 updates) OOM'd the 85-GiB world-8 box at ~93 GiB. Measured card-7
+#   single-rank 3-step probes 2026-09-25 (nvidia-smi memory.used): B4 after the block-fp32
+#   cast fix peaks 84.06 GiB (<= 85 gate, accepted; 81.66 allocator); an earlier whole-group
+#   fp32 cast OOM'd B4 at 89.77 GiB. --fp32_master stays in sft_math for a bigger box / the
+#   known-answer test; flip this line to it only on a run with enough headroom.
 #   seq 4096 from the pack, BATCH 4/rank (no accumulation: sft_math has none; global 32
 #   rows ~131K tokens/step). The user's "default 48" was read as a GLOBAL batch; 48 was
 #   actually per-rank rows, which extrapolates past the 96 GB H20 at B4x4096; the controller
