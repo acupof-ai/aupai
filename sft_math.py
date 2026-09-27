@@ -586,14 +586,27 @@ def main():
             logits = SOFTCAP * torch.tanh(logits / SOFTCAP)
         return F.cross_entropy(logits, targets, ignore_index=-100)
 
+    # Is the FLCE symbol the real CUDA-only liger kernel? The CI SFT CED gate injects a
+    # CPU-capable FakeFLCE by reassigning the module symbol; distinguish by origin, never by a
+    # probe call (the fake counts one loss per step, so an extra call would desync its gate).
+    is_real_liger = (
+        LigerFusedLinearCrossEntropyLoss is not None
+        and getattr(LigerFusedLinearCrossEntropyLoss, "__module__", "").startswith("liger_kernel"))
+
     if device.startswith("cuda"):
-        assert LigerFusedLinearCrossEntropyLoss is not None, (
+        assert is_real_liger, (
             "the GPU SFT path builds the loss with liger_kernel; it is installed on the pod but "
             "not in the CPU image.")
         flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
 
         def ce_loss(hidden_flat, targets):
             return flce(weight, hidden_flat.to(weight.dtype), targets)
+    elif not is_real_liger and LigerFusedLinearCrossEntropyLoss is not None:
+        # CPU with a CPU-capable substitute injected (scripts/test_sft_ced_cpu.py's FakeFLCE).
+        flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
+
+        def ce_loss(hidden_flat, targets):
+            return flce(weight, hidden_flat, targets)
     else:
         ce_loss = _cpu_ce
     if amp:
