@@ -10,6 +10,9 @@ data/sft/*.jsonl.gz
 # qwq_mmlu.parquet (45MB) and gsm8k_zh.json (8.9MB) were committed.
 data/sft/*.parquet
 data/sft/*.json
+# raw TACO/APPS downloads for the reasoning SFT pack (2.2 GiB, fetched by
+# scripts/fetch_taco_apps.sh; raw data is never committed)
+data/sft_raw/
 data/mix/
 data/**/*.pt
 data/rl/
