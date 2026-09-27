@@ -2118,6 +2118,10 @@ def main():
         # --router_logit_cap C*tanh(z/C) switch on known logits (off bitwise, bounded huge logits,
         # near-identity small, known value at C). Without this a deleted cap in _route reads fine.
         "scripts/test_router_logit_cap.py",
+        # spike_step_domains rebuilds the plan domain/row column for a step interval; --selftest
+        # pins plan determinism, rows-in-pool, and the exact prefix-count identity vs a ckpt
+        # row_cursor (a wrong plan length would silently map a spike to the wrong data).
+        "scripts/spike_step_domains.py",
         # in-training health: collapsed/uniform router through the real MoEFFN, the 0923 bias
         # shape, frozen/live optimizer step, layer grad spike, logit lens
         "scripts/train_health.py",
