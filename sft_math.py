@@ -343,9 +343,13 @@ def main():
         if Cfg.fone:
             V, W = V[rank::world].contiguous(), W[rank::world].contiguous()
     n_even = ddp_even_len(len(X), Cfg.batch, ddp)
-    X, Y = X[:n_even].pin_memory(), Y[:n_even].pin_memory()
-    if Cfg.fone:
-        V, W = V[:n_even].pin_memory(), W[:n_even].pin_memory()
+    # pin_memory only exists with CUDA; on a CPU run (device=="cpu") it raises
+    # "No CUDA GPUs are available". The CPU 2-step SFT smoke/resume path hits exactly this, so
+    # guard it instead of relying on the test's pin_memory monkeypatch.
+    if device.startswith("cuda"):
+        X, Y = X[:n_even].pin_memory(), Y[:n_even].pin_memory()
+        if Cfg.fone:
+            V, W = V[:n_even].pin_memory(), W[:n_even].pin_memory()
     if is_main:
         print(f"sft rows {len(X)} per rank (world {world})", flush=True)
 
@@ -570,12 +574,28 @@ def main():
                        f"-> step0 {g['lr']:.3g}")
 
     step = 0
-    assert LigerFusedLinearCrossEntropyLoss is not None, (
-        "this path builds the loss and needs liger_kernel; it is installed on the pod but "
-        "not in the CPU image. --check_pack is the cardless gate and does not reach here."
-    )
-    flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
     weight = raw_model.head.weight[: raw_model.cfg.vocab]
+
+    def _cpu_ce(hidden_flat, targets):
+        # Liger FLCE has no CPU kernel (it raises "0 active drivers" without CUDA). The CPU
+        # 2-step smoke exercises the load/pack/step path only, so materialize logits and use
+        # torch CE with the same tanh softcap Liger applies (model.SOFTCAP). 537 MiB fp32 at
+        # B1/seq4096 -- fine for a smoke, never the training path.
+        logits = F.linear(hidden_flat.float(), weight.float())
+        if SOFTCAP:
+            logits = SOFTCAP * torch.tanh(logits / SOFTCAP)
+        return F.cross_entropy(logits, targets, ignore_index=-100)
+
+    if device.startswith("cuda"):
+        assert LigerFusedLinearCrossEntropyLoss is not None, (
+            "the GPU SFT path builds the loss with liger_kernel; it is installed on the pod but "
+            "not in the CPU image.")
+        flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
+
+        def ce_loss(hidden_flat, targets):
+            return flce(weight, hidden_flat.to(weight.dtype), targets)
+    else:
+        ce_loss = _cpu_ce
     if amp:
         torch.cuda.reset_peak_memory_stats(device)
 
@@ -602,7 +622,7 @@ def main():
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
                 hidden, _ = model(xb, yb, cub, vb)
             B, T, D = hidden.shape
-            loss = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1))
+            loss = ce_loss(hidden.reshape(-1, D), yb.reshape(-1))
             if Cfg.fone:
                 # Supervised [NUM] positions only: a prompt-masked one must not be scored
                 nmask = yb == Cfg.num_id
