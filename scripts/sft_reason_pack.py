@@ -20,9 +20,11 @@ Steps:
   3. Merge the in-SFT parts and hand (prompt, output) pairs to prepare_sft.pack_and_save
      (split_encode, the same raw-continuation packing the existing sft_mixA pack uses).
 
-Mix (1e): cot 40% / verified code 40% / code_if 20%. If the verifier yields fewer than the code
-target, --code-target 0 means "use whatever verified rows exist"; the row counts are printed so
-the caller sees the realized mix rather than an assumed one.
+Mix (1e): cot 40% / verified code 40% / code_if 20%. The verifier yields fewer unique code rows
+than the code target, so (1e 2026-09-27) the in-SFT verified code rows repeat --code-repeat 2
+times rather than adding a new source; realized unique vs repeated rows and the effective mix
+are printed and written to pack_stats.json / the pack manifest, so the reader sees the realized
+mix and the duplication rather than the assumed one.
 
     # pod, CPU only:
     taskset -c 146-179 nice -n 10 OMP_NUM_THREADS=2 python3 scripts/sft_reason_pack.py \\
@@ -75,7 +77,7 @@ def decontaminate(rows, text_key, dec):
     return clean, dropped, hits
 
 
-def build(in_dir, verified_dir, heldout_n, seed, cot_cap, codeif_cap):
+def build(in_dir, verified_dir, heldout_n, seed, cot_cap, codeif_cap, code_repeat):
     cot = list(read_jsonl(os.path.join(in_dir, "cot_reason.jsonl")))[:cot_cap or None]
     code_if = list(read_jsonl(os.path.join(in_dir, "code_if_short.jsonl")))[:codeif_cap or None]
     verified = []
@@ -117,8 +119,15 @@ def build(in_dir, verified_dir, heldout_n, seed, cot_cap, codeif_cap):
     stats["heldout_code_problems"] = len(hold)
     stats["heldout_code_solutions"] = len(heldout)
 
-    parts = {"cot_reason": cot, "verified_code": ver_train, "code_if_short": code_if_c}
+    # 1e ruling 2026-09-27: no new source. The verified code arm is the only execution-checked
+    # data and the target is HumanEval, so after the held-out carve its TRAIN rows are repeated
+    # code_repeat times in the pack to lift the code share. The held-out is carved first, so no
+    # held-out solution is ever repeated into SFT.
+    ver_train_rep = ver_train * code_repeat
+    parts = {"cot_reason": cot, "verified_code": ver_train_rep, "code_if_short": code_if_c}
     stats["in_sft"] = {k: len(v) for k, v in parts.items()}
+    stats["verified_code_unique_rows"] = len(ver_train)
+    stats["verified_code_repeat"] = code_repeat
     examples = []
     for rows in parts.values():
         examples.extend((r["prompt"], r["output"]) for r in rows)
@@ -153,6 +162,9 @@ def main():
     ap.add_argument("--body-gate-tokens", type=int, default=256)
     ap.add_argument("--cot-cap", type=int, default=48000)
     ap.add_argument("--codeif-cap", type=int, default=24000)
+    ap.add_argument("--code-repeat", type=int, default=2,
+                    help="repeat the in-SFT verified code rows N times (1e 2026-09-27: no new "
+                         "source; code is the only execution-checked arm, repeat 2x to hit mix)")
     ap.add_argument("--dry", action="store_true", help="assemble + stats only, no token pack")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
@@ -160,7 +172,7 @@ def main():
         return _selftest()
 
     examples, parts, stats = build(a.in_dir, a.verified, a.heldout, a.seed,
-                                   a.cot_cap, a.codeif_cap)
+                                   a.cot_cap, a.codeif_cap, a.code_repeat)
     total = len(examples)
     stats["total_examples"] = total
     stats["realized_mix_pct"] = {k: round(100 * len(v) / max(total, 1), 1)
@@ -182,7 +194,10 @@ def main():
                for n in ("cot_reason.jsonl", "code_if_short.jsonl")]
     pack_and_save(examples, tok, eos, a.out, a.seq, split_encode=True,
                   sources=sources, extra_stats={"plan": "sft reasoning v1 (1e 2026-09-27)",
-                                                "mix": stats["realized_mix_pct"]})
+                                                "mix": stats["realized_mix_pct"],
+                                                "verified_code_repeat": a.code_repeat,
+                                                "verified_code_unique_rows":
+                                                    stats["verified_code_unique_rows"]})
     print("packed ->", a.out)
     return 0
 
