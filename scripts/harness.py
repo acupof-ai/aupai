@@ -16088,6 +16088,7 @@ def check_gpu_entry_points_claim(root):
         "sft_math.py": "launcher-claimed (scripts/run_sft.sh)",
         # A laptop path, deliberately: it is how a person talks to a checkpoint with no pod involved.
         "infer_local.py": "laptop inference path, not a pod lane job",
+        "scripts/base_generate.py": "laptop REPL for a base ckpt (cpu/mps, never cuda), not a pod lane job",
     }
     move = _re.compile(r'\.to\(\s*(?:dev|device|DEV|"cuda|\'cuda)|device\s*=\s*["\']cuda|\.cuda\(\)')
     # `import card_claim` and `from card_claim import ...` both count, because a file may wrap
