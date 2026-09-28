@@ -27,7 +27,7 @@ import torch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
+from scripts.loader import IM_END, format_prompt, load_checkpoint, load_tokenizer  # noqa: E402
 
 HOLD = 16
 STOPS = ["\n\n\n", "\nQuestion:", "\n问：", "\ndef ", "\nclass ", "\nif __name__"]
@@ -39,12 +39,11 @@ def pick_device(want):
     return "cpu"  # measured 2026-09-28 on M4 Pro: cpu 7.8 tok/s vs mps 4.5 (small per-token kernels)
 
 
-def stream(model, tok, prompt, device, max_new, temp, code_stops):
+def stream(model, tok, prompt, device, max_new, temp, stops, stop_ids=(1,)):
     """Yield the continuation in pieces; a piece that could still grow into a stop is held back."""
     ids = tok.encode(prompt).ids
     x = torch.tensor([ids], device=device)
     new, printed, text = [], "", ""
-    stops = STOPS if code_stops else STOPS[:3]
     with torch.no_grad():
         for _ in range(max_new):
             logits = model(x[:, -model.cfg.seq:])[0][:, -1].float()
@@ -52,7 +51,7 @@ def stream(model, tok, prompt, device, max_new, temp, code_stops):
                 nxt = logits.argmax(-1, keepdim=True)
             else:
                 nxt = torch.multinomial(torch.softmax(logits / temp, -1), 1)
-            if nxt.item() == 1:
+            if nxt.item() in stop_ids:
                 break
             new.append(nxt.item())
             x = torch.cat([x, nxt.view(1, 1)], 1)
@@ -68,16 +67,20 @@ def stream(model, tok, prompt, device, max_new, temp, code_stops):
     stream.n_tokens = len(new)
 
 
-def prep(p):
-    code = p.lstrip().startswith(("def ", "from ", "import "))
-    if code:
-        p = p.rstrip("\n")  # HumanEval scores the rstrip-nl arm; a trailing blank line reads as end-of-function
-    return p, code
+def prep(p, tok, chat=False):
+    """-> (prompt, text stops, stop token ids). Chat wraps the question in ChatML and stops on
+    <|im_end|>, the token an instruction-tuned checkpoint ends its answer with."""
+    if chat:
+        return format_prompt(p), [], (1, tok.token_to_id(IM_END))
+    if p.lstrip().startswith(("def ", "from ", "import ")):
+        # HumanEval scores the rstrip-nl arm; a trailing blank line reads as end-of-function
+        return p.rstrip("\n"), STOPS, (1,)
+    return p, STOPS[:3], (1,)
 
 
-def generate(model, tok, prompt, device, max_new, temp, code_stops):
+def generate(model, tok, prompt, device, max_new, temp, stops, stop_ids):
     t0 = time.time()
-    for piece in stream(model, tok, prompt, device, max_new, temp, code_stops):
+    for piece in stream(model, tok, prompt, device, max_new, temp, stops, stop_ids):
         sys.stdout.write(piece)
         sys.stdout.flush()
     dt = time.time() - t0
@@ -123,7 +126,7 @@ def serve(model, tok, device, port, relay_port=0):
                     pass
                 return
             req = json.loads(body)
-            prompt, code = prep(req["prompt"])
+            prompt, stops, stop_ids = prep(req["prompt"], tok, bool(req.get("chat")))
             max_new = max(1, min(int(req.get("max_new", 256)), 1024))
             temp = float(req.get("temp", 0.0))
             self.send_response(200)
@@ -132,7 +135,7 @@ def serve(model, tok, device, port, relay_port=0):
             with lock:
                 t0 = time.time()
                 try:
-                    for piece in stream(model, tok, prompt, device, max_new, temp, code):
+                    for piece in stream(model, tok, prompt, device, max_new, temp, stops, stop_ids):
                         if piece:
                             self.wfile.write(piece.encode())
                             self.wfile.flush()
@@ -173,6 +176,7 @@ label{color:var(--mut);font-size:13px}input{width:70px;font:inherit;padding:4px 
 <button class="go" id="go">生成 (⌘↵)</button><button id="stop" disabled>停止</button>
 <label>温度 <input id="t" type="number" value="0" step="0.1" min="0" max="2"></label>
 <label>最多 token <input id="m" type="number" value="256" step="32" min="16" max="1024"></label>
+<label><input id="c" type="checkbox" style="width:auto"> 对话模式（SFT 过的模型）</label>
 </div>
 <pre id="o"></pre><div class="stat" id="s"></div>
 </main><script>
@@ -180,15 +184,16 @@ const P={
 "代码":"def is_palindrome(s: str) -> bool:\\n    \\"\\"\\"Return True if s reads the same forwards and backwards, ignoring case and non-letters.\\n    >>> is_palindrome('A man, a plan, a canal: Panama')\\n    True\\n    \\"\\"\\"\\n",
 "数学":"Question: A shop sells pens at 3 dollars each. Tom buys 7 pens and pays with a 50 dollar bill. How much change does he get?\\nAnswer:",
 "中文问答":"问：为什么天空是蓝色的？\\n答：",
-"英文续写":"The key idea behind binary search is"};
+"英文续写":"The key idea behind binary search is",
+"对话":"为什么天空是蓝色的？"};
 const $=id=>document.getElementById(id);let ctl=null;
-for(const k in P){const b=document.createElement("button");b.textContent=k;b.onclick=()=>{$("p").value=P[k]};$("presets").append(b)}
+for(const k in P){const b=document.createElement("button");b.textContent=k;b.onclick=()=>{$("p").value=P[k];$("c").checked=k==="对话"};$("presets").append(b)}
 $("p").value=P["代码"];
 async function go(){
  const prompt=$("p").value;if(!prompt.trim())return;ctl=new AbortController();
  $("go").disabled=true;$("stop").disabled=false;$("s").textContent="生成中…";
- const o=$("o");o.textContent="";const g=document.createElement("span");g.className="g";o.append(prompt,g);
- try{const r=await fetch("/",{method:"POST",body:JSON.stringify({prompt,temp:+$("t").value,max_new:+$("m").value}),signal:ctl.signal});
+ const o=$("o");o.textContent="";const g=document.createElement("span");g.className="g";o.append($("c").checked?"问："+prompt+"\n\n答：":prompt,g);
+ try{const r=await fetch("/",{method:"POST",body:JSON.stringify({prompt,chat:$("c").checked,temp:+$("t").value,max_new:+$("m").value}),signal:ctl.signal});
   const rd=r.body.getReader(),dec=new TextDecoder();let buf="";
   for(;;){const{done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});
    const i=buf.indexOf("\\n\\u0000");g.textContent=i<0?buf:buf.slice(0,i);if(i>=0)$("s").textContent=buf.slice(i+2)}
@@ -209,6 +214,7 @@ def main():
     ap.add_argument("--max_new", type=int, default=256)
     ap.add_argument("--temp", type=float, default=0.0, help="0 = greedy")
     ap.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")
+    ap.add_argument("--chat", action="store_true", help="wrap each prompt in ChatML (instruction-tuned checkpoints)")
     ap.add_argument("--serve", type=int, default=0, metavar="PORT", help="serve a web page on 127.0.0.1:PORT")
     ap.add_argument("--relay", type=int, default=0, metavar="POD_PORT",
                     help="with --serve: load nothing locally, forward each request to the pod's --serve on POD_PORT")
@@ -242,9 +248,9 @@ def main():
         p = prompts.pop(0) if prompts else (None if prompts is not None else input("\nprompt> "))
         if not p:
             return
-        p, code = prep(p.replace("\\n", "\n"))
+        p, stops, stop_ids = prep(p.replace("\\n", "\n"), tok, args.chat)
         print(p, end="")
-        generate(model, tok, p, device, args.max_new, args.temp, code_stops=code)
+        generate(model, tok, p, device, args.max_new, args.temp, stops, stop_ids)
 
 
 if __name__ == "__main__":
