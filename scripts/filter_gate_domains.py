@@ -27,16 +27,19 @@ sys.path.insert(0, ROOT)
 
 HUMANEVAL_REL = os.path.join("data", "eval", "humaneval", "humaneval_164.jsonl")
 MBPP_REL = os.path.join("data", "eval", "mbpp_holdouts.jsonl")
+GSM8K_REL = os.path.join("data", "eval", "gsm8k_test.jsonl")
+MATH500_REL = os.path.join("data", "eval", "math_test_500.jsonl")
 N = 13
 _WORKER_DECON = {}
 
 
-def _worker_decon(root, cls):
-    """Per-process cached gate gram set; built once per root."""
-    d = _WORKER_DECON.get(root)
+def _worker_decon(root, cls, extra_math=False):
+    """Per-process cached gate gram set; built once per (root, gate set)."""
+    key = (root, bool(extra_math))
+    d = _WORKER_DECON.get(key)
     if d is None:
-        d = cls.load_default(root)
-        _WORKER_DECON[root] = d
+        d = cls.load_default(root, extra_math=extra_math)
+        _WORKER_DECON[key] = d
     return d
 
 
@@ -53,11 +56,11 @@ def _corpus_fp(files):
 def _process_shard(args):
     """Scan one shard; hard-link if clean, rewrite dropping hits. Returns stats.
     Each pool worker builds the gate gram set once per root and caches it."""
-    p, dst, root = args
+    p, dst, root, extra_math = args
     sys.path.insert(0, root)
     from filters.decontam_ngram import Decontaminator
 
-    decon = _worker_decon(root, Decontaminator)
+    decon = _worker_decon(root, Decontaminator, extra_math=extra_math)
     name = os.path.basename(p)
     kept_lines, scanned, dropped = [], 0, 0
     problems = {}
@@ -97,9 +100,10 @@ def _process_shard(args):
             "problems": problems}
 
 
-def filter_domain(domain, root, out_root, workers):
+def filter_domain(domain, root, out_root, workers, out_name=None, extra_math=False):
     src = os.path.join(root, "data", "corpus", domain)
-    dst = os.path.join(out_root, f"{domain}_dc")
+    out_name = out_name or f"{domain}_dc"
+    dst = os.path.join(out_root, out_name)
     os.makedirs(dst, exist_ok=True)
     # THE HOLDOUT SLICE IS METADATA, NOT CORPUS. A build carrying --phase writes
     # {out}/holdout_slice_{phase}.jsonl beside its shards, and a plain `*.jsonl` glob picks it
@@ -117,7 +121,7 @@ def filter_domain(domain, root, out_root, workers):
     if not files:
         return {"domain": domain, "error": "no source shards"}
 
-    tasks = [(p, dst, root) for p in files]
+    tasks = [(p, dst, root, extra_math) for p in files]
     scanned = dropped = rewritten = linked = 0
     per_problem = {}
     with ProcessPoolExecutor(max_workers=workers) as ex:
@@ -157,11 +161,14 @@ def filter_domain(domain, root, out_root, workers):
     # launch. fp_dir excludes build_corpus_stats.json, so compute it over the finished
     # shards BEFORE writing the stamp; the stamp must not hash itself.
     fingerprint = fp_dir(dst)
+    gate_rel = [HUMANEVAL_REL, MBPP_REL] + ([GSM8K_REL, MATH500_REL] if extra_math else [])
+    gate_desc = "HumanEval+MBPP" + ("+GSM8K+MATH-500" if extra_math else "")
     stamp = {
-        "domain": f"{domain}_dc",
+        "domain": out_name,
         "source_domain": domain,
         "fingerprint": fingerprint,
-        "filter": "filters/decontam_ngram.py 13-word-token containment vs HumanEval+MBPP",
+        "filter": f"filters/decontam_ngram.py 13-word-token containment vs {gate_desc}",
+        "extra_math_gates": bool(extra_math),
         "n": N,
         "rows_scanned": scanned,
         "rows_dropped": dropped,
@@ -175,8 +182,7 @@ def filter_domain(domain, root, out_root, workers):
         # a stale source value mismatches through check_corpus_filters_fp's pair logic.
         "filters_fp": source_filters_fp,
         # module fp is vocab-independent (module + gate files), attached explicitly
-        "decontam_fp": decontam_fp(os.path.join(root, HUMANEVAL_REL),
-                                   os.path.join(root, MBPP_REL)),
+        "decontam_fp": decontam_fp(*(os.path.join(root, r) for r in gate_rel)),
     }
     with open(os.path.join(dst, "build_corpus_stats.json"), "w", encoding="utf-8") as fh:
         json.dump(stamp, fh, indent=1)
@@ -190,20 +196,32 @@ def main():
                     default="code_py_starcoder,code_py_rp1t,cot,math_owm_stage2,en_c4_stage2")
     ap.add_argument("--out_root", default="")
     ap.add_argument("--workers", type=int, default=16)
+    ap.add_argument("--extra_math", action="store_true",
+                    help="also gate against data/eval/gsm8k_test.jsonl and math_test_500.jsonl")
+    ap.add_argument("--out_names", default="",
+                    help="optional comma list aligned with --domains; blank entry keeps <dom>_dc")
     a = ap.parse_args()
     root = a.root
     out_root = a.out_root or os.path.join(root, "data", "corpus")
     # benchmark files gate a production run; workers load_default() off this root.
-    for rel in (HUMANEVAL_REL, MBPP_REL):
+    gate_rels = [HUMANEVAL_REL, MBPP_REL] + ([GSM8K_REL, MATH500_REL] if a.extra_math else [])
+    for rel in gate_rels:
         if not os.path.exists(os.path.join(root, rel)):
             sys.exit(f"decontam benchmark missing: {os.path.join(root, rel)}")
+    doms = [x for x in a.domains.split(",") if x]
+    names = [x or None for x in a.out_names.split(",")] if a.out_names else []
+    if names and len(names) != len(doms):
+        sys.exit("--out_names must align one-per-domain with --domains (blanks allowed)")
     summary = {}
-    for d in [x for x in a.domains.split(",") if x]:
-        st = filter_domain(d, root, out_root, a.workers)
+    for i, d in enumerate(doms):
+        out_name = names[i] if names else None
+        st = filter_domain(d, root, out_root, a.workers, out_name=out_name,
+                           extra_math=a.extra_math)
+        label = out_name or f"{d}_dc"
         if "error" in st:
             print(f"{d}: {st['error']}", flush=True)
         else:
-            print(f"{d}_dc: scanned {st['rows_scanned']} dropped {st['rows_dropped']} "
+            print(f"{label}: scanned {st['rows_scanned']} dropped {st['rows_dropped']} "
                   f"({st['drop_fraction']*100:.4f}%) rewritten {st['shards_rewritten']} "
                   f"linked {st['shards_hardlinked']} problems {st['distinct_problems_hit']}",
                   flush=True)
@@ -322,6 +340,37 @@ def _selftest():
             fh.write(json.dumps(clean) + "\n")
         bad2 = filter_domain("dom_nostamp", root, os.path.join(root, "data", "corpus"), 1)
         assert "error" in bad2 and "filters_fp" in bad2["error"], bad2
+
+        # EXTRA MATH GATES (zh 2026-09-28): --extra_math shingles GSM8K + MATH-500,
+        # --out_name names the output domain. A row verbatim-holding a 13+ word-token
+        # span of a math answer must drop; clean rows survive.
+        gsm_pad = " ".join(["word"] * 12)
+        gsm = {"question": "How many apples remain after giving some away today?",
+               "answer": f"{gsm_pad} she makes nine dollars at the market every single "
+                         "weekday morning without fail here"}
+        m500 = {"instruction": "compute the integral value here", "output": "x = 1\n"}
+        with open(os.path.join(mbpp_dir, "gsm8k_test.jsonl"), "w") as fh:
+            fh.write(json.dumps(gsm) + "\n")
+        with open(os.path.join(mbpp_dir, "math_test_500.jsonl"), "w") as fh:
+            fh.write(json.dumps(m500) + "\n")
+        srcm = os.path.join(root, "data", "corpus", "domm")
+        os.makedirs(srcm)
+        with open(os.path.join(srcm, "s0.jsonl"), "w") as fh:
+            fh.write(json.dumps({"content": gsm["answer"] + " trailing context"}) + "\n")
+            fh.write(json.dumps(clean) + "\n")
+        with open(os.path.join(srcm, "build_corpus_stats.json"), "w") as fh:
+            json.dump({"filters_fp": source_filters_fp}, fh)
+        mst = filter_domain("domm", root, os.path.join(root, "data", "corpus"), 1,
+                            out_name="domm_web_dc", extra_math=True)
+        assert "error" not in mst, mst
+        assert mst["rows_scanned"] == 2 and mst["rows_dropped"] == 1, mst
+        assert any(k.startswith("gsm8k:") for k in mst["problems"]), mst["problems"]
+        assert mst["domain"] == "domm_web_dc" and mst["extra_math_gates"] is True, mst
+        assert os.path.isdir(os.path.join(root, "data", "corpus", "domm_web_dc"))
+        # without the extra gate the same row survives
+        base = filter_domain("domm", root, os.path.join(root, "data", "corpus"), 1,
+                            out_name="domm_base_dc", extra_math=False)
+        assert base["rows_dropped"] == 0, base
 
         try:
             import train
