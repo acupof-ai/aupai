@@ -80,3 +80,65 @@ de-router-scale-20k	-	merged, no worktree
 ## DELETED 2026-09-28T11:52Z
 # 7 merged worktrees, 1 prunable tmp worktree, 12 merged branches, 8 empty wt-* dirs + 3 scratch txt, 2 empty parts dirs
 # ~595M freed. Both .pt weights (12.1G) verified present after deletion.
+
+## 0928 第二批（用户批准：删）
+
+### 未合并分支 tip sha（31 个，删后按 sha 在 gc 前可恢复）
+b0868cf84710504e6f6ed5d0467904867d9cb6b2  0e-finemath-pod-fetch-fact
+98d5b9baf78e181878055769a88e5f8b5dcc3800  0e-mix-fp-6domains
+eb85649ace762df16ff147bc376a5ce658424ede  1e-expdoc-0923
+9457c6fc91319e4f7365aaae7ab99b7443bd41c8  3b-mmain-stale-ci
+17cb832e566870f551696acc7238823e47884a9b  3b-review-585
+4d13cb48f562b147703c75eb174ce113e18acff2  3b-review-rows-0924
+6cc225760d6f7b3027e3d83ecab54aff46cd168e  3b-rl-code-pool-0925
+f7b8b6a66a65802fc1c50835caf3b484c9744181  3b-row670
+66c93fc966259e074185860cee1d17cc66a3331a  3b-triage-0923
+22a7a5d825bb8296bd39d6c9819a97c239e0c218  66-bf16-update-granularity
+8a06b45f7c2443d3d05f09e8149317324bb4d837  66-heval-gpu-pass8
+3e26d6cc465e56e1b0ed03cf05c363ad235bad91  66-heval-shards8-arm
+5694d55208af7b2bab3d5f5b2a61795d445c1d10  de-flat-cut-rebase
+5694d55208af7b2bab3d5f5b2a61795d445c1d10  de-flat-removal
+ce46dec3af6fa7d40de8ba42442d59d314950019  de-muon-ns-remove
+cb94649349bf5c6010902da0c001e6a013b552b2  de-sft-bf16-weights
+84c9e504c65f6ca6654f82e42ff98537a9fbeff7  fb-v41f-repro-fix2
+d95182c43083c166506cdf28e3db5af875aca6b3  gena-humaneval-shard
+b78e1c3cedd4a1be6aa876e3aff955cc8fda7f07  genb-review-0924f
+1bc9e05bfd0f5b3863468045d2900d499f5cd883  janitor-1
+30a84b3bab31957f14541b05754fca635e48cf3c  janitor-2
+db6b2aedb60d5b89fb5a0a3f6f649b42b75c7411  janitor-3
+a6d242faf992474b53e277a91599e41d0141e966  pr650
+88ba5c269c3da9029c6e8eb998092a7b90041ed5  pr650n
+e7d310a172e00446009a17975fd235346d686c6b  pr650n2
+cb5554ecefe8c0c4616b020b6c26ff26b959808a  pr654
+b8816658f9124ed00c062003a249ffc42786d8ba  pr662
+2dafb4a7a101e03ba2a13dd16763c3899b89de34  pr670n
+ef0b95047a902c1a8a6649b18a77d50b92f62692  pr710
+cfdb1a8a8cafffd57ae7592ce001b99cebf13982  pr716
+fd5e615caf3d7b99955751efe3d79ac61940e0b1  pr728
+
+### worktree 删前状态与后悔药
+# /Users/bytedance/code/aupai-de  fb-v41f-repro-fix2 @ 84c9e504  status clean
+#   SKIPPED: lsof 命中活进程 pid 34034(zsh 看门狗轮询循环, CODEX_COMPANION ccc06926)+59129(sleep 180)，cwd 在该目录
+# /Users/bytedance/code/aupai-de-flatcut  de-flat-removal @ 5694d552  status clean
+# /Users/bytedance/code/aupai-de-muonremove  de-muon-ns-remove @ ce46dec3  status clean
+# /Users/bytedance/code/aupai-de-sftbf16  de-sft-bf16-weights @ cb946493  status clean
+# /Users/bytedance/code/aupai-expdoc  1e-expdoc-0923 @ eb85649a  status clean
+# /Users/bytedance/code/aupai-de-scalemon  de-router-scale-monitor(已合并) @ 3b5c9f57
+#   status: " M runs/router_scale_0926.jsonl" + "?? runs/monitor_logs/"
+#   补丁: ~/aupai_trash_0928/scalemon_tracked.patch, ~/aupai_trash_0928/scalemon_untracked.tgz
+# /Users/bytedance/code/aupai-subreadme  1e-subreadme-0923(已合并) @ a3cdc326
+#   status: "?? .awb/"（看板事件日志）  备份: ~/aupai_trash_0928/subreadme_untracked.tgz
+# /private/tmp/sr_main  detached @ 05b15d34(已合并提交)
+#   status: "?? _probe_muon.py"(554B)  备份: ~/aupai_trash_0928/sr_main_probe_muon.py
+# 脱离 git 的普通目录（无 worktree 元数据，直接 rm）：
+# /Users/bytedance/code/aupai-l0code  72M  0916 期旧检出，gitfile 指向已 prune 元数据，含旧 data/ 25M
+# /Users/bytedance/code/aupai-genA-work  14M  非 git 仓，0913 代码生成脚本+ch_*.md
+
+### 执行结果 DELETED 2026-09-28T12:02Z
+# 删 worktree 6 个：de-flatcut(80M) de-muonremove(79M) de-sftbf16(80M) expdoc(79M) de-scalemon(80M) subreadme(79M)
+# 删 tmp worktree：/private/tmp/sr_main (76M)
+# 删脱离 git 目录：aupai-l0code (72M)、aupai-genA-work (14M)
+# 删分支 32 个：清单 31 个未合并分支 - fb-v41f-repro-fix2(随 aupai-de 保留) = 30，外加已合并的 1e-subreadme-0923、de-router-scale-monitor
+# 释放空间约 640M；分支不占工作树空间。所有记录的 sha git cat-file 仍可解析（gc 前可恢复）
+# 跳过：/Users/bytedance/code/aupai-de（fb-v41f-repro-fix2 @ 84c9e504），lsof 命中活进程 pid 34034 看门狗轮询循环 + pid 59129 sleep，未动
+# 保护名单 6 个 worktree 与 6 个受保护分支全部未动
