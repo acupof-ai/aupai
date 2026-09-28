@@ -142,3 +142,7 @@ fd5e615caf3d7b99955751efe3d79ac61940e0b1  pr728
 # 释放空间约 640M；分支不占工作树空间。所有记录的 sha git cat-file 仍可解析（gc 前可恢复）
 # 跳过：/Users/bytedance/code/aupai-de（fb-v41f-repro-fix2 @ 84c9e504），lsof 命中活进程 pid 34034 看门狗轮询循环 + pid 59129 sleep，未动
 # 保护名单 6 个 worktree 与 6 个受保护分支全部未动
+
+## 0928 第二批补删（1e，jan 因活进程跳过的一项；孤儿看门狗循环 pid 34034/59428 已按 PID 杀）
+worktree /Users/bytedance/code/aupai-de 82M branch fb-v41f-repro-fix2 84c9e504c65f6ca6654f82e42ff98537a9fbeff7 status clean
+DELETED 2026-09-28T12:08:19Z
