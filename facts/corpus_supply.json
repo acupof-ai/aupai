@@ -2312,6 +2312,56 @@
    "tokens_status": "measured",
    "guard_phrases": [],
    "retracted_value": []
+  },
+  {
+   "id": "cs.math_cot2_dc_built_0928",
+   "value": 1201200028,
+   "unit": "exact kept document tokens (sum of per-doc gate-vocab tokenizer ids + one <eos> per doc, scripts/count_dir.py convention), post 13-gram decontam + NuminaMath question dedup + exact (question,answer) dedup, over data/corpus/math_cot2_dc on the pod. Packed pool for training is 293,190 rows x 4097 = 1,201,199,430 tokens (598 below the document count, the trailing partial row).",
+   "measured": "2026-09-28",
+   "status": "measured",
+   "tokens_status": "measured",
+   "config": {
+    "purpose": "new word-problem + step-by-step-solution domain for the 10B continued-pretraining mix; the existing cot_dc is the FULL NuminaMath-CoT (851,625 rows / 399,973,717 tokens, source corrected 2026-09-19), so math_cot2_dc draws only sources cot_dc did not consume and drops every question NuminaMath already contained",
+    "sources_in_processing_order": [
+     "microsoft/orca-math-word-problems-200k (200,035 rows; real word problems, human answers; hf-mirror data/train-00000-of-00001.parquet, 84,248,748 bytes)",
+     "open-math/OpenMathInstruct-2 train shards 00..08 of 00032 (9 shards, 3,929,850 rows; problem/generated_solution/expected_answer/problem_source, augmented_gsm8k+gsm8k+augmented_math+math; modelscope AI-ModelScope/OpenMathInstruct-2)",
+     "meta-math/MetaMathQA-395K (395,000 rows query/response/original_question/type; hf-mirror MetaMathQA-395K.json, 395,626,321 bytes)"
+    ],
+    "format": "continuous pretraining text 'Question: {q}\\nAnswer: {a}', never ChatML; shards data/corpus/math_cot2_dc/math_cot2_NNN.jsonl, 50,000 rows/shard, jsonl {content,source,url}",
+    "total_rows_scanned": 4524885,
+    "rows_kept": 3365064,
+    "drops": {
+     "13gram_gate": 34995,
+     "numina_question_overlap": 1121560,
+     "exact_question_answer_pair_dup": 3262,
+     "empty_q_or_a": 4
+    },
+    "gate_drops_by_benchmark": {
+     "MATH_500_en": 30949,
+     "HumanEval": 3657,
+     "GSM8K_test": 357,
+     "MBPP": 28,
+     "MATH_500_zh": 4
+    },
+    "kept_by_source": {
+     "orca_math": 45531,
+     "openmathinstruct2_9shards": 3078728,
+     "metamath": 240805
+    },
+    "gates": "13-word-token n-gram containment (filters/decontam_ngram.py normaliser: whitespace collapse, word split, vocabulary-independent) vs FOUR sets keyed on every text part: GSM8K test (1,319 rows Q+A, data/eval/gsm8k_test.jsonl sha256 3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14), English MATH-500 (500 rows problem+solution, data/eval/math_500_en_test.jsonl = HuggingFaceH4/MATH-500 test.jsonl sha256 35dc41080a3680858b27fa7e0533d2d547825316fc5dafe5d316f4ccc5a06132), the tracked Chinese MATH-500 translation (math_test_500.jsonl instruction+output), HumanEval/164 (prompt+canonical_solution+test), MBPP holdouts (text+code); 194,552 distinct gate grams",
+    "numina_dedup": "question set 814,287 whitespace-collapsed-lowercased questions from the 5 hf_numma parquet (all of NuminaMath-CoT); 1,121,560 input rows were verbatim NuminaMath questions (orca is a NuminaMath subset: 154,308/200,035 orca rows overlap) and dropped so the domain is new bytes relative to cot_dc",
+    "rephrase_leak_check": "MetaMathQA keeps original_question per row; matching it against the 1,319 GSM8K test + 500 English MATH-500 questions gives 0 hits across all 395,000 MetaMath rows; direct problem-text match over all 9 OM2 shards also gives 0 hits. Augmentations derive from the train splits only. Near-verbatim rephrases that share a 13-word span are still caught by the n-gram gate (34,995 gate drops total); pure paraphrases under 13 shared words are not detectable by construction.",
+    "domain_fingerprint": "cca29b7fca53177e (datagen/corpus_fingerprint.py fp_dir, 68 shards)",
+    "token_cache": "/data00/tokens_math_cot2_dc.pt 4,804,801,841 bytes; .vocab f1f860970d15d623, .srcfp cca29b7fca53177e (matches live dir), .seed 42; built 2026-09-28 by scripts/pretokenize_domains.py --workers 60 RAYON_NUM_THREADS=1 CUDA_VISIBLE_DEVICES='' in 67 s",
+    "builder": "datagen/build_math_cot2.py (committed on math-0928); gate files gsm8k_test.jsonl/math_500_en_test.jsonl are pod-only eval bytes not in git"
+   },
+   "source": "pod (git-ignored bytes, not in this tree): build stamp /work/aupai/data/corpus/math_cot2_dc/build_corpus_stats.json (per-shard stats re-aggregated from /work/aupai/runs/math_cot2/build.log after a stamp-key bug collapsed the 9 OM2 shards to one entry; bytes/fingerprint unchanged, fp re-verified == cca29b7fca53177e); exact count /work/aupai/runs/math_cot2/count.log (scripts/count_dir.py); pretokenize REPORT in /work/aupai/runs/math_cot2/pretokenize.log; rephrase-leak check /tmp/mm_leak.py run 2026-09-28. The in-tree builder is datagen/build_math_cot2.py (committed in the same change).",
+   "uncertainty": "Exact for this build: count_dir full-population token count and the pretokenize packed pool agree to 598 tokens (one truncated trailing row). The domain is NOT yet named in data/mix_v41_gate.json; the 10B continued-training mix is a later decision. Gate coverage is bounded: a paraphrase with no 13-word verbatim run against the four gate files passes, same bound as every other _dc domain. MetaMath/OM2 train-test lineage is verified only at exact-original-question identity.",
+   "boundary": "Measures one data build. Says nothing about downstream GSM8K accuracy; no training has consumed these tokens yet. Does not re-count cot_dc or any other domain.",
+   "artifact_sha256": {
+    "gsm8k_test.jsonl": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14",
+    "math_500_en_test.jsonl": "35dc41080a3680858b27fa7e0533d2d547825316fc5dafe5d316f4ccc5a06132"
+   }
   }
  ]
 }
