@@ -44,3 +44,5 @@
 {"ts": "2026-09-14 15:40", "path": "data/eval/mmlu_test.jsonl", "sha256": "d190959183ab5d86057dd93dfb159a6e32224f0a370cab30080cb767a949d068", "bytes": 7510640, "rows": 14042, "run": "r3 pre-final leak screen (ae)", "note": "cais/mmlu all test, screened copy; sha1 d9c4079e asserted by eval/mmlu.py; fetched laptop huggingface.co (pod egress dead) + tn push"}
 {"path": "data/eval/humaneval/humaneval_164.jsonl", "sha256": "1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2", "bytes": 214438, "rows": 164, "written_at": "2026-09-21 06:05:19"}
 {"path": "data/eval/mbpp_holdouts.jsonl", "sha256": "ccf64ceae9c5403bf50a044cb6d505bfd2a2963ee58338ba268fd65beab92a9f", "bytes": 563743, "rows": 974, "written_at": "2026-09-21 06:05:19"}
+{"path": "data/eval/gsm8k_test.jsonl", "sha256": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14", "bytes": 749738, "rows": 1319, "written_at": "2026-09-28 13:17:56"}
+{"path": "data/eval/math_500_en_test.jsonl", "sha256": "35dc41080a3680858b27fa7e0533d2d547825316fc5dafe5d316f4ccc5a06132", "bytes": 446564, "rows": 500, "written_at": "2026-09-28 13:17:56"}
