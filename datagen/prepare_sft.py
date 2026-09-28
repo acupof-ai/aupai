@@ -423,6 +423,10 @@ def main():
         known = {os.path.basename(p) for p, _, _ in SOURCES}
         assert set(want) <= known, f"--only names unknown sources: {sorted(set(want) - known)}"
         SOURCES = [s for s in SOURCES if os.path.basename(s[0]) in want]
+    if "--src" in sys.argv:
+        # explicit instruction/output jsonl paths (repeatable), replacing SOURCES
+        SOURCES = [(os.path.abspath(sys.argv[i + 1]), "instruction", "output")
+                   for i, a in enumerate(sys.argv) if a == "--src"]
     random.seed(42)
     tok = Tokenizer.from_file(TOK_PATH)
     eos = tok.token_to_id("<eos>")
