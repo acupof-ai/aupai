@@ -23,7 +23,7 @@ NUM_RE = re.compile(r"-?\d[\d,]*\.?\d*")
 
 
 LOCAL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "eval", "gsm8k_test.jsonl")
-CUTS = ("\nQuestion:", "\n问：", "<|im_end|>")
+CUTS = ("\nQ:", "\nQuestion:", "\n问：", "<|im_end|>")
 
 
 def load_dataset():
@@ -37,14 +37,46 @@ def load_dataset():
     return load_dataset("openai/gsm8k", "main", split="test")
 
 
-def fewshot_fmt(demos):
-    """Base-model prompt with k solved test rows in front; those rows are then not scored."""
-    shots = "".join(f"Question: {r['question']}\nAnswer: {re.sub(r'<<[^>]*>>', '', r['answer'])}\n\n" for r in demos)
+# The 8 chain-of-thought exemplars of Wei et al. 2022 (lm-eval-harness gsm8k-cot), in its Q:/A: layout.
+COT8 = [
+    ("There are 15 trees in the grove. Grove workers will plant trees in the grove today. After they are done, "
+     "there will be 21 trees. How many trees did the grove workers plant today?",
+     "There are 15 trees originally. Then there were 21 trees after some more were planted. So there must have "
+     "been 21 - 15 = 6. The answer is 6."),
+    ("If there are 3 cars in the parking lot and 2 more cars arrive, how many cars are in the parking lot?",
+     "There are originally 3 cars. 2 more cars arrive. 3 + 2 = 5. The answer is 5."),
+    ("Leah had 32 chocolates and her sister had 42. If they ate 35, how many pieces do they have left in total?",
+     "Originally, Leah had 32 chocolates. Her sister had 42. So in total they had 32 + 42 = 74. After eating 35, "
+     "they had 74 - 35 = 39. The answer is 39."),
+    ("Jason had 20 lollipops. He gave Denny some lollipops. Now Jason has 12 lollipops. How many lollipops did "
+     "Jason give to Denny?",
+     "Jason started with 20 lollipops. Then he had 12 after giving some to Denny. So he gave Denny 20 - 12 = 8. "
+     "The answer is 8."),
+    ("Shawn has five toys. For Christmas, he got two toys each from his mom and dad. How many toys does he have now?",
+     "Shawn started with 5 toys. If he got 2 toys each from his mom and dad, then that is 4 more toys. 5 + 4 = 9. "
+     "The answer is 9."),
+    ("There were nine computers in the server room. Five more computers were installed each day, from monday to "
+     "thursday. How many computers are now in the server room?",
+     "There were originally 9 computers. For each of 4 days, 5 more computers were added. So 5 * 4 = 20 computers "
+     "were added. 9 + 20 is 29. The answer is 29."),
+    ("Michael had 58 golf balls. On tuesday, he lost 23 golf balls. On wednesday, he lost 2 more. How many golf "
+     "balls did he have at the end of wednesday?",
+     "Michael started with 58 golf balls. After losing 23 on tuesday, he had 58 - 23 = 35. After losing 2 more, "
+     "he had 35 - 2 = 33 golf balls. The answer is 33."),
+    ("Olivia has $23. She bought five bagels for $3 each. How much money does she have left?",
+     "Olivia had 23 dollars. 5 bagels for 3 dollars each will be 5 x 3 = 15 dollars. So she has 23 - 15 dollars "
+     "left. 23 - 15 is 8. The answer is 8."),
+]
+
+
+def fewshot_fmt(k=8):
+    """Base-model prompt: the first k standard CoT exemplars, then the question."""
+    shots = "".join(f"Q: {q}\nA: {a}\n\n" for q, a in COT8[:k])
 
     def fmt(q):
-        return f"{shots}Question: {q}\nAnswer:"
+        return f"{shots}Q: {q}\nA:"
 
-    fmt.__name__ = f"fewshot{len(demos)}"
+    fmt.__name__ = f"cot{k}"
     return fmt
 
 
@@ -55,7 +87,7 @@ def extract_number(text):
 
 
 @torch.no_grad()
-def evaluate(model, tok, device, batch_size=8, temperature=0.0, fmt=None, skip=0):
+def evaluate(model, tok, device, batch_size=8, temperature=0.0, fmt=None):
     # No default format. `fmt=format_prompt` would be the defect with a friendlier face:
     # a base checkpoint scored in ChatML reads zero on an unseen prefix, not on capability
     # (AGENTS.md:200; 1.6% vs 94.4% fence rate, eval/score_code_exec.py:9-31). The caller
@@ -63,7 +95,7 @@ def evaluate(model, tok, device, batch_size=8, temperature=0.0, fmt=None, skip=0
     if fmt is None:
         raise ValueError("evaluate() needs fmt=prompt_fn(classify(cfg, name)); a default "
                          "would silently score a base checkpoint in ChatML")
-    rows = list(load_dataset())[skip:]
+    rows = list(load_dataset())
     correct = total = 0
 
     for s in range(0, len(rows), batch_size):
@@ -101,6 +133,6 @@ if __name__ == "__main__":
     # base checkpoint by hand silently scored it in ChatML.
     kind = classify(cfg, os.path.basename(ckpt))
     if shots and kind == "base":
-        evaluate(model, tok, "cuda", fmt=fewshot_fmt(load_dataset()[:shots]), skip=shots)
+        evaluate(model, tok, "cuda", fmt=fewshot_fmt(shots))
     else:
         evaluate(model, tok, "cuda", fmt=prompt_fn(kind))
