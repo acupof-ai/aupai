@@ -314,6 +314,15 @@ class Cfg:
     # linear to 0 over the whole remaining run. Default keeps every pretraining launch byte-
     # identical; only sft_math's --lr_decay selects linear.
     lr_decay = "cosine"
+    # WSD stage-2 LR rebase. None = the single-stage schedule, byte-identical to every
+    # existing run. Set to the absolute step a stage-2 segment joins at: lr_mult rebases
+    # at that step -- absolute re-warmup of `warmup` steps to lr_peak_mult (a fraction of
+    # the optimizer group's initial_lr, lr_scale still multiplies), then cosine decay to
+    # ZERO at total_steps. final_lr_frac does not apply on this path: a nonzero end LR is
+    # exactly the floor the 30B run ended shaking at. Launched with --warmdown 1.0 so the
+    # cosine fills the whole post-warmup segment.
+    lr_origin_step = None
+    lr_peak_mult = 1.0
     # Fractional warmup for short SFT runs: None means ABSOLUTE warmup in `warmup` steps (the
     # pretraining path, where a fixed step count is the measured choice). When set, warmup is
     # round(frac*total) steps, resolved per call in lr_mult because total arrives there.
@@ -3229,6 +3238,18 @@ def _warmup_steps(cfg, total):
 
 
 def lr_mult(step, total, cfg):
+    # WSD stage-2: rebase at the join. Segment-relative s, absolute warmup (cfg.warmup),
+    # linear up to cfg.lr_peak_mult then cosine to zero at `total`. Default path untouched.
+    if getattr(cfg, "lr_origin_step", None) is not None and step >= cfg.lr_origin_step:
+        s = step - cfg.lr_origin_step
+        seg = total - cfg.lr_origin_step
+        wu = _warmup_steps(cfg, seg)
+        if s < wu:
+            return cfg.lr_peak_mult * (s + 1) / wu
+        if seg <= wu:
+            return 0.0
+        progress = min(1.0, (s - wu) / (seg - wu))
+        return cfg.lr_peak_mult * 0.5 * (1 + math.cos(math.pi * progress))
     wu = _warmup_steps(cfg, total)
     if step < wu:
         return (step + 1) / wu
@@ -3292,6 +3313,7 @@ def main():
         "sample_seed": "corpus-shuffle seed; unset follows --seed. Pin it across a seed sweep so "
                        "the arms share one token cache and differ only in init (de-7)",
         "attn_every": "one attention layer every N blocks",
+        "lr_origin_step": "WSD stage-2: absolute step this segment joins at; re-warmup then cosine to zero (default None = single-stage schedule)",
         # "heads %% (N+1)": argparse formats every help string with `% params`, so a
         # literal percent must be doubled. It was not, and --help has raised
         # ValueError: unsupported format character '(' since 2bc3fe6f -- on every box,
@@ -3338,6 +3360,7 @@ def main():
         "moe_router_lr": "MoE: lr for the router's AdamW group; <=0 means attn_res_lr (0.01), this repo's AdamW rate for a small learned mixing map -- NOT muon_lr, which is the EXPERT group's own rate and is what ruling (f) excludes",
         "moe_bias_gamma": "MoE: aux-loss-free bias step size, applied to the SIGN of the load error (0.001, pre-registered from facts/moe.json, NOT tuned after seeing a curve)",
         "moe_balance_alpha": "MoE: sequence-wise balance loss coefficient (1e-4, complementary to the bias, not an alternative)",
+        "lr_peak_mult": "WSD stage-2: peak lr_mult as a fraction of each group's initial_lr, used with --lr_origin_step (e.g. 0.30)",
     }.items():
         parser.add_argument(f"--{name}", type=float, default=None, required=name in RECIPE_REQUIRED,
                             help=f"{help_} (default: Cfg.{name})")
