@@ -34,10 +34,12 @@ def main():
     args = ap.parse_args()
     with open("data/mix_v41_gate.json") as g:
         gate = json.load(g)
-    mix = {"total_tokens": args.tokens, "anneal_frac": 0.0,
-           "domains": {n: {**gate["domains"][n], "weight": w, "anneal": w} for n, w in WEIGHTS.items()}}
     ck = torch.load(args.cursor_ckpt, map_location="cpu", weights_only=False, mmap=True)
     cursor = {n: int(v) for n, v in ck["row_cursor"].items() if n in WEIGHTS}
+    # build_mix reads total_tokens as a total over cursor + this plan and allocates the remainder.
+    total = args.tokens + sum(cursor.values()) * train.Cfg.seq
+    mix = {"total_tokens": total, "anneal_frac": 0.0,
+           "domains": {n: {**gate["domains"][n], "weight": w, "anneal": w} for n, w in WEIGHTS.items()}}
     print(f"cursor from {args.cursor_ckpt}: {cursor} seed {ck.get('row_cursor_seed')}", flush=True)
     train.Cfg.anneal_frac = 0.0  # one phase; build_mix refuses a mix/Cfg disagreement
     tok = train.build_tokenizer(None)
