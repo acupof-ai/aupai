@@ -39,6 +39,7 @@ def main():
     ck = torch.load(args.cursor_ckpt, map_location="cpu", weights_only=False, mmap=True)
     cursor = {n: int(v) for n, v in ck["row_cursor"].items() if n in WEIGHTS}
     print(f"cursor from {args.cursor_ckpt}: {cursor} seed {ck.get('row_cursor_seed')}", flush=True)
+    train.Cfg.anneal_frac = 0.0  # one phase; build_mix refuses a mix/Cfg disagreement
     tok = train.build_tokenizer(None)
     assert train.VOCAB_ID, "build_tokenizer did not set VOCAB_ID"
     with tempfile.NamedTemporaryFile("w", suffix=".json", dir="runs", delete=False) as f:
