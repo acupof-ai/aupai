@@ -188,6 +188,7 @@
     "scripts/rl_code_pool.py": 0.1,
     "scripts/rl_pool_dedup_replay.py": 0.1,
     "scripts/router_logit_stats.py": 2.5,
+    "scripts/sft_func_build.py": 0.1,
     "scripts/sft_hf_control.py": 5.1,
     "scripts/sft_reason_pack.py": 0.1,
     "scripts/sft_reason_prep.py": 0.1,
