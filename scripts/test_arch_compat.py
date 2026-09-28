@@ -24,9 +24,11 @@ file whose checks are its module body is exactly where that happens silently.
 
 import contextlib
 import copy
+import math
 import os
 import subprocess
 import sys
+import types
 
 import torch
 import torch.nn as nn
@@ -170,6 +172,36 @@ assert opts[0].param_groups[0]["weight_decay"] == Cfg.muon_wd
 train.set_schedule(opts, 100, 100, Cfg)
 assert opts[0].param_groups[0]["weight_decay"] == 0.0
 assert train.lr_mult(10**6, 100, Cfg) == Cfg.final_lr_frac, "lr must stay at the floor past total (resume)"
+# Default lr_origin_step=None must reproduce the single-stage schedule exactly. Recompute
+# the old formula independently over warmup, plateau, warmdown and past-total; the stage-2
+# rebase is allowed to add a path, never to move the default one.
+assert Cfg.lr_origin_step is None, "Cfg default: stage-2 rebase off"
+for _total in (500, 1000):
+    _wd = _total - max(1, int(Cfg.warmdown * _total))
+    for _step in (0, 5, Cfg.warmup - 1, Cfg.warmup, _wd - 1, _wd, (_wd + _total) // 2,
+                  _total - 1, _total, _total + 10):
+        if _step < Cfg.warmup:
+            _want = (_step + 1) / Cfg.warmup
+        elif _step < _wd:
+            _want = 1.0
+        else:
+            _p = min(1.0, (_step - _wd) / (_total - _wd))
+            _want = Cfg.final_lr_frac + (1 - Cfg.final_lr_frac) * 0.5 * (1 + math.cos(math.pi * _p))
+        assert train.lr_mult(_step, _total, Cfg) == _want, (
+            f"default schedule moved at step {_step}/{_total}: {train.lr_mult(_step, _total, Cfg)} != {_want}")
+# Stage-2 path shape: re-warmup to the peak, then cosine to exactly zero at total.
+# SimpleNamespace, not copy.copy(Cfg): copy of a class returns the class itself, which
+# would mutate Cfg and move every later assertion's warmup.
+_c2 = types.SimpleNamespace(
+    warmup=500, warmup_frac=None, final_lr_frac=Cfg.final_lr_frac, lr_decay="cosine",
+    warmdown=Cfg.warmdown, lr_origin_step=38146, lr_peak_mult=0.30)
+_p_old = min(1.0, (38145 - (50884 - max(1, int(_c2.warmdown * 50884)))) / max(1, int(_c2.warmdown * 50884)))
+assert train.lr_mult(38145, 50884, _c2) == (
+    _c2.final_lr_frac + (1 - _c2.final_lr_frac) * 0.5 * (1 + math.cos(math.pi * _p_old)))  # join-1: old path
+assert abs(train.lr_mult(38146, 50884, _c2) - 0.30 / 500) < 1e-12  # first rewarmed step
+assert abs(train.lr_mult(38645, 50884, _c2) - 0.30) < 1e-12       # peak at end of warmup
+assert train.lr_mult(50884, 50884, _c2) == 0.0                    # zero at the end, no 5% floor
+assert 0 < train.lr_mult(44000, 50884, _c2) < 0.30
 with _amp():
     m(x, y)[0].sum().backward()
 for o in opts:

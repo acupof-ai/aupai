@@ -28125,6 +28125,10 @@ _UNFROZEN_ALLOWLIST = {
     "profile_step_every",
     "allow_corpus_drift", "allow_pod_drift", "allow_env_drift", "allow_partial_cursor",  # safety overrides
     "lr_scale",           # optimizer multiplier, varies by experiment
+    # WSD stage-2 schedule rebase (mix-0928): the join step is run-specific and the peak
+    # fraction is an experiment choice; neither changes architecture. Unset reproduces the
+    # single-stage schedule byte-for-byte (test_arch_compat pins that).
+    "lr_origin_step", "lr_peak_mult",
     # Newton-Schulz rank sharding changes WHERE the Muon orthogonalisation computes (across
     # DDP ranks) but not WHAT: each stacked same-shape matrix is still fully orthogonalised
     # and scripts/test_muon_ns_shard.py pins bit-parity, so on/off is an execution-speed
