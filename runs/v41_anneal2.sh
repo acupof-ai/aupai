@@ -15,7 +15,7 @@ CARDS=$(IFS=,; echo "${_DEVS[*]}")
 BATCH=${BATCH:-4}
 LR_SCALE=${LR_SCALE:-0.05}
 SAVE_EVERY=${SAVE_EVERY:-2000}
-PREC=${PREC:---no_fp8 --stochastic_round}
+PREC=${PREC---no_fp8 --stochastic_round}  # set-but-empty PREC selects fp8
 STEPS=${MAX_STEPS:+--max_steps $MAX_STEPS}
 if [ -z "${HYPOTHESIS:-}" ]; then
   echo "REFUSING: set HYPOTHESIS='<what this run is meant to show>' before launching."
