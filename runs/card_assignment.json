@@ -191,10 +191,10 @@
  ],
  "theirs_baseline": [],
  "granted": "2026-09-03",
- "launch_block_granted": true,
- "block_cards": "0-7",
+ "launch_block_granted": false,
+ "block_cards": "",
  "lane_card": null,
- "note": "2026-09-28T12:5xZ 1e: GRANT block 0-7, world 8, no lane, to mix (aupai-eb) for the v41 stage-2 50-step smoke (runs/ced_stage2_launch.sh, resume from ckpt_v41_ced_0926.pt). Released as soon as the smoke ends; the web inference server on card 7 was stopped for it. Previous note: 2026-09-28T01:4xZ 1e: the v41_ced_0926 30B run and the reasoning SFT v1 on block 0-7 have both finished (nvidia-smi: 8 cards 0 MiB). No block is granted now. All eight cards stay aupai's (cards[] owner, 2026-09-13 user order); jobs take them by explicit --cards. Current holder: heval3_pair_0928 (de), HumanEval paired eval of the 30B final + SFT epoch1/epoch2 on 0-7. The next training block is granted here when it is decided.",
+ "note": "2026-09-28T14:1xZ 1e: the stage-2 50-step smoke finished (step 38146->38196, 0 NaN, 8 cards released); no block is granted now. Card 7 serves the zh chat model for the user's web page. The full stage-2 10B run is granted block 0-7 again at its launch. Previous note: 2026-09-28T12:5xZ 1e: GRANT block 0-7, world 8, no lane, to mix (aupai-eb) for the v41 stage-2 50-step smoke (runs/ced_stage2_launch.sh, resume from ckpt_v41_ced_0926.pt). Released as soon as the smoke ends; the web inference server on card 7 was stopped for it. Previous note: 2026-09-28T01:4xZ 1e: the v41_ced_0926 30B run and the reasoning SFT v1 on block 0-7 have both finished (nvidia-smi: 8 cards 0 MiB). No block is granted now. All eight cards stay aupai's (cards[] owner, 2026-09-13 user order); jobs take them by explicit --cards. Current holder: heval3_pair_0928 (de), HumanEval paired eval of the 30B final + SFT epoch1/epoch2 on 0-7. The next training block is granted here when it is decided.",
  "verified": "2026-09-12 14:3xZ fb: nvidia-smi read all eight cards at 0 MiB after the SIGTERM stop; torchrun 3078695 gone.",
  "next_grant": {
   "to": "0.2b_8b_b192 (e1-43; prereg runs/prereg.jsonl#matched_batch_dense_0906@amended_1), dense comparator for 1.5b-a0.2b-e48_8b",
