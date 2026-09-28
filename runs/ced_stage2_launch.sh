@@ -35,6 +35,7 @@ if [ "$MODE" = "full" ]; then
   SAVE=2000
   VAL=500
   WARMUP="${WARMUP:-500}"  # absolute re-warmup, matches the 30B run's own warmup (1e ruling)
+  WATCH=1
   HYPO="stage-2 10B continuation from the 30B final: 30%-peak re-warmup then cosine to zero, code-heavy re-mix; HumanEval beats the 30B endpoint"
 else
   NAME=v41_ced_stage2_smoke_0928
@@ -42,7 +43,18 @@ else
   SAVE=100000
   VAL=25
   WARMUP="${WARMUP:-20}"  # 50 steps cannot show a 500-step ramp; smoke shrinks it to exercise the peak+decay
+  WATCH=0
   HYPO="stage-2 join mechanics: opt+cursor load, loss continues at the 30B endpoint (~1.4-1.8), stage-2 LR ramp, 0 NaN"
+fi
+
+# Divergence watchdog (full only; same rules as v41_ced_0923: gnorm>10 on 3 consecutive
+# progress lines, 50-step mean train loss >3.0, any card nvidia-smi RSS >80 GiB/60s). It
+# waits for the log to appear and seeks to EOF, so arming before the launch is race-free;
+# it reports, never restarts. Smoke is 50 steps and needs none.
+if [ "$WATCH" = "1" ]; then
+  setsid nohup python3 scripts/ced_diverge_watch.py --log "runs/$NAME.log" --name "$NAME" \
+    > "runs/$NAME.watchdog.log" 2>&1 </dev/null &
+  echo "watchdog armed: runs/$NAME.watchdog.log (rules gnorm>10x3 | loss50mean>3.0 | RSS>80GiB/60s)"
 fi
 
 exec python3 scripts/harness.py launch "$NAME" \
