@@ -2176,7 +2176,12 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
                         f"domain reported a discarded cursor, so this is not the discard path."
                     )
         else:
-            ck["row_cursor"] = dict(cur)  # no step (run-end save): the plan is complete
+            # Run-end save (step=None): the plan is complete. `cur` holds the post-segment
+            # cursor for NAMED domains; carry retired domains verbatim too, or the final
+            # checkpoint drops them and the next resume fails the same absolute-sum identity
+            # at its first save (v41 stage-2 retires cot_dc; 1e order 2026-09-28).
+            ck["row_cursor"] = dict(cur)
+            ck["row_cursor"].update({n: int(v) for n, v in _retired.items()})
         ck["row_cursor_srcfp"] = dict(fps or {})
         ck["row_cursor_seed"] = _seed if _seed is not None else _sample_seed()
     _atomic_torch_save(ck, path)

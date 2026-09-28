@@ -207,6 +207,47 @@ def _check_retired_domain(bad, tmp):
         print(f"  retired neg   : no retired base -> refused, {retired_rows} rows short")
 
 
+def _check_retired_run_end(bad, tmp):
+    """The run-end save (step=None, .ep1) must ALSO carry retired domains through.
+
+    `cur` is the post-segment cursor for named domains only; if the step=None branch wrote
+    it verbatim the final checkpoint would silently drop the retired domain, and the next
+    resume would fail the absolute-sum identity at its first periodic save -- the same v41
+    defect one save later (1e order 2026-09-28).
+    """
+    import train
+
+    as_of, origin = 100, 40
+    full = _plan_full(origin, as_of)
+    retired_rows = 130806
+    before = origin * ROWS_PER_STEP
+    named_before = before - retired_rows
+    per = named_before // len(NAMES)
+    base = {n: per for n in NAMES}
+    base[NAMES[0]] += named_before - per * len(NAMES)
+    retired = {"cot_dc": retired_rows}
+
+    cfg = FakeCfg()
+    cfg._plan_domains_full = full
+    cfg._plan_domains = _stripe(full)
+    cfg._plan_world = WORLD
+    cfg._plan_names = list(NAMES)
+    cfg._plan_step_origin = origin
+    cfg._row_cursor = {n: 0 for n in NAMES}
+    cfg._row_cursor_srcfp = {n: "fp" for n in NAMES}
+    cfg._row_cursor_base = dict(base)
+    cfg._cursor_discarded = []
+    cfg._row_cursor_retired_base = dict(retired)
+    cfg._total_steps = as_of
+    p = os.path.join(tmp, "ck_ep1_retired.pt")
+    train.save_checkpoint(p, {"w": torch.zeros(2)}, cfg, "vocab", step=None)
+    ck = torch.load(p, map_location="cpu", weights_only=False)
+    if int(ck["row_cursor"].get("cot_dc", -1)) != retired_rows:
+        bad.append(f"run-end save dropped the retired domain (got {ck['row_cursor'].get('cot_dc')})")
+    else:
+        print(f"  retired ep1   : run-end save carries cot_dc {retired_rows} verbatim")
+
+
 def _check_call_sites(bad):
     """Every save_checkpoint call passes opt and step -- 6 args, not 4.
 
@@ -735,6 +776,7 @@ def main():
 
     _check_striping(bad, tmp)
     _check_retired_domain(bad, tmp)
+    _check_retired_run_end(bad, tmp)
     _check_no_full_plan_refuses(bad, tmp)
     _check_no_plan_world_refuses(bad, tmp)
     _check_world_source(bad, tmp)
