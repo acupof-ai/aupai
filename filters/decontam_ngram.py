@@ -43,6 +43,10 @@ import re
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HUMANEVAL = os.path.join(ROOT, "data", "eval", "humaneval", "humaneval_164.jsonl")
 MBPP = os.path.join(ROOT, "data", "eval", "mbpp_holdouts.jsonl")
+# zh 2026-09-28: a Chinese web domain is gated also against the math holdouts;
+# load_default(extra=True) adds these.
+GSM8K = os.path.join(ROOT, "data", "eval", "gsm8k_test.jsonl")
+MATH500 = os.path.join(ROOT, "data", "eval", "math_test_500.jsonl")
 N = 13
 
 _WS = re.compile(r"\s+")
@@ -120,14 +124,47 @@ class Decontaminator:
         return cls(parts)
 
     @classmethod
-    def load_default(cls, root=None):
-        """Build from the repo benchmark paths (or an explicit root)."""
+    def load_default(cls, root=None, extra_math=False):
+        """Build from the repo benchmark paths (or an explicit root).
+
+        extra_math=True also shingles GSM8K test (question,answer) and MATH-500
+        (instruction,output); the gate files must then exist.
+        """
         if root is None:
-            return cls.from_benchmarks()
-        return cls.from_benchmarks(
-            os.path.join(root, "data", "eval", "humaneval", "humaneval_164.jsonl"),
-            os.path.join(root, "data", "eval", "mbpp_holdouts.jsonl"),
-        )
+            d = cls.from_benchmarks()
+            root = ROOT
+        else:
+            d = cls.from_benchmarks(
+                os.path.join(root, "data", "eval", "humaneval", "humaneval_164.jsonl"),
+                os.path.join(root, "data", "eval", "mbpp_holdouts.jsonl"),
+            )
+        if not extra_math:
+            return d
+
+        def add(pid, part, text):
+            g = ngrams(text)
+            if g:
+                d.parts.setdefault(pid, {})[part] = g
+
+        gsm = os.path.join(root, "data", "eval", "gsm8k_test.jsonl")
+        m500 = os.path.join(root, "data", "eval", "math_test_500.jsonl")
+        if not os.path.exists(gsm):
+            raise SystemExit(f"decontam benchmark missing: {gsm}")
+        if not os.path.exists(m500):
+            raise SystemExit(f"decontam benchmark missing: {m500}")
+        with open(gsm, encoding="utf-8") as fh:
+            for i, line in enumerate(fh):
+                r = json.loads(line)
+                tid = f"gsm8k:{i}"
+                add(tid, "question", r.get("question", ""))
+                add(tid, "answer", r.get("answer", ""))
+        with open(m500, encoding="utf-8") as fh:
+            for i, line in enumerate(fh):
+                r = json.loads(line)
+                tid = f"math500:{i}"
+                add(tid, "instruction", r.get("instruction", ""))
+                add(tid, "output", r.get("output", ""))
+        return d
 
     def hit(self, content):
         """Return {problem, part} for the first gate 13-gram in content, else None.
