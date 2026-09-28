@@ -131,7 +131,8 @@ if __name__ == "__main__":
     tok = load_tokenizer("data/tokenizer.json", cfg)
     # classify, not an assumption: the old default was ckpt_sft.pt, so pointing this at a
     # base checkpoint by hand silently scored it in ChatML.
-    kind = classify(cfg, os.path.basename(ckpt))
+    # --kind overrides classify: a continued-pretraining run trained through sft_math reads as sft
+    kind = sys.argv[sys.argv.index("--kind") + 1] if "--kind" in sys.argv else classify(cfg, os.path.basename(ckpt))
     if shots and kind == "base":
         evaluate(model, tok, "cuda", fmt=fewshot_fmt(shots))
     else:
