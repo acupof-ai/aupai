@@ -937,7 +937,7 @@ def _assert_canonical_stats(stats, where):
     assert not missing, f"{where} stats missing canonical keys: {missing}"
 
 
-ZH_WEB_ALLOWED = {"zh_web", "web_hq", "chatml", "chat_qa", "wiki_chat", "chat"}
+ZH_WEB_ALLOWED = {"zh_web", "web_hq", "chatml", "chat_qa", "wiki_chat", "chat", "zh_cfwe"}
 
 
 def _check_filter_tier(domain, filters):
