@@ -64,6 +64,24 @@ class UnregisteredEval(KeyError):
 # A probe whose items must NOT reach the corpus is a holdout and belongs in data/eval/ with an
 # entry; the test is which way the contamination runs, not the word "probe".
 REGISTRY = {
+    "gsm8k_test": {
+        "path": "data/eval/gsm8k_test.jsonl",
+        "kind": "eval",
+        "question_field": ["question"],
+        "added": "2026-09-28",
+        "why": "GSM8K main/test, 1,319 rows, eval/gsm8k.py's standard 8-shot CoT metric and a "
+               "13-gram decontam gate for math domains (filter_gate_domains --extra_math, "
+               "datagen/build_math_cot2.py)",
+    },
+    "math_500_en_test": {
+        "path": "data/eval/math_500_en_test.jsonl",
+        "kind": "eval",
+        "question_field": ["problem"],
+        "added": "2026-09-28",
+        "why": "English MATH-500 (HuggingFaceH4/MATH-500 test.jsonl), 500 rows. The tracked "
+               "math_test_500.jsonl is a Chinese translation; English math corpora need the "
+               "English gate (datagen/build_math_cot2.py)",
+    },
     "math_test_500": {
         "path": "data/eval/math_test_500.jsonl",
         "kind": "eval",
@@ -331,7 +349,9 @@ REGISTRY_SHA1 = {
     "code_holdout_500": "a43dde77332cffe863be26f57d347c9be8198a33",
     "code_holdout_v2_500": "c9fd62cdf5d4d73167c6284e5c99a5d8a9272a2a",
     "control_sft_text_heldout": "b3c97dd749d24f4b9c9eb1e67d8912b5cd5e4ea7",
+    "gsm8k_test": "4a3eef48d6039e82f52dd15af8dfc7f4ea369d42",
     "gsm8k_zh_holdout": "8ccbf8b2314f9f7b12874b86af931fe2bba41307",
+    "math_500_en_test": "1aa0694a523af50f8214ad55a280cb3d9be7ab92",
     "humaneval_164": "ee3a74711c43ea4f4a5d8187364fefd539240499",
     "mbpp_sanitized_427": "8e6b6c0a1d746e060a492df8efcd5ee2270ace13",
     "mbpp_holdouts_974": "c0bb8355ddc670dd61c71a826fddef0532c98a76",
