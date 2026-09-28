@@ -9,12 +9,16 @@
 Prompts that match pretraining: a Python signature + docstring, "Question: ...\\nAnswer:",
 "问：...\\n答：". A literal \\n in the typed prompt becomes a newline. Empty line quits.
 --serve 8765 serves the same generator as a web page at http://127.0.0.1:8765 (streams the text).
+On a GPU box: --device cuda --serve 8766; on the laptop: --serve 8765 --relay 8766 shows the same page
+and runs every request on the pod's GPU through ~/bin/pod.
 Each step re-runs the whole sequence (no KV cache), so speed falls as the text grows.
 """
 import argparse
+import base64
 import http.server
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -80,7 +84,20 @@ def generate(model, tok, prompt, device, max_new, temp, code_stops):
     print(f"\n[{stream.n_tokens} tokens, {dt:.1f}s, {stream.n_tokens / max(dt, 1e-9):.1f} tok/s]")
 
 
-def serve(model, tok, device, port):
+def relay(body, port):
+    """Forward one request to a --serve running in the pod container, through the pod exec
+    channel (tn has no port forwarding). Killing the local wrapper does not stop the remote
+    curl: an abandoned request finishes on the GPU and is discarded."""
+    cmd = f"echo {base64.b64encode(body).decode()} | base64 -d | curl -4 -sN --data-binary @- http://127.0.0.1:{port}/"
+    p = subprocess.Popen([os.path.expanduser("~/bin/pod"), cmd], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    try:
+        while chunk := p.stdout.read1(4096):
+            yield chunk
+    finally:
+        p.kill()
+
+
+def serve(model, tok, device, port, relay_port=0):
     lock = threading.Lock()  # ponytail: one model, one request at a time
 
     class H(http.server.BaseHTTPRequestHandler):
@@ -93,7 +110,19 @@ def serve(model, tok, device, port):
             self.wfile.write(body)
 
         def do_POST(self):
-            req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            if relay_port:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                try:
+                    for chunk in relay(body, relay_port):
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+                return
+            req = json.loads(body)
             prompt, code = prep(req["prompt"])
             max_new = max(1, min(int(req.get("max_new", 256)), 1024))
             temp = float(req.get("temp", 0.0))
@@ -137,7 +166,7 @@ label{color:var(--mut);font-size:13px}input{width:70px;font:inherit;padding:4px 
 .g{color:var(--gen)}.stat{color:var(--mut);font-size:12px}
 </style></head><body><main>
 <h1>aupai 基座模型 · 续写</h1>
-<div class="sub">这是预训练基座，只会接着写，不会对话。按下面的格式开头效果最好。CPU 推理，约 5–8 字/秒。</div>
+<div class="sub">这是预训练基座，只会接着写，不会对话。按下面的格式开头效果最好。</div>
 <div class="row" id="presets"></div>
 <textarea id="p"></textarea>
 <div class="row">
@@ -173,16 +202,23 @@ $("p").addEventListener("keydown",e=>{if(e.key==="Enter"&&(e.metaKey||e.ctrlKey)
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", required=True)
-    ap.add_argument("--tokenizer", required=True)
-    ap.add_argument("--device", default="auto", help="auto (= cpu) | mps | cpu")
+    ap.add_argument("--ckpt")
+    ap.add_argument("--tokenizer")
+    ap.add_argument("--device", default="auto", help="auto (= cpu) | mps | cpu | cuda")
     ap.add_argument("--prompt", default=None, help="one prompt, then exit")
     ap.add_argument("--max_new", type=int, default=256)
     ap.add_argument("--temp", type=float, default=0.0, help="0 = greedy")
+    ap.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")
     ap.add_argument("--serve", type=int, default=0, metavar="PORT", help="serve a web page on 127.0.0.1:PORT")
+    ap.add_argument("--relay", type=int, default=0, metavar="POD_PORT",
+                    help="with --serve: load nothing locally, forward each request to the pod's --serve on POD_PORT")
     args = ap.parse_args()
+    if args.relay:
+        return serve(None, None, None, args.serve, relay_port=args.relay)
+    if not (args.ckpt and args.tokenizer):
+        ap.error("--ckpt and --tokenizer are required unless --relay")
     device = pick_device(args.device)
-    model, cfg = load_checkpoint(os.path.expanduser(args.ckpt), device="cpu", dtype=torch.bfloat16, low_mem=True)
+    model, cfg = load_checkpoint(os.path.expanduser(args.ckpt), device="cpu", dtype=torch.float32 if args.dtype == "fp32" else torch.bfloat16, low_mem=True)
     held = []
     if device == "mps":
         # MPS has no float64. MoEFFN pins its load counters (h_load, h_sums) to float64 in its own
