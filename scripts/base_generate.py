@@ -192,7 +192,7 @@ $("p").value=P["代码"];
 async function go(){
  const prompt=$("p").value;if(!prompt.trim())return;ctl=new AbortController();
  $("go").disabled=true;$("stop").disabled=false;$("s").textContent="生成中…";
- const o=$("o");o.textContent="";const g=document.createElement("span");g.className="g";o.append($("c").checked?"问："+prompt+"\n\n答：":prompt,g);
+ const o=$("o");o.textContent="";const g=document.createElement("span");g.className="g";o.append($("c").checked?"问："+prompt+"\\n\\n答：":prompt,g);
  try{const r=await fetch("/",{method:"POST",body:JSON.stringify({prompt,chat:$("c").checked,temp:+$("t").value,max_new:+$("m").value}),signal:ctl.signal});
   const rd=r.body.getReader(),dec=new TextDecoder();let buf="";
   for(;;){const{done,value}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});
