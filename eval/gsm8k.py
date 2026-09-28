@@ -22,10 +22,30 @@ MAX_CTX = 4096  # the model's trained seq len; smaller truncates the model's own
 NUM_RE = re.compile(r"-?\d[\d,]*\.?\d*")
 
 
+LOCAL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "eval", "gsm8k_test.jsonl")
+CUTS = ("\nQuestion:", "\n问：", "<|im_end|>")
+
+
 def load_dataset():
+    if os.path.exists(LOCAL):  # the pod has no Hub access; the same 1319 test rows
+        import json
+
+        with open(LOCAL, encoding="utf-8") as f:
+            return [json.loads(line) for line in f if line.strip()]
     from datasets import load_dataset
 
     return load_dataset("openai/gsm8k", "main", split="test")
+
+
+def fewshot_fmt(demos):
+    """Base-model prompt with k solved test rows in front; those rows are then not scored."""
+    shots = "".join(f"Question: {r['question']}\nAnswer: {re.sub(r'<<[^>]*>>', '', r['answer'])}\n\n" for r in demos)
+
+    def fmt(q):
+        return f"{shots}Question: {q}\nAnswer:"
+
+    fmt.__name__ = f"fewshot{len(demos)}"
+    return fmt
 
 
 def extract_number(text):
@@ -35,7 +55,7 @@ def extract_number(text):
 
 
 @torch.no_grad()
-def evaluate(model, tok, device, batch_size=8, temperature=0.0, fmt=None):
+def evaluate(model, tok, device, batch_size=8, temperature=0.0, fmt=None, skip=0):
     # No default format. `fmt=format_prompt` would be the defect with a friendlier face:
     # a base checkpoint scored in ChatML reads zero on an unseen prefix, not on capability
     # (AGENTS.md:200; 1.6% vs 94.4% fence rate, eval/score_code_exec.py:9-31). The caller
@@ -43,7 +63,7 @@ def evaluate(model, tok, device, batch_size=8, temperature=0.0, fmt=None):
     if fmt is None:
         raise ValueError("evaluate() needs fmt=prompt_fn(classify(cfg, name)); a default "
                          "would silently score a base checkpoint in ChatML")
-    rows = list(load_dataset())
+    rows = list(load_dataset())[skip:]
     correct = total = 0
 
     for s in range(0, len(rows), batch_size):
@@ -52,7 +72,10 @@ def evaluate(model, tok, device, batch_size=8, temperature=0.0, fmt=None):
         golds = [float(r["answer"].split("####")[-1].replace(",", "").strip()) for r in batch]
 
         for out_ids, gold in zip(generate_batch(model, p_ids, 256, device, temperature), golds, strict=True):
-            pred = extract_number(tok.decode(out_ids))
+            text = tok.decode(out_ids)
+            for c in CUTS:  # a few-shot continuation runs on into the next question
+                text = text.split(c)[0]
+            pred = extract_number(text)
             total += 1
             if pred is not None and abs(pred - gold) < 1e-4:
                 correct += 1
@@ -70,9 +93,14 @@ if __name__ == "__main__":
     from score_matrix import classify
 
     ckpt = sys.argv[1] if len(sys.argv) > 1 else "ckpt_sft.pt"
+    shots = int(sys.argv[sys.argv.index("--shots") + 1]) if "--shots" in sys.argv else 0
     model, cfg = load_checkpoint(ckpt, device="cuda")
     model = model.to(torch.bfloat16)
     tok = load_tokenizer("data/tokenizer.json", cfg)
     # classify, not an assumption: the old default was ckpt_sft.pt, so pointing this at a
     # base checkpoint by hand silently scored it in ChatML.
-    evaluate(model, tok, "cuda", fmt=prompt_fn(classify(cfg, os.path.basename(ckpt))))
+    kind = classify(cfg, os.path.basename(ckpt))
+    if shots and kind == "base":
+        evaluate(model, tok, "cuda", fmt=fewshot_fmt(load_dataset()[:shots]), skip=shots)
+    else:
+        evaluate(model, tok, "cuda", fmt=prompt_fn(kind))
