@@ -1585,6 +1585,8 @@ def main():
         # Base/twist pairs: --selftest proves each reference passes its own tests and every
         # twist's tests reject its base idiom. CPU-only, no data or checkpoint.
         "eval/twist_pairs.py",
+        # SFT v2 builder: --selftest checks solution splitting, prompt rendering and the call harness.
+        "scripts/sft_func_build.py",
         # The rate printed on a val_every boundary covers the validation pass, so it is not a
         # training rate. Registered because reading two of them as a ratio does NOT cancel:
         # validation costs two arms different absolute amounts, and sampling steps
