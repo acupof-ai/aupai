@@ -217,6 +217,9 @@ def cmd_pack(a):
             n_if += 1
             if n_if >= a.codeif_cap:
                 break
+    # humaneval_gen scores the rstrip-nl arm: the prompt it feeds ends at the closing quotes and the
+    # model generates the newline itself. Train on that same boundary.
+    examples = [(p[:-1], "\n" + o) if p.endswith("\n") else (p, o) for p, o in examples]
     random.Random(a.seed).shuffle(examples)
     stats = {"verified_rows": len(rows), "decontam_dropped": len(dropped), "hits": hits,
              "problems": len(qids), "heldout_problems": len(held), "train_rows_unique": len(train),
