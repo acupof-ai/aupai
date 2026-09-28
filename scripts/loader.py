@@ -41,7 +41,7 @@ EOS_ID = 1
 NUM_ID = 32767  # V4.1 gate tokenizer (rebuilt 2026-09-10): [NUM] is the final id
 
 
-def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True, claim=True):
+def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True, claim=True, low_mem=False):
     """(model, cfg), the model built from ck["cfg"] — never the live Cfg, which the
     train loop owns and which is not stable across runs. cfg gains `vocab_id` for
     load_tokenizer to cross-check.
@@ -86,7 +86,10 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True, claim=True):
         stem = os.path.basename(sys.argv[0] or "")
         claim_my_cards(stem[:-3] if stem.endswith(".py") else (stem or "load_checkpoint"),
                        note=f"load_checkpoint {os.path.basename(str(path))[:40]}")
-    ck = torch.load(path, map_location=device, weights_only=False)
+    # low_mem: mmap the file and build the model directly in `dtype`, so peak RSS is one copy of
+    # the weights instead of fp32-model + checkpoint (13 GB + 6.4 GB at the 0926 shape, which a
+    # 48 GB laptop kills mid-load).
+    ck = torch.load(path, map_location=device, weights_only=False, mmap=low_mem)
     cfg = SimpleNamespace(**ck["cfg"])
     # Old checkpoints predate newer Cfg keys (e.g. chunk_size, added 2026-08-30):
     # backfill live defaults so they still load. Safe only where the default is
@@ -113,7 +116,13 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True, claim=True):
             "numbers would silently read as zero. Use a tool that passes num_vals "
             "(eval/math_hard.py, eval/math_zh.py, eval/run_eval.py, infer_local.py)."
         )
-    model = HybridLM(cfg).to(device)
+    _prev = torch.get_default_dtype()
+    if low_mem and dtype is not None:
+        torch.set_default_dtype(dtype)
+    try:
+        model = HybridLM(cfg).to(device)
+    finally:
+        torch.set_default_dtype(_prev)
     if "model" in ck:
         model.load_state_dict(ck["model"])
     model.eval()
