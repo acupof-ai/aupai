@@ -14,6 +14,12 @@
 # it one phase, and the stage-2 branch bypasses final_lr_frac=0.05, the nonzero floor the
 # 30B run ended shaking at. lr_scale stays 1.0; optimizer state loads from the checkpoint.
 #
+# --stochastic_round is MANDATORY: the 30B checkpoint was trained with option B
+# (StochasticAdamW, state keys m/v; cfg.stochastic_round=True). Without the flag the
+# resume builds stock AdamW (state keys exp_avg), load_state_dict accepts both shapes in
+# silence and the first opt.step() dies with KeyError 'exp_avg' -- measured on the first
+# smoke attempt 2026-09-28.
+#
 # Mixes are generated on the pod against the checkpoint cursor:
 #   python3 scripts/write_mix_stage2_v41.py --ckpt ckpt_v41_ced_0926.pt --mode smoke|full
 cd /work/aupai || exit 1
@@ -46,7 +52,8 @@ exec python3 scripts/harness.py launch "$NAME" \
   --dim 1024 --layers 12 --heads 8 --ffn_hidden 6912 --batch 4 --accum 6 \
   --lr_scale 1.0 --lr_origin_step "$JOIN" --lr_peak_mult 0.30 \
   --warmdown 1.0 --anneal_frac 0.0 --warmup "$WARMUP" \
-  --save_every "$SAVE" --val_every "$VAL" --no-grad_ckpt \
+  --save_every "$SAVE" --val_every "$VAL" --no-grad_ckpt --stochastic_round \
   --attn_every 1 --csa --csa2 --csa2_win_flash --rope_dims 64 --n_swa_only_layers 2 --no-attn_res \
   --ced --ced_enc_layers 6 \
-  --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11 --moe_arm v41ced
+  --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11 \
+  --moe_router_lr 0.001 --router_score sigmoid --moe_arm v41ced
