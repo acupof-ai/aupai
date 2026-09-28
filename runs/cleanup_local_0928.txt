@@ -1,0 +1,82 @@
+# Local aupai cleanup — 2026-09-28 (jan, coordinator 1e)
+# Scope: laptop only. Format: path <TAB> size <TAB> reason.
+# Branch merge basis: origin/main @ 35729eaa.
+
+## DELETE — worktrees: merged into origin/main, clean, not on protected list
+/Users/bytedance/code/aupai-3b	106M	worktree 3b-rl-stdin-0925, branch merged, clean, 0 open fds
+/Users/bytedance/code/aupai-ci	80M	worktree ci-rl-code-0925, branch merged, clean, 0 open fds
+/Users/bytedance/code/aupai-de-atomicsave	80M	worktree de-atomic-save, branch merged, clean, 0 open fds
+/Users/bytedance/code/aupai-de-dsbound	80M	worktree de-ds-lost-boundary, branch merged, clean, 0 open fds
+/Users/bytedance/code/aupai-de-sft710	80M	worktree de-sft-fp32master-merge, branch merged, clean, 0 open fds
+/Users/bytedance/code/aupai-de-sftreason	80M	worktree de-sft-reasoning-v1, branch merged, clean, 0 open fds
+/Users/bytedance/code/aupai-de-spikedom	79M	worktree de-spike-step-domains, branch merged, clean, 0 open fds
+/private/tmp/66_pushwt	9.4M	prunable worktree (gitdir gone), only uncommitted files are .cache/__pycache__; branch 66-heval-s4000-exp merged
+
+## DELETE — merged local branches without a live worktree
+3b-rl-stdin-0925	-	merged; worktree removed above
+ci-rl-code-0925	-	merged; worktree removed above
+de-atomic-save	-	merged; worktree removed above
+de-ds-lost-boundary	-	merged; worktree removed above
+de-sft-fp32master-merge	-	merged; worktree removed above
+de-sft-reasoning-v1	-	merged; worktree removed above
+de-spike-step-domains	-	merged; worktree removed above
+1e-prereg-0926c	-	merged, no worktree
+de-ledger-catch-0926	-	merged, no worktree
+de-router-scale-20k	-	merged, no worktree
+66-heval-s4000-exp	-	merged; prunable worktree removed above
+
+## DELETE — tmp residue (empty dirs from a 0924 worktree scan, all unregistered in git)
+/private/tmp/wt-fix5	0B	empty stale dir (broken CLAUDE.md symlink, empty runs/)
+/private/tmp/wt-harness-dl	0B	empty stale dir
+/private/tmp/wt-mmlu	0B	empty stale dir
+/private/tmp/wt-pr1	0B	empty stale dir
+/private/tmp/wt-514new	0B	empty stale dir
+/private/tmp/wt-redlist	0B	empty stale dir
+/private/tmp/wt-514	0B	empty stale dir
+/private/tmp/wt-seeds-err	0B	empty stale dir
+/private/tmp/wt-scanned.txt	899B	0924 worktree-scan scratch output
+/private/tmp/wt-now.txt	706B	0924 worktree-scan scratch output
+/private/tmp/wt-branches.txt	237B	0924 worktree-scan scratch output
+
+## DELETE — pulled model shard dirs (shards already consumed; merged .pt sha-verified, kept)
+/Users/bytedance/models/aupai_v41_ced_0926/parts	4K	only SHA256SUMS remains (p_000..p_024 already consumed into final .pt)
+/Users/bytedance/models/aupai_v41_ced_0926/parts_avg3	4K	only SHA256SUMS remains (p_000..p_024 already consumed into avg3 .pt)
+# KEPT: v41_ced_0926_final_weights_bf16.pt (6.0G) and v41_ced_0926_avg3_weights_bf16.pt (6.1G)
+
+## DO NOT DELETE — unmerged worktrees (protected or open work)
+# /Users/bytedance/code/aupai-1e-0926       protected (coordinator), merged but active
+# /Users/bytedance/code/aupai-zh-0928       protected
+# /Users/bytedance/code/aupai-math-0928     protected
+# /Users/bytedance/code/aupai-mix-0928      protected
+# /Users/bytedance/code/aupai-jan-0928      protected (this worktree)
+# /Users/bytedance/code/aupai               protected (integration tree, detached)
+# /Users/bytedance/code/aupai-de            82M, fb-v41f-repro-fix2 unmerged(4)
+# /Users/bytedance/code/aupai-de-flatcut    80M, de-flat-removal unmerged(3)
+# /Users/bytedance/code/aupai-de-muonremove 79M, de-muon-ns-remove unmerged(1)
+# /Users/bytedance/code/aupai-de-sftbf16    80M, de-sft-bf16-weights unmerged(3)
+# /Users/bytedance/code/aupai-expdoc        79M, 1e-expdoc-0923 unmerged(3)
+
+## DO NOT DELETE — dirty worktrees
+# /Users/bytedance/code/aupai-de-scalemon   80M, M runs/router_scale_0926.jsonl + ?? runs/monitor_logs/
+# /Users/bytedance/code/aupai-subreadme     79M, ?? .awb/ (branch itself merged)
+# /private/tmp/sr_main                      76M, detached at merged 05b15d34 but ?? _probe_muon.py (554B, 0925)
+
+## DO NOT DELETE — detached-from-git dirs, uncertain
+# /Users/bytedance/code/aupai-l0code        72M, gitfile points to pruned worktree metadata; holds old data/ (25M), 0916-era checkout
+# /Users/bytedance/code/aupai-genA-work     14M, not a git repo; code-generation scripts + ch_*.md analysis (0913-0923)
+
+## DO NOT DELETE — unmerged local branches (30), listed for owner decision
+# 0e-finemath-pod-fetch-fact(1) 0e-mix-fp-6domains(1) 1e-expdoc-0923(3)
+# 3b-mmain-stale-ci(2) 3b-review-585(2) 3b-review-rows-0924(1) 3b-rl-code-pool-0925(1)
+# 3b-row670(1) 3b-triage-0923(5) 66-bf16-update-granularity(1) 66-heval-gpu-pass8(1)
+# 66-heval-shards8-arm(1) de-flat-cut-rebase(3) de-flat-removal(3) de-muon-ns-remove(1)
+# de-sft-bf16-weights(3) fb-v41f-repro-fix2(4) gena-humaneval-shard(1) genb-review-0924f(2)
+# janitor-1(2) janitor-2(2) janitor-3(3) pr650(4) pr650n(4) pr650n2(5) pr654(1)
+# pr662(2) pr670n(7) pr710(1) pr716(1) pr728(1)
+# 3b-review-rows-0924(1) kept: re-verified NOT ancestor of origin/main (earlier ahead-count reading)
+# de-ds-lost-boundary and de-spike-step-domains were -D deleted: is-ancestor vs origin/main passed
+# (git -d only compared them to their same-named remote branches).
+
+## DELETED 2026-09-28T11:52Z
+# 7 merged worktrees, 1 prunable tmp worktree, 12 merged branches, 8 empty wt-* dirs + 3 scratch txt, 2 empty parts dirs
+# ~595M freed. Both .pt weights (12.1G) verified present after deletion.
