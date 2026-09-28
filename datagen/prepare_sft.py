@@ -413,9 +413,16 @@ def _selftest():
 
 
 def main():
+    global SOURCES
     out_path = OUT_PATH
     if "--out" in sys.argv:
         out_path = sys.argv[sys.argv.index("--out") + 1]
+    if "--only" in sys.argv:
+        # comma-separated basenames; an unknown name refuses rather than packing less than asked
+        want = sys.argv[sys.argv.index("--only") + 1].split(",")
+        known = {os.path.basename(p) for p, _, _ in SOURCES}
+        assert set(want) <= known, f"--only names unknown sources: {sorted(set(want) - known)}"
+        SOURCES = [s for s in SOURCES if os.path.basename(s[0]) in want]
     random.seed(42)
     tok = Tokenizer.from_file(TOK_PATH)
     eos = tok.token_to_id("<eos>")
