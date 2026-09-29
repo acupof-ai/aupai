@@ -78,11 +78,12 @@ def make_loss():
 
 
 def step(m, fwd, loss_fn, ids, tgt, cu, opts=None):
-    hidden, _ = fwd(ids, cu=cu)
-    loss = loss_fn(m.head.weight, hidden.reshape(-1, hidden.size(-1)), tgt.reshape(-1))
-    aux = m.aux_loss()
-    if aux is not None:
-        loss = loss + aux
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        hidden, _ = fwd(ids, cu=cu)
+        loss = loss_fn(m.head.weight, hidden.reshape(-1, hidden.size(-1)), tgt.reshape(-1))
+        aux = m.aux_loss()
+        if aux is not None:
+            loss = loss + aux
     loss.backward()
     if opts is not None:
         for o in opts:
