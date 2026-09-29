@@ -17,6 +17,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from .deepgemm_moe import grouped_linear_fp8
 from .expert import Expert
 from .norm_gate import Gate
 
@@ -65,8 +66,10 @@ class MoE(nn.Module):
         norm_topk_prob=True,
         score_func="sqrtsoftplus",
         stacked=False,
+        moe_gemm="grouped_mm",
     ):
         super().__init__()
+        self.moe_gemm = moe_gemm
         self.dim = dim
         self.n_routed_experts = n_routed_experts
         self.n_activated_experts = n_activated_experts
@@ -174,6 +177,8 @@ class MoE(nn.Module):
                 w = getattr(self, name).to(torch.bfloat16)
             else:
                 w = torch.stack([getattr(e, name).weight for e in self.experts]).to(torch.bfloat16)
+            if self.moe_gemm == "deepgemm":
+                return grouped_linear_fp8(a, w, counts, offs)
             return torch._grouped_mm(a, w.transpose(-2, -1), offs=offs)
 
         gate = gmm(rows, "w1").float()

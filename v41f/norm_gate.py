@@ -23,7 +23,10 @@ class RMSNorm(nn.Module):
     impl = "torch"  # "liger": LigerRMSNorm kernel, casting_mode gemma == this forward's cast order
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if self.impl == "liger" and x.is_cuda and _liger_rms_norm is not None:
+        # not under dynamo: liger 0.8.3's _rms_norm_forward_kernel takes eps/offset as runtime floats and
+        # calls .to() on them; inductor's triton wrapper specializes Python floats to constexpr, and a
+        # constexpr float has no .to -> CompilationError. Inductor fuses the torch path itself.
+        if self.impl == "liger" and x.is_cuda and _liger_rms_norm is not None and not torch.compiler.is_compiling():
             return _liger_rms_norm(x, self.weight, self.eps, 0.0, "gemma", False)
         dtype = x.dtype
         x = x.float()

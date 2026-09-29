@@ -118,6 +118,10 @@ class V41FConfig:
     # cast after the weight), the order our RMSNorm uses. Both CUDA-only; torch elsewhere.
     hc_impl: str = "torch"
     norm_impl: str = "torch"
+    # moe_gemm "deepgemm": the routed expert GEMMs (fwd, dX) as DeepGEMM fp8 grouped GEMMs, per-token
+    # x 128 activations / 128x128 weight blocks; dW stays bf16 grouped_mm. Needs moe_stacked. CUDA
+    # with deep_gemm importable; elsewhere a torch quantize/dequantize emulation (v41f/deepgemm_moe.py).
+    moe_gemm: str = "grouped_mm"
 
     def validate(self) -> None:
         if len(self.compress_ratios) != self.n_layers:
@@ -176,6 +180,10 @@ class V41FConfig:
             raise ValueError("indexer_train_mode 'kl' needs attn_impl 'chunked' or 'fused' (the lse it reads)")
         if self.rope_impl not in ("complex", "real"):
             raise ValueError(f"rope_impl must be 'complex' or 'real', got {self.rope_impl!r}")
+        if self.moe_gemm not in ("grouped_mm", "deepgemm"):
+            raise ValueError(f"moe_gemm must be 'grouped_mm' or 'deepgemm', got {self.moe_gemm!r}")
+        if self.moe_gemm == "deepgemm" and not self.moe_stacked:
+            raise ValueError("moe_gemm 'deepgemm' needs moe_stacked=True (it reads the [E,N,K] weights)")
         if self.hc_impl not in ("torch", "liger") or self.norm_impl not in ("torch", "liger"):
             raise ValueError(f"hc_impl/norm_impl must be 'torch' or 'liger', got {self.hc_impl!r}/{self.norm_impl!r}")
 

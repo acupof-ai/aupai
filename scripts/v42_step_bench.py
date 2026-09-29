@@ -7,6 +7,8 @@ One micro-batch fwd+bwd (Liger FLCE + aux loss) at --B x --T, every combination 
   fp8    : 0 | 1                  (train.convert_to_fp8_compute, torchao Float8Linear, e4m3 tensorwise)
   --hc / --norm torch | liger     (liger_kernel mHC kernels / LigerRMSNorm; one value per run, not a grid axis)
   --grad_ckpt                     (per-Block recompute; with --B this answers which micro-batch fits)
+  --moe_gemm grouped_mm | deepgemm (DeepGEMM fp8 grouped expert GEMMs, needs --moe stacked)
+  --profile also times the optimizer step alone (opt_ms: V4.1 Muon+Sinkhorn+AdamW over the built model)
 and prints ms/step (median of --iters), peak GiB, and a CUDA-time split attention / MoE / other from
 torch.profiler. The split is by kernel-name substrings (ATTN_KEYS, MOE_KEYS): the ten heaviest kernels
 are printed under it so a misfiled kernel is visible, and an unmatched kernel lands in `other`.
@@ -117,7 +119,7 @@ def bench_cell(a, attn, moe, compile_, fp8, ids, tgt, cu, loss_fn):
     from v41f.config import v42_s24
 
     cfg = v42_s24(vocab_size=a.vocab, attn_impl=attn, rope_impl=a.rope, moe_stacked=(moe == "stacked"),
-                  hc_impl=a.hc, norm_impl=a.norm, block_ckpt=a.grad_ckpt)
+                  hc_impl=a.hc, norm_impl=a.norm, block_ckpt=a.grad_ckpt, moe_gemm=a.moe_gemm)
     cfg.validate()
     torch._dynamo.reset()
     m, fwd = build(cfg, fp8, compile_)
@@ -145,9 +147,23 @@ def bench_cell(a, attn, moe, compile_, fp8, ids, tgt, cu, loss_fn):
     split, top = split_cuda_time(prof)
     if a.profile:
         prof.export_chrome_trace(a.trace)
-    row = {"attn": attn, "moe": moe, "compile": compile_, "fp8": fp8, "hc": a.hc, "norm": a.norm, "grad_ckpt": a.grad_ckpt, "B": a.B, "T": a.T,
+    opt_ms = None
+    if a.profile:
+        ts = []
+        for _ in range(a.iters):
+            step(m, fwd, loss_fn, ids, tgt, cu, None)  # grads present, no optimizer step
+            torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            for o in opts:
+                o.step()
+            torch.cuda.synchronize()
+            ts.append((time.perf_counter() - t0) * 1e3)
+            for o in opts:
+                o.zero_grad(set_to_none=True)
+        opt_ms = statistics.median(ts)
+    row = {"attn": attn, "moe": moe, "compile": compile_, "fp8": fp8, "hc": a.hc, "norm": a.norm, "moe_gemm": a.moe_gemm, "grad_ckpt": a.grad_ckpt, "B": a.B, "T": a.T,
            "mode": "train_step" if a.profile else "fwd_bwd",
-           "ms_median": statistics.median(times), "ms_min": min(times), "peak_gib": peak, "cuda_ms": split}
+           "ms_median": statistics.median(times), "ms_min": min(times), "opt_ms": opt_ms, "peak_gib": peak, "cuda_ms": split}
     print(json.dumps(row), flush=True)
     for t, k, name in top:
         print(f"    {t / 1e3:8.2f} ms  {k:9s} {name}", flush=True)
@@ -166,6 +182,8 @@ def main():
     ap.add_argument("--compile", default="0,1")
     ap.add_argument("--fp8", default="0,1")
     ap.add_argument("--grad_ckpt", action="store_true", help="V41FConfig.block_ckpt: recompute each Block in backward")
+    ap.add_argument("--moe_gemm", default="grouped_mm", choices=["grouped_mm", "deepgemm"],
+                    help="deepgemm: DeepGEMM fp8 grouped expert GEMMs (needs --moe stacked)")
     ap.add_argument("--hc", default="torch", choices=["torch", "liger"])
     ap.add_argument("--norm", default="torch", choices=["torch", "liger"])
     ap.add_argument("--rope", default="real", choices=["real", "complex"],

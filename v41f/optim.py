@@ -74,16 +74,16 @@ class V42Muon(torch.optim.Optimizer):
         for group in self.param_groups:
             beta, lr, wd = group["momentum"], group["lr"], group["weight_decay"]
             heads = group["heads"] or [1] * len(group["params"])
+            live = [(p, h) for p, h in zip(group["params"], heads, strict=True) if p.grad is not None]
+            for p, _ in live:
+                if "momentum_buffer" not in self.state[p]:
+                    self.state[p]["momentum_buffer"] = torch.zeros_like(p.grad)
+            grads = [p.grad for p, _ in live]
+            bufs = [self.state[p]["momentum_buffer"] for p, _ in live]
+            torch._foreach_lerp_(bufs, grads, 1 - beta)
+            us = torch._foreach_lerp(grads, bufs, beta)  # Nesterov: beta*M_t + (1-beta)*G_t
             by_shape = {}
-            for p, h in zip(group["params"], heads, strict=True):
-                if p.grad is None:
-                    continue
-                st = self.state[p]
-                if "momentum_buffer" not in st:
-                    st["momentum_buffer"] = torch.zeros_like(p.grad)
-                m = st["momentum_buffer"]
-                m.lerp_(p.grad, 1 - beta)
-                u = p.grad.lerp(m, beta)  # Nesterov: beta*M_t + (1-beta)*G_t
+            for (p, h), u in zip(live, us, strict=True):
                 mats = u.reshape(-1, u.size(-2) // h, u.size(-1)) if u.ndim == 2 else u.reshape(-1, *u.shape[-2:])
                 by_shape.setdefault(tuple(mats.shape[-2:]), []).append((p, mats))
             for items in by_shape.values():
@@ -98,9 +98,10 @@ class V42Muon(torch.optim.Optimizer):
                     chunk = items[i:j]
                     o = orthogonalize(torch.cat([m for _, m in chunk]), group["ns_steps"])
                     o = o * (group["rms"] / o.square().mean(dim=(-2, -1), keepdim=True).sqrt().clamp_min(1e-12))
-                    for (p, m), oi in zip(chunk, o.split([m.size(0) for _, m in chunk]), strict=True):
-                        p.mul_(1 - lr * wd)
-                        p.add_(oi.reshape(p.shape).to(p.dtype), alpha=-lr)
+                    ps = [p for p, _ in chunk]
+                    torch._foreach_mul_(ps, 1 - lr * wd)
+                    torch._foreach_add_(ps, [oi.reshape(p.shape).to(p.dtype) for p, oi in
+                                             zip(ps, o.split([m.size(0) for _, m in chunk]), strict=True)], alpha=-lr)
                     i = j
 
 

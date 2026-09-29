@@ -48,6 +48,7 @@ class Block(nn.Module):
             norm_topk_prob=cfg.norm_topk_prob,
             score_func=cfg.score_func,
             stacked=cfg.moe_stacked,
+            moe_gemm=cfg.moe_gemm,
         )
         self.attn_norm = RMSNorm(cfg.dim, cfg.norm_eps)
         self.ffn_norm = RMSNorm(cfg.dim, cfg.norm_eps)

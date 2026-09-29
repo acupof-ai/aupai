@@ -9,7 +9,9 @@ Cases, each printing max abs / worst grad rel and asserting a tolerance:
   - HyperConn hc_impl liger vs torch: coeffs (pre/post/comb fp32), hc_pre, hc_post, and the grads of
     hc_fn/hc_base/hc_scale/x through a full mixes->pre->post chain on bf16 streams;
   - RMSNorm norm_impl liger (casting_mode gemma) vs torch on bf16 input, forward and grad;
-  - whole V42LM at the tiny test shape: logits and every grad, liger vs torch.
+  - whole V42LM at the tiny test shape: logits and every grad, liger vs torch;
+  - moe_gemm deepgemm: the real DeepGEMM fp8 grouped GEMMs vs the torch emulation of the same
+    quantization and vs grouped_mm bf16 (out, dx, dw), at a 64-expert / 1024x640 shape.
 """
 import sys
 from pathlib import Path
@@ -94,8 +96,48 @@ def test_model():
     assert d < 5e-2 and worst < 5e-2
 
 
+def test_deepgemm():
+    from v41f import deepgemm_moe as dg
+    from v41f.moe import MoE
+
+    if not dg.HAS_DEEP_GEMM:
+        print("  SKIP deepgemm: deep_gemm not importable")
+        return
+    torch.manual_seed(0)
+    kw = dict(dim=1024, n_routed_experts=64, n_activated_experts=8, moe_inter_dim=640, swiglu_limit=10.0)
+    ref = MoE(**kw, stacked=True).to(DEV, torch.bfloat16)
+    real = MoE(**kw, stacked=True, moe_gemm="deepgemm").to(DEV, torch.bfloat16)
+    real.load_state_dict(ref.state_dict())
+    x = (torch.randn(2, 1024, 1024, device=DEV) * 0.5).to(torch.bfloat16)
+    outs = {}
+    for name, m, emulate in (("grouped_mm", ref, None), ("deepgemm", real, False), ("emulated", real, True)):
+        xg = x.clone().requires_grad_()
+        m.zero_grad()
+        if emulate is not None:
+            orig = dg.grouped_linear_fp8
+
+            def patched(a, w, counts, offs, _e=emulate):
+                return dg.GroupedLinearFP8.apply(a, w, counts, offs, _e)
+            dg.grouped_linear_fp8 = patched
+            import v41f.moe as moe_mod
+            moe_mod.grouped_linear_fp8 = patched
+        try:
+            y = m(xg).float()
+            y.square().sum().backward()
+        finally:
+            if emulate is not None:
+                dg.grouped_linear_fp8 = orig
+                moe_mod.grouped_linear_fp8 = orig
+        outs[name] = (y, xg.grad.float(), m.w1.grad.float().clone(), m.w2.grad.float().clone())
+    for a, b in (("deepgemm", "emulated"), ("deepgemm", "grouped_mm")):
+        rels = [_rel(u, v) for u, v in zip(outs[a], outs[b])]
+        print(f"  {a} vs {b}: out {rels[0]:.2e} dx {rels[1]:.2e} dw1 {rels[2]:.2e} dw2 {rels[3]:.2e}")
+        tol = 2e-2 if b == "emulated" else 8e-2  # kernel vs same-recipe emulation; fp8 vs bf16
+        assert max(rels) < tol, (a, b, rels)
+
+
 if __name__ == "__main__":
-    for t in (test_hyperconn, test_rmsnorm, test_model):
+    for t in (test_hyperconn, test_rmsnorm, test_model, test_deepgemm):
         t()
         print(f"ok   {t.__name__}")
-    print("liger parity: 3/3 passed")
+    print("liger/deepgemm parity: 4/4 passed")

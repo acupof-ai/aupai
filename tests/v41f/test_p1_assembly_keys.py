@@ -96,6 +96,7 @@ CFG_ONLY_TRAINING_KNOBS = frozenset({
     "block_ckpt",           # v41f/model.py: per-Block activation checkpointing (--grad_ckpt, track P, 1e)
     "hc_impl",              # v41f/hyperconn.py: liger_kernel mHC kernels over our parameters (1e)
     "norm_impl",            # v41f/norm_gate.py: LigerRMSNorm casting_mode gemma (1e)
+    "moe_gemm",             # v41f/deepgemm_moe.py: DeepGEMM fp8 grouped expert GEMMs (1e)
 })
 
 # Prime bucket sum independently recomputed = 786,862; x head_dim 128 = 100.7M rows.
