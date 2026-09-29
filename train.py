@@ -3435,6 +3435,7 @@ def main():
                             help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
         "grad_ckpt": "gradient checkpointing (recompute sublayers in backward)",
+        "compile": "torch.compile the model body (default on); --no-compile runs eager, for a path compile cannot trace yet",
         "attn_res": "Attention Residuals (arXiv 2603.15031)",
         "attn_res_dyn_q": "AttnRes input-dependent pseudo-query",
         "fone": "Fourier number embedding: one [NUM] per number, value in, digits out",

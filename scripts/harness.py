@@ -28221,6 +28221,7 @@ _UNFROZEN_ALLOWLIST = {
     # exists so the ~20x-slower fallback cannot be entered by accident, which is the
     # opposite of a knob a launch may vary quietly.
     "allow_slow_attn",
+    "compile",  # torch.compile on/off: same numerics, only tracing; --no-compile for an untraceable path
 }
 
 
