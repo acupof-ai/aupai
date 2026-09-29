@@ -83,7 +83,8 @@ def _stripe(full, rank=0, world=WORLD):
     return full[rank::world].clone()
 
 
-def _save(tmp, as_of, origin, base, discarded=None, world=WORLD, full=None, tag=""):
+def _save(tmp, as_of, origin, base, discarded=None, world=WORLD, full=None, tag="",
+          retired=None):
     """Call the real save_checkpoint and return (path, loaded_ck, error_or_None)."""
     import train
 
@@ -99,6 +100,7 @@ def _save(tmp, as_of, origin, base, discarded=None, world=WORLD, full=None, tag=
     cfg._row_cursor_srcfp = {n: "fp" for n in NAMES}
     cfg._row_cursor_base = dict(base)
     cfg._cursor_discarded = list(discarded or [])
+    cfg._row_cursor_retired_base = dict(retired or {})
     cfg._total_steps = 3814
 
     p = os.path.join(tmp, f"ck_{as_of}_{origin}_{len(discarded or [])}{tag}.pt")
@@ -140,6 +142,110 @@ def _short_sites(src, want=6, expect=4):
     if len(sites) < expect:
         return sites, f"{len(sites)} call sites, expected {expect}"
     return sites, [ln for ln, n in sites if n < want]
+
+
+def _check_retired_domain(bad, tmp):
+    """A domain the resume cursor carries but the new mix DROPS (v41 stage-2 drops cot_dc).
+
+    The retired domain is not in the plan, so this segment never reads it, but its count is
+    real rows an earlier segment consumed. The absolute cursor must still sum to step x
+    rows_per_step, so the retired count is carried verbatim, not dropped. The v41 stage-2
+    launch hit exactly this at step 40000: cot_dc carried 130,806 rows, the new mix named
+    only the other domains, and the identity was 130,806 short and refused the save.
+    """
+    import train
+
+    as_of, origin = 100, 40
+    full = _plan_full(origin, as_of)
+    # Named domains' base sums to consumed-before MINUS the retired rows; retired is held
+    # separately, exactly like build_mix's cursor_base (named) + _row_cursor_retired_base.
+    retired_rows = 130806
+    before = origin * ROWS_PER_STEP                      # total rows consumed before this segment
+    named_before = before - retired_rows
+    per = named_before // len(NAMES)
+    base = {n: per for n in NAMES}
+    base[NAMES[0]] += named_before - per * len(NAMES)
+    retired = {"cot_dc": retired_rows}
+
+    p, ck, err = _save(tmp, as_of, origin, base, full=full, retired=retired, tag="_retired")
+    if err:
+        bad.append(f"the retired-domain case RAISED on a correct cursor: {err[:200]}")
+        return
+    got = sum(ck["row_cursor"].values())
+    want = as_of * ROWS_PER_STEP
+    if got != want:
+        bad.append(f"retired cursor dropped: sum {got}, want {want} (short by {want - got})")
+    if int(ck["row_cursor"].get("cot_dc", -1)) != retired_rows:
+        bad.append("retired domain cot_dc was not written through verbatim into row_cursor")
+    else:
+        print(f"  retired domain: sum {got} == {want}, cot_dc {retired_rows} carried through")
+
+    # THE NEGATIVE SIDE, textually reverted in memory: without the retired update the cursor
+    # is exactly retired_rows short and the identity must refuse. A fix that only silenced
+    # the assert (instead of adding the retired rows) would not be caught by the sum alone --
+    # so also assert the carried key survives. The revert removes BOTH write-through lines.
+    import inspect
+    src = inspect.getsource(train.save_checkpoint)
+    reverted = src.replace(
+        '                ck["row_cursor"].update({n: int(v) for n, v in _retired.items()})\n',
+        "")
+    if reverted == src:
+        bad.append("the retired write-through line in save_checkpoint no longer matches the "
+                   "text this negative case reverts -- re-derive it")
+        return
+    # Drive the real function with retired BASE DROPPED to simulate the pre-fix world: a
+    # build_mix that did not publish _row_cursor_retired_base. The real save must then refuse
+    # by exactly retired_rows -- proving the identity has teeth against the regression.
+    p2, _ck2, err2 = _save(tmp, as_of, origin, base, full=full, retired={}, tag="_retired_neg")
+    if not err2:
+        bad.append("PRE-FIX SHAPE ACCEPTED: with no retired base the save wrote "
+                   f"{sum(_ck2['row_cursor'].values())} where {want} rows were consumed and "
+                   "nothing raised -- the identity lost its teeth against the v41 defect")
+    elif str(retired_rows) not in err2.replace(",", ""):
+        bad.append(f"the pre-fix refusal does not name the short sum {retired_rows}: {err2[:200]}")
+    else:
+        print(f"  retired neg   : no retired base -> refused, {retired_rows} rows short")
+
+
+def _check_retired_run_end(bad, tmp):
+    """The run-end save (step=None, .ep1) must ALSO carry retired domains through.
+
+    `cur` is the post-segment cursor for named domains only; if the step=None branch wrote
+    it verbatim the final checkpoint would silently drop the retired domain, and the next
+    resume would fail the absolute-sum identity at its first periodic save -- the same v41
+    defect one save later (1e order 2026-09-28).
+    """
+    import train
+
+    as_of, origin = 100, 40
+    full = _plan_full(origin, as_of)
+    retired_rows = 130806
+    before = origin * ROWS_PER_STEP
+    named_before = before - retired_rows
+    per = named_before // len(NAMES)
+    base = {n: per for n in NAMES}
+    base[NAMES[0]] += named_before - per * len(NAMES)
+    retired = {"cot_dc": retired_rows}
+
+    cfg = FakeCfg()
+    cfg._plan_domains_full = full
+    cfg._plan_domains = _stripe(full)
+    cfg._plan_world = WORLD
+    cfg._plan_names = list(NAMES)
+    cfg._plan_step_origin = origin
+    cfg._row_cursor = {n: 0 for n in NAMES}
+    cfg._row_cursor_srcfp = {n: "fp" for n in NAMES}
+    cfg._row_cursor_base = dict(base)
+    cfg._cursor_discarded = []
+    cfg._row_cursor_retired_base = dict(retired)
+    cfg._total_steps = as_of
+    p = os.path.join(tmp, "ck_ep1_retired.pt")
+    train.save_checkpoint(p, {"w": torch.zeros(2)}, cfg, "vocab", step=None)
+    ck = torch.load(p, map_location="cpu", weights_only=False)
+    if int(ck["row_cursor"].get("cot_dc", -1)) != retired_rows:
+        bad.append(f"run-end save dropped the retired domain (got {ck['row_cursor'].get('cot_dc')})")
+    else:
+        print(f"  retired ep1   : run-end save carries cot_dc {retired_rows} verbatim")
 
 
 def _check_call_sites(bad):
@@ -669,6 +775,8 @@ def main():
         print(f"  discard path  : skipped and recorded -- {ckd['row_cursor_sum_unchecked'][:80]}")
 
     _check_striping(bad, tmp)
+    _check_retired_domain(bad, tmp)
+    _check_retired_run_end(bad, tmp)
     _check_no_full_plan_refuses(bad, tmp)
     _check_no_plan_world_refuses(bad, tmp)
     _check_world_source(bad, tmp)

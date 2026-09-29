@@ -407,6 +407,28 @@ def t_live_from_step_ignores_early_runaway():
             assert "at step 600" in got.read()
 
 
+def t_live_follows_rotation():
+    # stage-2 2026-09-28: the launcher renamed the log after the watchdog attached, so it
+    # tailed the old inode and never saw a progress line. After a rotation, lines written to
+    # the NEW file at the path must be watched.
+    with tempfile.TemporaryDirectory() as d:
+        log = os.path.join(d, "l.log")
+        with open(log, "w") as f:
+            f.write("history\n")
+        with open(os.path.join(d, "o.txt"), "w") as out:
+            p = _run_live(log, max_stale=20.0, out_path=out, extra=["--no_mem"])
+            time.sleep(0.6)
+            os.rename(log, log + ".20260928T185437Z")
+            with open(log, "w") as a:
+                for s, g in ((14010, 15.0), (14020, 16.0), (14030, 17.0)):
+                    a.write(f"step {s}/38146 40% [main] | loss 3.5 | gnorm {g}\n")
+                    a.flush()
+                    time.sleep(0.15)
+            assert _wait_exit(p) == 2, "rotated log not followed"
+        with open(os.path.join(d, "o.txt")) as got:
+            assert "REOPEN" in got.read()
+
+
 TESTS = [
     t_parse_progress,
     t_healthy_silent,
@@ -421,6 +443,7 @@ TESTS = [
     t_live_history_is_ignored_new_lines_watch,
     t_live_history_only_goes_stale_not_trigger,
     t_live_chatter_does_not_reset_staleness,
+    t_live_follows_rotation,
     t_mem_parse_three_way,
     t_mem_over_threshold_boundary,
     t_mem_read_failure_distinct_from_parse,

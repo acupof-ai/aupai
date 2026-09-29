@@ -1996,6 +1996,9 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     _origin = 0 if isinstance(cfg, dict) else (getattr(cfg, "_plan_step_origin", 0) or 0)
     _base = {} if isinstance(cfg, dict) else (getattr(cfg, "_row_cursor_base", None) or {})
     _discarded = [] if isinstance(cfg, dict) else (getattr(cfg, "_cursor_discarded", None) or [])
+    # Domains the resume cursor carried but THIS mix dropped: not in the plan, held at their
+    # carried count so the absolute cursor still sums across every segment. See build_mix.
+    _retired = {} if isinstance(cfg, dict) else (getattr(cfg, "_row_cursor_retired_base", None) or {})
     _total_steps = None if isinstance(cfg, dict) else getattr(cfg, "_total_steps", None)
     _seed = None if isinstance(cfg, dict) else getattr(cfg, "sample_seed", None)
     _seed = (None if isinstance(cfg, dict) else getattr(cfg, "seed", None)) if _seed is None else _seed
@@ -2128,6 +2131,9 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
                 # then re-read (de-13).
                 ck["row_cursor"] = {n: int(counts[i]) + int(_base.get(n, 0))
                                     for i, n in enumerate(names)}
+                # Retired domains are not in this plan, so they keep their carried counts
+                # verbatim. Writing them through keeps the next resume's cursor complete.
+                ck["row_cursor"].update({n: int(v) for n, v in _retired.items()})
                 ck["row_cursor_as_of_step"] = step
                 # WHICH vector the per-domain counts were taken over. A resume cannot
                 # otherwise tell a correct cursor from one computed off rank 0's stripe:
@@ -2170,7 +2176,12 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
                         f"domain reported a discarded cursor, so this is not the discard path."
                     )
         else:
-            ck["row_cursor"] = dict(cur)  # no step (run-end save): the plan is complete
+            # Run-end save (step=None): the plan is complete. `cur` holds the post-segment
+            # cursor for NAMED domains; carry retired domains verbatim too, or the final
+            # checkpoint drops them and the next resume fails the same absolute-sum identity
+            # at its first save (v41 stage-2 retires cot_dc; 1e order 2026-09-28).
+            ck["row_cursor"] = dict(cur)
+            ck["row_cursor"].update({n: int(v) for n, v in _retired.items()})
         ck["row_cursor_srcfp"] = dict(fps or {})
         ck["row_cursor_seed"] = _seed if _seed is not None else _sample_seed()
     _atomic_torch_save(ck, path)
@@ -3104,6 +3115,20 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     # leaving the previous call's dict standing. An empty base and a stale base read the same
     # to save_checkpoint (`getattr(...) or {}`), which is how the leak stayed silent.
     Cfg._row_cursor_base = cursor_base
+    # RETIRED DOMAINS: carried in the resume cursor but not named by THIS mix, so this
+    # segment neither reads nor re-plans them. Their counts are real rows earlier segments
+    # consumed, so they belong in the absolute cursor sum save_checkpoint checks, but they
+    # have no place in cursor_base (only named domains seed used[]). Without this a stage-2
+    # mix that drops a stage-1 domain -- v41 stage-2 drops cot_dc, whose 30B cursor is
+    # 130,806 -- fails the absolute-sum identity at the first save even though the cursor is
+    # correct. A retired domain's srcfp mismatch is not checked: its corpus may be removed;
+    # only the carried COUNT is preserved, written through verbatim for the next resume.
+    retired_base = {n: int(v) for n, v in (row_cursor or {}).items() if n not in names}
+    Cfg._row_cursor_retired_base = retired_base
+    if retired_base and is_main:
+        print(f"mix: {len(retired_base)} retired cursor domain(s) carried but not in this mix "
+              f"({sum(retired_base.values()):,} rows kept in the absolute cursor): "
+              f"{', '.join(sorted(retired_base))}", flush=True)
     if discarded and not Cfg.allow_partial_cursor:
         # 44-12: the print above is the only signal a 66h log gives. Refuse, named, so the
         # operator chooses --allow_partial_cursor knowingly instead of discovering the
@@ -3187,6 +3212,12 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
         for nm in names
         if os.path.isdir(os.path.join(DATA, "corpus", nm))
     }
+    # Retired domains leave the mix, so there is no live corpus to fingerprint; carry the
+    # srcfp the resume checkpoint held for them so their written-through cursor stays
+    # triple-complete (a later re-add of the domain then validates against the right bytes).
+    for nm in retired_base:
+        if nm in (cursor_srcfp or {}) and nm not in Cfg._row_cursor_srcfp:
+            Cfg._row_cursor_srcfp[nm] = cursor_srcfp[nm]
     # Multiple of world, or a rank left a row short gets a different lr and hangs the all-reduce.
     n = (plan.shape[1] // world) * world
     mine = plan[:, :n][:, rank::world]
