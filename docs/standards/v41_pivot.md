@@ -35,7 +35,7 @@ close before the gate run; each needs a one-line ruling in this table, not a new
 
 | field | V4.1-Flash | ours | status |
 |---|---|---|---|
-| SWA-only layers | compress_ratios 0 at layers 0,1 (then 3 MTP layers at the end) | n_swa_only_layers 2 | match |
+| SWA-only layers | compress_ratios 0 at layers 0,1 (then 3 MTP layers at the end) | none: n_swa_only_layers 2 is a no-op without --attn_hybrid, all 12 layers are CSA2 | **mismatch** (was marked match until 2026-09-29; docs/audits/v41_arch_alignment_0929.md) |
 | sliding_window | 128 | csa2_n_win 128 | match |
 | qk_rope_head_dim | 64 (partial RoPE, theta 10000) | rope_dims 64 | match |
 | candidate_block_size | 8 | csa2_m 8 | match |
