@@ -42,8 +42,9 @@ class Gate(nn.Module):
                              persistent=True)
         nn.init.kaiming_uniform_(self.weight, a=5 ** 0.5)
 
-    def forward(self, x: torch.Tensor):
-        """x: [n, dim] -> weights [n, top_k], indices [n, top_k]."""
+    def forward(self, x: torch.Tensor, return_scores: bool = False):
+        """x: [n, dim] -> weights [n, top_k], indices [n, top_k] (+ fp32 scores [n, E] when asked,
+        for the trainer's sequence-level balance loss)."""
         scores = torch.nn.functional.linear(x.float(), self.weight.float()) / self.gate_temp
         if self.score_func == "softmax":
             scores = scores.softmax(dim=-1)
@@ -57,4 +58,6 @@ class Gate(nn.Module):
         if self.norm_topk_prob and self.top_k > 1:
             weights = weights / (weights.sum(dim=-1, keepdim=True) + 1e-20)
         weights = weights * self.route_scale
+        if return_scores:
+            return weights, indices, scores
         return weights, indices

@@ -2642,6 +2642,10 @@ def main():
         # refuses the bare default, that with_derived_engram requires the tokenizer it
         # documents, and that the OFF path still needs neither.
         "tests/v41f/test_p1_config_gate.py",
+        # v42 trainer gates (1e, 2026-09-29): V4.1 optimizer (Sinkhorn row/col RMS, head-wise Muon
+        # vs per-head NS with a whole-matrix control, one-group census) and a 3-step CPU smoke
+        # through train.build_model / set_schedule / the MoE balancer.
+        "tests/v41f/test_v42_train.py",
         # v41f-S config-formula total/active parameter counter (3b); --selftest pins a
         # hand-computed tiny config so the total=sum-of-modules identity cannot silently rot.
         "scripts/v41f_param_count.py",
@@ -3182,7 +3186,8 @@ def main():
                           "tests/v41f/test_p1_indexer_freeze.py",
                           "tests/v41f/test_p1_train_ckpt.py",
                           "tests/v41f/test_p1_train_resume_smoke.py",
-                          "tests/v41f/test_p1_config_gate.py"}
+                          "tests/v41f/test_p1_config_gate.py",
+                          "tests/v41f/test_v42_train.py"}
     _subject_tests = set()
     for _subj in staged("AM"):
         _subject_tests |= TESTS_FOR_SUBJECT.get(_subj, set())

@@ -28017,6 +28017,9 @@ _FROZEN_KEYS = (
     # attn_hybrid decides whether the two keys above take effect at all (per-layer SWA-only
     # and F/R maps), so it changes which parameters exist: architecture, 1e 2026-09-29.
     "attn_hybrid",
+    # arch picks HybridLM or the v41f V42LM and v42_cfg is the V41FConfig it built: which
+    # parameters exist (1e, 2026-09-29). v42_lr is the one base lr of the V4.1 optimizer.
+    "arch", "v42_cfg", "v42_lr",
     # ARCHITECTURE, user order 2026-09-22: CED replaces where a decoder layer's global KV comes
     # from and adds a per-decoder-layer W_KV/W_Z, so a resume that disagreed on it would be a
     # different model under one run's name -- head_mixed's argument exactly. ced_enc_layers is
@@ -28106,7 +28109,7 @@ _REQUIRED_ALT = {"flash_attn": "flash_attn.cute"}
 
 _UNFROZEN_ALLOWLIST = {
     "seed",               # the quantity that is supposed to vary
-    "name", "mix", "resume", "max_steps",  # run management
+    "name", "mix", "resume", "max_steps", "stop_at_step",  # run management
     "save_every",         # checkpoint cadence, an operational knob, not a recipe key
     "build_only",         # inspection flag (scripts/active_params.py): builds the model, prints params, exits before training
     "fp8",                # training precision, not architecture
