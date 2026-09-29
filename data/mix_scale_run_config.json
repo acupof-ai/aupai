@@ -57,5 +57,6 @@
   "ced_enc_layers": 6,
   "ced_kc_norm": 0,
   "rope_dims": 0,
-  "n_swa_only_layers": 2
+  "n_swa_only_layers": 2,
+  "attn_hybrid": false
 }

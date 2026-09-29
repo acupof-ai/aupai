@@ -23,9 +23,10 @@ every fact below is read from `runs/prereg.jsonl#v41_ced_0923`, `facts/v41.json`
   CED projection above; Full/Reuse modes thread a cross-layer KV package.
 - **Sliding window**: every one of the 12 layers carries a local SWA branch inside its CSA2
   attention, window 128, flash-attn varlen (`window_size=(n_win-1,0)`). There are **no
-  SWA-only layers** in the gate stack: `--n_swa_only_layers 2` is a no-op, because the
-  per-layer kind/mode map is built only under `--attn_hybrid`, which the launch never sets
-  (`model.py:2905-2912`); the same gate leaves `csa2_modes` (Full/Reuse) inert. `class PureSWA`
+  SWA-only layers** in the gate stack: `--n_swa_only_layers 2` was a no-op, because the
+  per-layer kind/mode map is built only under `--attn_hybrid`, which had no CLI flag; the same
+  gate left `csa2_modes` (Full/Reuse) inert. Since 2026-09-29 `--attn_hybrid` exists and
+  train.py refuses either flag without it. `class PureSWA`
   exists and no gate checkpoint uses it (`docs/audits/v41_arch_alignment_0929.md`).
 - **Partial RoPE** (`--rope_dims 64`): the last 64 dims of each head rotate; there is no
   recurrent state and no KDA.
@@ -165,7 +166,7 @@ every dip in the measured 30B window: 10.3 min of 6.04 h, 2.8%
 | Measure everything unscored | `python scripts/harness.py measure` |
 | pass@k gate for RL | `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` — needs pass@8 − pass@1 ≥ 15pt |
 | Launch the V4.1 gate run | `bash runs/ced_w8_launch.sh` (pod) — world 8, block 0-7 (no lane), B4/accum6, CED 6/6, `data/mix_v41_gate.json`; committed launcher, it runs on the controller's explicit go and the `runs/prereg.jsonl#v41_ced_0923` checklist. It is also the pod-side launch file (pod_push skips `runs/`), sha256 4c7b3a37… at the pod |
-| V4.1 smoke ladder | S0 exact param count via `--build_only`; S2 single-card v41_ced_smoke_0922 (300 steps, B4/accum6, 0 NaN, val 5.706→4.062, 43.14 GiB); S3 world-8 v41_ced_w8smoke_0923 (8-rank NCCL/MoE/CSA2 start+step, 0 NaN, ~21K tok/s/gpu warmup). The committed launcher carries the flags — `--ced --ced_enc_layers 6 --csa2 --csa2_win_flash --rope_dims 64 --n_swa_only_layers 2 --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11` |
+| V4.1 smoke ladder | S0 exact param count via `--build_only`; S2 single-card v41_ced_smoke_0922 (300 steps, B4/accum6, 0 NaN, val 5.706→4.062, 43.14 GiB); S3 world-8 v41_ced_w8smoke_0923 (8-rank NCCL/MoE/CSA2 start+step, 0 NaN, ~21K tok/s/gpu warmup). The committed launcher carries the flags — `--ced --ced_enc_layers 6 --csa2 --csa2_win_flash --rope_dims 64 --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11` |
 | Decontaminate the non-ultra gate domains | `python scripts/filter_gate_domains.py --domains <comma-list>` — 13-gram overlap removal against HumanEval/MBPP, writes a `_dc` domain + summary (facts in `facts/contamination.json`). The overlap engine is the library `filters/decontam_ngram.py` (CLI runs only with `--selftest`); this script is NOT the ultra path — code_ultra_l2_dc and code_ultra_l3_noexec_dc decontaminate inside `datagen/ultradata_shards.py --aggregate` |
 | Corpus | `python datagen/build_corpus.py --domain X --source Y --target_tokens 6e9`; `--dry --limit N` prints the rejects histogram. Math generators: `mathbank/vet_programs.py` is the registry root that reaches `math_programs_l*`. UltraData L2/L3 keep rules: 0e's filters (`#237`) |
 | AttnRes A/B | retired with the KDA/MLA line; the ablation script stays in history but nothing launches it |
@@ -191,7 +192,7 @@ The committed gate line is `runs/ced_w8_launch.sh`; the direct shape it runs is:
 NGPU=8 ./run_ddp.sh --mix data/mix_v41_gate.json --name v41_ced_0923 \
   --dim 1024 --layers 12 --heads 8 --ffn_hidden 6912 --batch 4 --accum 6 \
   --lr_scale 1.0 --warmdown 0.65 --anneal_frac 0.10 --warmup 500 --save_every 2000 --no-grad_ckpt \
-  --attn_every 1 --csa --csa2 --csa2_win_flash --rope_dims 64 --n_swa_only_layers 2 --no-attn_res \
+  --attn_every 1 --csa --csa2 --csa2_win_flash --rope_dims 64 --no-attn_res \
   --ced --ced_enc_layers 6 \
   --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11 --moe_arm v41ced
 ```
