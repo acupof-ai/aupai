@@ -20,10 +20,12 @@ stage (A) freezes block.py. Stage (B) registers real Engram modules in these slo
 builds the tokenizer-dependent NgramHashState; the call sites below already match ref.
 """
 
+import copy
 from dataclasses import asdict
 from types import SimpleNamespace
 
 import torch
+import torch.utils.checkpoint
 import torch.nn.functional as F
 from torch import nn
 
@@ -58,6 +60,12 @@ class V41FHead(nn.Module):
         return F.linear(x.float(), self.weight)
 
 
+def _block_on_state_copy(layer, h, pre_mix, state):
+    st = copy.copy(state)
+    st.indexer_kl = list(state.indexer_kl)
+    return layer(h, 0, pre_mix, st)
+
+
 class V41FModel(nn.Module):
     """Embed + Block stack + norm/head, matching ref Transformer.
 
@@ -70,6 +78,7 @@ class V41FModel(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.attn_impl = cfg.attn_impl  # read in forward; a subclass may rebind self.cfg
+        self.block_ckpt = cfg.block_ckpt
         self.hc_mult = cfg.hc_mult
         self.target_layer_ids = tuple(cfg.dspark_target_layer_ids)
         self.embed = nn.Embedding(cfg.vocab_size, cfg.dim)
@@ -207,8 +216,8 @@ class V41FModel(nn.Module):
         pre_mix = make_identity_pre_mix(h, self.hc_mult)
         state = SharedAttnState()
         state.cu = cu
-        if cu is not None or self.attn_impl == "chunked":
-            state.doc, state.pos, state.doclen = doc_layout(cu, *input_ids.shape, input_ids.device)
+        if cu is not None or self.attn_impl in ("chunked", "fused"):
+            state.doc, state.pos, state.doclen, state.cu_docs = doc_layout(cu, *input_ids.shape, input_ids.device)
         for i, layer in enumerate(self.layers):
             engram = self.engrams[i]
             if engram is not None:
@@ -216,7 +225,13 @@ class V41FModel(nn.Module):
             # MTP reads the attention INPUT of its target layer, before the block runs
             if i in self.target_layer_ids:
                 main_hiddens.append(h.mean(dim=2))
-            h, pre_mix, state = layer(h, 0, pre_mix, state)
+            if self.block_ckpt and torch.is_grad_enabled():
+                # the recompute must see the state THIS layer saw, not what later layers published
+                # into the shared container, so each checkpointed block writes into its own copy
+                h, pre_mix, state = torch.utils.checkpoint.checkpoint(
+                    _block_on_state_copy, layer, h, pre_mix, state, use_reentrant=False)
+            else:
+                h, pre_mix, state = layer(h, 0, pre_mix, state)
         h = self.layers[-1].hc_pre(h, pre_mix)
         # mean per-query KL over the index-source layers (indexer_train_mode "kl"), else None
         self.indexer_loss = (torch.stack([t / c.clamp_min(1) for t, c in state.indexer_kl]).mean()

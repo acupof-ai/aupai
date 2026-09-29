@@ -68,7 +68,8 @@ class V42LM(V41FModel):
         """Parameters one token multiplies: total minus the routed experts it skips."""
         tot = sum(p.numel() for p in self.parameters())
         c = self.v41f_cfg
-        routed = sum(p.numel() for n, p in self.named_parameters() if ".ffn.experts." in n)
+        routed = sum(p.numel() for n, p in self.named_parameters()
+                     if ".ffn.experts." in n or n.split(".")[-1] in ("w1", "w3", "w2") and ".ffn." in n)
         return tot - routed + routed * c.n_activated_experts // c.n_routed_experts
 
     def to(self, *args, **kwargs):

@@ -87,15 +87,17 @@ class HyperConn(nn.Module):
 
     def hc_pre(self, x, pre_mix):
         """[b,s,hc,d] x [b,s,hc] -> [b,s,d]: weighted collapse onto one sublayer input."""
-        y = torch.sum(pre_mix.unsqueeze(-1) * x.float(), dim=2)
+        # bmm over hc: no [b,s,hc,d] fp32 product materialized (the elementwise form kept one
+        # for backward per call, 256 MiB at B4 T4096 d1024 hc4)
+        y = torch.matmul(pre_mix.unsqueeze(-2), x.float()).squeeze(-2)
         return y.to(x.dtype)
 
     def hc_post(self, x, residual, post, comb):
         """x [b,s,d], residual [b,s,hc,d], post [b,s,hc], comb [b,s,hc,hc] -> [b,s,hc,d]:
         expand the sublayer output weighted by post and add the comb-mixed residual."""
-        y = post.unsqueeze(-1) * x.unsqueeze(-2) + torch.sum(
-            comb.unsqueeze(-1) * residual.unsqueeze(-2), dim=2
-        )
+        # y[j] = post[j] x + sum_i comb[i,j] residual[i]: comb^T @ residual as one bmm instead of
+        # the [b,s,hc,hc,d] outer product (512 MiB per call at B4 T4096, OOM on the full trunk)
+        y = post.unsqueeze(-1) * x.unsqueeze(-2) + torch.matmul(comb.transpose(-1, -2), residual.float())
         return y.type_as(x)
 
     def attn(self, x, pre_mix):

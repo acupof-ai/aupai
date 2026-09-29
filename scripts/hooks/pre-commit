@@ -2604,6 +2604,9 @@ def main():
         # path, chunked == ref attention in logits and every grad, the KL indexer loss reaches
         # exactly the indexer leaves, and a positions-not-restarted mutant goes red.
         "tests/v41f/test_p1_docpack.py",
+        # track P (1e): attn_impl fused == chunked (logits+grads, KL lse), rope real == complex,
+        # stacked MoE bit-equal to the loop with remap both ways, dynamo.explain 0 breaks.
+        "tests/v41f/test_p1_fused.py",
         # Assembly A/B key-set + dtype structural gate (98, #468 prep). --selftest freezes the
         # all-off v41f_small floor (241 sd keys/236 params, fp32 head+hc+sink+gate-bias contract,
         # no non-persistent leak), the ModelArgs<->V41FConfig field intersection (a ref-only

@@ -39,7 +39,20 @@ def _expert_weighted(expert, x, weights):
     return expert.w2(h.to(dtype))
 
 
+def swiglu_clamp(gate, up, weight, lim: float):
+    """silu(clamp(gate)) * clamp(up) * routing weight, fp32, as ONE elementwise expression: under
+    torch.compile inductor fuses the clamps, silu, two multiplies and the surrounding casts into
+    one kernel over the [rows, inter] activation (the 'fused SwiGLU'); eager runs them separately.
+    Bit-identical to the reference's clamp-then-silu order."""
+    if lim > 0:
+        up = torch.clamp(up, min=-lim, max=lim)
+        gate = torch.clamp(gate, max=lim)
+    return weight.float() * (F.silu(gate) * up)
+
+
 class MoE(nn.Module):
+    grouped_on_cpu = False  # tests flip it: torch._grouped_mm runs on CPU when strides are 16B-aligned
+
     def __init__(
         self,
         dim,
@@ -51,11 +64,14 @@ class MoE(nn.Module):
         gate_temp=1.0,
         norm_topk_prob=True,
         score_func="sqrtsoftplus",
+        stacked=False,
     ):
         super().__init__()
         self.dim = dim
         self.n_routed_experts = n_routed_experts
         self.n_activated_experts = n_activated_experts
+        self.stacked = bool(stacked)
+        self.swiglu_limit = float(swiglu_limit)
         self.gate = Gate(
             dim,
             n_routed_experts,
@@ -65,9 +81,19 @@ class MoE(nn.Module):
             norm_topk_prob=norm_topk_prob,
             route_scale=route_scale,
         )
-        self.experts = nn.ModuleList(
-            [Expert(dim, moe_inter_dim, swiglu_limit=swiglu_limit) for _ in range(n_routed_experts)]
-        )
+        if self.stacked:
+            # three stacked parameters, [E,inter,dim] / [E,inter,dim] / [E,dim,inter]; grouped_mm
+            # reads them without a per-forward torch.stack (which saved 3*E*inter*dim bf16 per
+            # layer for backward). Init matches nn.Linear's kaiming_uniform (bound 1/sqrt(fan_in)).
+            self.experts = None
+            for name, out_f, in_f in (("w1", moe_inter_dim, dim), ("w3", moe_inter_dim, dim), ("w2", dim, moe_inter_dim)):
+                w = torch.empty(n_routed_experts, out_f, in_f)
+                nn.init.uniform_(w, -in_f ** -0.5, in_f ** -0.5)
+                setattr(self, name, nn.Parameter(w))
+        else:
+            self.experts = nn.ModuleList(
+                [Expert(dim, moe_inter_dim, swiglu_limit=swiglu_limit) for _ in range(n_routed_experts)]
+            )
         # exactly one shared expert, unconditional
         self.shared_experts = Expert(dim, moe_inter_dim, swiglu_limit=swiglu_limit)
         # Trainer-side balancing (V4.1 report §4.2.2). Both default off, so the reference
@@ -87,14 +113,18 @@ class MoE(nn.Module):
         shape = x.size()
         x = x.view(-1, self.dim)
         weights, indices, scores = self.gate(x, return_scores=True)
-        counts = torch.bincount(indices.flatten(), minlength=self.n_routed_experts)
+        # scatter_add, not bincount: same numbers, static [E] shape (bincount's output shape is
+        # data-dependent to dynamo and broke the compiled graph at every MoE layer)
+        flat = indices.flatten()
+        counts = torch.zeros(self.n_routed_experts, dtype=torch.long, device=x.device).scatter_add_(
+            0, flat, torch.ones_like(flat))
         if self.training and torch.is_grad_enabled():
             with torch.no_grad():
                 c = counts.float()
                 self.tokens_per_expert += c
                 self.step_tokens_per_expert += c
                 self.windows += 1
-        if x.is_cuda:
+        if x.is_cuda or self.grouped_on_cpu:
             y = self._routed_grouped(x, weights, indices, counts)
         else:
             y = torch.zeros_like(x, dtype=torch.float32)
@@ -102,7 +132,13 @@ class MoE(nn.Module):
                 if n == 0:
                     continue
                 idx, top = torch.where(indices == i)
-                y[idx] += _expert_weighted(self.experts[i], x[idx], weights[idx, top, None])
+                if self.stacked:
+                    xi = x[idx]
+                    h = swiglu_clamp(F.linear(xi, self.w1[i]).float(), F.linear(xi, self.w3[i]).float(),
+                                     weights[idx, top, None], self.swiglu_limit)
+                    y[idx] += F.linear(h.to(x.dtype), self.w2[i])
+                else:
+                    y[idx] += _expert_weighted(self.experts[i], x[idx], weights[idx, top, None])
         y += self.shared_experts(x).float()
         self.aux_loss = None
         if self.balance_alpha > 0 and self.training and len(shape) == 3:
@@ -134,19 +170,34 @@ class MoE(nn.Module):
         rows = x[tok].to(torch.bfloat16)
 
         def gmm(a, name):
-            w = torch.stack([getattr(e, name).weight for e in self.experts]).to(torch.bfloat16)
+            if self.stacked:
+                w = getattr(self, name).to(torch.bfloat16)
+            else:
+                w = torch.stack([getattr(e, name).weight for e in self.experts]).to(torch.bfloat16)
             return torch._grouped_mm(a, w.transpose(-2, -1), offs=offs)
 
         gate = gmm(rows, "w1").float()
         up = gmm(rows, "w3").float()
-        lim = self.shared_experts.swiglu_limit
-        if lim > 0:
-            up = torch.clamp(up, min=-lim, max=lim)
-            gate = torch.clamp(gate, max=lim)
-        h = weights.reshape(-1)[order].unsqueeze(-1).float() * (F.silu(gate) * up)
+        h = swiglu_clamp(gate, up, weights.reshape(-1)[order].unsqueeze(-1), self.swiglu_limit)
         out = gmm(h.to(torch.bfloat16).contiguous(), "w2")
         y = torch.zeros_like(x, dtype=torch.float32)
         return y.index_add(0, tok, out.float())
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        """Loader remap between the two expert layouts: per-expert `experts.{i}.w{1,3,2}.weight`
+        keys become the stacked `w{1,3,2}` (and back), so a checkpoint from either layout loads."""
+        pe = f"{prefix}experts."
+        if self.stacked and any(k.startswith(pe) for k in state_dict):
+            for name in ("w1", "w3", "w2"):
+                keys = [f"{pe}{i}.{name}.weight" for i in range(self.n_routed_experts)]
+                if all(k in state_dict for k in keys):
+                    state_dict[f"{prefix}{name}"] = torch.stack([state_dict.pop(k) for k in keys])
+        elif not self.stacked and f"{prefix}w1" in state_dict:
+            for name in ("w1", "w3", "w2"):
+                w = state_dict.pop(f"{prefix}{name}")
+                for i in range(self.n_routed_experts):
+                    state_dict[f"{pe}{i}.{name}.weight"] = w[i]
+        return super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     @torch.no_grad()
     def update_bias(self, counts):

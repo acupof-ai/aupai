@@ -31,9 +31,16 @@ from v41f.indexer import Indexer
 from v41f.indexer_ste import ste_slot_weight
 from v41f.norm_gate import RMSNorm
 from v41f.projections import GroupedOProj, KVProj, QProj
-from v41f.rope import apply_rotary_emb, precompute_freqs_cis
+from v41f.rope import apply_rotary_emb, apply_rotary_real, precompute_freqs_cis, rope_cos_sin
 from v41f.sparse_attn import sparse_attn
 from v41f.window import get_window_topk_idxs
+
+
+def _rot_tail(t, fn, rd):
+    """RoPE on the last rd dims, out of place: a q/kv from a Float8Linear is a custom Function
+    output and autograd refuses an in-place write through a view of it. rope_impl real
+    allocates nothing but the result; complex clones the 64-dim tail, not the tensor."""
+    return torch.cat((t[..., :-rd], fn(t[..., -rd:])), dim=-1)
 
 
 class SharedAttnState:
@@ -55,6 +62,7 @@ class SharedAttnState:
         self.cu = None  # int32 cu_seqlens over the flattened b*s stream; None = one doc per row
         # packed-row path (v41f/docpack.py): per-token layout, entry metadata, indexer loss
         self.doc = self.pos = self.doclen = None  # [b,s]
+        self.cu_docs = None  # int32 merged cu_seqlens (fused window branch)
         self.entry_meta = None  # (e_valid, e_doc, e_last, ratio) from the kv source
         self.indexer_kl = []  # (sum, count) per index-source layer under indexer_train_mode "kl"
 
@@ -198,14 +206,15 @@ class Attention(nn.Module):
         if self.is_kv_source:
             latent, e_start, e_valid = self.compressor.forward_docs(x, state.pos, state.doclen)
             efreqs = self.freqs_cis[state.pos.gather(1, e_start)]
+            if self.cfg.rope_impl == "real":
+                ecos, esin = rope_cos_sin(efreqs)
+                erot = lambda t: apply_rotary_real(t, ecos, esin)  # noqa: E731
+            else:
+                erot = lambda t: apply_rotary_emb(t.clone(), efreqs)  # noqa: E731
             if self.owns_index_k:
                 # detached latent: the index keys learn only from the indexer loss
-                k = self.index_key(latent.detach())
-                apply_rotary_emb(k[..., -self.rd :], efreqs)
-                state.index_k = k
-            rot = latent.clone()
-            apply_rotary_emb(rot[..., -self.rd :], efreqs)
-            state.compress_kv = rot
+                state.index_k = _rot_tail(self.index_key(latent.detach()), erot, self.rd)
+            state.compress_kv = _rot_tail(latent, erot, self.rd)
             e_last = e_start + self.compress_ratio - 1
             state.entry_meta = (e_valid, state.doc.gather(1, e_start), e_last, self.compress_ratio)
         if self.is_index_source:
@@ -220,17 +229,27 @@ class Attention(nn.Module):
             raise NotImplementedError("indexer_train_mode 'ste' has no packed-row path; use 'kl'")
         bsz, seqlen, _ = x.size()
         freqs = self.freqs_cis[state.pos]  # [b,s,rd/2]: positions restart per document
+        real = self.cfg.rope_impl == "real"
+        if real:
+            cos, sin = rope_cos_sin(freqs)
+            rot = lambda t, inv=False: apply_rotary_real(t, cos, sin, inverse=inv)  # noqa: E731
+        else:
+            rot = lambda t, inv=False: apply_rotary_emb(t.clone(), freqs, inverse=inv)  # noqa: E731
         q, qr = self.qproj(x)
-        apply_rotary_emb(q[..., -self.rd :], freqs)
-        kv = self.kvproj(x)
-        apply_rotary_emb(kv[..., -self.rd :], freqs)
+        q = _rot_tail(q, rot, self.rd)
+        kv = _rot_tail(self.kvproj(x), rot, self.rd)
         comp_kv = comp_idx = None
         if self.compress_ratio:
             comp_kv, comp_idx = self._compress_docs(x, qr, freqs, state)
-        if self.cfg.attn_impl == "chunked":
+        if self.cfg.attn_impl in ("chunked", "fused"):
             m = state.entry_meta[3] if comp_kv is not None else 1
-            o, lse = docpack.windowed_sparse_attn(
-                q, kv, comp_kv, comp_idx, self.attn_sink, self.softmax_scale, state.doc, self.window_size, m)
+            if self.cfg.attn_impl == "fused":
+                o, lse = docpack.fused_sparse_attn(
+                    q, kv, comp_kv, comp_idx, self.attn_sink, self.softmax_scale, state.doc, state.cu_docs,
+                    self.window_size, m)
+            else:
+                o, lse = docpack.windowed_sparse_attn(
+                    q, kv, comp_kv, comp_idx, self.attn_sink, self.softmax_scale, state.doc, self.window_size, m)
             if self.is_index_source and self.cfg.indexer_train_mode == "kl":
                 state.indexer_kl.append(docpack.indexer_kl(
                     self.indexer, x, qr, state.index_k, freqs, q, comp_kv, comp_idx, lse,
@@ -243,8 +262,7 @@ class Attention(nn.Module):
                 kv = torch.cat([kv, comp_kv], dim=1)
                 idxs = torch.cat([idxs, torch.where(comp_idx >= 0, comp_idx + seqlen, -1)], dim=-1)
             o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale)
-        o = o.to(q.dtype)
-        apply_rotary_emb(o[..., -self.rd :], freqs, inverse=True)
+        o = _rot_tail(o.to(q.dtype), lambda t: rot(t, True), self.rd)
         return self.oproj(o), state
 
     def forward(self, x, state=None):
