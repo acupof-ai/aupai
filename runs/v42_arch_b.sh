@@ -27,4 +27,5 @@ exec python3 scripts/harness.py launch "$NAME" \
   -- ./run_ddp.sh --mix data/mix_v41_gate.json --name "$NAME" --stop_at_step 2000 \
   --arch v42 --v42_lr 1e-3 --moe_arm v42b \
   --dim 1024 --layers 12 --heads 8 --ffn_hidden 6912 --batch "$MB" --accum "$ACC" \
-  --lr_scale 1.0 --warmdown 0.65 --anneal_frac 0.10 --warmup 500 --save_every 2000 --no-grad_ckpt
+  --lr_scale 1.0 --warmdown 0.65 --anneal_frac 0.10 --warmup 500 --save_every 2000 --no-grad_ckpt \
+  ${EXTRA_ARGS:-}
