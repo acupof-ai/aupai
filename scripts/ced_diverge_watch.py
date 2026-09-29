@@ -361,6 +361,19 @@ def main():
                 return rc
         line = f.readline()
         if not line:
+            # A launcher that rotates runs/<name>.log (mv to .log.<stamp>, then a fresh file)
+            # after this watchdog attached leaves it tailing the renamed history inode: stage-2
+            # 2026-09-28 read zero progress lines and exited STALE 30 min in. A new inode at the
+            # path is this segment's log, so it is read from offset 0.
+            try:
+                rotated = os.stat(args.log).st_ino != os.fstat(f.fileno()).st_ino
+            except OSError:
+                rotated = False
+            if rotated:
+                f.close()
+                f = open(args.log, errors="replace")  # noqa: SIM115
+                print(f"WATCHDOG REOPEN {args.log}: path now names a new file (rotated)", flush=True)
+                continue
             if time.time() - last_progress > args.max_stale:
                 print(
                     f"WATCHDOG STALE {args.log}: no progress line for {args.max_stale}s "
