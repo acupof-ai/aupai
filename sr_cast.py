@@ -34,12 +34,14 @@ def _bf16_neighbors(x):
     p1 = bits + 1
     a = n1.to(torch.int16).view(torch.bfloat16).float()
     c = p1.to(torch.int16).view(torch.bfloat16).float()
-    lower = torch.minimum(a, c)
-    upper = torch.maximum(a, c)
-    # For exact points snap both to the value itself (a == c == x there).
-    exact = bv == x
-    lower = torch.where(exact, bv, torch.minimum(lower, bv))
-    upper = torch.where(exact, bv, torch.maximum(upper, bv))
+    # bv is x rounded to nearest, so it IS one end of x's bracket; the other end is the grid
+    # neighbour on x's side. Bracketing with both neighbours (min(a,c), max(a,c)) spans two ULPs
+    # around bv, never returns bv, and moves every inexact element by a full ULP per cast --
+    # unbiased, but an lr-independent random walk (v41_ced_stage2_0928, 2026-09-29).
+    below = torch.minimum(a, c)
+    above = torch.maximum(a, c)
+    lower = torch.where(bv <= x, bv, below)
+    upper = torch.where(bv >= x, bv, above)
     step = upper - lower
     frac = torch.where(step > 0, ((x - lower) / step).clamp(0.0, 1.0), torch.zeros_like(x))
     return lower, upper, frac
