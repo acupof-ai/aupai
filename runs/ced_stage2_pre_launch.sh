@@ -17,7 +17,7 @@ exec python3 scripts/harness.py launch v41_ced_stage2_pre_0928 \
   --warmdown 1.0 --anneal_frac 0.0 --warmup 500 \
   --save_every 10 --val_every 0 --max_steps 38152 --no-grad_ckpt \
   --stochastic_round \
-  --attn_every 1 --csa --csa2 --csa2_win_flash --rope_dims 64 --n_swa_only_layers 2 --no-attn_res \
+  --attn_every 1 --csa --csa2 --csa2_win_flash --rope_dims 64 --no-attn_res \
   --ced --ced_enc_layers 6 \
   --moe_experts 48 --moe_top_k 3 --moe_shared 1 --moe_expert_ffn 1728 --moe_layers 0-11 \
   --moe_router_lr 0.001 --router_score sigmoid --moe_arm v41ced

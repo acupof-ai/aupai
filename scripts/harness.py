@@ -28014,6 +28014,9 @@ _FROZEN_KEYS = (
     "csa2", "csa2_m", "csa2_top_k", "csa2_n_win", "csa2_indexer_heads", "csa2_indexer_dim",
     "csa2_win_flash",
     "csa2_modes", "rope_dims", "n_swa_only_layers",  # V4.1 flat stack (fb, 2026-09-10)
+    # attn_hybrid decides whether the two keys above take effect at all (per-layer SWA-only
+    # and F/R maps), so it changes which parameters exist: architecture, 1e 2026-09-29.
+    "attn_hybrid",
     # ARCHITECTURE, user order 2026-09-22: CED replaces where a decoder layer's global KV comes
     # from and adds a per-decoder-layer W_KV/W_Z, so a resume that disagreed on it would be a
     # different model under one run's name -- head_mixed's argument exactly. ced_enc_layers is
@@ -28194,6 +28197,9 @@ _UNFROZEN_ALLOWLIST = {
     # router_score: a per-arm architecture/recipe choice recorded in cfg and the checkpoint,
     # not resume-pinned; 0 = off keeps every cap-less checkpoint bitwise.
     "router_logit_cap",
+    # V4.1 routed_scaling_factor on the routed gate: changes the FFN function, classified like
+    # router_score. 1.0 keeps every earlier checkpoint bitwise.
+    "moe_routed_scale",
     # train_health cadences: read-only monitoring, no computation of the trained function changes.
     "health_every", "health_lens_every",
     # The arm's LABEL, not part of what it trains: it names the rows in runs/memory_diag.jsonl and

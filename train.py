@@ -264,6 +264,7 @@ class Cfg:
     # never the gate. Switching this changes the routing function, so it is recorded in cfg
     # and the checkpoint, not inferred.
     router_score = "softmax"
+    moe_routed_scale = 1.0  # V4.1 routed_scaling_factor (1.5 there); multiplies the routed gate only
     # Router logit softcap C (z := C*tanh(z/C) before softmax/sigmoid). 0 = off; changes what a
     # block computes so it lands in ck["cfg"]. See model.MoEFFN for the saturation measurement.
     router_logit_cap = 0.0
@@ -3391,6 +3392,7 @@ def main():
         "moe_router_lr": "MoE: lr for the router's AdamW group; <=0 means attn_res_lr (0.01), this repo's AdamW rate for a small learned mixing map -- NOT muon_lr, which is the EXPERT group's own rate and is what ruling (f) excludes",
         "moe_bias_gamma": "MoE: aux-loss-free bias step size, applied to the SIGN of the load error (0.001, pre-registered from facts/moe.json, NOT tuned after seeing a curve)",
         "moe_balance_alpha": "MoE: sequence-wise balance loss coefficient (1e-4, complementary to the bias, not an alternative)",
+        "moe_routed_scale": "MoE: routed_scaling_factor on the top-k-renormalized routed gate (1.0 = off; V4.1 uses 1.5)",
         "lr_peak_mult": "WSD stage-2: peak lr_mult as a fraction of each group's initial_lr, used with --lr_origin_step (e.g. 0.30)",
     }.items():
         parser.add_argument(f"--{name}", type=float, default=None, required=name in RECIPE_REQUIRED,
@@ -3404,6 +3406,7 @@ def main():
         "csa": "CSA attention arm in GatedMLA (required by --csa2)",
         "csa2": "V4.1 CSA2: learned entries + indexer + one softmax over entries and SWA",
         "csa2_win_flash": "CSA2: flash SWA window with dense entries, fp32 LSE split combine (default materialized)",
+        "attn_hybrid": "per-layer attention map: first n_swa_only_layers are pure SWA, the rest CSA2 with csa2_modes (F/R/X). Without it both of those flags are inert",
         "ced": "CED: bottom ced_enc_layers encoder; every decoder layer projects its global KV from H_{L/2} with its own W_KV/W_Z",
         "ced_kc_norm": "QK-norm: per-head F.rms_norm of the CED decoder global entry keys W_KV(H_6); off keeps old checkpoints byte-identical",
         "muon_ns_shard": "Muon: shard Newton-Schulz over DDP ranks along stacked same-shape instances and all_gather (bit-identical; default off)",
@@ -3539,7 +3542,7 @@ def main():
     )
     parser.add_argument("--no_attn_res", action="store_true", help="disable AttnRes (A/B measurement)")
     parser.add_argument(
-        "--router_score", choices=["softmax", "sigmoid"], default=None,
+        "--router_score", choices=["softmax", "sigmoid", "sqrtsoftplus"], default=None,
         help="MoE router affinity: softmax (V2, default, old checkpoints bit-identical) or "
              "sigmoid (V3 aux-loss-free, arXiv 2412.19437 §2.1.2: independent per-expert "
              "sigmoids; bias selects only; gate renormalizes within the selected top-k)")
@@ -3608,6 +3611,16 @@ def main():
             setattr(Cfg, k, v)
     if args.no_attn_res:
         Cfg.attn_res = False
+    # n_swa_only_layers and csa2_modes are read only inside HybridLM's attn_hybrid branch. Every
+    # gate launch passed --n_swa_only_layers 2 without --attn_hybrid, so the gate stack trained with
+    # zero SWA-only layers while the docs said two (docs/audits/v41_arch_alignment_0929.md).
+    # Refused at launch, not in the model: old checkpoints carry n_swa_only_layers=2 with
+    # attn_hybrid False in ck["cfg"] and must keep loading.
+    if not Cfg.attn_hybrid and (args.n_swa_only_layers or args.csa2_modes is not None):
+        raise SystemExit(
+            "--n_swa_only_layers / --csa2_modes take effect only with --attn_hybrid; without it the "
+            "stack is CSA2 in every layer and these flags would be recorded but inert. Pass "
+            "--attn_hybrid, or drop them.")
     # THE ARM ID IS REQUIRED WHENEVER THERE IS A MEMORY, refused at startup rather than defaulted.
     # runs/memory_diag.jsonl is append-only and its row identity is (name, step); `name` is the
     # only field that says which arm wrote the row. A default would let two arms write rows that
