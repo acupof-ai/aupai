@@ -141,12 +141,17 @@ def test_deepgemm_layout_and_emulated_fp8():
 
     torch.manual_seed(0)
     counts = torch.tensor([3, 0, 130, 128, 1])
-    src, mi = dg.padded_layout(counts)
-    assert src.numel() == 128 + 0 + 256 + 128 + 128 == mi.numel()  # each count rounded up to 128
-    assert (mi[:3] == 0).all() and (mi[3:128] == -1).all() and (src[3:128] == -1).all()
+    m_pad = dg.padded_m(int(counts.sum()), counts.numel())
+    assert m_pad >= 128 + 0 + 256 + 128 + 128 and m_pad % 128 == 0, m_pad  # a shape, >= the used length
+    pos, mi = dg.padded_layout(counts, m_pad)
+    assert mi.numel() == m_pad and pos.numel() == counts.sum()
     # segments: e0 rows 0-127 (3 real), e1 none, e2 128-383 (130 real), e3 384-511, e4 512-639 (1 real)
-    assert (mi[128:258] == 2).all() and src[128].item() == 3 and (mi[384:512] == 3).all() and mi[512].item() == 4
-    assert (src[src >= 0] == torch.arange(counts.sum())).all(), "every real row appears once, in order"
+    assert (mi[:3] == 0).all() and (mi[3:128] == -1).all()
+    assert (mi[128:258] == 2).all() and pos[3].item() == 128 and (mi[384:512] == 3).all() and mi[512].item() == 4
+    assert (mi[640:] == -1).all(), "the unused tail is padding"
+    assert pos.unique().numel() == pos.numel() and (mi[pos] >= 0).all(), "every real row has its own padded row"
+    # fixed padded length across routings: the same shape for any counts of the same total
+    assert dg.padded_m(262, 5) == m_pad and dg.padded_layout(torch.tensor([262, 0, 0, 0, 0]), m_pad)[1].numel() == m_pad
     kw = dict(dim=256, n_routed_experts=4, n_activated_experts=2, moe_inter_dim=128, swiglu_limit=10.0)
     ref = MoE(**kw, stacked=True).to(torch.bfloat16)
     dgm = MoE(**kw, stacked=True, moe_gemm="deepgemm").to(torch.bfloat16)
