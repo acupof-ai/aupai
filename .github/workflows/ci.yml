@@ -66,6 +66,7 @@ jobs:
       - run: python tests/v41f/test_p1_assembly_keys.py --selftest
       - run: python tests/v41f/test_p1_indexer_freeze.py --selftest
       - run: python tests/v41f/test_p1_config_gate.py --selftest
+      - run: python tests/v41f/test_v42_train.py --selftest
       - run: python tests/v41f/test_p1_train_ckpt.py
       # Muon Newton-Schulz rank sharding bit-parity: gloo world2/world4 CPU, sharded NS must
       # equal one rank doing every stacked instance, plus the uneven-group fallback.

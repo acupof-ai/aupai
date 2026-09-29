@@ -268,6 +268,14 @@ class Cfg:
     # Router logit softcap C (z := C*tanh(z/C) before softmax/sigmoid). 0 = off; changes what a
     # block computes so it lands in ck["cfg"]. See model.MoEFFN for the saturation measurement.
     router_logit_cap = 0.0
+    # --arch v42: the v41f V4.1 stack (v41f/lm.V42LM, preset v41f.config.v42_s24) in place of
+    # HybridLM, trained by the V4.1 optimizer (v41f/optim.py) at one base lr, v42_lr. The lr is
+    # an estimate from DeepSeek LLM's fit eta = 0.3118 * C^-0.125 (arXiv 2401.02954) at
+    # C = 6 * 0.55e9 non-embedding active * 30e9 tokens -> 9.9e-4; not tuned on this stack.
+    # v42_cfg is the resolved V41FConfig as a dict, written at build time so ck["cfg"] carries it.
+    arch = "hybrid"
+    v42_lr = 1e-3
+    v42_cfg = None
     # <=0 means "the dense lr", resolved in build_optimizers. The flag exists so the value is
     # recorded in the launch line and ck["cfg"] rather than living in a default nobody reads --
     # same reason mem_sel_lr exists, and the memory collapse is why it must never be the
@@ -833,6 +841,29 @@ def patch_liger_flce_fp8():
     return True
 
 
+def build_model(cfg):
+    """HybridLM, or under --arch v42 the v41f V42LM. The V41FConfig is v42_s24 at cfg.vocab unless
+    cfg.v42_cfg already holds one (a resumed Cfg); either way it is written back to cfg.v42_cfg so
+    the checkpoint's cfg records the exact shape."""
+    if getattr(cfg, "arch", "hybrid") != "v42":
+        return HybridLM(cfg)
+    from dataclasses import asdict  # noqa: PLC0415
+
+    from v41f.config import V41FConfig, v42_s24  # noqa: PLC0415
+    from v41f.lm import V42LM  # noqa: PLC0415
+
+    vc = V41FConfig(**{k: tuple(v) if isinstance(v, list) else v for k, v in cfg.v42_cfg.items()}) \
+        if cfg.v42_cfg else v42_s24(vocab_size=cfg.vocab)
+    vc.validate()
+    cfg.v42_cfg = asdict(vc)
+    return V42LM(vc, balance_alpha=cfg.moe_balance_alpha, bias_gamma=cfg.moe_bias_gamma)
+
+
+def _softcap():
+    """The logit softcap for the fused CE: none for v42 (V4.1 has no softcap), SOFTCAP otherwise."""
+    return None if getattr(Cfg, "arch", "hybrid") == "v42" else SOFTCAP
+
+
 def convert_to_fp8_compute(model):
     """FP8 linears via torchao Float8Linear; falls back to FP8Linear (dynamo-disabled -> ~200
     graph breaks) when torchao is missing. FP8_RECIPE=rowwise|tensorwise|legacy overrides.
@@ -869,7 +900,12 @@ def convert_to_fp8_compute(model):
         cfg = Float8LinearConfig(
             cast_config_input=cc(), cast_config_weight=cc(), cast_config_grad_output=cc()
         )
-    convert_to_float8_training(model, config=cfg, module_filter_fn=_fp8_filter)
+    # v42: the routed experts' Linears are never called as modules on CUDA (v41f/moe.py stacks
+    # their weights into torch._grouped_mm), so converting them buys nothing; and a Linear the
+    # reference keeps fp32 (the m>1 compressor, which pools in fp32) stays out of fp8 with it.
+    filt = (lambda m, f: ".ffn.experts." not in f and m.weight.dtype != torch.float32
+            and _fp8_filter(m, f)) if hasattr(model, "v41f_cfg") else _fp8_filter
+    convert_to_float8_training(model, config=cfg, module_filter_fn=filt)
     return model
 
 
@@ -1209,7 +1245,7 @@ def validate(
     """Mean FLCE loss over the fixed validation split; all DDP ranks call it in lockstep. Under
     --fone the values must ride along, or every [NUM] is fed zero and the loss is not comparable."""
     model.eval()
-    flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
+    flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=_softcap())
     weight = raw_model.head.weight[: raw_model.cfg.vocab]
     vl = []
     with torch.no_grad():
@@ -3473,6 +3509,10 @@ def main():
     )
     parser.add_argument("--resume", type=str, default=None, help="checkpoint to resume from")
     parser.add_argument(
+        "--stop_at_step", type=int, default=None,
+        help="stop after N optimizer steps WITHOUT shrinking the LR schedule (--max_steps shrinks it), "
+             "so a short probe reads against a full-schedule run at the same steps")
+    parser.add_argument(
         "--max_steps", type=int, default=None, help="stop after N optimizer steps (ablations)"
     )
     parser.add_argument(
@@ -3546,6 +3586,12 @@ def main():
         help="MoE router affinity: softmax (V2, default, old checkpoints bit-identical) or "
              "sigmoid (V3 aux-loss-free, arXiv 2412.19437 §2.1.2: independent per-expert "
              "sigmoids; bias selects only; gate renormalizes within the selected top-k)")
+    parser.add_argument(
+        "--arch", choices=["hybrid", "v42"], default=None,
+        help="hybrid (default: model.HybridLM, unchanged) or v42 (v41f V4.1 stack, preset "
+             "v41f.config.v42_s24, V4.1 optimizer at --v42_lr)")
+    parser.add_argument("--v42_lr", type=float, default=None,
+                        help="v42: the one base lr for Muon, Sinkhorn and AdamW (default: Cfg.v42_lr)")
     parser.add_argument(
         "--router_logit_cap", type=float, default=None,
         help="MoE router logit softcap C: z := C*tanh(z/C) before softmax/sigmoid; 0 (or unset) "
@@ -3621,6 +3667,20 @@ def main():
             "--n_swa_only_layers / --csa2_modes take effect only with --attn_hybrid; without it the "
             "stack is CSA2 in every layer and these flags would be recorded but inert. Pass "
             "--attn_hybrid, or drop them.")
+    if Cfg.arch == "v42":
+        _v42_bad = [f for f, on in (
+            ("--fone", Cfg.fone), ("--grad_ckpt", Cfg.grad_ckpt), ("--loop", args.loop),
+            ("--mem_values", Cfg.mem_values), ("--moe_experts (HybridLM MoE)", Cfg.moe_experts),
+            ("--stochastic_round", getattr(Cfg, "stochastic_round", False)),
+            ("--fp32_master", args.fp32_master), ("FP8_HEAD=1", os.environ.get("FP8_HEAD") == "1"),
+            ("--seq > 4096 (v41f RoPE tables are 4096 long)", Cfg.seq > 4096),
+            ("--moe_arm unset (moe_diag rows need an arm id)", not str(Cfg.moe_arm).strip()),
+            ("no --fp8/--bf16 (pass one: the m=1 compressor wkv is bf16 by reference)",
+             not (args.fp8 or args.bf16)),
+        ) if on]
+        if _v42_bad:
+            raise SystemExit(f"REFUSING --arch v42: {'; '.join(_v42_bad)}. The v41f stack (v41f/lm.py) "
+                             f"does not implement these.")
     # THE ARM ID IS REQUIRED WHENEVER THERE IS A MEMORY, refused at startup rather than defaulted.
     # runs/memory_diag.jsonl is append-only and its row identity is (name, step); `name` is the
     # only field that says which arm wrote the row. A default would let two arms write rows that
@@ -3656,6 +3716,14 @@ def main():
     if args.build_only:
         # scripts/active_params.py: the model this launch line builds, counted, no DDP/data.
         # Params are a property of the config, so --resume is ignored here on purpose.
+        if Cfg.arch == "v42":
+            with torch.device("meta"):
+                _m = build_model(Cfg)
+            print(json.dumps({"arch": "v42", "total": sum(p.numel() for p in _m.parameters()),
+                              "active": _m.n_active(), **{k: Cfg.v42_cfg[k] for k in (
+                                  "dim", "n_layers", "n_heads", "head_dim", "n_routed_experts",
+                                  "n_activated_experts", "moe_inter_dim", "hc_mult")}}))
+            return
         _m = HybridLM(Cfg)
         print(json.dumps({"total": sum(p.numel() for p in _m.parameters()),
                           "active": _n_active_params(_m, Cfg),
@@ -3827,7 +3895,7 @@ def main():
         )
         for _ in range(2)
     ]
-    raw_model = HybridLM(Cfg).to(device)
+    raw_model = build_model(Cfg).to(device)
     resume_step = 0
     if args.resume:
         ck = torch.load(args.resume, map_location="cpu", weights_only=False)
@@ -3993,7 +4061,7 @@ def main():
         # nothing would have looked wrong" -- is the reason to generalise the exclusion rather
         # than special-case 48 experts. _n_active_params carries the arithmetic and the dense
         # no-op; `n_dense` keeps its name because the FORMULA is still the dense approximation.
-        n_dense = _n_active_params(raw_model, Cfg)
+        n_dense = raw_model.n_active() if Cfg.arch == "v42" else _n_active_params(raw_model, Cfg)
         # dense peak per GPU for MFU; override with PEAK_TFLOPS (H20: 296 FP8 / 148 bf16)
         peak_tflops = float(os.environ.get("PEAK_TFLOPS", 296 if fp8 else 148))
         # runlog, not print: an unrecorded batch size once cost 90 minutes of regression-chasing
@@ -4013,7 +4081,7 @@ def main():
         runlog(
             f"cfg batch {Cfg.batch} accum {Cfg.accum} seq {Cfg.seq} grad_ckpt {Cfg.grad_ckpt} "
             f"doc_mask {Cfg.doc_mask} attn_res {Cfg.attn_res}/{Cfg.attn_res_blocks} "
-            f"softcap {SOFTCAP} warmup {Cfg.warmup} epochs {Cfg.epochs} "
+            f"softcap {_softcap()} warmup {Cfg.warmup} epochs {Cfg.epochs} "
             f"lr_scale {args.lr_scale} mix {Cfg.mix or 'flat'} fone {Cfg.fone} "
             # The EFFECTIVE values, from Cfg after the flags are applied -- not the
             # argv the caller typed. --seed 0 was silently dropped for weeks and
@@ -4068,7 +4136,12 @@ def main():
     _mmap = {}
     for _m in _masters:
         _mmap.update(_m.map)
-    optimizers = build_optimizers(raw_model, Cfg, _mmap or None)
+    if Cfg.arch == "v42":
+        from v41f.optim import build_v42_optimizers  # noqa: PLC0415
+
+        optimizers = build_v42_optimizers(raw_model, raw_model.v41f_cfg, Cfg.v42_lr)
+    else:
+        optimizers = build_optimizers(raw_model, Cfg, _mmap or None)
     if table_master is not None and is_main:
         _tn = sum(m.numel() for _, m in table_master.pairs)
         print(f"fp32 table master: {_tn / 1e9:.2f}B params, {_tn * 4 / 2**30:.2f} GiB master + "
@@ -4177,6 +4250,7 @@ def main():
         total_steps += resume_step
     if args.max_steps:
         total_steps = min(total_steps, args.max_steps)  # LR schedule completes within the short run
+    _stop_step = min(total_steps, args.stop_at_step) if args.stop_at_step else total_steps
     # For save_checkpoint, and for the comparison below. Published on Cfg the same way
     # build_mix publishes _row_cursor: save_checkpoint reads state off cfg rather than
     # taking it through five call sites.
@@ -4306,9 +4380,13 @@ def main():
                 hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
             B, T, D = hidden.shape
             weight = raw_model.head.weight[: raw_model.cfg.vocab]
-            loss = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)(
+            loss = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=_softcap())(
                 weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1)
             )
+            if Cfg.arch == "v42":
+                _aux = raw_model.aux_loss()
+                if _aux is not None:
+                    loss = loss + _aux
             if Cfg.fone:
                 # [NUM] says a number comes next but not which one, so digits are supervised
                 # separately against the SHIFTED value slice (wb), not the embedding's (vb).
@@ -4397,7 +4475,7 @@ def main():
                         if is_main:
                             runlog(f"step {step}/{total_steps} 20 skips in a row — rolled back to snapshot")
                     step += 1
-                    if step >= total_steps:
+                    if step >= _stop_step:
                         break
                     continue
                 n_skip = 0
@@ -4480,7 +4558,8 @@ def main():
                             _hrow["layer"], _hrow["opt"] = train_health.after_step(_hprobe, optimizers)
                             _hrow["loss"] = float(loss.detach())
                             _hrow["grad_norm"] = float(grad_norm)
-                            if Cfg.health_lens_every > 0 and (step + 1) % Cfg.health_lens_every == 0:
+                            if (Cfg.health_lens_every > 0 and (step + 1) % Cfg.health_lens_every == 0
+                                    and Cfg.arch != "v42"):  # logit_lens hooks HybridLM blocks
                                 _xl, _yl = Xva[:1].to(device), Yva[:1].to(device)
                                 _hrow["lens"] = train_health.logit_lens(
                                     raw_model, _xl, _yl, doc_cu_seqlens(_xl, eos_id) if Cfg.doc_mask else None,
@@ -4860,7 +4939,7 @@ def main():
                         except Exception as _e:  # noqa: BLE001 -- see the memory block's reasoning
                             runlog(f"step {step}/{total_steps} moe_diag write FAILED, run "
                                    f"continues: {type(_e).__name__}: {_e}")
-                if step >= total_steps:
+                if step >= _stop_step:
                     break
 
         for opt in optimizers:
@@ -4898,8 +4977,8 @@ def main():
                 opt_snapshot(optimizers),
                 step,
             )
-        if step >= total_steps:
-            break  # --max_steps reached (validation + epoch ckpt already done above)
+        if step >= _stop_step:
+            break  # --max_steps / --stop_at_step reached (validation + epoch ckpt already done above)
 
     if is_main:
         # A checkpoint that took no optimizer steps is a 206M random init that every
