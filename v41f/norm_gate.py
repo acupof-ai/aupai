@@ -8,6 +8,11 @@ import torch
 from torch import nn
 
 
+try:  # liger_kernel 0.8.3, CUDA only
+    from liger_kernel.transformers.functional import liger_rms_norm as _liger_rms_norm
+except ImportError:
+    _liger_rms_norm = None
+
 class RMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
@@ -15,7 +20,11 @@ class RMSNorm(nn.Module):
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(dim))
 
+    impl = "torch"  # "liger": LigerRMSNorm kernel, casting_mode gemma == this forward's cast order
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.impl == "liger" and x.is_cuda and _liger_rms_norm is not None:
+            return _liger_rms_norm(x, self.weight, self.eps, 0.0, "gemma", False)
         dtype = x.dtype
         x = x.float()
         var = x.square().mean(-1, keepdim=True)

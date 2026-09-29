@@ -17,6 +17,13 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+try:  # liger_kernel 0.8.3: Triton mHC kernels, CUDA only
+    from liger_kernel.transformers.functional import liger_mhc_coeffs, liger_mhc_post_res, liger_mhc_pre
+
+    HAS_LIGER_MHC = True
+except ImportError:
+    HAS_LIGER_MHC = False
+
 
 def hc_split_sinkhorn(mixes, hc_scale, hc_base, hc_mult, sinkhorn_iters, eps):
     """Pure-torch port of kernel.hc_split_sinkhorn_kernel.
@@ -55,6 +62,7 @@ class HyperConn(nn.Module):
         self.hc_sinkhorn_iters = sinkhorn_iters
         self.hc_eps = eps
         self.norm_eps = norm_eps
+        self.impl = "torch"  # "liger" set by V41FModel from cfg.hc_impl
         mix_hc = (2 + hc_mult) * hc_mult
         hc_dim = hc_mult * dim
         # ref Block builds these under set_dtype(float32). Construct them explicitly fp32 so
@@ -80,6 +88,12 @@ class HyperConn(nn.Module):
     def hc_mixes(self, x, hc_fn, hc_scale, hc_base):
         """x [b,s,hc,d] -> (pre,post,comb). One RMS-normalized linear over the flat
         hc*d stream (one statistic per token), then the Sinkhorn split."""
+        if self._liger(x):
+            # phi is [hc*d, m] (ours is [m, hc*d]); alphas are our hc_scale[0:3]; eps roles map 1:1
+            return liger_mhc_coeffs(
+                x, hc_fn.t().contiguous(), hc_base, hc_scale[0], hc_scale[1], hc_scale[2],
+                allow_fp32=True, tmax=self.hc_sinkhorn_iters, rms_eps=self.norm_eps,
+                pre_eps=self.hc_eps, sinkhorn_eps=self.hc_eps, post_mult=2.0)
         x = x.flatten(2).float()
         rsqrt = torch.rsqrt(x.square().mean(-1, keepdim=True) + self.norm_eps)
         mixes = F.linear(x, hc_fn) * rsqrt
@@ -87,6 +101,8 @@ class HyperConn(nn.Module):
 
     def hc_pre(self, x, pre_mix):
         """[b,s,hc,d] x [b,s,hc] -> [b,s,d]: weighted collapse onto one sublayer input."""
+        if self._liger(x):
+            return liger_mhc_pre(x, pre_mix)
         # bmm over hc: no [b,s,hc,d] fp32 product materialized (the elementwise form kept one
         # for backward per call, 256 MiB at B4 T4096 d1024 hc4)
         y = torch.matmul(pre_mix.unsqueeze(-2), x.float()).squeeze(-2)
@@ -95,10 +111,16 @@ class HyperConn(nn.Module):
     def hc_post(self, x, residual, post, comb):
         """x [b,s,d], residual [b,s,hc,d], post [b,s,hc], comb [b,s,hc,hc] -> [b,s,hc,d]:
         expand the sublayer output weighted by post and add the comb-mixed residual."""
+        if self._liger(residual):
+            # liger: out[o] = sum_i h_res[o,i] x[i]; ours sums comb[i,j] over i -> hand it comb^T
+            return liger_mhc_post_res(residual, x.to(residual.dtype), post, comb.transpose(-1, -2).contiguous())
         # y[j] = post[j] x + sum_i comb[i,j] residual[i]: comb^T @ residual as one bmm instead of
         # the [b,s,hc,hc,d] outer product (512 MiB per call at B4 T4096, OOM on the full trunk)
         y = post.unsqueeze(-1) * x.unsqueeze(-2) + torch.matmul(comb.transpose(-1, -2), residual.float())
         return y.type_as(x)
+
+    def _liger(self, x):
+        return self.impl == "liger" and HAS_LIGER_MHC and x.is_cuda
 
     def attn(self, x, pre_mix):
         """Coefficients for the attention sublayer from residual x; returns the collapsed
