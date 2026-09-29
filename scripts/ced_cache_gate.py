@@ -42,11 +42,12 @@ def _load_humaneval_scorer():
     return mod
 
 
-def load(ckpt, tok_path, threads):
+def load(ckpt, tok_path, threads, dtype="bf16"):
     from scripts.ced_cache import CEDCache  # noqa: F401  (import check)
     from scripts.loader import load_checkpoint, load_tokenizer
     torch.set_num_threads(threads)
-    model, cfg = load_checkpoint(ckpt, device="cpu", dtype=torch.bfloat16, low_mem=True)
+    dt = torch.float32 if dtype == "fp32" else torch.bfloat16
+    model, cfg = load_checkpoint(ckpt, device="cpu", dtype=dt, low_mem=True)
     model = model.eval()
     model.cfg = cfg
     tok = load_tokenizer(tok_path, cfg)
@@ -248,6 +249,7 @@ def main():
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--tokenizer", required=True)
     ap.add_argument("--threads", type=int, default=14)
+    ap.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")
     ap.add_argument("--section", required=True,
                     choices=("parity", "heval20", "heval164", "speed", "short", "all"))
     ap.add_argument("--max_new", type=int, default=280)
@@ -260,7 +262,7 @@ def main():
         sys.exit("REFUSING: this gate is cardless CPU; set CUDA_VISIBLE_DEVICES empty")
     with open(HE_DATA, encoding="utf-8") as fh:
         probs = [json.loads(l) for l in fh if l.strip()]
-    model, cfg, tok = load(args.ckpt, args.tokenizer, args.threads)
+    model, cfg, tok = load(args.ckpt, args.tokenizer, args.threads, args.dtype)
 
     todo = (["parity", "heval20", "speed"] if args.section == "short"
             else ["parity", "heval20", "heval164", "speed"] if args.section == "all"
