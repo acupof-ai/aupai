@@ -249,7 +249,7 @@ def main():
     ap.add_argument("--tokenizer", required=True)
     ap.add_argument("--threads", type=int, default=14)
     ap.add_argument("--section", required=True,
-                    choices=("parity", "heval20", "heval164", "speed", "all"))
+                    choices=("parity", "heval20", "heval164", "speed", "short", "all"))
     ap.add_argument("--max_new", type=int, default=280)
     ap.add_argument("--parity_steps", type=int, default=48)
     ap.add_argument("--parity_n", type=int, default=8)
@@ -262,7 +262,9 @@ def main():
         probs = [json.loads(l) for l in fh if l.strip()]
     model, cfg, tok = load(args.ckpt, args.tokenizer, args.threads)
 
-    todo = ["parity", "heval20", "heval164", "speed"] if args.section == "all" else [args.section]
+    todo = (["parity", "heval20", "speed"] if args.section == "short"
+            else ["parity", "heval20", "heval164", "speed"] if args.section == "all"
+            else [args.section])
     if "parity" in todo:
         section_parity(model, cfg, tok, probs[:args.parity_n], args.parity_steps)
     if "heval20" in todo:
