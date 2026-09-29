@@ -4246,6 +4246,14 @@ def main():
                 print(f"dynamo cache_size_limit={_dynamo_limit} (need {_dynamo_need})", flush=True)
         if os.environ.get("COMPILE_SUPPRESS_ERRORS", "0") == "1":
             torch._dynamo.config.suppress_errors = True
+        if os.environ.get("DYNAMO_OPTIMIZE_DDP", "1") == "0":
+            # DDPOptimizer splits the graph at bucket boundaries; on v42 (2026-09-29, world 8)
+            # the split forward returned a hidden with no grad_fn while the single-process
+            # compile of the same model trained. With accum>1 and no_sync the allreduce is
+            # once per step anyway, so the overlap the splitter buys is small.
+            torch._dynamo.config.optimize_ddp = False
+            if is_main:
+                print("dynamo optimize_ddp=False (DYNAMO_OPTIMIZE_DDP=0)", flush=True)
         model = torch.compile(model, dynamic=False, mode=os.environ.get("COMPILE_MODE") or None)
 
     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
