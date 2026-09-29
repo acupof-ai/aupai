@@ -28109,6 +28109,7 @@ _REQUIRED_ALT = {"flash_attn": "flash_attn.cute"}
 
 _UNFROZEN_ALLOWLIST = {
     "seed",               # the quantity that is supposed to vary
+    "v42_record",         # v42 diagnostics recorder (v41f/record.py): observation only, no effect on the run
     "v42_impl",           # v42 implementation switches (fused attention, real rope, stacked MoE): same
                           # numbers to the bf16 floor (tests/v41f/test_p1_fused.py), not architecture
     "name", "mix", "resume", "max_steps", "stop_at_step",  # run management
