@@ -133,7 +133,8 @@ if [ -z "${AUPAI_LAUNCHED_BY:-}" ] && [ "${ALLOW_DIRECT_RUN:-}" != "1" ]; then
   exit 1
 fi
 
-torchrun --nproc_per_node="${NGPU:-8}" --master_port="${PORT:-29500}" train.py --fp8 "$@"
+# PREC_FLAG=--bf16 runs the bf16-masters arm (train.py refuses --fp8 and --bf16 together)
+torchrun --nproc_per_node="${NGPU:-8}" --master_port="${PORT:-29500}" train.py "${PREC_FLAG:---fp8}" "$@"
 rc=$?
 # A training run without a score-matrix record is what the score_matrix_present
 # check catches; score here so the record exists by construction.
