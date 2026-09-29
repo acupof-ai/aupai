@@ -28109,6 +28109,8 @@ _REQUIRED_ALT = {"flash_attn": "flash_attn.cute"}
 
 _UNFROZEN_ALLOWLIST = {
     "seed",               # the quantity that is supposed to vary
+    "v42_impl",           # v42 implementation switches (fused attention, real rope, stacked MoE): same
+                          # numbers to the bf16 floor (tests/v41f/test_p1_fused.py), not architecture
     "name", "mix", "resume", "max_steps", "stop_at_step",  # run management
     "save_every",         # checkpoint cadence, an operational knob, not a recipe key
     "build_only",         # inspection flag (scripts/active_params.py): builds the model, prints params, exits before training
@@ -28221,6 +28223,7 @@ _UNFROZEN_ALLOWLIST = {
     # exists so the ~20x-slower fallback cannot be entered by accident, which is the
     # opposite of a knob a launch may vary quietly.
     "allow_slow_attn",
+    "compile",  # torch.compile on/off: same numerics, only tracing; --no-compile for an untraceable path
 }
 
 
