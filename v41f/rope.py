@@ -39,10 +39,11 @@ def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor, inverse: bool = F
     xc = torch.view_as_complex(x.float().unflatten(-1, (-1, 2)))
     if inverse:
         freqs_cis = freqs_cis.conj()
+    lead = freqs_cis.size(0) if freqs_cis.dim() == 3 else 1  # [b,s,d/2] per-token positions
     if xc.ndim == 3:
-        freqs_cis = freqs_cis.view(1, xc.size(1), xc.size(-1))
+        freqs_cis = freqs_cis.view(lead, xc.size(1), xc.size(-1))
     else:
-        freqs_cis = freqs_cis.view(1, xc.size(1), 1, xc.size(-1))
+        freqs_cis = freqs_cis.view(lead, xc.size(1), 1, xc.size(-1))
     out = torch.view_as_real(xc * freqs_cis).flatten(-2)
     y.copy_(out.to(y.dtype))  # in-place, matching model_ref apply_rotary_emb (return discarded by callers)
     return y

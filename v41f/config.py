@@ -98,6 +98,10 @@ class V41FConfig:
     # indexer path, which is why this is the one V41FConfig field the ref ModelArgs cannot
     # consume (see the intersection gate's CFG_ONLY_TRAINING_KNOBS).
     indexer_train_mode: str = "off"
+    # "ref" runs the reference gathered sparse_attn; "chunked" is the packed-row training
+    # path (v41f/docpack.py): exact same softmax, per-query-chunk with activation checkpoints,
+    # and the only path that computes the "kl" indexer loss. Also not a reference field.
+    attn_impl: str = "ref"
 
     def validate(self) -> None:
         if len(self.compress_ratios) != self.n_layers:
@@ -148,8 +152,12 @@ class V41FConfig:
                 f"engram_num_embeddings has {len(self.engram_num_embeddings)} entries for "
                 f"{len(self.engram_layer_ids)} engram layers"
             )
-        if self.indexer_train_mode not in ("off", "ste"):
-            raise ValueError(f"indexer_train_mode must be 'off' or 'ste', got {self.indexer_train_mode!r}")
+        if self.indexer_train_mode not in ("off", "ste", "kl"):
+            raise ValueError(f"indexer_train_mode must be 'off', 'ste' or 'kl', got {self.indexer_train_mode!r}")
+        if self.attn_impl not in ("ref", "chunked"):
+            raise ValueError(f"attn_impl must be 'ref' or 'chunked', got {self.attn_impl!r}")
+        if self.indexer_train_mode == "kl" and self.attn_impl != "chunked":
+            raise ValueError("indexer_train_mode 'kl' needs attn_impl 'chunked' (the lse it reads)")
 
     def derived_engram_num_embeddings(self) -> tuple[int, ...]:
         """Table rows per engram layer = that layer's sum of bucket primes.
@@ -302,7 +310,7 @@ def v42_s24(**over) -> V41FConfig:
         n_routed_experts=64, n_shared_experts=1, n_activated_experts=8, moe_inter_dim=640,
         score_func="sqrtsoftplus", route_scale=1.5, swiglu_limit=10.0, norm_eps=1e-20,
         hc_mult=4, engram_layer_ids=(), n_mtp_layers=0, dspark_block_size=0,
-        dspark_target_layer_ids=(),
+        dspark_target_layer_ids=(), attn_impl="chunked", indexer_train_mode="kl",
     )
     c = replace(c, **over)
     c.validate()

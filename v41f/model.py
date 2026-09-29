@@ -29,6 +29,7 @@ from torch import nn
 
 from .attention import SharedAttnState
 from .block import Block, make_identity_pre_mix
+from .docpack import doc_layout
 from .engram import Engram, EngramLayout, NgramHashState
 from .mtp import DSparkBlock
 from .norm_gate import RMSNorm
@@ -186,7 +187,8 @@ class V41FModel(nn.Module):
         criterion would evict a live parameter. Freezing is for what is dead BY
         CONSTRUCTION.
         """
-        dead = set(self.permanently_dead_param_names(cfg))
+        # "kl" trains the index keys and the indexer projections through the indexer loss
+        dead = set() if cfg.indexer_train_mode == "kl" else set(self.permanently_dead_param_names(cfg))
         if cfg.indexer_train_mode == "off":
             dead |= set(self.indexer_projection_names(cfg))
         for name, param in self.named_parameters():
@@ -204,6 +206,8 @@ class V41FModel(nn.Module):
         pre_mix = make_identity_pre_mix(h, self.hc_mult)
         state = SharedAttnState()
         state.cu = cu
+        if cu is not None or self.cfg.attn_impl == "chunked":
+            state.doc, state.pos, state.doclen = doc_layout(cu, *input_ids.shape, input_ids.device)
         for i, layer in enumerate(self.layers):
             engram = self.engrams[i]
             if engram is not None:
@@ -213,8 +217,11 @@ class V41FModel(nn.Module):
                 main_hiddens.append(h.mean(dim=2))
             h, pre_mix, state = layer(h, 0, pre_mix, state)
         h = self.layers[-1].hc_pre(h, pre_mix)
+        # mean per-query KL over the index-source layers (indexer_train_mode "kl"), else None
+        self.indexer_loss = (torch.stack([t / c.clamp_min(1) for t, c in state.indexer_kl]).mean()
+                             if state.indexer_kl else None)
         if return_hidden:
-            return self.norm(h), None
+            return self.norm(h), self.indexer_loss
         logits = self.head(self.norm(h))
         main_hidden = torch.cat(main_hiddens, dim=-1) if main_hiddens else None
         return logits, main_hidden
