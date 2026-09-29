@@ -2705,6 +2705,10 @@ def main():
         # runs by hand on the digest box (ALLOW_UNISOLATED=1), not at commit time.
         "algorithms/test_stdin_reward_known.py": "needs gitignored multi-GB APPS/TACO raw data and executes dataset references; run by hand on the digest box",
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
+        # 1e 2026-09-29: liger_kernel Triton kernels vs our torch hyperconn/RMSNorm; needs CUDA and
+        # liger_kernel (pod only). Prints SKIP and exits 0 off CUDA, so a commit-time run would be
+        # a pass that ran nothing; run by hand on a free card.
+        "tests/v41f/test_gpu_liger_parity.py": "liger_kernel Triton kernels need CUDA and the pod's liger install; SKIPs (exit 0) off CUDA, so a commit-time run proves nothing",
         # The format-SFT packer's boundary known-answer test (ruling C, 2026-09-09):
         # asserts the split-encode invariants on the REAL tokenizer, because the
         # prompt/body boundary merge is a tokenizer property and a fake tokenizer

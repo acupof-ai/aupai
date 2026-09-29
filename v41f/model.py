@@ -31,6 +31,7 @@ from torch import nn
 
 from .attention import SharedAttnState
 from .block import Block, make_identity_pre_mix
+from .hyperconn import HyperConn
 from .docpack import doc_layout
 from .engram import Engram, EngramLayout, NgramHashState
 from .mtp import DSparkBlock
@@ -112,6 +113,11 @@ class V41FModel(nn.Module):
             )
         self.norm = RMSNorm(cfg.dim, cfg.norm_eps)
         self.head = V41FHead(cfg.vocab_size, cfg.dim)
+        for mod in self.modules():  # kernel choice per module; CUDA-only kernels fall back to torch off CUDA
+            if isinstance(mod, RMSNorm):
+                mod.impl = cfg.norm_impl
+            elif isinstance(mod, HyperConn):
+                mod.impl = cfg.hc_impl
         # DSpark draft stages, registered under the mtp.* checkpoint namespace (ref
         # Transformer :1207-1211). Empty when n_mtp_layers is 0, so the OFF path is
         # structurally identical rather than specially cased.

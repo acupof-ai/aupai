@@ -861,7 +861,7 @@ def build_model(cfg):
     over = {}
     for kv in filter(None, (getattr(cfg, "v42_impl", "") or "").split(",")):
         k, v = kv.split("=", 1)
-        if k not in ("attn_impl", "rope_impl", "moe_stacked"):
+        if k not in ("attn_impl", "rope_impl", "moe_stacked", "hc_impl", "norm_impl"):
             raise ValueError(f"--v42_impl: {k} is not an implementation switch")
         over[k] = v in ("1", "true", "True") if k == "moe_stacked" else v
     vc = replace(vc, block_ckpt=bool(cfg.grad_ckpt), **over)
@@ -3606,7 +3606,8 @@ def main():
                         help="v42: the one base lr for Muon, Sinkhorn and AdamW (default: Cfg.v42_lr)")
     parser.add_argument("--v42_impl", type=str, default=None,
                         help="v42: implementation switches k=v,k=v over V41FConfig, e.g. "
-                             "attn_impl=fused,rope_impl=real,moe_stacked=1 (default: chunked/complex/0)")
+                             "attn_impl=fused,rope_impl=real,moe_stacked=1,hc_impl=liger,norm_impl=liger "
+                             "(default: chunked/complex/0/torch/torch)")
     parser.add_argument(
         "--router_logit_cap", type=float, default=None,
         help="MoE router logit softcap C: z := C*tanh(z/C) before softmax/sigmoid; 0 (or unset) "

@@ -112,6 +112,12 @@ class V41FConfig:
     # block_ckpt: recompute each Block in backward (torch.utils.checkpoint, non-reentrant); the
     # trainer sets it from --grad_ckpt. Numerically identical; trades ~1 forward for activations.
     block_ckpt: bool = False
+    # hc_impl "liger": liger_kernel mHC Triton kernels (coeffs = fused matmul+RMS+Sinkhorn, pre,
+    # post_res) over OUR parameters and OUR pre hand-off; same math (layout pre|post|comb, softmax+eps,
+    # col then row/col rounds). norm_impl "liger": LigerRMSNorm casting_mode gemma (fp32 x and w,
+    # cast after the weight), the order our RMSNorm uses. Both CUDA-only; torch elsewhere.
+    hc_impl: str = "torch"
+    norm_impl: str = "torch"
 
     def validate(self) -> None:
         if len(self.compress_ratios) != self.n_layers:
@@ -170,6 +176,8 @@ class V41FConfig:
             raise ValueError("indexer_train_mode 'kl' needs attn_impl 'chunked' or 'fused' (the lse it reads)")
         if self.rope_impl not in ("complex", "real"):
             raise ValueError(f"rope_impl must be 'complex' or 'real', got {self.rope_impl!r}")
+        if self.hc_impl not in ("torch", "liger") or self.norm_impl not in ("torch", "liger"):
+            raise ValueError(f"hc_impl/norm_impl must be 'torch' or 'liger', got {self.hc_impl!r}/{self.norm_impl!r}")
 
     def derived_engram_num_embeddings(self) -> tuple[int, ...]:
         """Table rows per engram layer = that layer's sum of bucket primes.
