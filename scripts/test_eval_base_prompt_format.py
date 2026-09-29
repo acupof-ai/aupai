@@ -79,7 +79,10 @@ CHATML_ARM = [
 #: chat.py is exempt, and not because it is small: it loads a fixed ckpt.pt and answers a
 #: person typing at a prompt, so a nonsense generation is visible to whoever caused it and
 #: nothing it produces enters a fact, a ledger row, or a decision.
-EXEMPT = {"chat.py": "interactive, fixed ckpt.pt, output goes to a human not a record"}
+EXEMPT = {
+    "chat.py": "interactive, fixed ckpt.pt, output goes to a human not a record",
+    "base_generate.py": "ChatML only behind an explicit --chat / web checkbox; streams to a person, writes no record",
+}
 
 
 def _ast_parents(tree):
