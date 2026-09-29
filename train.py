@@ -4405,6 +4405,12 @@ def main():
             if ev is not None:
                 ev.record()
             cu = doc_cu_seqlens(xb, eos_id) if Cfg.doc_mask else None
+            if Cfg.arch == "v42":
+                # qk-scale probe on the LAST micro-batch of a health step only (rank 0): the model
+                # collects per-layer q/kv RMS into raw_model.qk_stats; printed at the accum boundary
+                raw_model.record_qk_stats = bool(
+                    is_main and Cfg.health_every > 0 and (step + 1) % Cfg.health_every == 0
+                    and (i // Cfg.batch + 1) % Cfg.accum == 0)
             _sp.start("fwd")
             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
                 hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
@@ -4475,9 +4481,13 @@ def main():
                     # pre-clip grad norms by module group and optimizer group (v41f/optim.py
                     # grad_norm_report): the world-8 trial's pre-clip gnorm climbed 22 -> 59 over
                     # steps 500-1000 while the loss fell; this names where it sits, rank 0 only.
-                    from v41f.optim import grad_norm_report  # noqa: PLC0415
+                    from v41f.optim import grad_norm_report, qk_scale_report  # noqa: PLC0415
 
                     print(f"step {step + 1} health {grad_norm_report(raw_model)}", flush=True)
+                    if raw_model.qk_stats:
+                        print(f"step {step + 1} health "
+                              f"{qk_scale_report(raw_model.qk_stats, raw_model.layers[0].attn.softmax_scale)}", flush=True)
+                    raw_model.record_qk_stats = False
                 grad_norm = nn.utils.clip_grad_norm_(raw_model.parameters(), Cfg.clip)
                 # One CPU sync per step: finite(loss) & finite(grad_norm), MIN-reduced across ranks
                 flag = (torch.isfinite(loss.detach()) & torch.isfinite(grad_norm)).float()

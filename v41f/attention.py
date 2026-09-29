@@ -65,6 +65,10 @@ class SharedAttnState:
         self.cu_docs = None  # int32 merged cu_seqlens (fused window branch)
         self.entry_meta = None  # (e_valid, e_doc, e_last, ratio) from the kv source
         self.indexer_kl = []  # (sum, count) per index-source layer under indexer_train_mode "kl"
+        # qk-scale probe (train health): when record_qk, every layer appends
+        # (layer_id, per-head q RMS [h], kv RMS) after RoPE; read by V41FModel into model.qk_stats
+        self.record_qk = False
+        self.qk_stats = []
 
 
 class IndexKeyProj(nn.Module):
@@ -238,6 +242,11 @@ class Attention(nn.Module):
         q, qr = self.qproj(x)
         q = _rot_tail(q, rot, self.rd)
         kv = _rot_tail(self.kvproj(x), rot, self.rd)
+        if state.record_qk:
+            # per-token norms only, no sequence matmul; RoPE is norm-preserving so this is the q the
+            # softmax sees. Side effect on the state object, replayed by dynamo like indexer_kl.
+            state.qk_stats.append((self.layer_id, q.detach().float().square().mean(dim=(0, 1, 3)).sqrt(),
+                                   kv.detach().float().square().mean().sqrt()))
         comp_kv = comp_idx = None
         if self.compress_ratio:
             comp_kv, comp_idx = self._compress_docs(x, qr, freqs, state)
