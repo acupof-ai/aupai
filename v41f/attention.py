@@ -51,6 +51,7 @@ class SharedAttnState:
         self.topk_idxs = None  # [b, s, index_topk], published by an index source
         self.candidates = None  # level-one block mask, from the candidate source
         self.sel_scores = None  # continuous scores at the published slots (training only)
+        self.cu = None  # int32 cu_seqlens over the flattened b*s stream; None = one doc per row
 
 
 class IndexKeyProj(nn.Module):
