@@ -173,13 +173,52 @@ def test_deepgemm_layout_and_emulated_fp8():
     assert rel < 5e-2 and grel < 8e-2 and wrel < 8e-2, (rel, grel, wrel)
 
 
+def test_qk_norm_and_softcap_switches():
+    """Both deviations default off and reproduce the reference path bit-for-bit; on, they change the
+    logits; a checkpoint saved without qk_norm loads into a qk_norm model (identity weight) and the
+    softcap at C=1e6 is the uncapped softmax to fp32 rounding."""
+    ids, cu = _batch()
+    base = _model(_cfg(attn_impl="fused", indexer_train_mode="kl"))
+    off = _model(_cfg(attn_impl="fused", indexer_train_mode="kl", qk_norm=False, attn_logit_softcap=0.0))
+    off.load_state_dict(base.state_dict())
+    d, w, _ = _compare(base, off, ids, cu, "switches off == reference path", tol=1e-12)
+    assert d == 0.0 and w == 0.0, (d, w)
+    # softcap: huge C == off; small C changes the logits and every attention path agrees fused vs chunked
+    hi = _model(_cfg(attn_impl="fused", indexer_train_mode="kl", attn_logit_softcap=1e6))
+    hi.load_state_dict(base.state_dict())
+    d, w, _ = _compare(base, hi, ids, cu, "softcap 1e6 == off", tol=1e-4)
+    capf = _model(_cfg(attn_impl="fused", indexer_train_mode="kl", attn_logit_softcap=0.5))
+    capc = _model(_cfg(attn_impl="chunked", indexer_train_mode="kl", attn_logit_softcap=0.5))
+    capf.load_state_dict(base.state_dict())
+    capc.load_state_dict(base.state_dict())
+    _compare(capf, capc, ids, cu, "softcap 0.5 fused == chunked", tol=1e-3)  # tanh at C=0.5 amplifies fp32 rounding in the LSE merge
+    lb, _ = _grads(base, ids, cu)
+    lc, _ = _grads(capf, ids, cu)
+    assert (lb - lc).abs().max() > 1e-3, "softcap 0.5 must change the logits"
+    # qk_norm: old checkpoint round-trips (missing head norms filled with ones), output changes
+    qk = _model(_cfg(attn_impl="fused", indexer_train_mode="kl", qk_norm=True))
+    res = qk.load_state_dict(base.state_dict(), strict=True)
+    assert not res.missing_keys and not res.unexpected_keys, res
+    assert torch.equal(qk.layers[0].attn.qproj.head_norm.weight, torch.ones(qk.layers[0].attn.head_dim))
+    names = set(qk.state_dict())
+    assert any(n.endswith("qproj.head_norm.weight") for n in names) and any(n.endswith("indexer.q_head_norm.weight") for n in names)
+    lq, _ = _grads(qk, ids, cu)
+    assert (lb - lq).abs().max() > 1e-3, "qk_norm must change the logits"
+    # and the qk_norm model's own state dict round-trips into a fresh qk_norm model
+    qk2 = _model(_cfg(attn_impl="fused", indexer_train_mode="kl", qk_norm=True))
+    qk2.load_state_dict(qk.state_dict(), strict=True)
+    _compare(qk, qk2, ids, cu, "qk_norm state_dict round trip", tol=1e-12)
+    print("  switches off == reference (bit-exact); softcap 1e6 == off; softcap fused == chunked; qk_norm loads an old ckpt")
+
+
 def test_forward_compiles_without_graph_breaks():
     import torch._dynamo as dynamo
 
     from v41f.lm import V42LM
 
     ids, cu = _batch()
-    cfg = _cfg(attn_impl="fused", rope_impl="real", indexer_train_mode="kl", moe_stacked=True)
+    cfg = _cfg(attn_impl="fused", rope_impl="real", indexer_train_mode="kl", moe_stacked=True,
+               qk_norm=True, attn_logit_softcap=30.0)  # both deviations on: they must not break the graph
     torch.manual_seed(0)
     m = V42LM(cfg, max_batch_size=2).float().train()
     m.record_qk_stats = True  # the health probe's side effects must not break the graph
@@ -199,7 +238,8 @@ def test_forward_compiles_without_graph_breaks():
 
 
 TESTS = [test_fused_equals_chunked, test_rope_real_equals_complex, test_stacked_moe_equals_loop_and_remaps,
-         test_deepgemm_layout_and_emulated_fp8, test_forward_compiles_without_graph_breaks]
+         test_deepgemm_layout_and_emulated_fp8, test_qk_norm_and_softcap_switches,
+         test_forward_compiles_without_graph_breaks]
 
 if __name__ == "__main__":
     for t in TESTS:

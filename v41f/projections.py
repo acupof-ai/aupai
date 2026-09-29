@@ -16,11 +16,13 @@ from v41f.norm_gate import RMSNorm
 
 
 class QProj(nn.Module):
-    def __init__(self, dim: int, q_lora_rank: int, n_heads: int, head_dim: int, eps: float):
+    def __init__(self, dim: int, q_lora_rank: int, n_heads: int, head_dim: int, eps: float, qk_norm: bool = False):
         super().__init__()
         self.wq_a = nn.Linear(dim, q_lora_rank, bias=False)
         self.q_norm = RMSNorm(q_lora_rank, eps)
         self.wq_b = nn.Linear(q_lora_rank, n_heads * head_dim, bias=False)
+        # cfg.qk_norm (deviation from the reference): RMSNorm per head on q, before RoPE
+        self.head_norm = RMSNorm(head_dim, eps) if qk_norm else None
         self.n_heads = n_heads
         self.head_dim = head_dim
 
@@ -29,7 +31,17 @@ class QProj(nn.Module):
 
     def forward(self, x):
         qr = self.latent(x)
-        return self.wq_b(qr).unflatten(-1, (self.n_heads, self.head_dim)), qr
+        q = self.wq_b(qr).unflatten(-1, (self.n_heads, self.head_dim))
+        if self.head_norm is not None:
+            q = self.head_norm(q)
+        return q, qr
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        # a checkpoint saved without qk_norm loads into a qk_norm model at the identity weight
+        k = f"{prefix}head_norm.weight"
+        if self.head_norm is not None and k not in state_dict:
+            state_dict[k] = torch.ones_like(self.head_norm.weight)
+        return super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
 
 class KVProj(nn.Module):

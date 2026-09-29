@@ -13,7 +13,7 @@ import torch
 
 
 def sparse_attn(q: torch.Tensor, kv: torch.Tensor, attn_sink: torch.Tensor,
-                topk_idxs: torch.Tensor, softmax_scale: float,
+                topk_idxs: torch.Tensor, softmax_scale: float, softcap: float = 0.0,
                 slot_weight: "torch.Tensor | None" = None) -> torch.Tensor:
     """`slot_weight` [b,m,1,k] optionally scales each gathered slot's softmax numerator.
 
@@ -33,6 +33,8 @@ def sparse_attn(q: torch.Tensor, kv: torch.Tensor, attn_sink: torch.Tensor,
     bidx = torch.arange(b, device=q.device)[:, None, None]
     gathered = kv[bidx, safe]                            # [b,m,topk,d]
     scores = torch.einsum("bmhd,bmtd->bmht", q, gathered) * softmax_scale
+    if softcap:  # cfg.attn_logit_softcap, a deviation from the reference; the sink stays uncapped
+        scores = softcap * torch.tanh(scores / softcap)
     scores = scores.masked_fill(~valid.unsqueeze(2), float("-inf"))
     row_max = scores.amax(dim=-1, keepdim=True)
     row_max = torch.nan_to_num(row_max, neginf=0.0)     # all-empty row -> sink only

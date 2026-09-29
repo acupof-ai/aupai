@@ -108,7 +108,8 @@ class Attention(nn.Module):
         # would make the allclose oracle non-deterministic (the gate-test flaky lesson).
         self.attn_sink = nn.Parameter(torch.zeros(self.n_heads, dtype=torch.float32))
 
-        self.qproj = QProj(cfg.dim, cfg.q_lora_rank, cfg.n_heads, cfg.head_dim, cfg.norm_eps)
+        self.qproj = QProj(cfg.dim, cfg.q_lora_rank, cfg.n_heads, cfg.head_dim, cfg.norm_eps, qk_norm=cfg.qk_norm)
+        self.softcap = float(cfg.attn_logit_softcap)
         self.kvproj = KVProj(cfg.dim, cfg.head_dim, cfg.norm_eps)
         self.oproj = GroupedOProj(cfg.n_heads, cfg.head_dim, cfg.o_groups, cfg.o_lora_rank, cfg.dim)
 
@@ -131,6 +132,8 @@ class Attention(nn.Module):
                 cfg.rope_head_dim,
                 cfg.index_topk,
                 ratio,
+                qk_norm=cfg.qk_norm,
+                eps=cfg.norm_eps,
             )
             if self.is_index_source
             else None
@@ -228,6 +231,11 @@ class Attention(nn.Module):
             state.topk_idxs = docpack.select_visible(self.indexer, x, qr, state.index_k, freqs, visible, m)
         return state.compress_kv, state.topk_idxs
 
+    def _cap_kw(self):
+        """softcap only when on: the off path keeps the reference sparse_attn call byte-identical
+        (inference stubs and monkeypatches read that signature; see the slot_weight note below)."""
+        return {"softcap": self.softcap} if self.softcap else {}
+
     def _forward_docs(self, x, state):
         if self.cfg.indexer_train_mode == "ste":
             raise NotImplementedError("indexer_train_mode 'ste' has no packed-row path; use 'kl'")
@@ -255,14 +263,15 @@ class Attention(nn.Module):
             if self.cfg.attn_impl == "fused":
                 o, lse = docpack.fused_sparse_attn(
                     q, kv, comp_kv, comp_idx, self.attn_sink, self.softmax_scale, state.doc, state.cu_docs,
-                    self.window_size, m)
+                    self.window_size, m, softcap=self.softcap)
             else:
                 o, lse = docpack.windowed_sparse_attn(
-                    q, kv, comp_kv, comp_idx, self.attn_sink, self.softmax_scale, state.doc, self.window_size, m)
+                    q, kv, comp_kv, comp_idx, self.attn_sink, self.softmax_scale, state.doc, self.window_size, m,
+                    softcap=self.softcap)
             if self.is_index_source and self.cfg.indexer_train_mode == "kl":
                 state.indexer_kl.append(docpack.indexer_kl(
                     self.indexer, x, qr, state.index_k, freqs, q, comp_kv, comp_idx, lse,
-                    self.softmax_scale, m))
+                    self.softmax_scale, m, softcap=self.softcap))
         else:
             win = get_window_topk_idxs(self.window_size, bsz, seqlen, 0, device=x.device)
             start = torch.arange(seqlen, device=x.device) - state.pos  # [b,s] document start
@@ -270,7 +279,7 @@ class Attention(nn.Module):
             if comp_kv is not None:
                 kv = torch.cat([kv, comp_kv], dim=1)
                 idxs = torch.cat([idxs, torch.where(comp_idx >= 0, comp_idx + seqlen, -1)], dim=-1)
-            o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale)
+            o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale, **self._cap_kw())
         o = _rot_tail(o.to(q.dtype), lambda t: rot(t, True), self.rd)
         return self.oproj(o), state
 
@@ -310,9 +319,9 @@ class Attention(nn.Module):
             # THE OFF PATH MAKES THE IDENTICAL CALL. Not `slot_weight=None`: passing the
             # keyword at all changes the call signature every inference stub and monkeypatch
             # sees, so the faithful path is kept literally byte-for-byte the old call.
-            o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale)
+            o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale, **self._cap_kw())
         else:
-            o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale,
+            o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale, **self._cap_kw(),
                             slot_weight=ste_slot_weight(sel_scores))
         # the kernel accumulates in fp32 against the fp32 attn_sink but stores empty_like(q),
         # so its output is the activation dtype; match that boundary before wo_a (bf16).

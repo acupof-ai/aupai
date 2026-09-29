@@ -122,6 +122,14 @@ class V41FConfig:
     # x 128 activations / 128x128 weight blocks; dW stays bf16 grouped_mm. Needs moe_stacked. CUDA
     # with deep_gemm importable; elsewhere a torch quantize/dequantize emulation (v41f/deepgemm_moe.py).
     moe_gemm: str = "grouped_mm"
+    # DEVIATIONS FROM THE V4.1 REFERENCE, default off, for the qproj-grad-growth arm (2026-09-30):
+    # qk_norm: RMSNorm per head (over head_dim, learned weight, norm_eps) on q after wq_b and before
+    # RoPE, and the same on the indexer query after its wq_b. The reference bounds only the latent qr.
+    # attn_logit_softcap C > 0: scores := C * tanh(scores / C) after the softmax scale, in every
+    # attention path (sparse_attn, the chunked window/entry branches, the flash window branch via
+    # flash_attn.cute's softcap); the sink is not capped. 0 = off = the reference softmax.
+    qk_norm: bool = False
+    attn_logit_softcap: float = 0.0
 
     def validate(self) -> None:
         if len(self.compress_ratios) != self.n_layers:
@@ -180,6 +188,8 @@ class V41FConfig:
             raise ValueError("indexer_train_mode 'kl' needs attn_impl 'chunked' or 'fused' (the lse it reads)")
         if self.rope_impl not in ("complex", "real"):
             raise ValueError(f"rope_impl must be 'complex' or 'real', got {self.rope_impl!r}")
+        if self.attn_logit_softcap < 0:
+            raise ValueError(f"attn_logit_softcap must be >= 0 (0 = off), got {self.attn_logit_softcap}")
         if self.moe_gemm not in ("grouped_mm", "deepgemm"):
             raise ValueError(f"moe_gemm must be 'grouped_mm' or 'deepgemm', got {self.moe_gemm!r}")
         if self.moe_gemm == "deepgemm" and not self.moe_stacked:
