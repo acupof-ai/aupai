@@ -91,6 +91,9 @@ REF_ONLY_SHAPE_PENDING = frozenset()
 CFG_ONLY_TRAINING_KNOBS = frozenset({
     "indexer_train_mode",   # docs/standards/v41f_indexer_trainability_design.md (#456/#485)
     "attn_impl",            # v41f/docpack.py: packed-row chunked attention (v42 trainer)
+    "rope_impl",            # v41f/rope.py: real cos/sin rotation, compile-friendly (track P, 1e)
+    "moe_stacked",          # v41f/moe.py: stacked expert weights for grouped_mm (track P, 1e)
+    "block_ckpt",           # v41f/model.py: per-Block activation checkpointing (--grad_ckpt, track P, 1e)
 })
 
 # Prime bucket sum independently recomputed = 786,862; x head_dim 128 = 100.7M rows.

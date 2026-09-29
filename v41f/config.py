@@ -102,6 +102,16 @@ class V41FConfig:
     # path (v41f/docpack.py): exact same softmax, per-query-chunk with activation checkpoints,
     # and the only path that computes the "kl" indexer loss. Also not a reference field.
     attn_impl: str = "ref"
+    # "fused": flash-attn window branch + chunked entry branch merged by LSE (v41f/docpack.py
+    # fused_sparse_attn); pure-torch fallback off CUDA. Same numbers as "chunked" to bf16 floor.
+    # rope_impl "real": cos/sin rotation instead of the complex64 round trip (compile-clean).
+    # moe_stacked: the routed experts as three stacked [E,...] parameters (grouped_mm reads them
+    # directly, no per-forward torch.stack); state_dict keys change, the loader remaps old ones.
+    rope_impl: str = "complex"
+    moe_stacked: bool = False
+    # block_ckpt: recompute each Block in backward (torch.utils.checkpoint, non-reentrant); the
+    # trainer sets it from --grad_ckpt. Numerically identical; trades ~1 forward for activations.
+    block_ckpt: bool = False
 
     def validate(self) -> None:
         if len(self.compress_ratios) != self.n_layers:
@@ -154,10 +164,12 @@ class V41FConfig:
             )
         if self.indexer_train_mode not in ("off", "ste", "kl"):
             raise ValueError(f"indexer_train_mode must be 'off', 'ste' or 'kl', got {self.indexer_train_mode!r}")
-        if self.attn_impl not in ("ref", "chunked"):
-            raise ValueError(f"attn_impl must be 'ref' or 'chunked', got {self.attn_impl!r}")
-        if self.indexer_train_mode == "kl" and self.attn_impl != "chunked":
-            raise ValueError("indexer_train_mode 'kl' needs attn_impl 'chunked' (the lse it reads)")
+        if self.attn_impl not in ("ref", "chunked", "fused"):
+            raise ValueError(f"attn_impl must be 'ref', 'chunked' or 'fused', got {self.attn_impl!r}")
+        if self.indexer_train_mode == "kl" and self.attn_impl == "ref":
+            raise ValueError("indexer_train_mode 'kl' needs attn_impl 'chunked' or 'fused' (the lse it reads)")
+        if self.rope_impl not in ("complex", "real"):
+            raise ValueError(f"rope_impl must be 'complex' or 'real', got {self.rope_impl!r}")
 
     def derived_engram_num_embeddings(self) -> tuple[int, ...]:
         """Table rows per engram layer = that layer's sum of bucket primes.
