@@ -203,6 +203,7 @@
     "scripts/test_cache_absent_refusal.py": 2.3,
     "scripts/test_cache_dir_knob.py": 1.3,
     "scripts/test_cache_read_line.py": 2.3,
+    "scripts/test_ced_cache.py": 25.0,
     "scripts/test_check_summary.py": 68.4,
     "scripts/test_ci_selftests_driver.py": 3.2,
     "scripts/test_cursor_save.py": 5.6,

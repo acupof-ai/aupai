@@ -1289,7 +1289,13 @@ def main():
         # Measured 2026-09-07, three mutants each killing a different world set: count-not-overlap
         # -> W2/W3-control/W6, two-dot -> W3-control/W6, always-empty -> W1/W3.
         "scripts/test_behind_main_overlap.py",
-        # _refuse_committing_on_main's five worlds. Registered because the gate it tests lives in
+        # CED incremental cache (jan). Registered because its acceptance is numerical
+        # equivalence to a whole-sequence forward, which eyeballing the join cannot show:
+        # the selftest builds a tiny 6-layer CED MoE model and pins exact-mode prefill
+        # logits bit-identical to a full forward at three prompt lengths, and a mutant that
+        # drops a SWA ring row from the attention is caught by the negative control (a
+        # corrupted window key/value must move the next logits). CPU, bf16/fp32, ~1s.
+        "scripts/test_ced_cache.py",        # _refuse_committing_on_main's five worlds. Registered because the gate it tests lives in
         # THIS file and nowhere else, and because its load-bearing world is one nobody would think
         # to build: an UNBORN HEAD is the only world separating symbolic-ref from
         # `rev-parse --abbrev-ref`, and the swap mutant survived the other four. Detached, which is
