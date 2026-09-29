@@ -31,7 +31,7 @@ JOIN=38146
 
 if [ "$MODE" = "full" ]; then
   NAME="${NAME:-v41_ced_stage2_0928}"
-  MIX=data/mix_v41_stage2.json
+  MIX="${MIX:-data/mix_v41_stage2.json}"
   SAVE=2000
   VAL=500
   WARMUP="${WARMUP:-500}"  # absolute re-warmup, matches the 30B run's own warmup (1e ruling)

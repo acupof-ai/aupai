@@ -1,0 +1,127 @@
+{
+ "_comment": "V4.1 CED stage-2 full mix, derived against step 38146 of the 30B run (ckpt_v41_ced_0926.pt). Segment 12715 steps = 2,441,280 plan rows (192/step) = 9.999B tokens; total_tokens is cursor 7,193,226 rows + segment = 9,634,506 rows. Single phase (anneal_frac 0). epochs are TOTALS against the trainable pool and every pool was measured from its cache at write time. Launch with --lr_origin_step 38146 --lr_peak_mult 0.30 --warmup 500 --warmdown 1.0 --anneal_frac 0.0. Regenerate with scripts/write_mix_stage2_v41.py; never edit. REPAIR COPY 2026-09-29 (1e): identical plan and epoch totals, _derived_against rebased to ckpt_v41_ced_stage2_0928.pt.step46000 for the sr_cast-fix resume (v41_ced_stage2r_0929); train.py subtracts the rows that cursor already spent.",
+ "total_tokens": 39462936576,
+ "total_rows": 9634506,
+ "seq": 4096,
+ "anneal_frac": 0.0,
+ "join_step": 38146,
+ "segment_steps": 12715,
+ "segment_plan_rows": 2441280,
+ "domains": {
+  "code_ultra_l2_dc": {
+   "weight": 0.25,
+   "anneal": 0.25,
+   "epochs": 1,
+   "fingerprint": "fefdc1fec54808e0",
+   "pool_rows_measured": 8821264,
+   "cache_seq_rows": 8826264,
+   "val_rows_held_out": 5000,
+   "cursor_used_rows": 3396487,
+   "unread_rows": 5424777,
+   "segment_rows": 610320,
+   "epochs_pool_source": "mmap of /data00/tokens_code_ultra_l2_dc.pt at write time (packed 8,826,264 seq-rows minus 5,000 val)"
+  },
+  "code_ultra_l3_noexec_dc": {
+   "weight": 0.25,
+   "anneal": 0.25,
+   "epochs": 1,
+   "fingerprint": "c40de52da40ffd2e",
+   "pool_rows_measured": 6511781,
+   "cache_seq_rows": 6516781,
+   "val_rows_held_out": 5000,
+   "cursor_used_rows": 2345578,
+   "unread_rows": 4166203,
+   "segment_rows": 610320,
+   "epochs_pool_source": "mmap of /data00/tokens_code_ultra_l3_noexec_dc.pt at write time (packed 6,516,781 seq-rows minus 5,000 val)"
+  },
+  "code_py_starcoder_dc": {
+   "weight": 0.1,
+   "anneal": 0.1,
+   "epochs": 1,
+   "fingerprint": "117f8fcbbefef881",
+   "pool_rows_measured": 1935189,
+   "cache_seq_rows": 1940189,
+   "val_rows_held_out": 5000,
+   "cursor_used_rows": 529495,
+   "unread_rows": 1405694,
+   "segment_rows": 244128,
+   "epochs_pool_source": "mmap of /data00/tokens_code_py_starcoder_dc.pt at write time (packed 1,940,189 seq-rows minus 5,000 val)"
+  },
+  "zh_web_dc": {
+   "weight": 0.15,
+   "anneal": 0.15,
+   "epochs": 1,
+   "pool_rows_measured": 1186899,
+   "cache_seq_rows": 1191899,
+   "val_rows_held_out": 5000,
+   "cursor_used_rows": 0,
+   "unread_rows": 1186899,
+   "segment_rows": 366192,
+   "epochs_pool_source": "mmap of /data00/tokens_zh_web_dc.pt at write time (packed 1,191,899 seq-rows minus 5,000 val)",
+   "stage2_only_domain": true
+  },
+  "math_owm_stage2_dc": {
+   "weight": 0.1200002,
+   "anneal": 0.1200002,
+   "epochs": 1,
+   "fingerprint": "6201b92bf4ca4e1c",
+   "pool_rows_measured": 2305276,
+   "cache_seq_rows": 2310276,
+   "val_rows_held_out": 5000,
+   "cursor_used_rows": 594153,
+   "unread_rows": 1711123,
+   "segment_rows": 292954,
+   "epochs_pool_source": "mmap of /data00/tokens_math_owm_stage2_dc.pt at write time (packed 2,310,276 seq-rows minus 5,000 val)"
+  },
+  "math_cot2_dc": {
+   "weight": 0.08,
+   "anneal": 0.08,
+   "epochs": 1,
+   "pool_rows_measured": 288190,
+   "cache_seq_rows": 293190,
+   "val_rows_held_out": 5000,
+   "cursor_used_rows": 0,
+   "unread_rows": 288190,
+   "segment_rows": 195302,
+   "epochs_pool_source": "mmap of /data00/tokens_math_cot2_dc.pt at write time (packed 293,190 seq-rows minus 5,000 val)",
+   "stage2_only_domain": true
+  },
+  "en_c4_stage2_dc": {
+   "weight": 0.05,
+   "anneal": 0.05,
+   "epochs": 1,
+   "fingerprint": "15caa8587b64e20f",
+   "pool_rows_measured": 1406698,
+   "cache_seq_rows": 1411698,
+   "val_rows_held_out": 5000,
+   "cursor_used_rows": 327513,
+   "unread_rows": 1079185,
+   "segment_rows": 122064,
+   "epochs_pool_source": "mmap of /data00/tokens_en_c4_stage2_dc.pt at write time (packed 1,411,698 seq-rows minus 5,000 val)"
+  }
+ },
+ "_derived_against": {
+  "row_cursor": {
+   "code_ultra_l2_dc": 3773877,
+   "code_ultra_l3_noexec_dc": 2722339,
+   "code_py_starcoder_dc": 680179,
+   "zh_web_dc": 225978,
+   "math_owm_stage2_dc": 775180,
+   "math_cot2_dc": 120534,
+   "en_c4_stage2_dc": 403107,
+   "cot_dc": 130806
+  },
+  "row_cursor_srcfp": {
+   "code_ultra_l2_dc": "fefdc1fec54808e0",
+   "code_ultra_l3_noexec_dc": "c40de52da40ffd2e",
+   "code_py_starcoder_dc": "117f8fcbbefef881",
+   "zh_web_dc": "fec775d8f920cb86",
+   "math_owm_stage2_dc": "6201b92bf4ca4e1c",
+   "math_cot2_dc": "cca29b7fca53177e",
+   "en_c4_stage2_dc": "15caa8587b64e20f",
+   "cot_dc": "22c9a8274155111e"
+  },
+  "row_cursor_seed": 42,
+  "_note": "30B resume cursor at step 38146. Stage-2-only domains ['math_cot2_dc', 'zh_web_dc'] are deliberately absent: they start at packed row 0 and the checkpoint carries no cursor for them."
+ }
+}
