@@ -69,6 +69,7 @@ class V41FModel(nn.Module):
     def __init__(self, cfg, max_batch_size: int = 4, tokenizer=None, max_seq_len: int = 4096):
         super().__init__()
         self.cfg = cfg
+        self.attn_impl = cfg.attn_impl  # read in forward; a subclass may rebind self.cfg
         self.hc_mult = cfg.hc_mult
         self.target_layer_ids = tuple(cfg.dspark_target_layer_ids)
         self.embed = nn.Embedding(cfg.vocab_size, cfg.dim)
@@ -206,7 +207,7 @@ class V41FModel(nn.Module):
         pre_mix = make_identity_pre_mix(h, self.hc_mult)
         state = SharedAttnState()
         state.cu = cu
-        if cu is not None or self.cfg.attn_impl == "chunked":
+        if cu is not None or self.attn_impl == "chunked":
             state.doc, state.pos, state.doclen = doc_layout(cu, *input_ids.shape, input_ids.device)
         for i, layer in enumerate(self.layers):
             engram = self.engrams[i]
