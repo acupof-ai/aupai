@@ -153,7 +153,7 @@ class Attention(nn.Module):
     # ------------------------------------------------------------------ prefill helpers
     def _window_kv(self, x, freqs, bsz):
         """Sliding-window raw KV (MQA) and the per-query window position idxs (prefill)."""
-        kv = self.kvproj(x)
+        kv = self.kvproj(x).clone()  # clone: rotated in place below; a Linear under fp8/compile returns a custom-Function output whose view cannot take an in-place write
         apply_rotary_emb(kv[..., -self.rd :], freqs)
         seqlen = x.size(1)
         # prefill attends over the chunk directly; the ring-buffer write is decode-only and
@@ -177,7 +177,7 @@ class Attention(nn.Module):
         latent = self.compressor(x, 0) if self.is_kv_source else None
 
         if self.owns_index_k and latent is not None:
-            k = self.index_key(latent)  # index keys, RoPE-free
+            k = self.index_key(latent).clone()  # index keys, RoPE-free; rotated in place below
             apply_rotary_emb(k[..., -self.rd :], self._group_freqs(seqlen, self.compress_ratio))
             state.index_k = k
         if self.is_kv_source and latent is not None:
@@ -276,6 +276,7 @@ class Attention(nn.Module):
             return self._forward_docs(x, state)
 
         q, qr = self.qproj(x)
+        q = q.clone()  # rotated in place below
         apply_rotary_emb(q[..., -self.rd :], freqs)
 
         kv, idxs = self._window_kv(x, freqs, bsz)
@@ -306,6 +307,6 @@ class Attention(nn.Module):
                             slot_weight=ste_slot_weight(sel_scores))
         # the kernel accumulates in fp32 against the fp32 attn_sink but stores empty_like(q),
         # so its output is the activation dtype; match that boundary before wo_a (bf16).
-        o = o.to(q.dtype)
+        o = o.to(q.dtype).clone()  # inverse RoPE writes in place below
         apply_rotary_emb(o[..., -self.rd :], freqs, inverse=True)
         return self.oproj(o), state

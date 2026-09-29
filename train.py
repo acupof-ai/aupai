@@ -276,6 +276,10 @@ class Cfg:
     arch = "hybrid"
     v42_lr = 1e-3
     v42_cfg = None
+    # v42 implementation switches, "k=v,k=v" over V41FConfig (attn_impl=fused, rope_impl=real,
+    # moe_stacked=1). Numerically equivalent paths (tests/v41f/test_p1_fused.py), so they may
+    # change across a resume; the shape fields stay in v42_cfg.
+    v42_impl = ""
     # <=0 means "the dense lr", resolved in build_optimizers. The flag exists so the value is
     # recorded in the launch line and ck["cfg"] rather than living in a default nobody reads --
     # same reason mem_sel_lr exists, and the memory collapse is why it must never be the
@@ -847,13 +851,20 @@ def build_model(cfg):
     the checkpoint's cfg records the exact shape."""
     if getattr(cfg, "arch", "hybrid") != "v42":
         return HybridLM(cfg)
-    from dataclasses import asdict  # noqa: PLC0415
+    from dataclasses import asdict, replace  # noqa: PLC0415
 
     from v41f.config import V41FConfig, v42_s24  # noqa: PLC0415
     from v41f.lm import V42LM  # noqa: PLC0415
 
     vc = V41FConfig(**{k: tuple(v) if isinstance(v, list) else v for k, v in cfg.v42_cfg.items()}) \
         if cfg.v42_cfg else v42_s24(vocab_size=cfg.vocab)
+    over = {}
+    for kv in filter(None, (getattr(cfg, "v42_impl", "") or "").split(",")):
+        k, v = kv.split("=", 1)
+        if k not in ("attn_impl", "rope_impl", "moe_stacked"):
+            raise ValueError(f"--v42_impl: {k} is not an implementation switch")
+        over[k] = v in ("1", "true", "True") if k == "moe_stacked" else v
+    vc = replace(vc, block_ckpt=bool(cfg.grad_ckpt), **over)
     vc.validate()
     cfg.v42_cfg = asdict(vc)
     return V42LM(vc, balance_alpha=cfg.moe_balance_alpha, bias_gamma=cfg.moe_bias_gamma)
@@ -3435,6 +3446,7 @@ def main():
                             help=f"{help_} (default: Cfg.{name})")
     for name, help_ in {
         "grad_ckpt": "gradient checkpointing (recompute sublayers in backward)",
+        "compile": "torch.compile the model body (default on); --no-compile runs eager, for a path compile cannot trace yet",
         "attn_res": "Attention Residuals (arXiv 2603.15031)",
         "attn_res_dyn_q": "AttnRes input-dependent pseudo-query",
         "fone": "Fourier number embedding: one [NUM] per number, value in, digits out",
@@ -3592,6 +3604,9 @@ def main():
              "v41f.config.v42_s24, V4.1 optimizer at --v42_lr)")
     parser.add_argument("--v42_lr", type=float, default=None,
                         help="v42: the one base lr for Muon, Sinkhorn and AdamW (default: Cfg.v42_lr)")
+    parser.add_argument("--v42_impl", type=str, default=None,
+                        help="v42: implementation switches k=v,k=v over V41FConfig, e.g. "
+                             "attn_impl=fused,rope_impl=real,moe_stacked=1 (default: chunked/complex/0)")
     parser.add_argument(
         "--router_logit_cap", type=float, default=None,
         help="MoE router logit softcap C: z := C*tanh(z/C) before softmax/sigmoid; 0 (or unset) "
@@ -3669,7 +3684,7 @@ def main():
             "--attn_hybrid, or drop them.")
     if Cfg.arch == "v42":
         _v42_bad = [f for f, on in (
-            ("--fone", Cfg.fone), ("--grad_ckpt", Cfg.grad_ckpt), ("--loop", args.loop),
+            ("--fone", Cfg.fone), ("--loop", args.loop),
             ("--mem_values", Cfg.mem_values), ("--moe_experts (HybridLM MoE)", Cfg.moe_experts),
             ("--stochastic_round", getattr(Cfg, "stochastic_round", False)),
             ("--fp32_master", args.fp32_master), ("FP8_HEAD=1", os.environ.get("FP8_HEAD") == "1"),
