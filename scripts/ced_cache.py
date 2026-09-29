@@ -246,10 +246,13 @@ class CEDCache:
         # ste's forward value IS the hard selector, so multiply the selected entry output by it.
         oe = (pe * e_mask.to(pe.dtype)) @ vc                         # (H,Tq,hd)
         kw = wk.transpose(0, 1)                                      # (H,W,hd)
-        sw = (qh @ kw.transpose(-1, -2) * csa.scale).masked_fill(
-            ~win_mask[None], float("-inf"))
-        lw = torch.logsumexp(sw.to(wd), -1)
-        ow = torch.softmax(sw, -1).to(wd) @ wv.transpose(0, 1).to(wd)
+        # Match csa2_window_flash's CPU branch exactly: it casts the masked scores to wd
+        # BEFORE both logsumexp and softmax, so the window softmax runs in fp32 even on a
+        # bf16 model. Softmax in bf16 here is a second, larger prefill/decode gap.
+        sw = ((qh @ kw.transpose(-1, -2) * csa.scale)
+              .masked_fill(~win_mask[None], float("-inf"))).to(wd)
+        lw = torch.logsumexp(sw, -1)
+        ow = torch.softmax(sw, -1) @ wv.transpose(0, 1).to(wd)
         mm = torch.maximum(le, lw)
         ae = torch.where(torch.isfinite(le), (le - mm).exp(), torch.zeros_like(le))
         aw = (lw - mm).exp()
