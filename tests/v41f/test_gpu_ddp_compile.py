@@ -69,11 +69,12 @@ def one_arm(a, optimize_ddp, rank, local, world):
     g = torch.Generator().manual_seed(rank)
     ids = torch.randint(0, a.vocab, (a.B, a.T), generator=g).to(local)
     tgt = torch.roll(ids, -1, 1)
-    hidden, _ = model(ids, cu=None)
-    h = hidden.reshape(-1, hidden.size(-1))
-    loss = flce(raw.head.weight, h, tgt.reshape(-1)) if flce is not None else \
-        torch.nn.functional.cross_entropy((h @ raw.head.weight.t()).float(), tgt.reshape(-1))
-    aux = raw.aux_loss()
+    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):  # train.py's amp context around fwd+loss
+        hidden, _ = model(ids, cu=None)
+        h = hidden.reshape(-1, hidden.size(-1))
+        loss = flce(raw.head.weight, h, tgt.reshape(-1)) if flce is not None else \
+            torch.nn.functional.cross_entropy((h @ raw.head.weight.t()).float(), tgt.reshape(-1))
+        aux = raw.aux_loss()
     if aux is not None:
         loss = loss + aux
     problems = []

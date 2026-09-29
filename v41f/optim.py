@@ -75,6 +75,8 @@ class V42Muon(torch.optim.Optimizer):
             beta, lr, wd = group["momentum"], group["lr"], group["weight_decay"]
             heads = group["heads"] or [1] * len(group["params"])
             live = [(p, h) for p, h in zip(group["params"], heads, strict=True) if p.grad is not None]
+            if not live:  # torch._foreach_* refuse an empty list; a group with no grads this step is a no-op
+                continue
             for p, _ in live:
                 if "momentum_buffer" not in self.state[p]:
                     self.state[p]["momentum_buffer"] = torch.zeros_like(p.grad)

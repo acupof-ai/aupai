@@ -50,6 +50,7 @@ def main():
     ap.add_argument("--T", type=int, default=4096)
     ap.add_argument("--vocab", type=int, default=32768)
     ap.add_argument("--grad_ckpt", action="store_true")
+    ap.add_argument("--moe_gemm", default="grouped_mm", choices=["grouped_mm", "deepgemm"])
     ap.add_argument("--layers", type=int, default=None, help="truncate the trunk (default 14 on CPU, 24 on CUDA)")
     ap.add_argument("--experts", type=int, default=None, help="routed experts (default 16 on CPU, 64 on CUDA)")
     a = ap.parse_args()
@@ -61,7 +62,7 @@ def main():
         index_source_layers=tuple(s for s in (2, 8, 12, 16, 20) if s < L))
     over["n_routed_experts"] = a.experts or (64 if dev == "cuda" else 16)
     cfg = v42_s24(vocab_size=a.vocab, attn_impl="fused", rope_impl="real", moe_stacked=True,
-                  block_ckpt=a.grad_ckpt, **over)
+                  block_ckpt=a.grad_ckpt, moe_gemm=a.moe_gemm, **over)
     cfg.validate()
     MoE.grouped_on_cpu = True
     torch.manual_seed(0)
@@ -95,7 +96,7 @@ def main():
     with torch.autograd.graph.saved_tensors_hooks(pack, lambda t: t):
         hidden, _ = m(ids, cu=None)
     stream = a.B * a.T * cfg.hc_mult * cfg.dim * 2
-    print(f"v42_mem_account: B{a.B} T{a.T} dev={dev} layers={L} experts={over['n_routed_experts']} "
+    print(f"v42_mem_account: B{a.B} T{a.T} dev={dev} layers={L} experts={over['n_routed_experts']} moe_gemm={a.moe_gemm} "
           f"block_ckpt={a.grad_ckpt}; 4-stream residual "
           f"[b,s,hc,d] bf16 = {stream / MIB:.0f} MiB per layer boundary")
     print(f"{'layer':>6} {'attention':>10} {'hc+norm':>10} {'moe':>10} {'other':>8} {'total MiB':>10}")

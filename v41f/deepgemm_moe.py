@@ -11,7 +11,9 @@ per-tensor mode, so the scaling matches torchao's e4m3 dynamic recipe in dtype a
 in granularity.
 
   forward   y = a @ w^T      m_grouped_fp8_gemm_nt_contiguous((a_fp8, a_sf), (w_fp8, w_sf), y, m_indices)
-  backward  da = dy @ w      m_grouped_fp8_gemm_nn_contiguous((dy_fp8, dy_sf), (w_fp8, w_sf), da, m_indices)
+  backward  da = dy @ w      the same nt kernel with B = w^T as a K-major [E,K,N] copy (DeepGEMM asserts
+                             major_b == K: the nn variant with our [E,N,K] weight fails gemm.hpp:159);
+                             128x128 block scales transpose with it
             dw = dy^T @ a    torch._grouped_mm in bf16 (this deep_gemm build has no k-grouped GEMM)
 
 Off CUDA, or without deep_gemm, `emulate=True` runs the same quantize -> dequantize -> bf16 grouped
@@ -90,22 +92,21 @@ def _gemm_nt(a_q, a_sf, w_q, w_sf, m_indices, emulate):
         d = torch.empty(a_q.size(0), w_q.size(1), dtype=torch.bfloat16, device=a_q.device)
         _dg.m_grouped_fp8_gemm_nt_contiguous((a_q, a_sf), (w_q, w_sf), d, m_indices)
         return d
+    # per-expert loop over the 128-aligned segments: no [Mpad,N,K] gather (that form needed 21 GB at
+    # B1 T1024 on CPU and would dwarf the kernel path's memory on a card)
     a = dequant_token(a_q, a_sf)
     w = dequant_block(w_q, w_sf)
-    idx = m_indices.clamp_min(0).long()
-    return torch.einsum("mk,mnk->mn", a, w[idx]).to(torch.bfloat16) * (m_indices >= 0).unsqueeze(-1)
+    out = a.new_zeros(a.size(0), w.size(1))
+    for e in range(w.size(0)):
+        rows = (m_indices == e).nonzero().squeeze(1)
+        if rows.numel():
+            out[rows] = a[rows] @ w[e].t()
+    return out.to(torch.bfloat16)
 
 
-def _gemm_nn(a_q, a_sf, w_q, w_sf, m_indices, emulate):
-    """[Mpad,N] x [E,N,K] -> bf16 [Mpad,K] over the expert of each row (dA = dY @ W)."""
-    if not emulate:
-        d = torch.empty(a_q.size(0), w_q.size(2), dtype=torch.bfloat16, device=a_q.device)
-        _dg.m_grouped_fp8_gemm_nn_contiguous((a_q, a_sf), (w_q, w_sf), d, m_indices)
-        return d
-    a = dequant_token(a_q, a_sf)
-    w = dequant_block(w_q, w_sf)
-    idx = m_indices.clamp_min(0).long()
-    return torch.einsum("mn,mnk->mk", a, w[idx]).to(torch.bfloat16) * (m_indices >= 0).unsqueeze(-1)
+def transpose_blocks(w_q, w_sf):
+    """[E,N,K] fp8 + [E,N/128,K/128] scales -> the K-major [E,K,N] operand for dA = dY @ W as an nt GEMM."""
+    return w_q.transpose(1, 2).contiguous(), w_sf.transpose(1, 2).contiguous()
 
 
 class GroupedLinearFP8(torch.autograd.Function):
@@ -130,7 +131,7 @@ class GroupedLinearFP8(torch.autograd.Function):
         dy_pad = dy.new_zeros(m_indices.numel(), dy.size(1))
         dy_pad[pos] = dy
         dy_q, dy_sf = per_token_cast(dy_pad)
-        da = _gemm_nn(dy_q, dy_sf, w_q, w_sf, m_indices, ctx.emulate)[pos]
+        da = _gemm_nt(dy_q, dy_sf, *transpose_blocks(w_q, w_sf), m_indices, ctx.emulate)[pos]
         # dW[e] = dy[e]^T @ a[e]: bf16 grouped GEMM over the unpadded segments
         dw = torch._grouped_mm(dy.to(torch.bfloat16).transpose(0, 1), a.to(torch.bfloat16), offs=offs)
         return da.to(a.dtype), dw.to(torch.bfloat16), None, None, None
