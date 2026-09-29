@@ -12,6 +12,8 @@ import os
 import sys
 from dataclasses import asdict
 
+import math
+
 import torch
 import torch.nn.functional as F
 
@@ -130,6 +132,57 @@ def test_nonfinite_and_maxgrad_reports():
     line = aux_terms_report(m)
     assert "indexer_loss=" in line and ("moe_aux=4 finite" in line or "moe_aux=none" in line), line
     print(f"  nonfinite {sorted(rep)}; maxgrad {name}; {line}")
+
+
+def test_recorder_names_a_planted_inf():
+    """A forward hook that puts inf into one module's output (registered before the recorder, so the
+    recorder sees it) is named as act_max with inf; its downstream grads are flagged non-finite; the
+    row round-trips through JSON; detach() leaves no hooks; dynamo.explain reports the recording
+    step's break count while an unrecorded step is untouched (0 breaks, test_p1_fused)."""
+    import json
+
+    from v41f.record import Recorder
+
+    torch.manual_seed(0)
+    m = V42LM(tiny_cfg(), max_batch_size=1).to(torch.bfloat16)
+    ids = torch.randint(0, 512, (1, 64))
+    target = m.layers[1].attn.kvproj.kv_norm
+
+    def plant(mod, inp, out):
+        out = out.clone()
+        out[0, 3, 0] = float("inf")
+        return out
+    h = target.register_forward_hook(plant)
+    rec = Recorder(m)
+    rec.attach()
+    hidden, _ = m(ids)
+    hidden.float().square().mean().backward()
+    rec.detach()
+    row = rec.row(step=7, loss=1.0, healthy=False)
+    assert row["summary"]["act_max"][0] == "layers.1.attn.kvproj.kv_norm" and math.isinf(row["summary"]["act_max"][1]), row["summary"]
+    assert not row["act"]["layers.1.attn.kvproj.kv_norm"]["finite"]
+    assert row["nonfinite_params"], "an inf in a kv output must reach some parameter grad"
+    assert any(n.startswith("layers.1.attn.kvproj") or n.startswith("layers.0") or n == "embed.weight"
+               for n, _, _ in row["nonfinite_params"]), row["nonfinite_params"][:5]
+    assert "layers.1.hc.hc_pre" in row["act"] and "layers.1.hc.hc_post" in row["act"], "hc methods recorded"
+    back = json.loads(json.dumps(row))
+    assert math.isinf(back["summary"]["act_max"][1]) and back["step"] == 7
+    line = Recorder.summary_line(row)
+    assert line.startswith("step 7 record: act_max layers.1.attn.kvproj.kv_norm=inf"), line
+    h.remove()
+    # detached: no hooks left, no patched hc methods
+    assert all(not mod._forward_hooks and not mod._backward_hooks for mod in m.modules())
+    assert all("hc_pre" not in vars(mod) for mod in m.modules() if isinstance(mod, type(m.layers[0].hc)))
+    # recording-step compile cost, stated: breaks with the recorder attached
+    import torch._dynamo as dynamo
+
+    m2 = V42LM(tiny_cfg(), max_batch_size=1).float()
+    rec2 = Recorder(m2)
+    rec2.attach()
+    dynamo.reset()
+    ex = dynamo.explain(m2)(ids)
+    rec2.detach()
+    print(f"  recorder: {line[:90]}; recording-step dynamo.explain: {ex.graph_count} graph(s), {ex.graph_break_count} break(s)")
 
 
 def test_headwise_muon_equals_per_head_ns():
@@ -266,7 +319,7 @@ def test_packed_rows_train_the_indexer():
 
 TESTS = [test_packed_rows_train_the_indexer, test_sinkhorn_row_col_rms, test_headwise_muon_equals_per_head_ns, test_census_one_group_each,
          test_smoke_three_steps, test_grouped_moe_matches_loop_cuda, test_grad_norm_report_names_the_planted_param_first,
-         test_qk_scale_report_tracks_wq_b_scale, test_nonfinite_and_maxgrad_reports]
+         test_qk_scale_report_tracks_wq_b_scale, test_nonfinite_and_maxgrad_reports, test_recorder_names_a_planted_inf]
 
 
 if __name__ == "__main__":
