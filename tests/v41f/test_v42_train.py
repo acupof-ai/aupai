@@ -76,6 +76,33 @@ def test_grad_norm_report_names_the_planted_param_first():
     print(f"  {line[:120]}")
 
 
+def test_qk_scale_report_tracks_wq_b_scale():
+    """record_qk_stats collects one (layer, q RMS per head, kv RMS) per layer; scaling one layer's
+    wq_b by 8 raises that layer's proxy ~8x and puts it first; off by default nothing is collected."""
+    from v41f.optim import qk_scale_report
+
+    torch.manual_seed(0)
+    m = V42LM(tiny_cfg(), max_batch_size=1).to(torch.bfloat16).eval()  # the m=1 compressor wkv is bf16 by reference
+    ids = torch.randint(0, 512, (1, 64))
+    with torch.no_grad():
+        m(ids)
+        assert m.qk_stats is None
+        m.record_qk_stats = True
+        m(ids)
+        stats = m.qk_stats
+        assert [s[0] for s in stats] == list(range(4)) and stats[0][1].shape == (4,), stats
+        base = {lyr: float((q * kv * m.layers[0].attn.softmax_scale).max()) for lyr, q, kv in stats}
+        m.layers[3].attn.qproj.wq_b.weight.mul_(8.0)
+        m(ids)
+        after = {lyr: float((q * kv * m.layers[0].attn.softmax_scale).max()) for lyr, q, kv in m.qk_stats}
+    ratio = after[3] / base[3]
+    assert 7.5 < ratio < 8.5, ratio
+    assert all(abs(after[k] / base[k] - 1) < 1e-4 for k in (0, 1, 2)), (base, after)
+    line = qk_scale_report(m.qk_stats, m.layers[0].attn.softmax_scale)
+    assert line.startswith("qk_scale top5 layers.3="), line
+    print(f"  {line}")
+
+
 def test_headwise_muon_equals_per_head_ns():
     torch.manual_seed(1)
     h, hd, c = 4, 32, 48
@@ -209,7 +236,8 @@ def test_packed_rows_train_the_indexer():
 
 
 TESTS = [test_packed_rows_train_the_indexer, test_sinkhorn_row_col_rms, test_headwise_muon_equals_per_head_ns, test_census_one_group_each,
-         test_smoke_three_steps, test_grouped_moe_matches_loop_cuda, test_grad_norm_report_names_the_planted_param_first]
+         test_smoke_three_steps, test_grouped_moe_matches_loop_cuda, test_grad_norm_report_names_the_planted_param_first,
+         test_qk_scale_report_tracks_wq_b_scale]
 
 
 if __name__ == "__main__":

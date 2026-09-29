@@ -182,6 +182,7 @@ def test_forward_compiles_without_graph_breaks():
     cfg = _cfg(attn_impl="fused", rope_impl="real", indexer_train_mode="kl", moe_stacked=True)
     torch.manual_seed(0)
     m = V42LM(cfg, max_batch_size=2).float().train()
+    m.record_qk_stats = True  # the health probe's side effects must not break the graph
     torch._dynamo.mark_dynamic(cu, 0)
     dynamo.reset()
     MoE.grouped_on_cpu = True  # trace the GPU dispatch path, not the CPU per-expert loop
@@ -194,6 +195,7 @@ def test_forward_compiles_without_graph_breaks():
     for r in reasons:
         print(f"    break: {r}")
     assert ex.graph_break_count <= MAX_GRAPH_BREAKS, f"graph breaks: {reasons}"
+    assert m.qk_stats is not None and len(m.qk_stats) == cfg.n_layers, "qk stats not replayed under dynamo"
 
 
 TESTS = [test_fused_equals_chunked, test_rope_real_equals_complex, test_stacked_moe_equals_loop_and_remaps,

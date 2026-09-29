@@ -81,6 +81,10 @@ class V41FModel(nn.Module):
         self.attn_impl = cfg.attn_impl  # read in forward; a subclass may rebind self.cfg
         self.block_ckpt = cfg.block_ckpt
         self.hc_mult = cfg.hc_mult
+        # train health: set True for one forward to collect (layer, q RMS per head, kv RMS) into
+        # self.qk_stats; a module-attribute guard, so compile keeps one graph per value (two total)
+        self.record_qk_stats = False
+        self.qk_stats = None
         self.target_layer_ids = tuple(cfg.dspark_target_layer_ids)
         self.embed = nn.Embedding(cfg.vocab_size, cfg.dim)
         self.layers = nn.ModuleList([Block(cfg, i, max_batch_size) for i in range(cfg.n_layers)])
@@ -222,6 +226,7 @@ class V41FModel(nn.Module):
         pre_mix = make_identity_pre_mix(h, self.hc_mult)
         state = SharedAttnState()
         state.cu = cu
+        state.record_qk = self.record_qk_stats
         if cu is not None or self.attn_impl in ("chunked", "fused"):
             state.doc, state.pos, state.doclen, state.cu_docs = doc_layout(cu, *input_ids.shape, input_ids.device)
         for i, layer in enumerate(self.layers):
@@ -240,6 +245,7 @@ class V41FModel(nn.Module):
                 h, pre_mix, state = layer(h, 0, pre_mix, state)
         h = self.layers[-1].hc_pre(h, pre_mix)
         # mean per-query KL over the index-source layers (indexer_train_mode "kl"), else None
+        self.qk_stats = state.qk_stats if self.record_qk_stats else None
         self.indexer_loss = (torch.stack([t / c.clamp_min(1) for t, c in state.indexer_kl]).mean()
                              if state.indexer_kl else None)
         if return_hidden:

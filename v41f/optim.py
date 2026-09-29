@@ -180,6 +180,21 @@ def grad_norm_report(model, topk=5):
     opts = " ".join(f"{k}={float(by_opt.get(k, 0.0)) ** 0.5:.3g}" for k in ("muon", "sinkhorn", "adamw_decay", "adamw_nodecay"))
     return f"gradnorm top{topk} {mods} | groups {opts}"
 
+def qk_scale_report(stats, softmax_scale, topk=5):
+    """One line from V41FModel.qk_stats: per layer the logit-scale proxy max_h(q_rms_h) * kv_rms *
+    softmax_scale (the largest head) with the head mean beside it; top-k layers and the median."""
+    rows = []
+    for layer, q_rms, kv_rms in stats:
+        prox = (q_rms * kv_rms * softmax_scale).float()
+        rows.append((layer, float(prox.max()), float(prox.mean())))
+    if not rows:
+        return "qk_scale (no stats)"
+    top = sorted(rows, key=lambda r: -r[1])[:topk]
+    med = sorted(r[1] for r in rows)[len(rows) // 2]
+    return ("qk_scale top5 " + " ".join(f"layers.{lyr}={mx:.3g}(mean {mn:.3g})" for lyr, mx, mn in top)
+            + f" | median={med:.3g} layers={len(rows)}")
+
+
 def _heads_of(name, cfg):
     if name.endswith("qproj.wq_b.weight"):
         return cfg.n_heads
