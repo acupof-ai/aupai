@@ -3601,7 +3601,9 @@ def main():
     parser.add_argument(
         "--arch", choices=["hybrid", "v42"], default=None,
         help="hybrid (default: model.HybridLM, unchanged) or v42 (v41f V4.1 stack, preset "
-             "v41f.config.v42_s24, V4.1 optimizer at --v42_lr)")
+             "v41f.config.v42_s24, V4.1 optimizer at --v42_lr). Under v42 with compile on, dynamo's "
+             "DDPOptimizer is off by default (its graph split returned a hidden with no grad_fn on "
+             "world 8, 2026-09-29); DYNAMO_OPTIMIZE_DDP=1 turns it back on")
     parser.add_argument("--v42_lr", type=float, default=None,
                         help="v42: the one base lr for Muon, Sinkhorn and AdamW (default: Cfg.v42_lr)")
     parser.add_argument("--v42_impl", type=str, default=None,
@@ -4246,14 +4248,18 @@ def main():
                 print(f"dynamo cache_size_limit={_dynamo_limit} (need {_dynamo_need})", flush=True)
         if os.environ.get("COMPILE_SUPPRESS_ERRORS", "0") == "1":
             torch._dynamo.config.suppress_errors = True
-        if os.environ.get("DYNAMO_OPTIMIZE_DDP", "1") == "0":
-            # DDPOptimizer splits the graph at bucket boundaries; on v42 (2026-09-29, world 8)
-            # the split forward returned a hidden with no grad_fn while the single-process
-            # compile of the same model trained. With accum>1 and no_sync the allreduce is
-            # once per step anyway, so the overlap the splitter buys is small.
+        # DDPOptimizer splits the graph at bucket boundaries; on v42 (2026-09-29, world 8) the
+        # split forward returned a hidden with no grad_fn while the single-process compile of the
+        # same model trained, and with optimize_ddp=False the same launch trained (9.69 s/step at
+        # step 20, runs/v42_arch_b_0929.step20.txt). With accum>1 and no_sync the allreduce is once
+        # per step anyway, so the overlap the splitter buys is small. Default off under --arch v42;
+        # DYNAMO_OPTIMIZE_DDP=1/0 overrides either way.
+        _ddp_opt_default = "0" if Cfg.arch == "v42" else "1"
+        if os.environ.get("DYNAMO_OPTIMIZE_DDP", _ddp_opt_default) == "0":
             torch._dynamo.config.optimize_ddp = False
             if is_main:
-                print("dynamo optimize_ddp=False (DYNAMO_OPTIMIZE_DDP=0)", flush=True)
+                print(f"dynamo optimize_ddp=False (DYNAMO_OPTIMIZE_DDP={os.environ.get('DYNAMO_OPTIMIZE_DDP', _ddp_opt_default)!r}, "
+                      f"default {_ddp_opt_default!r} for arch {Cfg.arch})", flush=True)
         model = torch.compile(model, dynamic=False, mode=os.environ.get("COMPILE_MODE") or None)
 
     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
