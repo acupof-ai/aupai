@@ -280,6 +280,10 @@ class Cfg:
     # moe_stacked=1). Numerically equivalent paths (tests/v41f/test_p1_fused.py), so they may
     # change across a resume; the shape fields stay in v42_cfg.
     v42_impl = ""
+    # --v42_record: per-module activation/grad-output/param-grad statistics for the last micro-batch
+    # of every health step, and of every step once a non-finite grad has been seen; one JSON line per
+    # step to runs/<name>.record.jsonl (v41f/record.py). Hooks attach and detach around the step.
+    v42_record = False
     # <=0 means "the dense lr", resolved in build_optimizers. The flag exists so the value is
     # recorded in the launch line and ck["cfg"] rather than living in a default nobody reads --
     # same reason mem_sel_lr exists, and the memory collapse is why it must never be the
@@ -3607,6 +3611,9 @@ def main():
              "world 8, 2026-09-29); DYNAMO_OPTIMIZE_DDP=1 turns it back on")
     parser.add_argument("--v42_lr", type=float, default=None,
                         help="v42: the one base lr for Muon, Sinkhorn and AdamW (default: Cfg.v42_lr)")
+    parser.add_argument("--v42_record", action="store_true",
+                        help="v42: record per-module act/grad-output/param-grad stats on health steps (and every "
+                             "step after a non-finite grad) to runs/<name>.record.jsonl; hooks only on those steps")
     parser.add_argument("--v42_impl", type=str, default=None,
                         help="v42: implementation switches k=v,k=v over V41FConfig, e.g. "
                              "attn_impl=fused,rope_impl=real,moe_stacked=1,hc_impl=liger,norm_impl=liger "
@@ -4312,6 +4319,8 @@ def main():
             f"warmdown starts at step {warmdown_start(total_steps, Cfg)}"
         )
     n_skip = 0  # consecutive optimizer steps skipped for non-finite gradients
+    _nf_seen = False  # --v42_record: record every step once a non-finite grad has been seen
+    _recorder = None
     _sp = StepProfiler(getattr(args, "profile_step_every", 0), torch,
                        bucket_view=not args.no_bucket_view)
     if _sp.every != _sp.requested and is_main:
@@ -4409,9 +4418,14 @@ def main():
             if Cfg.arch == "v42":
                 # qk-scale probe on the LAST micro-batch of a health step only (rank 0): the model
                 # collects per-layer q/kv RMS into raw_model.qk_stats; printed at the accum boundary
-                raw_model.record_qk_stats = bool(
-                    is_main and Cfg.health_every > 0 and (step + 1) % Cfg.health_every == 0
-                    and (i // Cfg.batch + 1) % Cfg.accum == 0)
+                _last_mb = (i // Cfg.batch + 1) % Cfg.accum == 0
+                _health_step = Cfg.health_every > 0 and (step + 1) % Cfg.health_every == 0
+                raw_model.record_qk_stats = bool(is_main and _health_step and _last_mb)
+                if Cfg.v42_record and _last_mb and (_health_step or _nf_seen):
+                    from v41f.record import Recorder  # noqa: PLC0415
+
+                    _recorder = Recorder(raw_model, rank=dist.get_rank() if ddp else 0)
+                    _recorder.attach()
             _sp.start("fwd")
             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
                 hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
@@ -4497,6 +4511,17 @@ def main():
                 if ddp:
                     dist.all_reduce(flag, op=dist.ReduceOp.MIN)
                 healthy = flag.item() > 0.5
+                if _recorder is not None:
+                    # --v42_record: grads are still on the parameters here (clip scaled them, drop is below)
+                    _recorder.detach()
+                    _row = _recorder.row(step, loss=float(loss) * Cfg.accum, healthy=healthy,
+                                         mem_alloc_gib=torch.cuda.memory_allocated() / 2**30 if device.startswith("cuda") else None)
+                    if is_main or _recorder.any_nonfinite(_row):
+                        _recorder.write(os.path.join(ROOT, "runs", f"{Cfg.name}.record.jsonl"), _row)
+                        print(f"rank {_recorder.rank} {_recorder.summary_line(_row)}", flush=True)
+                    _recorder = None
+                if not healthy:
+                    _nf_seen = True
                 if step % 10 == 9:
                     last = loss.item() * Cfg.accum  # only sync the loss value on log steps
                 if not healthy:
