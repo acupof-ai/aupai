@@ -58,5 +58,8 @@
   "ced_kc_norm": 0,
   "rope_dims": 0,
   "n_swa_only_layers": 2,
-  "attn_hybrid": false
+  "attn_hybrid": false,
+  "arch": "hybrid",
+  "v42_cfg": null,
+  "v42_lr": 0.001
 }
