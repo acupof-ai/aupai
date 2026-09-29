@@ -90,6 +90,7 @@ REF_ONLY_SHAPE_PENDING = frozenset()
 # documented act, never a silent wildcard match.
 CFG_ONLY_TRAINING_KNOBS = frozenset({
     "indexer_train_mode",   # docs/standards/v41f_indexer_trainability_design.md (#456/#485)
+    "attn_impl",            # v41f/docpack.py: packed-row chunked attention (v42 trainer)
 })
 
 # Prime bucket sum independently recomputed = 786,862; x head_dim 128 = 100.7M rows.
