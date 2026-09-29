@@ -26,17 +26,17 @@ cd /work/aupai || exit 1
 export NGPU=8
 
 MODE="${MODE:-smoke}"
-CKPT="ckpt_v41_ced_0926.pt"
+CKPT="${CKPT:-ckpt_v41_ced_0926.pt}"  # override to resume a stage-2 save (the 0929 SR-fix repair)
 JOIN=38146
 
 if [ "$MODE" = "full" ]; then
-  NAME=v41_ced_stage2_0928
+  NAME="${NAME:-v41_ced_stage2_0928}"
   MIX=data/mix_v41_stage2.json
   SAVE=2000
   VAL=500
   WARMUP="${WARMUP:-500}"  # absolute re-warmup, matches the 30B run's own warmup (1e ruling)
   WATCH=1
-  HYPO="stage-2 10B continuation from the 30B final: 30%-peak re-warmup then cosine to zero, code-heavy re-mix; HumanEval beats the 30B endpoint"
+  HYPO="${HYPO:-stage-2 10B continuation from the 30B final: 30%-peak re-warmup then cosine to zero, code-heavy re-mix; HumanEval beats the 30B endpoint}"
 else
   NAME=v41_ced_stage2_smoke_0928
   MIX=data/mix_v41_stage2_smoke.json

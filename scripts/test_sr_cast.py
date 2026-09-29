@@ -84,10 +84,30 @@ def test_repeated_sub_ulp_accumulates():
     assert frac_moved > 0.5, f"stochastic path should move most weights after {N} steps, got {frac_moved}"
 
 
+def test_bracket_is_one_ulp_and_sub_ulp_rarely_moves():
+    """The bracket is the two ADJACENT grid points around x, and an update of 1e-3 ULP moves
+    about 1e-3 of the elements. The unbiasedness tests cannot see a two-ULP bracket (it is
+    still unbiased); this one moved 100% of elements under it."""
+    torch.manual_seed(1)
+    w = (torch.randn(200_000) * 0.05).to(torch.bfloat16).float()
+    bits = w.to(torch.bfloat16).view(torch.int16).to(torch.int32)
+    nxt = (bits + 1).to(torch.int16).view(torch.bfloat16).float()
+    ulp = (nxt - w).abs()
+    x = w + 1e-3 * ulp * torch.sign(torch.randn_like(w))
+    lo, up, _ = _bf16_neighbors(x)
+    step = up - lo
+    assert torch.all((lo == w) | (up == w)), "nearest grid point must be a bracket end"
+    assert torch.all(step <= ulp * 1.0001), "bracket wider than one ULP"
+    g = torch.Generator().manual_seed(0)
+    moved = float((stochastic_round_bf16(x, g).float() != w).float().mean())
+    assert moved < 0.01, f"a 1e-3-ULP update moved {moved:.3f} of elements (expect ~0.001)"
+
+
 def _selftest():
     test_neighbors_bracket()
     test_expectation_unbiased()
     test_repeated_sub_ulp_accumulates()
+    test_bracket_is_one_ulp_and_sub_ulp_rarely_moves()
     rounder = StochasticRounder(seed=4)
     a = rounder.round(torch.randn(5))
     b = StochasticRounder(seed=4).round(torch.randn(5))
