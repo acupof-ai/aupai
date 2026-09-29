@@ -2112,9 +2112,12 @@ class MoEFFN(nn.Module):
         # or sigmoid (V3 §2.1.2). Stored on the module so forward() reads one explicit branch
         # and a checkpoint without the field still resolves to softmax via the Cfg default.
         rs = str(getattr(cfg, "router_score", "softmax") or "softmax")
-        if rs not in ("softmax", "sigmoid"):
-            raise ValueError(f"router_score must be 'softmax' or 'sigmoid', got {rs!r}")
+        if rs not in ("softmax", "sigmoid", "sqrtsoftplus"):
+            raise ValueError(f"router_score must be 'softmax', 'sigmoid' or 'sqrtsoftplus', got {rs!r}")
         self.router_score = rs
+        # V4.1 config: routed_scaling_factor 1.5 multiplies the top-k-renormalized routed gate; the
+        # shared expert is unscaled. 1.0 (default) leaves every existing checkpoint's function as is.
+        self.routed_scale = float(getattr(cfg, "moe_routed_scale", 1.0) or 1.0)
         # OPTIONAL LOGIT SOFTCAP applied before softmax/sigmoid: z := cap*tanh(z/cap). 0 = off
         # (default; bit-identical to every checkpoint trained without it). Measured 2026-09-26 on
         # v41_ced_fixprobe r2 step3000: router row norms grow init ~1 -> ~11 at lr 0.01 / wd 0,
@@ -2459,11 +2462,17 @@ class MoEFFN(nn.Module):
             logits = c * torch.tanh(logits / c)
         if self.router_score == "sigmoid":
             affinity = torch.sigmoid(logits)
+        elif self.router_score == "sqrtsoftplus":
+            # V4.1 scoring_func: per-expert independent like sigmoid, but unbounded above, so a
+            # saturated logit keeps a gradient where sigmoid's goes to zero.
+            affinity = torch.sqrt(torch.nn.functional.softplus(logits))
         else:
             affinity = torch.softmax(logits, dim=-1)
         sel = (affinity + self.expert_bias.float()).topk(self.top_k, dim=-1).indices
         gate = affinity.gather(1, sel)
         gate = gate / gate.sum(-1, keepdim=True).clamp_min(1e-9)
+        if self.routed_scale != 1.0:
+            gate = gate * self.routed_scale
         return affinity, sel, gate
 
     def forward(self, x):
@@ -2730,7 +2739,10 @@ class Block(nn.Module):
         # (the two constructors and the both-on refusal), and a second source for the same two
         # booleans is how they come to disagree.
         if attn_kind is not None and is_attn and not _hm:
-            cfg = _CfgView(cfg, csa=(attn_kind == "csa"), hca=(attn_kind == "hca"), swa=(attn_kind == "swa"))
+            # csa2 is a variant OF the csa arm, so a layer that is not csa carries no csa2 either:
+            # leaving it on made every SWA-only layer refuse with "csa2 needs csa" at build.
+            cfg = _CfgView(cfg, csa=(attn_kind == "csa"), hca=(attn_kind == "hca"), swa=(attn_kind == "swa"),
+                           csa2=bool(getattr(cfg, "csa2", False)) and attn_kind == "csa")
         self.mixer = HeadMix(cfg, ratio=_hm) if _hm else (
             GatedMLA(cfg, csa2_mode=csa2_mode) if is_attn else DeltaRecurrence(cfg))
         self.n2 = RMSNorm(cfg.d)
@@ -3237,8 +3249,16 @@ class HybridLM(nn.Module):
         # own decoder's signal and would be a second unmeasured choice on top of the one this
         # feature tests (the same reasoning as the MEAN pool in _ced_kv_from_enc).
         if self.ced and not self.attn_res:
+            # The CSA2 package is threaded through the ENCODER exactly as in the flat body, so
+            # csa2_modes Reuse layers work below the split. Decoders never read it: each projects
+            # its own global KV from h_enc (Eq.1), and the constructor refuses a Reuse decoder.
+            pkg = None
             for b in self.blocks[: self.ced_enc_layers]:
+                if isinstance(b.mixer, GatedMLA):
+                    b.mixer._pkg = pkg
                 x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+                if isinstance(b.mixer, GatedMLA):
+                    pkg = b.mixer._pkg
             h_enc = x
             for b in self.blocks[self.ced_enc_layers:]:
                 _csa = getattr(b.mixer, "csa", None)

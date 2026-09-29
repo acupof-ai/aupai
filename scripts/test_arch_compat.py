@@ -2778,3 +2778,48 @@ print(
     f"order, the wiring and the counts unchanged. The value check is an in-process identity, "
     f"not a pinned digest, so it does not depend on the host class"
 )
+
+# =====================================================================================
+# CED + attn_hybrid (1e, 2026-09-29). The gate stack never ran this combination: the kind/mode
+# map is built only under attn_hybrid, which had no CLI flag, so n_swa_only_layers=2 trained as
+# zero SWA-only layers (docs/audits/v41_arch_alignment_0929.md). Two defects stood behind it and
+# each reds one assertion here on the previous model.py:
+#   (a) an SWA-only layer kept csa2=True with csa=False and refused at build ("csa2 needs csa");
+#   (b) the CED encoder pass did not thread the CSA2 package, so a Reuse layer below the split
+#       raised "ran with no KV package" at the first forward.
+class _CfgCedHybrid(_CfgCedPassStack):
+    attn_hybrid = True
+    csa2_modes = "F,R,R,R,F,F,F,F,F,F"  # 10 non-SWA layers: encoder 2-5 F,R,R,R; decoders 6-11 F
+
+
+torch.manual_seed(12)
+_hy = HybridLM(_CfgCedHybrid)
+_hy_kinds = [("swa" if _b.mixer.swa is not None else type(_b.mixer.csa).__name__) for _b in _hy.blocks]
+assert _hy_kinds[:2] == ["swa", "swa"], f"first two layers are not pure SWA: {_hy_kinds}"
+assert _hy_kinds[3:6] == ["CSA2Reuse"] * 3, f"encoder Reuse layers missing: {_hy_kinds}"
+assert all(getattr(_b.mixer.csa, "ced_kv", False) for _b in _hy.blocks[_n_enc:]), (
+    "every decoder layer must project its own global KV from H_{L/2}")
+_hy_x = torch.randint(0, _CfgCedHybrid.vocab - 1, (2, _CfgCedHybrid.seq))
+_hy_out = _hy(_hy_x)
+(_hy_out[0] if isinstance(_hy_out, tuple) else _hy_out).float().logsumexp(-1).mean().backward()
+_hy_g = _hy.blocks[2].mixer.csa.compress_k.weight.grad
+assert _hy_g is not None and _hy_g.abs().sum() > 0, (
+    "the Full encoder layer's entries got no gradient: its package is not read downstream")
+
+# sqrtsoftplus router + routed scaling (V4.1 scoring_func / routed_scaling_factor), on known logits
+class _CfgRouteV41(_CfgPaDense):
+    moe_experts, moe_top_k, moe_shared, moe_expert_ffn = 8, 3, 1, 32  # (3+1)*32 = ffn_hidden 128
+    router_score = "sqrtsoftplus"
+    moe_routed_scale = 1.5
+
+
+_ffn_r = model.MoEFFN(_CfgRouteV41)
+_lg = torch.tensor([[2.0, -1.0, 0.5, 3.0, -2.0, 0.0, 1.0, -0.5]])
+_aff, _sel, _gt = _ffn_r._route(_lg)
+assert torch.allclose(_aff, torch.sqrt(torch.nn.functional.softplus(_lg))), "affinity != sqrt(softplus(z))"
+assert sorted(_sel[0].tolist()) == [0, 3, 6], f"top-3 of known logits is experts 0,3,6, got {_sel.tolist()}"
+assert abs(_gt.sum().item() - 1.5) < 1e-6, f"routed gate must sum to routed_scale 1.5, got {_gt.sum().item()}"
+print(
+    "CED+hybrid: layers 0-1 pure SWA, encoder Reuse 3-5 fed by layer 2's package (its entries get "
+    "gradient), decoders project from H_{L/2}; sqrtsoftplus affinity exact, routed gate sums to 1.5"
+)
