@@ -4482,9 +4482,11 @@ def main():
                     # pre-clip grad norms by module group and optimizer group (v41f/optim.py
                     # grad_norm_report): the world-8 trial's pre-clip gnorm climbed 22 -> 59 over
                     # steps 500-1000 while the loss fell; this names where it sits, rank 0 only.
-                    from v41f.optim import grad_norm_report, qk_scale_report  # noqa: PLC0415
+                    from v41f.optim import grad_norm_report, max_abs_grad, qk_scale_report  # noqa: PLC0415
 
                     print(f"step {step + 1} health {grad_norm_report(raw_model)}", flush=True)
+                    _mg_name, _mg = max_abs_grad(raw_model)
+                    print(f"step {step + 1} health maxgrad {_mg_name}={_mg:.4g}", flush=True)
                     if raw_model.qk_stats:
                         print(f"step {step + 1} health "
                               f"{qk_scale_report(raw_model.qk_stats, raw_model.layers[0].attn.softmax_scale)}", flush=True)
@@ -4502,6 +4504,11 @@ def main():
                     # gradients is the whole fix. Restoring the snapshot here instead put a run back
                     # at random init on one bad grad at step 300, logging "restored last good state".
                     n_skip += 1
+                    if Cfg.arch == "v42":  # read the grads before they are dropped below
+                        from v41f.optim import aux_terms_report, nonfinite_grad_report  # noqa: PLC0415
+
+                        _nf_report = nonfinite_grad_report(raw_model)
+                        _nf_aux = aux_terms_report(raw_model)
                     for opt in optimizers:
                         opt.zero_grad(set_to_none=True)
                     # Unconditional: dropping the gradients IS this path. An optimizer may
@@ -4510,6 +4517,22 @@ def main():
                     raw_model.zero_grad(set_to_none=True)
                     if is_main:
                         runlog(f"step {step}/{total_steps} non-finite grad — step skipped ({n_skip})")
+                    if Cfg.arch == "v42":
+                        _nf_first_rank = 0
+                        if ddp:
+                            _nf = torch.zeros(dist.get_world_size(), device=device)
+                            _nf[dist.get_rank()] = float(bool(_nf_report))
+                            dist.all_reduce(_nf, op=dist.ReduceOp.MAX)
+                            _nz = torch.nonzero(_nf).flatten()
+                            _nf_first_rank = int(_nz[0]) if _nz.numel() else 0
+                        if is_main or (ddp and dist.get_rank() == _nf_first_rank):
+                            _rk = dist.get_rank() if ddp else 0
+                            _bad = " ".join(f"{n}={nan}nan/{inf}inf" for n, nan, inf in _nf_report[:40])
+                            _hid = bool(torch.isfinite(hidden.detach()).all())
+                            print(f"step {step} rank {_rk} non-finite grads: {_bad or '(none on this rank)'} "
+                                  f"| loss={float(loss) * Cfg.accum:.4g} hidden_finite={_hid} {_nf_aux} "
+                                  f"| {len(_nf_report)} params | mem_alloc={torch.cuda.memory_allocated() / 2**30:.2f}GiB",
+                                  flush=True)
                     if n_skip >= 20 and good_state is not None:  # not a transient spike
                         raw_model.load_state_dict(good_state)
                         for j, opt in enumerate(optimizers):
