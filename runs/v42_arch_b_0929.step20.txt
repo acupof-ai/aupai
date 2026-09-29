@@ -1,0 +1,5 @@
+dynamo optimize_ddp=False (DYNAMO_OPTIMIZE_DDP=0)
+step 0/38146 non-finite grad — step skipped (1)
+step 10/38146 0% [main] | loss 10.908 | lr 2.00e-05 (muon 2.00e-05 sinkhorn 2.00e-05 adamw 2.00e-05) | gnorm 6.95 | 0.01B tok | 3K tok/s/gpu | MFU 4% | peak 70.26GiB | ETA 363.8h | s/step 34.3466
+step 20/38146 0% [main] | loss 10.868 | lr 4.00e-05 (muon 4.00e-05 sinkhorn 4.00e-05 adamw 4.00e-05) | gnorm 7.30 | 0.02B tok | 10K tok/s/gpu | MFU 13% | peak 70.26GiB | ETA 233.2h | s/step 9.6902
+step 30/38146 0% [main] | loss 10.670 | lr 6.00e-05 (muon 6.00e-05 sinkhorn 6.00e-05 adamw 6.00e-05) | gnorm 5.71 | 0.02B tok | 10K tok/s/gpu | MFU 13% | peak 69.86GiB | ETA 188.9h | s/step 9.4877
