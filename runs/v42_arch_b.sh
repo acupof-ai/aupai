@@ -2,7 +2,7 @@
 # v42 architecture probe, one arm (1e, 2026-09-29). The control is v41_ced_0926
 # (runs/ced_w8_0926_launch.sh): same mix, seed, 30B schedule, warmup 500, warmdown 0.65,
 # B4/accum6 world 8, stopped at step 2000 with --stop_at_step, which keeps the 30B LR schedule, so
-# steps 500-2000 run at the control's lr multipliers. Read against runs/v41_ced_0926.log:
+# steps 500-2000 run at the control's lr multipliers. Read against runs/v41_ced_0926.log.20260927T015240Z (pod; the live 0926 log starts at 18500):
 #   val 2.491 / 2.135 / 2.027 / 1.954 at 500 / 1000 / 1500 / 2000; HumanEval greedy 8/164 at 2000.
 # Arm: --arch v42, the v41f V4.1 stack at preset v41f.config.v42_s24 -- 24 layers CED 12/12,
 # CSA2 m=2 encoder / m=1 decoder with V4.1's Full/Reuse/Reindex pattern, MQA 16x256, mHC x4,
