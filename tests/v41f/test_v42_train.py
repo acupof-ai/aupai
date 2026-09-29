@@ -151,7 +151,39 @@ def test_grouped_moe_matches_loop_cuda():
     assert err < 3e-2, f"grouped vs loop max abs {err:.3e}"
 
 
-TESTS = [test_sinkhorn_row_col_rms, test_headwise_muon_equals_per_head_ns, test_census_one_group_each,
+def test_packed_rows_train_the_indexer():
+    """The track A/B join: packed rows through V42LM, aux_loss carries the indexer KL, and every
+    trainable leaf is in a group and (routed experts aside) gets a gradient. A forward that drops
+    the indexer loss leaves wq_b/weights_proj/index_key gradient-less, which is this test's red."""
+    import train
+
+    torch.manual_seed(0)
+    train.Cfg.arch = "v42"
+    train.Cfg.v42_cfg = asdict(tiny_cfg())
+    m = train.build_model(train.Cfg).to(torch.bfloat16)
+    assert m.v41f_cfg.indexer_train_mode == "kl" and m.v41f_cfg.attn_impl == "chunked"
+    b, t, eos = 2, 64, 1
+    x = (torch.arange(b * (t + 1)).view(b, t + 1) * 7) % 97 + 2
+    x[0, 20] = eos
+    x[1, 41] = eos
+    xb, yb = x[:, :-1], x[:, 1:]
+    cu = train.doc_cu_seqlens(xb, eos)
+    assert cu.numel() == 5, cu
+    hidden, _ = m(xb, yb, cu, None)
+    assert m.indexer_loss is not None and float(m.indexer_loss) > 0
+    ce = F.cross_entropy(m.lm_logits(hidden).float().reshape(-1, 512), yb.reshape(-1))
+    (ce + m.aux_loss()).backward()
+    groups = {n for g in v42_param_groups(m).values() for n, _ in g}
+    trainable = {n for n, p in m.named_parameters() if p.requires_grad}
+    assert groups == trainable, sorted(groups ^ trainable)
+    idx = [n for n in trainable if ".indexer." in n or ".index_key." in n]
+    assert idx, "kl mode must leave the indexer trainable"
+    dead = [n for n, p in m.named_parameters()
+            if p.requires_grad and ".ffn.experts." not in n and (p.grad is None or not p.grad.abs().sum())]
+    assert not dead, dead
+
+
+TESTS = [test_packed_rows_train_the_indexer, test_sinkhorn_row_col_rms, test_headwise_muon_equals_per_head_ns, test_census_one_group_each,
          test_smoke_three_steps, test_grouped_moe_matches_loop_cuda]
 
 

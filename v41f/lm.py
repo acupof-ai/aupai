@@ -54,6 +54,9 @@ class V42LM(V41FModel):
 
     def aux_loss(self):
         terms = [b.ffn.aux_loss for b in self.layers if b.ffn.aux_loss is not None]
+        if getattr(self, "indexer_loss", None) is not None:
+            # indexer_train_mode "kl": its inputs are detached, so this only trains the indexer
+            terms.append(self.indexer_loss)
         return torch.stack(terms).sum() if terms else None
 
     def commit_moe_token_counts(self):
