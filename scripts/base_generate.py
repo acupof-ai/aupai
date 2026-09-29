@@ -32,6 +32,14 @@ from scripts.loader import IM_END, format_prompt, load_checkpoint, load_tokenize
 HOLD = 16
 STOPS = ["\n\n\n", "\nQuestion:", "\n问：", "\ndef ", "\nclass ", "\nif __name__"]
 
+# Set by main() from --cache; "off" keeps the original recompute-everything behaviour.
+CACHE_MODE = "off"
+
+
+def _make_cache(model):
+    from scripts.ced_cache import CEDCache
+    return CEDCache(model, mode=CACHE_MODE)
+
 
 def pick_device(want):
     if want != "auto":
@@ -39,12 +47,39 @@ def pick_device(want):
     return "cpu"  # measured 2026-09-28 on M4 Pro: cpu 7.8 tok/s vs mps 4.5 (small per-token kernels)
 
 
-def stream(model, tok, prompt, device, max_new, temp, stops, stop_ids=(1,)):
-    """Yield the continuation in pieces; a piece that could still grow into a stop is held back."""
+def stream(model, tok, prompt, device, max_new, temp, stops, stop_ids=(1,), cache=None):
+    """Yield the continuation in pieces; a piece that could still grow into a stop is held back.
+
+    cache: a scripts.ced_cache.CEDCache built on a CED model. When given, prefill runs the
+    incremental engine once and each generated token is one cached step (no whole-sequence
+    recompute); when None, the original recompute-everything path is used unchanged."""
     ids = tok.encode(prompt).ids
-    x = torch.tensor([ids], device=device)
     new, printed, text = [], "", ""
+    cache = _make_cache(model) if CACHE_MODE != "off" else None
     with torch.no_grad():
+        if cache is not None:
+            logits = cache.prefill(torch.tensor(ids, device=device)).float()
+            for _ in range(max_new):
+                if temp <= 0:
+                    nxt = logits.argmax(-1)
+                else:
+                    nxt = torch.multinomial(torch.softmax(logits / temp, -1), 1)[0]
+                tid = int(nxt.item())
+                if tid in stop_ids:
+                    break
+                new.append(tid)
+                logits = cache.step(tid).float()
+                text = tok.decode(new)
+                cut = [text.find(s) for s in stops if s in text]
+                if cut:
+                    text = text[:min(cut)]
+                    break
+                safe = text[:max(len(printed), len(text) - HOLD)]
+                yield safe[len(printed):]
+                printed = safe
+            yield text[len(printed):]
+            return
+        x = torch.tensor([ids], device=device)
         for _ in range(max_new):
             logits = model(x[:, -model.cfg.seq:])[0][:, -1].float()
             if temp <= 0:
@@ -214,6 +249,9 @@ def main():
     ap.add_argument("--max_new", type=int, default=256)
     ap.add_argument("--temp", type=float, default=0.0, help="0 = greedy")
     ap.add_argument("--dtype", choices=("bf16", "fp32"), default="bf16")
+    ap.add_argument("--cache", choices=("off", "bounded", "exact"), default="off",
+                    help="CED incremental KV cache (Steps 6-7): bounded replay (default in "
+                         "the paper) or exact replay; off = recompute the whole sequence")
     ap.add_argument("--chat", action="store_true", help="wrap each prompt in ChatML (instruction-tuned checkpoints)")
     ap.add_argument("--serve", type=int, default=0, metavar="PORT", help="serve a web page on 127.0.0.1:PORT")
     ap.add_argument("--relay", type=int, default=0, metavar="POD_PORT",
@@ -239,6 +277,8 @@ def main():
     for m, k, b in held:
         m._buffers[k] = b.to(device)
     model.cfg = cfg
+    global CACHE_MODE
+    CACHE_MODE = args.cache
     tok = load_tokenizer(os.path.expanduser(args.tokenizer), cfg)
     if args.serve:
         return serve(model, tok, device, args.serve)

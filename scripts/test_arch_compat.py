@@ -2823,3 +2823,22 @@ print(
     "CED+hybrid: layers 0-1 pure SWA, encoder Reuse 3-5 fed by layer 2's package (its entries get "
     "gradient), decoders project from H_{L/2}; sqrtsoftplus affinity exact, routed gate sums to 1.5"
 )
+
+# --- incremental-inference factor: GatedMLA._proj_qkv must be the unchanged training half ---
+# scripts/ced_cache.py builds cached attention from _proj_qkv; the refactor must not move the
+# training forward by one bit. Default state has NO _cap attribute, and _proj_qkv reproduces
+# exactly the q/k/v forward consumes (captured through the same optional _cap slot).
+_pqm = model.GatedMLA(_CfgCsa2On).double().eval()
+assert getattr(_pqm, "_cap", None) is None, "a fresh GatedMLA must have the inference _cap slot off"
+_xq = torch.randn(1, 5, _pqm.d_in, dtype=torch.float64)
+with torch.no_grad():
+    _cap = {}
+    _pqm._cap = _cap
+    _pqm(_xq)                                  # runs the normal training forward, captures k/v
+    _pqm._cap = None
+    _q2, _k2, _v2, _g2 = _pqm._proj_qkv(_xq)
+# the forward's captured projections equal the factored call
+assert torch.equal(_cap["k"], _k2) and torch.equal(_cap["v"], _v2), (
+    "_proj_qkv changed the training projections")
+assert _pqm._cap is None, "forward must leave _cap=None when the engine does not use it"
+print("inference factor: _proj_qkv reproduces forward q/k/v bit-identically; _cap is off by default")
