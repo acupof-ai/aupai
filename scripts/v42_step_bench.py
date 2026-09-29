@@ -194,6 +194,8 @@ def main():
     ap.add_argument("--profile", action="store_true", help="full train step with the V4.1 optimizers + chrome trace")
     ap.add_argument("--trace", default=str(ROOT / "runs" / "v42_step_bench_trace.json"))
     ap.add_argument("--json", default=None, help="append one row per cell to this jsonl")
+    ap.add_argument("--mem_snapshot", default=None,
+                    help="record torch.cuda.memory history and dump a pickle here when a cell raises OOM")
     a = ap.parse_args()
     if not torch.cuda.is_available():
         sys.exit("v42_step_bench: CUDA only (no card visible)")
@@ -204,6 +206,8 @@ def main():
     loss_fn, loss_name = make_loss()
     print(f"v42_step_bench: B{a.B} T{a.T} docs={cu.numel() - 1} loss={loss_name} torch={torch.__version__} "
           f"gpu={torch.cuda.get_device_name()}", flush=True)
+    if a.mem_snapshot:
+        torch.cuda.memory._record_memory_history(max_entries=200000)
     rows = []
     for attn in a.attn.split(","):
         for moe in a.moe.split(","):
@@ -214,6 +218,9 @@ def main():
                     except Exception as e:  # one failing cell must not hide the others
                         print(json.dumps({"attn": attn, "moe": moe, "compile": int(c), "fp8": int(f),
                                           "error": f"{type(e).__name__}: {str(e)[:200]}"}), flush=True)
+                        if a.mem_snapshot and isinstance(e, torch.OutOfMemoryError):
+                            torch.cuda.memory._dump_snapshot(a.mem_snapshot)
+                            print(f"memory snapshot -> {a.mem_snapshot} (torch.cuda.memory._dump_snapshot; view at pytorch.org/memory_viz)")
                         torch.cuda.empty_cache()
     if a.json:
         with open(a.json, "a") as fh:
