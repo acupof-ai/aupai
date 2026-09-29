@@ -114,8 +114,16 @@ class CEDCache:
         return kc, vc
 
     def _project_h6_entry(self, i, h6_rows):
+        # The MEAN must match _ced_kv_from_enc's arithmetic exactly: bf16 scatter_add
+        # accumulates rows in POSITION order, then divides by the real row count. torch's
+        # mean() uses a different (pairwise) reduction; at bf16 the two differ by ~0.1 in
+        # the projected keys and that difference is the whole prefill gap on a trained
+        # model. Sequential adds reproduce scatter_add's order bit for bit.
         csa = self.blocks[i].mixer.csa
-        hb = torch.stack(h6_rows, 0).mean(0)                          # (d,)
+        hb = h6_rows[0].clone()
+        for r in h6_rows[1:]:
+            hb = hb + r
+        hb = hb / len(h6_rows)
         kc = csa.w_kv(hb).view(self.H, self.hd)
         vc = csa.w_z(hb).view(self.H, self.hd)
         if csa.kc_norm:
