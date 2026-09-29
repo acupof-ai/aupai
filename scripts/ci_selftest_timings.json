@@ -293,6 +293,7 @@
     "scripts/write_mix_500m.py": 8.7,
     "tests/v41f/diag_resume_bimodal.py": 60,
     "tests/v41f/resume_gate_retry.py": 5.0,
+    "tests/v41f/test_p1_docpack.py": 15.0,
     "tests/v41f/test_p1_grouped_dispatch.py": 5.0,
     "tests/v41f/test_p1_train_resume_smoke.py": 60,
     "v41f_l2/l2_census_scan.py": 0.2

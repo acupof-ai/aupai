@@ -78,3 +78,29 @@ class Compressor(nn.Module):
         if not should_compress:
             return None
         return self.norm(kv.to(dtype))
+
+    def forward_docs(self, x: torch.Tensor, pos: torch.Tensor, doclen: torch.Tensor):
+        """Packed-row prefill: groups restart at each document start and a document's
+        partial tail group is dropped (the reference remainder rule, per document), so no
+        entry pools two documents.
+
+        Returns (latent [b, s//m, head_dim] pre-RoPE, e_start [b, s//m] first-token index of
+        each entry, e_valid [b, s//m]). Entries are in position order; complete groups fill
+        the front and padding entries carry e_valid False."""
+        bsz, seqlen, _ = x.size()
+        ratio, dtype = self.compress_ratio, x.dtype
+        if ratio == 1:
+            e_start = torch.arange(seqlen, device=x.device).expand(bsz, seqlen)
+            return self.norm(self.wkv(x)), e_start, torch.ones_like(e_start, dtype=torch.bool)
+        x = x.float()
+        kv, score = self.wkv(x), self.wgate(x)
+        starts = (pos % ratio == 0) & (pos + ratio <= doclen)
+        n = seqlen // ratio  # disjoint complete groups: never more than this many
+        e_start = torch.argsort((~starts).to(torch.int8), dim=1, stable=True)[:, :n]
+        e_valid = starts.gather(1, e_start)
+        members = (e_start[..., None] + torch.arange(ratio, device=x.device)).clamp_max(seqlen - 1)
+        flat = members.reshape(bsz, n * ratio, 1).expand(-1, -1, self.head_dim)
+        kv = kv.gather(1, flat).view(bsz, n, ratio, self.head_dim)
+        score = score.gather(1, flat).view(bsz, n, ratio, self.head_dim)
+        kv = (kv * score.softmax(dim=2)).sum(dim=2)
+        return self.norm(kv.to(dtype)), e_start, e_valid

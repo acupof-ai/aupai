@@ -23,7 +23,8 @@ def apply_rotary_emb(x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
     place; `freqs` is complex and already sliced to the query's positions."""
     out_dtype = x.dtype
     z = torch.view_as_complex(x.float().unflatten(-1, (-1, 2)))
-    shape = (1, z.size(1), z.size(-1)) if z.ndim == 3 else (1, z.size(1), 1, z.size(-1))
+    lead = freqs.size(0) if freqs.dim() == 3 else 1  # [b,s,d/2] per-token positions
+    shape = (lead, z.size(1), z.size(-1)) if z.ndim == 3 else (lead, z.size(1), 1, z.size(-1))
     return torch.view_as_real(z * freqs.view(*shape)).flatten(-2).to(out_dtype)
 
 

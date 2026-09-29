@@ -25,6 +25,7 @@ production training path never decodes. The two-level candidate indexer is confi
 import torch
 from torch import nn
 
+from v41f import docpack
 from v41f.compressor import Compressor
 from v41f.indexer import Indexer
 from v41f.indexer_ste import ste_slot_weight
@@ -52,6 +53,10 @@ class SharedAttnState:
         self.candidates = None  # level-one block mask, from the candidate source
         self.sel_scores = None  # continuous scores at the published slots (training only)
         self.cu = None  # int32 cu_seqlens over the flattened b*s stream; None = one doc per row
+        # packed-row path (v41f/docpack.py): per-token layout, entry metadata, indexer loss
+        self.doc = self.pos = self.doclen = None  # [b,s]
+        self.entry_meta = None  # (e_valid, e_doc, e_last, ratio) from the kv source
+        self.indexer_kl = []  # (sum, count) per index-source layer under indexer_train_mode "kl"
 
 
 class IndexKeyProj(nn.Module):
@@ -186,6 +191,62 @@ class Attention(nn.Module):
         # non-index layers reuse the source's published KV and topk for this same q set
         return state.compress_kv, state.topk_idxs
 
+    # ------------------------------------------------------------------ packed-row path
+    def _compress_docs(self, x, qr, freqs, state):
+        """_compress for packed rows: per-document groups and visibility (docpack). Returns
+        (compressed KV [b,n,d] RoPE'd, selected entry indices [b,s,k] with -1 empty)."""
+        if self.is_kv_source:
+            latent, e_start, e_valid = self.compressor.forward_docs(x, state.pos, state.doclen)
+            efreqs = self.freqs_cis[state.pos.gather(1, e_start)]
+            if self.owns_index_k:
+                # detached latent: the index keys learn only from the indexer loss
+                k = self.index_key(latent.detach())
+                apply_rotary_emb(k[..., -self.rd :], efreqs)
+                state.index_k = k
+            rot = latent.clone()
+            apply_rotary_emb(rot[..., -self.rd :], efreqs)
+            state.compress_kv = rot
+            e_last = e_start + self.compress_ratio - 1
+            state.entry_meta = (e_valid, state.doc.gather(1, e_start), e_last, self.compress_ratio)
+        if self.is_index_source:
+            assert state.index_k is not None, "index source reached with no published keys"
+            e_valid, e_doc, e_last, m = state.entry_meta
+            visible = docpack.entry_visibility(e_valid, e_doc, e_last, state.doc)
+            state.topk_idxs = docpack.select_visible(self.indexer, x, qr, state.index_k, freqs, visible, m)
+        return state.compress_kv, state.topk_idxs
+
+    def _forward_docs(self, x, state):
+        if self.cfg.indexer_train_mode == "ste":
+            raise NotImplementedError("indexer_train_mode 'ste' has no packed-row path; use 'kl'")
+        bsz, seqlen, _ = x.size()
+        freqs = self.freqs_cis[state.pos]  # [b,s,rd/2]: positions restart per document
+        q, qr = self.qproj(x)
+        apply_rotary_emb(q[..., -self.rd :], freqs)
+        kv = self.kvproj(x)
+        apply_rotary_emb(kv[..., -self.rd :], freqs)
+        comp_kv = comp_idx = None
+        if self.compress_ratio:
+            comp_kv, comp_idx = self._compress_docs(x, qr, freqs, state)
+        if self.cfg.attn_impl == "chunked":
+            m = state.entry_meta[3] if comp_kv is not None else 1
+            o, lse = docpack.windowed_sparse_attn(
+                q, kv, comp_kv, comp_idx, self.attn_sink, self.softmax_scale, state.doc, self.window_size, m)
+            if self.is_index_source and self.cfg.indexer_train_mode == "kl":
+                state.indexer_kl.append(docpack.indexer_kl(
+                    self.indexer, x, qr, state.index_k, freqs, q, comp_kv, comp_idx, lse,
+                    self.softmax_scale, m))
+        else:
+            win = get_window_topk_idxs(self.window_size, bsz, seqlen, 0, device=x.device)
+            start = torch.arange(seqlen, device=x.device) - state.pos  # [b,s] document start
+            idxs = torch.where(win >= start[..., None], win, -1)
+            if comp_kv is not None:
+                kv = torch.cat([kv, comp_kv], dim=1)
+                idxs = torch.cat([idxs, torch.where(comp_idx >= 0, comp_idx + seqlen, -1)], dim=-1)
+            o = sparse_attn(q, kv, self.attn_sink, idxs, self.softmax_scale)
+        o = o.to(q.dtype)
+        apply_rotary_emb(o[..., -self.rd :], freqs, inverse=True)
+        return self.oproj(o), state
+
     def forward(self, x, state=None):
         """Prefill forward. `state` is the shared per-pass SharedAttnState; a fresh one is
         made when the caller omits it (single-layer tests), but multi-layer models pass one."""
@@ -193,6 +254,8 @@ class Attention(nn.Module):
         freqs = self.freqs_cis[:seqlen]
         if state is None:
             state = SharedAttnState()
+        if state.doc is not None:
+            return self._forward_docs(x, state)
 
         q, qr = self.qproj(x)
         apply_rotary_emb(q[..., -self.rd :], freqs)
