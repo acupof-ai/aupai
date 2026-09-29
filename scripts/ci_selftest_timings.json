@@ -284,12 +284,17 @@
     "scripts/tokenizer_sweep.py": 0.0,
     "scripts/trace_classes.py": 0.0,
     "scripts/train_health.py": 3.0,
+    "scripts/v41f_param_count.py": 5.0,
     "scripts/val_step_rates.py": 0.0,
     "scripts/ve_row_norms.py": 1.1,
     "scripts/verify_dc_residual.py": 0.1,
     "scripts/verify_fetch.py": 0.0,
     "scripts/watch_router_scale.py": 1.5,
     "scripts/write_mix_500m.py": 8.7,
+    "tests/v41f/diag_resume_bimodal.py": 60,
+    "tests/v41f/resume_gate_retry.py": 5.0,
+    "tests/v41f/test_p1_grouped_dispatch.py": 5.0,
+    "tests/v41f/test_p1_train_resume_smoke.py": 60,
     "v41f_l2/l2_census_scan.py": 0.2
   }
 }

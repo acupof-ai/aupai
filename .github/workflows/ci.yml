@@ -60,6 +60,13 @@ jobs:
           MKL_DYNAMIC: "FALSE"
         run: python scripts/test_sft_ced_cpu.py
       - run: python scripts/de109/check_cpu_parity.py
+      # v41f (the v42 arch base): reference-parity P0/P1 suites and the structural gates, CPU-only.
+      - run: python tests/v41f/p0_selftest.py
+      - run: python tests/v41f/p1_selftest.py
+      - run: python tests/v41f/test_p1_assembly_keys.py --selftest
+      - run: python tests/v41f/test_p1_indexer_freeze.py --selftest
+      - run: python tests/v41f/test_p1_config_gate.py --selftest
+      - run: python tests/v41f/test_p1_train_ckpt.py
       # Muon Newton-Schulz rank sharding bit-parity: gloo world2/world4 CPU, sharded NS must
       # equal one rank doing every stacked instance, plus the uneven-group fallback.
       - name: Muon NS shard bit-parity
