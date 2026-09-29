@@ -2709,6 +2709,9 @@ def main():
         # liger_kernel (pod only). Prints SKIP and exits 0 off CUDA, so a commit-time run would be
         # a pass that ran nothing; run by hand on a free card.
         "tests/v41f/test_gpu_liger_parity.py": "liger_kernel Triton kernels need CUDA and the pod's liger install; SKIPs (exit 0) off CUDA, so a commit-time run proves nothing",
+        # 1e 2026-09-30: DDP + torch.compile reproduction of the v42 trial's first-backward failure; needs
+        # two cards under torchrun and exits nonzero off CUDA by design.
+        "tests/v41f/test_gpu_ddp_compile.py": "torchrun --nproc_per_node=2 on two cards; exits with 'CUDA only' off CUDA",
         # The format-SFT packer's boundary known-answer test (ruling C, 2026-09-09):
         # asserts the split-encode invariants on the REAL tokenizer, because the
         # prompt/body boundary merge is a tokenizer property and a fake tokenizer
