@@ -4470,6 +4470,14 @@ def main():
                     )
 
             if (i // Cfg.batch + 1) % Cfg.accum == 0:
+                if (Cfg.arch == "v42" and is_main and Cfg.health_every > 0
+                        and (step + 1) % Cfg.health_every == 0):
+                    # pre-clip grad norms by module group and optimizer group (v41f/optim.py
+                    # grad_norm_report): the world-8 trial's pre-clip gnorm climbed 22 -> 59 over
+                    # steps 500-1000 while the loss fell; this names where it sits, rank 0 only.
+                    from v41f.optim import grad_norm_report  # noqa: PLC0415
+
+                    print(f"step {step + 1} health {grad_norm_report(raw_model)}", flush=True)
                 grad_norm = nn.utils.clip_grad_norm_(raw_model.parameters(), Cfg.clip)
                 # One CPU sync per step: finite(loss) & finite(grad_norm), MIN-reduced across ranks
                 flag = (torch.isfinite(loss.detach()) & torch.isfinite(grad_norm)).float()
