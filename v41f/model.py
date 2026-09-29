@@ -193,13 +193,17 @@ class V41FModel(nn.Module):
             if name in dead:
                 param.requires_grad_(False)
 
-    def forward(self, input_ids: torch.Tensor):
+    def forward(self, input_ids: torch.Tensor, cu: "torch.Tensor | None" = None, return_hidden: bool = False):
+        """cu: int32 cu_seqlens over the flattened b*s stream (train.doc_cu_seqlens), None = one
+        document per row. return_hidden: the normed pre-head hidden [b,s,dim] instead of logits,
+        for a fused linear-CE caller."""
         engram_hashes = self.engram_hash(input_ids, 0, None) if self.engram_hash is not None else None
         h = self.embed(input_ids)
         h = h.unsqueeze(2).repeat(1, 1, self.hc_mult, 1)
         main_hiddens = []
         pre_mix = make_identity_pre_mix(h, self.hc_mult)
         state = SharedAttnState()
+        state.cu = cu
         for i, layer in enumerate(self.layers):
             engram = self.engrams[i]
             if engram is not None:
@@ -209,6 +213,8 @@ class V41FModel(nn.Module):
                 main_hiddens.append(h.mean(dim=2))
             h, pre_mix, state = layer(h, 0, pre_mix, state)
         h = self.layers[-1].hc_pre(h, pre_mix)
+        if return_hidden:
+            return self.norm(h), None
         logits = self.head(self.norm(h))
         main_hidden = torch.cat(main_hiddens, dim=-1) if main_hiddens else None
         return logits, main_hidden
