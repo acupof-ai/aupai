@@ -47,3 +47,27 @@ def apply_rotary_emb(x: torch.Tensor, freqs_cis: torch.Tensor, inverse: bool = F
     out = torch.view_as_real(xc * freqs_cis).flatten(-2)
     y.copy_(out.to(y.dtype))  # in-place, matching model_ref apply_rotary_emb (return discarded by callers)
     return y
+
+
+def rope_cos_sin(freqs_cis: torch.Tensor):
+    """complex [..., d/2] -> (cos, sin) fp32 of the same shape, for apply_rotary_real."""
+    return freqs_cis.real.contiguous(), freqs_cis.imag.contiguous()
+
+
+def apply_rotary_real(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor, inverse: bool = False):
+    """apply_rotary_emb without the complex64 round trip, OUT of place: the rotation of adjacent
+    pairs written as real multiplies, so torch.compile fuses it into the neighbouring casts
+    (inductor has no complex kernels and falls back to eager on view_as_complex). fp32 math on
+    the pairs; agrees with apply_rotary_emb to bf16 rounding (tests/v41f/test_p1_fused.py)."""
+    xf = x.float().unflatten(-1, (-1, 2))
+    a, b = xf[..., 0], xf[..., 1]
+    if inverse:
+        sin = -sin
+    lead = cos.size(0) if cos.dim() == 3 else 1
+    if xf.ndim == 4:  # [b,s,d/2,2]
+        cos = cos.view(lead, xf.size(1), xf.size(2))
+        sin = sin.view(lead, xf.size(1), xf.size(2))
+    else:  # [b,s,h,d/2,2]
+        cos = cos.view(lead, xf.size(1), 1, xf.size(3))
+        sin = sin.view(lead, xf.size(1), 1, xf.size(3))
+    return torch.stack((a * cos - b * sin, a * sin + b * cos), -1).flatten(-2).to(x.dtype)

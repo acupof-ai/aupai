@@ -34,17 +34,20 @@ ATTN_CHUNK = 512  # query rows per chunk; tests shrink it to exercise the chunk 
 
 def doc_layout(cu, b: int, s: int, device):
     """cu_seqlens over the flattened b*s stream (None = one document per row) ->
-    (doc [b,s] global document id, pos [b,s] position inside its document, doclen [b,s]).
+    (doc [b,s] global document id, pos [b,s] position inside its document, doclen [b,s],
+    cu_docs int32 the merged cu_seqlens the flash window branch takes).
 
-    Row starts are merged into cu, so a document never spans two rows even if the caller's
-    cu omitted a row boundary."""
+    CONTRACT: a given `cu` is sorted, unique, starts at 0, ends at b*s and contains every row
+    start -- exactly what train.doc_cu_seqlens produces (it unions the row starts itself). It is
+    trusted here rather than re-merged: `unique` has a data-dependent output shape and was one
+    torch.compile graph break per forward."""
     rows = torch.arange(0, b * s + 1, s, device=device, dtype=torch.long)
-    cu = rows if cu is None else torch.cat([cu.to(device=device, dtype=torch.long), rows]).unique()
+    cu = rows if cu is None else cu.to(device=device, dtype=torch.long)
     i = torch.arange(b * s, device=device)
     d = torch.searchsorted(cu, i, right=True) - 1
     pos = i - cu[d]
     doclen = cu[d + 1] - cu[d]
-    return d.view(b, s), pos.view(b, s), doclen.view(b, s)
+    return d.view(b, s), pos.view(b, s), doclen.view(b, s), cu.to(torch.int32)
 
 
 def entry_visibility(e_valid, e_doc, e_last, doc):
@@ -171,3 +174,111 @@ def indexer_kl(indexer, x, qr, index_k, freqs, q, comp, comp_idx, lse, scale: fl
             tot = tot + _kl_chunk(*args, indexer)
         cnt = cnt + has.sum()
     return tot, cnt
+
+
+# ------------------------------------------------------------------ fused path (attn_impl "fused")
+# The window branch is one flash-attn varlen call over the whole packed row (causal, window
+# 128, GQA h:1, document boundaries from cu_docs); the selected-entry branch stays chunked and
+# checkpointed; the two are joined with the sink by fp32 log-sum-exp, which is the reference
+# single softmax exactly (softmax over a union of sets = LSE-weighted mix of the parts).
+
+try:
+    from flash_attn.cute import interface as _fa  # flash-attn 4, image-baked on the pod
+    HAS_FA_CUTE = True
+except ImportError:  # CPU: the pure-torch window below carries the parity tests
+    _fa = None
+    HAS_FA_CUTE = False
+
+
+class _FlashWindow(torch.autograd.Function):
+    """flash_attn.cute varlen forward/backward with return_lse; q [N,h,d], kv [N,1,d] used as
+    both K and V (the model's MQA latent is one vector). lse comes back [h, N]."""
+
+    @staticmethod
+    def forward(ctx, q, kv, cu, max_len, window, scale):
+        o, lse = _fa._flash_attn_fwd(
+            q, kv, kv, cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=max_len, max_seqlen_k=max_len,
+            causal=True, window_size_left=window - 1, window_size_right=0,
+            softmax_scale=scale, return_lse=True)
+        ctx.save_for_backward(q, kv, o, lse)
+        ctx.meta = (cu, max_len, window, scale)
+        return o, lse
+
+    @staticmethod
+    def backward(ctx, go, glse):
+        q, kv, o, lse = ctx.saved_tensors
+        cu, max_len, window, scale = ctx.meta
+        dq, dk, dv = _fa._flash_attn_bwd(
+            q, kv, kv, o, go.to(o.dtype), lse, dlse=glse.contiguous() if glse is not None else None,
+            softmax_scale=scale, causal=True, window_size_left=window - 1, window_size_right=0,
+            cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=max_len, max_seqlen_k=max_len)
+        return dq, dk + dv, None, None, None, None
+
+
+def _window_torch(q, kv, doc, window, scale):
+    """Pure-torch window branch (CPU / no flash): chunked masked softmax without the sink.
+    Returns o [b,s,h,d] fp32-accumulated in q's dtype and lse [b,h,s] fp32."""
+    b, s, h, _ = q.shape
+    outs, lses = [], []
+    for c0 in range(0, s, ATTN_CHUNK):
+        c1 = min(s, c0 + ATTN_CHUNK)
+        k0 = max(0, c0 - window + 1)
+        qc, kvw = q[:, c0:c1], kv[:, k0:c1]
+        t = torch.arange(c0, c1, device=q.device)
+        j = torch.arange(k0, c1, device=q.device)
+        mw = (j[None, :] <= t[:, None]) & (t[:, None] - j[None, :] < window)
+        mw = mw[None] & (doc[:, c0:c1, None] == doc[:, None, k0:c1])
+        sc = (torch.einsum("bqhd,bkd->bhqk", qc, kvw).float() * scale).masked_fill(~mw[:, None], float("-inf"))
+        lse = torch.logsumexp(sc, -1)
+        p = torch.exp(sc - lse[..., None])
+        outs.append(torch.einsum("bhqk,bkd->bqhd", p.to(kvw.dtype), kvw))
+        lses.append(lse)
+    return torch.cat(outs, 1), torch.cat(lses, -1)
+
+
+def _entry_chunk(qc, compc, idxc, scale: float):
+    """Selected-entry branch for one query chunk: normalized output and its lse (no sink)."""
+    sel = _sel_mask(idxc, compc.size(1))
+    sc = (torch.einsum("bqhd,bnd->bhqn", qc, compc).float() * scale).masked_fill(~sel[:, None], float("-inf"))
+    lse = torch.logsumexp(sc, -1)                       # -inf where the query selected nothing
+    p = torch.exp(sc - lse[..., None].nan_to_num(neginf=0.0))
+    p = torch.where(torch.isfinite(lse)[..., None], p, torch.zeros_like(p))
+    return torch.einsum("bhqn,bnd->bqhd", p.to(compc.dtype), compc), lse
+
+
+def fused_sparse_attn(q, kv, comp, comp_idx, sink, scale: float, doc, cu_docs, window: int, m: int):
+    """Same contract as windowed_sparse_attn (o [b,s,h,d], lse [b,h,s] detached), computed as
+    window(flash) + entries(chunked) + sink, joined by LSE. `cu_docs` int32 over the flattened
+    b*s stream, from doc_layout."""
+    b, s, h, d = q.shape
+    if HAS_FA_CUTE and q.is_cuda:
+        ow, lw = _FlashWindow.apply(q.reshape(b * s, h, d), kv.reshape(b * s, 1, d), cu_docs, s, window, scale)
+        ow = ow.view(b, s, h, d)
+        lw = lw.view(h, b, s).permute(1, 0, 2).float()      # [b,h,s]
+    else:
+        ow, lw = _window_torch(q, kv, doc, window, scale)
+    le = torch.full_like(lw, float("-inf"))
+    oe = torch.zeros_like(ow)
+    if comp is not None:
+        outs, lses = [], []
+        for c0 in range(0, s, ATTN_CHUNK):
+            c1 = min(s, c0 + ATTN_CHUNK)
+            nv = min(comp.size(1), c1 // m)
+            if nv == 0:
+                outs.append(torch.zeros_like(ow[:, c0:c1]))
+                lses.append(torch.full_like(lw[:, :, c0:c1], float("-inf")))
+                continue
+            args = (q[:, c0:c1], comp[:, :nv], comp_idx[:, c0:c1], scale)
+            if torch.is_grad_enabled():
+                o, lse = checkpoint(_entry_chunk, *args, use_reentrant=False)
+            else:
+                o, lse = _entry_chunk(*args)
+            outs.append(o)
+            lses.append(lse)
+        oe, le = torch.cat(outs, 1), torch.cat(lses, -1)
+    ls = sink.float().view(1, h, 1).expand(b, h, s)
+    total = torch.logsumexp(torch.stack([lw, le, ls], 0), 0)   # [b,h,s]
+    ww = torch.exp(lw - total)
+    we = torch.where(torch.isfinite(le), torch.exp(le - total), torch.zeros_like(le))
+    o = ow.float() * ww.permute(0, 2, 1)[..., None] + oe.float() * we.permute(0, 2, 1)[..., None]
+    return o.to(q.dtype), total.detach()
