@@ -1,7 +1,10 @@
 """FP8 expert GEMMs through DeepGEMM (deep_gemm 0.1.0 on the pod, SM90) behind MoE(moe_gemm="deepgemm").
 
 Layout is DeepGEMM's "contiguous" grouped GEMM: rows sorted by expert, every expert's segment padded
-to the M alignment (128), `m_indices[row]` = expert id (-1 on padding rows). Scaling follows the
+to the M alignment (128), `m_indices[row]` = expert id (-1 on padding rows). The padded M is a SHAPE,
+`padded_m(B*T*top_k, E)` = rows + one partial block per expert, so no routing-dependent host read
+happens per step and the path stays inside a compiled graph (the unused tail is -1 rows the kernel
+skips; the cost is E*128 extra rows of fp8 activations, 64*128 = 8192 rows at v42_s24). Scaling follows the
 DeepSeek-V3 fine-grained recipe the library is built for -- activations per token x 128-wide K block
 (e4m3, fp32 scale), weights per 128x128 block -- not torchao's tensorwise recipe: the kernel has no
 per-tensor mode, so the scaling matches torchao's e4m3 dynamic recipe in dtype and dynamic range, not
@@ -57,21 +60,28 @@ def dequant_block(q, sf):
     return (v * sf.view(e, n // ALIGN, 1, k // ALIGN, 1)).view(e, n, k)
 
 
-def padded_layout(counts):
-    """counts [E] (int64, on device) -> (src, m_indices): `src[i]` is the sorted-row index that
-    padded row i reads (-1 on padding), `m_indices[i]` its expert (-1 on padding). Padded segment
-    sizes are counts rounded up to ALIGN; one host sync on the total (the padded M is a shape)."""
+def padded_m(n_rows, n_experts):
+    """The padded M as a shape: every expert segment rounds up to ALIGN, so the worst case over any
+    routing is n_rows plus one partial block per expert. Decided from B*T*top_k and E on the host once,
+    never from the routing, so the DeepGEMM path stays shape-static inside a compiled graph."""
+    return (n_rows + n_experts * (ALIGN - 1) + ALIGN - 1) // ALIGN * ALIGN
+
+
+def padded_layout(counts, m_pad):
+    """counts [E] (int64, on device) -> (pos, m_indices) for a fixed padded length m_pad:
+    `pos[r]` is the padded row of sorted real row r (segments in expert order, each starting on an
+    ALIGN boundary), `m_indices[i]` the expert of padded row i, -1 on padding and on the unused tail.
+    No host sync: m_pad is a shape (padded_m), everything else is device arithmetic."""
     pc = (counts + ALIGN - 1) // ALIGN * ALIGN
-    m_pad = int(pc.sum())
-    e = counts.numel()
-    seg = torch.repeat_interleave(torch.arange(e, device=counts.device), pc)  # expert per padded row
     start_pad = pc.cumsum(0) - pc
     start = counts.cumsum(0) - counts
-    local = torch.arange(m_pad, device=counts.device) - start_pad[seg]
-    valid = local < counts[seg]
-    src = torch.where(valid, start[seg] + local, torch.full_like(local, -1))
-    m_indices = torch.where(valid, seg, torch.full_like(seg, -1)).to(torch.int32)
-    return src, m_indices
+    n_rows = int(counts.sum()) if not torch.compiler.is_compiling() and counts.device.type == "cpu" else None
+    expert_of_row = torch.repeat_interleave(torch.arange(counts.numel(), device=counts.device), counts,
+                                            output_size=n_rows)
+    pos = start_pad[expert_of_row] + (torch.arange(expert_of_row.numel(), device=counts.device) - start[expert_of_row])
+    m_indices = torch.full((m_pad,), -1, dtype=torch.int32, device=counts.device)
+    m_indices[pos] = expert_of_row.to(torch.int32)
+    return pos, m_indices
 
 
 def _gemm_nt(a_q, a_sf, w_q, w_sf, m_indices, emulate):
@@ -103,9 +113,8 @@ class GroupedLinearFP8(torch.autograd.Function):
 
     @staticmethod
     def forward(ctx, a, w, counts, offs, emulate):
-        src, m_indices = padded_layout(counts)
-        pos = torch.nonzero(src >= 0).squeeze(1)  # padded row of each real sorted row, in order
-        a_pad = a.new_zeros(src.numel(), a.size(1))
+        pos, m_indices = padded_layout(counts, padded_m(a.size(0), w.size(0)))
+        a_pad = a.new_zeros(m_indices.numel(), a.size(1))
         a_pad[pos] = a
         a_q, a_sf = per_token_cast(a_pad)
         w_q, w_sf = per_block_cast(w)
