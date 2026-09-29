@@ -195,6 +195,46 @@ def qk_scale_report(stats, softmax_scale, topk=5):
             + f" | median={med:.3g} layers={len(rows)}")
 
 
+def nonfinite_grad_report(model):
+    """[(fqn, n_nan, n_inf)] over parameters whose grad has a non-finite entry; [] on a clean step."""
+    out = []
+    for n, p in model.named_parameters():
+        if p.grad is None:
+            continue
+        g = p.grad.detach()
+        fin = torch.isfinite(g)
+        if not bool(fin.all()):
+            nan = int(torch.isnan(g).sum())
+            out.append((n, nan, int((~fin).sum()) - nan))
+    return out
+
+
+def max_abs_grad(model):
+    """(fqn, value) of the largest |grad| element over every parameter; bf16 overflow shows as inf,
+    a value near 1e4-1e5 growing step over step predicts it."""
+    best, name = -1.0, None
+    for n, p in model.named_parameters():
+        if p.grad is None:
+            continue
+        v = float(p.grad.detach().abs().max())
+        if v > best or v != v:  # a NaN max wins: it is the finding
+            best, name = v, n
+            if v != v:
+                break
+    return name, best
+
+
+def aux_terms_report(model):
+    """Finite-ness of the two aux losses V42LM adds to the CE: the indexer KL and the per-layer MoE
+    sequence-balance terms; a text fragment for the non-finite step line."""
+    idx = getattr(model, "indexer_loss", None)
+    moe = [b.ffn.aux_loss for b in model.layers if getattr(b.ffn, "aux_loss", None) is not None]
+    idx_s = "none" if idx is None else f"{float(idx):.4g}"
+    moe_bad = [i for i, t in enumerate(moe) if not bool(torch.isfinite(t))]
+    moe_s = "none" if not moe else (f"{len(moe)} finite" if not moe_bad else f"non-finite at layers {moe_bad}")
+    return f"indexer_loss={idx_s} moe_aux={moe_s}"
+
+
 def _heads_of(name, cfg):
     if name.endswith("qproj.wq_b.weight"):
         return cfg.n_heads

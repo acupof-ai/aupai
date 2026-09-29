@@ -103,6 +103,35 @@ def test_qk_scale_report_tracks_wq_b_scale():
     print(f"  {line}")
 
 
+def test_nonfinite_and_maxgrad_reports():
+    """Planted NaN/inf grads are named with their counts; a clean model reports []; max_abs_grad names
+    the parameter holding the largest |grad| element; aux_terms_report says whether the aux terms are
+    finite."""
+    from v41f.optim import aux_terms_report, max_abs_grad, nonfinite_grad_report
+
+    torch.manual_seed(0)
+    m = V42LM(tiny_cfg(), max_batch_size=1).to(torch.bfloat16)
+    for p in m.parameters():
+        if p.requires_grad:
+            p.grad = torch.randn_like(p) * 1e-3
+    assert nonfinite_grad_report(m) == []
+    big = m.layers[1].attn.qproj.wq_b.weight
+    big.grad[0, 0] = 512.0
+    name, val = max_abs_grad(m)
+    assert name == "layers.1.attn.qproj.wq_b.weight" and val == 512.0, (name, val)
+    m.layers[2].attn.kvproj.wkv.weight.grad[:3, 0] = float("nan")
+    m.layers[0].ffn.gate.weight.grad[1, :2] = float("inf")
+    rep = dict((n, (a, b)) for n, a, b in nonfinite_grad_report(m))
+    assert rep == {"layers.2.attn.kvproj.wkv.weight": (3, 0), "layers.0.ffn.gate.weight": (0, 2)}, rep
+    name, val = max_abs_grad(m)
+    assert name == "layers.0.ffn.gate.weight" or val != val, (name, val)  # inf or the NaN wins
+    with torch.no_grad():
+        m(torch.randint(0, 512, (1, 64)))
+    line = aux_terms_report(m)
+    assert "indexer_loss=" in line and ("moe_aux=4 finite" in line or "moe_aux=none" in line), line
+    print(f"  nonfinite {sorted(rep)}; maxgrad {name}; {line}")
+
+
 def test_headwise_muon_equals_per_head_ns():
     torch.manual_seed(1)
     h, hd, c = 4, 32, 48
@@ -237,7 +266,7 @@ def test_packed_rows_train_the_indexer():
 
 TESTS = [test_packed_rows_train_the_indexer, test_sinkhorn_row_col_rms, test_headwise_muon_equals_per_head_ns, test_census_one_group_each,
          test_smoke_three_steps, test_grouped_moe_matches_loop_cuda, test_grad_norm_report_names_the_planted_param_first,
-         test_qk_scale_report_tracks_wq_b_scale]
+         test_qk_scale_report_tracks_wq_b_scale, test_nonfinite_and_maxgrad_reports]
 
 
 if __name__ == "__main__":
