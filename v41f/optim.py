@@ -147,6 +147,37 @@ def v42_param_groups(model):
     return groups
 
 
+def _grad_group_key(name):
+    """`layers.7.attn.indexer.wq_b.weight` -> `layers.7.attn.indexer`; `layers.7.ffn.w1` -> `layers.7.ffn`
+    (stacked experts) / `layers.7.ffn.experts` (per-expert); `embed.weight` -> `embed`."""
+    f = name.split(".")
+    if f[0] == "layers":
+        keep = 3
+        if len(f) > 3 and f[3] in ("indexer", "compressor", "experts", "gate", "qproj", "kvproj", "oproj"):
+            keep = 4
+        return ".".join(f[:keep])
+    return f[0]
+
+
+def grad_norm_report(model, topk=5):
+    """One line from the grads already on the parameters (before clipping, no extra backward, no
+    collective): the top-k module groups by grad L2 norm and the per-optimizer-group totals.
+    Norms are the sqrt of summed squares per group, fp32, on the parameters' device."""
+    groups = v42_param_groups(model)
+    by_mod, by_opt = {}, {}
+    for gname, items in groups.items():
+        for n, p in items:
+            if p.grad is None:
+                continue
+            sq = p.grad.detach().float().square().sum()
+            k = _grad_group_key(n)
+            by_mod[k] = by_mod.get(k, 0.0) + sq
+            by_opt[gname] = by_opt.get(gname, 0.0) + sq
+    top = sorted(by_mod.items(), key=lambda kv: -float(kv[1]))[:topk]
+    mods = " ".join(f"{k}={float(v) ** 0.5:.3g}" for k, v in top)
+    opts = " ".join(f"{k}={float(by_opt.get(k, 0.0)) ** 0.5:.3g}" for k in ("muon", "sinkhorn", "adamw_decay", "adamw_nodecay"))
+    return f"gradnorm top{topk} {mods} | groups {opts}"
+
 def _heads_of(name, cfg):
     if name.endswith("qproj.wq_b.weight"):
         return cfg.n_heads

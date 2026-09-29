@@ -51,6 +51,31 @@ def test_sinkhorn_row_col_rms():
     assert (g[7:].square().mean(1).sqrt() - 1).abs().max() > 0.5
 
 
+def test_grad_norm_report_names_the_planted_param_first():
+    """A large grad planted on one parameter puts its module group first and inflates only its
+    optimizer group; the other groups read their small background norm."""
+    from v41f.optim import grad_norm_report
+
+    torch.manual_seed(0)
+    m = V42LM(tiny_cfg(), max_batch_size=1)
+    for p in m.parameters():
+        if p.requires_grad:
+            p.grad = torch.randn_like(p) * 1e-3
+    target = m.layers[2].attn.indexer.wq_b.weight
+    target.grad = torch.full_like(target, 10.0)
+    line = grad_norm_report(m)
+    first = line.split("gradnorm top5 ")[1].split(" ")[0]
+    assert first.startswith("layers.2.attn.indexer="), line
+    planted = 10.0 * target.numel() ** 0.5
+    assert abs(float(first.split("=")[1]) - planted) / planted < 1e-2, line
+    groups = dict(kv.split("=") for kv in line.split("| groups ")[1].split(" "))
+    assert float(groups["muon"]) > 0.99 * planted and float(groups["sinkhorn"]) < 1.0, line
+    # negative control: without the plant, the indexer is not first
+    target.grad = torch.randn_like(target) * 1e-3
+    assert not grad_norm_report(m).split("gradnorm top5 ")[1].startswith("layers.2.attn.indexer="), line
+    print(f"  {line[:120]}")
+
+
 def test_headwise_muon_equals_per_head_ns():
     torch.manual_seed(1)
     h, hd, c = 4, 32, 48
@@ -184,7 +209,7 @@ def test_packed_rows_train_the_indexer():
 
 
 TESTS = [test_packed_rows_train_the_indexer, test_sinkhorn_row_col_rms, test_headwise_muon_equals_per_head_ns, test_census_one_group_each,
-         test_smoke_three_steps, test_grouped_moe_matches_loop_cuda]
+         test_smoke_three_steps, test_grouped_moe_matches_loop_cuda, test_grad_norm_report_names_the_planted_param_first]
 
 
 if __name__ == "__main__":
