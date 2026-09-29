@@ -97,6 +97,8 @@ CFG_ONLY_TRAINING_KNOBS = frozenset({
     "hc_impl",              # v41f/hyperconn.py: liger_kernel mHC kernels over our parameters (1e)
     "norm_impl",            # v41f/norm_gate.py: LigerRMSNorm casting_mode gemma (1e)
     "moe_gemm",             # v41f/deepgemm_moe.py: DeepGEMM fp8 grouped expert GEMMs (1e)
+    "qk_norm",              # v41f/projections.py, indexer.py: per-head q RMSNorm, deviation from the reference (1e)
+    "attn_logit_softcap",   # v41f/docpack.py cap(): C*tanh(s/C) on attention scores, deviation from the reference (1e)
 })
 
 # Prime bucket sum independently recomputed = 786,862; x head_dim 128 = 100.7M rows.
