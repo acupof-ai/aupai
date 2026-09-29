@@ -861,7 +861,7 @@ def build_model(cfg):
     over = {}
     for kv in filter(None, (getattr(cfg, "v42_impl", "") or "").split(",")):
         k, v = kv.split("=", 1)
-        if k not in ("attn_impl", "rope_impl", "moe_stacked", "hc_impl", "norm_impl"):
+        if k not in ("attn_impl", "rope_impl", "moe_stacked", "hc_impl", "norm_impl", "moe_gemm"):
             raise ValueError(f"--v42_impl: {k} is not an implementation switch")
         over[k] = v in ("1", "true", "True") if k == "moe_stacked" else v
     vc = replace(vc, block_ckpt=bool(cfg.grad_ckpt), **over)

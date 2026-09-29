@@ -134,6 +134,40 @@ def test_stacked_moe_equals_loop_and_remaps():
     print(f"  stacked MoE == loop (bit-equal), remap both ways, swiglu_clamp == reference; grouped_mm rel {rel:.1e}")
 
 
+def test_deepgemm_layout_and_emulated_fp8():
+    """moe_gemm deepgemm (torch emulation off CUDA): the padded contiguous layout and the fp8
+    quantize/dequantize path agree with grouped_mm bf16 within fp8 tolerance, forward and grads."""
+    from v41f import deepgemm_moe as dg
+
+    torch.manual_seed(0)
+    counts = torch.tensor([3, 0, 130, 128, 1])
+    src, mi = dg.padded_layout(counts)
+    assert src.numel() == 128 + 0 + 256 + 128 + 128 == mi.numel()  # each count rounded up to 128
+    assert (mi[:3] == 0).all() and (mi[3:128] == -1).all() and (src[3:128] == -1).all()
+    # segments: e0 rows 0-127 (3 real), e1 none, e2 128-383 (130 real), e3 384-511, e4 512-639 (1 real)
+    assert (mi[128:258] == 2).all() and src[128].item() == 3 and (mi[384:512] == 3).all() and mi[512].item() == 4
+    assert (src[src >= 0] == torch.arange(counts.sum())).all(), "every real row appears once, in order"
+    kw = dict(dim=256, n_routed_experts=4, n_activated_experts=2, moe_inter_dim=128, swiglu_limit=10.0)
+    ref = MoE(**kw, stacked=True).to(torch.bfloat16)
+    dgm = MoE(**kw, stacked=True, moe_gemm="deepgemm").to(torch.bfloat16)
+    dgm.load_state_dict(ref.state_dict())
+    x = (torch.randn(3, 70, 256) * 0.5).to(torch.bfloat16)
+    MoE.grouped_on_cpu = True
+    try:
+        xa, xb = x.clone().requires_grad_(), x.clone().requires_grad_()
+        ya, yb = ref(xa).float(), dgm(xb).float()
+        ya.square().sum().backward()
+        yb.square().sum().backward()
+    finally:
+        MoE.grouped_on_cpu = False
+    rel = ((ya - yb).norm() / ya.norm()).item()
+    grel = ((xa.grad.float() - xb.grad.float()).norm() / xa.grad.float().norm()).item()
+    wrel = max(((getattr(ref, n).grad.float() - getattr(dgm, n).grad.float()).norm()
+                / getattr(ref, n).grad.float().norm()).item() for n in ("w1", "w3", "w2"))
+    print(f"  deepgemm (emulated fp8) vs grouped_mm bf16: out rel {rel:.2e}, dx rel {grel:.2e}, dw rel {wrel:.2e}")
+    assert rel < 5e-2 and grel < 8e-2 and wrel < 8e-2, (rel, grel, wrel)
+
+
 def test_forward_compiles_without_graph_breaks():
     import torch._dynamo as dynamo
 
@@ -158,7 +192,7 @@ def test_forward_compiles_without_graph_breaks():
 
 
 TESTS = [test_fused_equals_chunked, test_rope_real_equals_complex, test_stacked_moe_equals_loop_and_remaps,
-         test_forward_compiles_without_graph_breaks]
+         test_deepgemm_layout_and_emulated_fp8, test_forward_compiles_without_graph_breaks]
 
 if __name__ == "__main__":
     for t in TESTS:
