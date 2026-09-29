@@ -281,6 +281,33 @@ def v41f_small(*, tokenizer=None, **over) -> V41FConfig:
     return c
 
 
+
+def v42_s24(**over) -> V41FConfig:
+    """The v42 gate shape: V4.1's layer pattern scaled to dim 1024 / 24 layers, CED 12/12.
+
+    Layers 0-1 are window-only; the encoder 2-11 compresses at m=2 with KV sources at 2 and 8
+    (V4.1: F+5R groups); the decoder 12-23 runs m=1 over the ONE KV set layer 12 builds from
+    its own input H_12, re-indexing every 4 layers (V4.1 config.json: kv 20, index 20/24/28/32/36).
+    MQA 16x256, 64 routed experts top-8 x 640 + 1 shared, mHC x4, sqrtsoftplus x1.5, SwiGLU
+    clamp 10, norm eps 1e-20 (config.json). Engram, MTP and the candidate pre-filter are off.
+    Meta count: 3,256.6M total / 614.1M active.
+    """
+    c = V41FConfig(
+        vocab_size=32768, dim=1024, n_layers=24, n_heads=16, head_dim=256, rope_head_dim=64,
+        q_lora_rank=256, o_groups=8, o_lora_rank=256, window_size=128,
+        compress_ratios=(0, 0) + (2,) * 10 + (1,) * 12,
+        kv_source_layers=(2, 8, 12), index_source_layers=(2, 8, 12, 16, 20),
+        candidate_source_layer=-1, original_seq_len=0,
+        index_n_heads=8, index_head_dim=128, index_topk=512,
+        n_routed_experts=64, n_shared_experts=1, n_activated_experts=8, moe_inter_dim=640,
+        score_func="sqrtsoftplus", route_scale=1.5, swiglu_limit=10.0, norm_eps=1e-20,
+        hc_mult=4, engram_layer_ids=(), n_mtp_layers=0, dspark_block_size=0,
+        dspark_target_layer_ids=(),
+    )
+    c = replace(c, **over)
+    c.validate()
+    return c
+
 if __name__ == "__main__":
     # Shape inspection only: V41FConfig() is the unvalidated shape, which is exactly what
     # this block wants (it prints field counts, builds nothing).
