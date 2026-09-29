@@ -8,7 +8,7 @@
 # CSA2 m=2 encoder / m=1 decoder with V4.1's Full/Reuse/Reindex pattern, MQA 16x256, mHC x4,
 # 64 experts top-8 x 640 + 1 shared, sqrtsoftplus x1.5, SwiGLU clamp 10, untied fp32 head, no
 # softcap -- trained by the V4.1 optimizer (Muon RMS 0.18 head-wise Q, Sinkhorn embed/head, AdamW
-# 0.9/0.95/1e-20) at one base lr --v42_lr 1e-3. 3,256.6M total / 614.1M active (control 3.22B /
+# 0.9/0.95/1e-20) at one base lr --v42_lr 3e-4. 3,256.6M total / 614.1M active (control 3.22B /
 # 355.4M). Everything changes at once: this answers "adopt the package", not which part carries
 # the delta. Also different from the control: no --stochastic_round (the V4.1 optimizer has no
 # stochastic-rounding path; train.py refuses the pair).
@@ -25,7 +25,7 @@ exec python3 scripts/harness.py launch "$NAME" \
   --training --class incremental --gate-timeout 3000 \
   --hypothesis "V4.1-aligned v42 stack (--arch v42, 614.1M active) on the v41_ced_0926 recipe reaches lower val than v41_ced_0926 at steps 500/1000/1500/2000 (2.491/2.135/2.027/1.954); step time read beside it" \
   -- ./run_ddp.sh --mix data/mix_v41_gate.json --name "$NAME" --stop_at_step 2000 \
-  --arch v42 --v42_lr 1e-3 --moe_arm v42b \
+  --arch v42 --v42_lr 3e-4 --moe_arm v42b \
   --dim 1024 --layers 12 --heads 8 --ffn_hidden 6912 --batch "$MB" --accum "$ACC" \
   --lr_scale 1.0 --warmdown 0.65 --anneal_frac 0.10 --warmup 500 --save_every 2000 --no-grad_ckpt \
   ${EXTRA_ARGS:-}
