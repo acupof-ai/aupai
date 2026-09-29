@@ -21,9 +21,12 @@ every fact below is read from `runs/prereg.jsonl#v41_ced_0923`, `facts/v41.json`
   8-token KV entries; a lightweight indexer selects top-k entries; one concatenated softmax
   over [selected global entries ; local SWA keys]. In a decoder the global entries are the
   CED projection above; Full/Reuse modes thread a cross-layer KV package.
-- **PureSWA sliding window** (`class PureSWA` in `model.py`): the first two layers are
-  SWA-only (`--n_swa_only_layers 2`), every other layer carries a local SWA branch, window
-  128, flash-attn varlen (`window_size=(n_win-1,0)`).
+- **Sliding window**: every one of the 12 layers carries a local SWA branch inside its CSA2
+  attention, window 128, flash-attn varlen (`window_size=(n_win-1,0)`). There are **no
+  SWA-only layers** in the gate stack: `--n_swa_only_layers 2` is a no-op, because the
+  per-layer kind/mode map is built only under `--attn_hybrid`, which the launch never sets
+  (`model.py:2905-2912`); the same gate leaves `csa2_modes` (Full/Reuse) inert. `class PureSWA`
+  exists and no gate checkpoint uses it (`docs/audits/v41_arch_alignment_0929.md`).
 - **Partial RoPE** (`--rope_dims 64`): the last 64 dims of each head rotate; there is no
   recurrent state and no KDA.
 - **MoE in every block** (`class MoEFFN` in `model.py`): 48 experts, top-3 routed + 1
