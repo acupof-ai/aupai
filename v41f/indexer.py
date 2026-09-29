@@ -16,6 +16,8 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
+from v41f.norm_gate import RMSNorm
+
 
 def apply_rotary_emb(x: torch.Tensor, freqs: torch.Tensor) -> torch.Tensor:
     """Rotate adjacent pairs as complex numbers. Mirrors upstream apply_rotary_emb
@@ -55,6 +57,7 @@ def select_candidate_blocks(
     return keep.repeat_interleave(block_size, dim=-1)[..., :width]
 
 
+
 class Indexer(nn.Module):
     """Scores one shared index key per compressed position with fp4-style multi-head
     queries, rectifies, combines heads through `weights_proj`, applies the causal
@@ -65,8 +68,10 @@ class Indexer(nn.Module):
 
     def __init__(self, dim: int, q_lora_rank: int, n_heads: int,
                  index_head_dim: int, rope_head_dim: int, index_topk: int,
-                 compress_ratio: int):
+                 compress_ratio: int, qk_norm: bool = False, eps: float = 1e-20):
         super().__init__()
+        # cfg.qk_norm (deviation from the reference): RMSNorm per head on the index query, before RoPE
+        self.q_head_norm = RMSNorm(index_head_dim, eps) if qk_norm else None
         self.n_heads = n_heads
         self.index_head_dim = index_head_dim
         self.rope_head_dim = rope_head_dim
@@ -83,12 +88,20 @@ class Indexer(nn.Module):
         """[b,s,dim],[b,s,q_lora],[b,t,hkd],complex[s,rd/2] -> raw [b,s,t] scores
         pre-visibility-mask (unreachable positions still finite here)."""
         q = self.wq_b(qr).unflatten(-1, (self.n_heads, self.index_head_dim))
+        if self.q_head_norm is not None:
+            q = self.q_head_norm(q)
         # only the last rope_head_dim dims rotate; the leading head dims stay linear
         q_rot = apply_rotary_emb(q[..., -self.rope_head_dim:], freqs)
         q = torch.cat([q[..., :-self.rope_head_dim], q_rot], dim=-1)
         weights = self.weights_proj(x) * (self.softmax_scale * self.n_heads ** -0.5)
         index_score = torch.einsum("bshd,btd->bsht", q, index_k)
         return (index_score.relu_() * weights.unsqueeze(-1)).sum(dim=2)
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        k = f"{prefix}q_head_norm.weight"
+        if self.q_head_norm is not None and k not in state_dict:
+            state_dict[k] = torch.ones_like(self.q_head_norm.weight)
+        return super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     def forward(self, x: torch.Tensor, qr: torch.Tensor, index_k: torch.Tensor,
                 freqs: torch.Tensor, start_pos: int, offset: int,
