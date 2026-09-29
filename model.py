@@ -1548,26 +1548,19 @@ class GatedMLA(nn.Module):
         rd = int(getattr(cfg, "rope_dims", 0) or 0)
         self.rope = PartialRoPE(rd, self.hd) if rd else None
 
-    def forward(self, x, cu=None):
+    def _proj_qkv(self, x, cu=None, pos=None):
+        """Projection half of forward: kv_down/kv_up/qg, per-head norm, partial RoPE.
+
+        Factored out for the incremental inference engine (scripts/ced_cache.py) so cached
+        attention uses the SAME projections training does. `pos` overrides RoPE positions
+        (a replay segment carries absolute positions); None uses per-document positions.
+        Returns (q, k, v, gate), q/k/v (B,T,h,hd), gate (B,T,d).
+        """
         B, T, D = x.shape
-        if D != self.d_in:
-            raise ValueError(
-                f"GatedMLA reads the residual at width {self.d_in}, got x with width {D}. The "
-                f"mixer no longer takes its width from x.shape, so a mismatch is a construction "
-                f"error, not something to reshape around.")
         latent = self.kv_down(x)
         k, v = self.kv_up(latent).chunk(2, dim=-1)
-        # A/B (4) value embeddings: a token-indexed vector added to V, gated per position.
-        #
-        # AFTER kv_up, never into the latent: the latent is shared by K and V (one kv_down, one
-        # kv_up producing both), so adding there would put token identity into the KEYS too and
-        # this would stop being a value embedding. 1e's ruling 2026-09-03.
-        #
-        # The gate reads the first 12 dims of the residual (speedrun's shape) and spans [0, 3):
-        # 3*sigmoid can amplify as well as suppress, which is the published form, and at init
-        # ve_gate is zero-init so sigmoid(0)=0.5 gives a gate of 1.5 -- NOT zero. That is
-        # deliberate and it is why this arm is not parameter-free at step 0: a zero gate would
-        # make the table invisible and the arm would need many steps just to discover it.
+        # value embeddings add to V AFTER kv_up, never the shared latent, so token identity
+        # never reaches the KEYS (1e ruling 2026-09-03); 3*sigmoid keeps the published gate.
         if self._ve is not None:
             g = 3.0 * torch.sigmoid(self.ve_gate(x[..., :12]))
             v = v + g * self._ve.to(v.dtype)
@@ -1577,14 +1570,25 @@ class GatedMLA(nn.Module):
         q = q.view(B, T, self.h, self.hd)
         q = F.rms_norm(q, (self.hd,))
         k = F.rms_norm(k, (self.hd,))
-        # PARTIAL RoPE, applied AFTER the norm and to q/k only. After, because rms_norm rescales
-        # the whole head and would otherwise rescale the rotated tail by a factor that depends on
-        # the angle, making the same relative offset mean different things at different absolute
-        # positions. q/k only, because V carries no angle -- see PartialRoPE's docstring for why
-        # V4's -i output correction is not needed here.
+        # PARTIAL RoPE AFTER the norm, q/k only; V carries no angle. `pos` carries the
+        # replay segment's absolute positions for the incremental engine.
         if self.rope is not None:
-            p = self.rope.positions(B, T, cu, x.device)
-            q, k = self.rope(q, p), self.rope(k, p)
+            if pos is None:
+                pos = self.rope.positions(B, T, cu, x.device)
+            q, k = self.rope(q, pos), self.rope(k, pos)
+        cap = getattr(self, "_cap", None)       # None on every training path
+        if cap is not None:
+            cap["k"], cap["v"] = k, v
+        return q, k, v, gate
+
+    def forward(self, x, cu=None):
+        B, T, D = x.shape
+        if D != self.d_in:
+            raise ValueError(
+                f"GatedMLA reads the residual at width {self.d_in}, got x with width {D}. The "
+                f"mixer no longer takes its width from x.shape, so a mismatch is a construction "
+                f"error, not something to reshape around.")
+        q, k, v, gate = self._proj_qkv(x, cu)
         if self.hca is not None:
             y = self.hca(q, k, v, cu)
             return self.o(y.reshape(B, T, self.d) * torch.sigmoid(gate))
