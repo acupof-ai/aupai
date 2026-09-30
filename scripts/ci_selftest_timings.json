@@ -300,6 +300,9 @@
     "tests/v41f/test_p1_grouped_dispatch.py": 5.0,
     "tests/v41f/test_p1_train_resume_smoke.py": 60,
     "v41f_l2/l2_census_scan.py": 0.2,
-    "tests/test_loader_arch.py": 35.0
+    "tests/test_loader_arch.py": 35.0,
+    "algorithms/test_rollout_context_parity.py": 1.7,
+    "algorithms/test_rl_v42_optimizer_groups.py": 7.2,
+    "algorithms/rl_admission.py": 0.1
   }
 }
