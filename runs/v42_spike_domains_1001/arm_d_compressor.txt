@@ -1,0 +1,22 @@
+arm d --v42_record, layers.2.attn.compressor, steps 1599/1699/1799 (grad, POST-clip) and 99/499/1699/1999 (act)
+act 99 layers.2.attn.compressor.norm {"rms": 0.9999991059299287, "absmax": 4.90625, "finite": true}
+act 99 layers.2.attn.compressor.wgate {"rms": 0.5755721769833548, "absmax": 2.640625, "finite": true}
+act 99 layers.2.attn.compressor.wkv {"rms": 0.5786701673397774, "absmax": 2.59375, "finite": true}
+act 499 layers.2.attn.compressor.norm {"rms": 0.999998867511108, "absmax": 8.125, "finite": true}
+act 499 layers.2.attn.compressor.wgate {"rms": 0.9732909372373983, "absmax": 5.84375, "finite": true}
+act 499 layers.2.attn.compressor.wkv {"rms": 1.0676158709924628, "absmax": 8.5625, "finite": true}
+grad 1599 layers.2.attn.compressor.norm.weight {"rms": 1.1224202353332657e-05, "absmax": 6.341934204101562e-05, "nan": 0, "inf": 0}
+grad 1599 layers.2.attn.compressor.wgate.weight {"rms": 1.1273824611635064e-06, "absmax": 1.7063479390344582e-05, "nan": 0, "inf": 0}
+grad 1599 layers.2.attn.compressor.wkv.weight {"rms": 3.132375695713563e-06, "absmax": 2.6626221369951963e-05, "nan": 0, "inf": 0}
+grad 1699 layers.2.attn.compressor.norm.weight {"rms": 0.001312013017013669, "absmax": 0.006744384765625, "nan": 0, "inf": 0}
+grad 1699 layers.2.attn.compressor.wgate.weight {"rms": 7.00040181982331e-05, "absmax": 0.0011426511919125915, "nan": 0, "inf": 0}
+grad 1699 layers.2.attn.compressor.wkv.weight {"rms": 0.0002593427780084312, "absmax": 0.0026330656837671995, "nan": 0, "inf": 0}
+act 1699 layers.2.attn.compressor.norm {"rms": 0.9999952912219765, "absmax": 6.21875, "finite": true}
+act 1699 layers.2.attn.compressor.wgate {"rms": 2.182235049391109, "absmax": 19.625, "finite": true}
+act 1699 layers.2.attn.compressor.wkv {"rms": 2.6648146834363744, "absmax": 18.75, "finite": true}
+grad 1799 layers.2.attn.compressor.norm.weight {"rms": 0.0032531898468732834, "absmax": 0.0174560546875, "nan": 0, "inf": 0}
+grad 1799 layers.2.attn.compressor.wgate.weight {"rms": 0.00019343371968716383, "absmax": 0.002341983839869499, "nan": 0, "inf": 0}
+grad 1799 layers.2.attn.compressor.wkv.weight {"rms": 0.0006662580417469144, "absmax": 0.0071213264018297195, "nan": 0, "inf": 0}
+act 1999 layers.2.attn.compressor.norm {"rms": 0.9999922811687114, "absmax": 6.625, "finite": true}
+act 1999 layers.2.attn.compressor.wgate {"rms": 2.347030276915502, "absmax": 16.0, "finite": true}
+act 1999 layers.2.attn.compressor.wkv {"rms": 2.7886940421556456, "absmax": 20.125, "finite": true}
