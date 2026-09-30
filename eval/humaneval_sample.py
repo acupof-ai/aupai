@@ -271,11 +271,12 @@ def main():
                  "GPU 0 -- tileRL's card. Set it to your granted card, or pass --device cpu "
                  "with CUDA_VISIBLE_DEVICES= to run cardless.")
 
-    from scripts.loader import load_checkpoint
-    from tokenizers import Tokenizer
+    from scripts.loader import load_checkpoint, load_tokenizer
     model, cfg = load_checkpoint(args.ckpt, device=args.device)
     model.eval()
-    tok = Tokenizer.from_file(TOK_PATH)
+    # load_tokenizer asserts vocab_real and vocab_id against the checkpoint and refuses a
+    # mismatch; Tokenizer.from_file scored against whatever was on disk.
+    tok = load_tokenizer(TOK_PATH, cfg)
     torch.manual_seed(args.seed)
 
     def gen(prompt, temperature, entry_point):
@@ -390,7 +391,7 @@ def main():
                     samples.append({"gen": c, "ok": judge(p, c, _jprompt)})
                 c = sum(s["ok"] for s in samples)
                 sample_pass += c / args.n
-                ctrl_pass += int(judge(p, p["canonical_solution"]))
+                ctrl_pass += int(judge(p, p["canonical_solution"], trusted=True))
                 sample_empty += sum(not s["gen"].strip() for s in samples)
                 fout.write(json.dumps(
                     {"phase": "sample", "task_id": p["task_id"], "c": c, "samples": samples},
