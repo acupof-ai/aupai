@@ -412,8 +412,124 @@ def _selftest():
     return f"{len(pairs)} examples conserved across {ids.shape[0]} rows"
 
 
+def _peel_chat_wrapper(text):
+    """A packed prompt span carries its chat wrapper ('user\\n<q>\\nassistant\\n'); the holdout
+    set hashes the bare question. Measured 2026-09-28 packs: without this, zh_think_v1's prompts
+    hashed to nothing at all and the check returned a zero that meant 'blind', not 'clean'."""
+    lines = text.split("\n")
+    body = lines[1:] if lines and lines[0].strip() in ("user", "system") else lines[:]
+    while body and body[-1].strip() in ("", "assistant"):
+        body.pop()
+    return "\n".join(body).strip()
+
+
+def pack_holdout_hits(path, tok=None):
+    """(n_prompts, n_hits, hit_examples) for the questions actually inside a packed .pt.
+
+    Reads the PACK, not its source files, for two reasons. A source file can be deleted --
+    sft_mixA_0924's sc2_exec.jsonl and apps_call.jsonl are gone from the pod, 60,375 of its
+    143,687 pairs -- and a source file can drift after the pack was built, so it answers a
+    question about the source rather than about the bytes that would be trained on.
+
+    A prompt span is a run of labels == -100 that is FOLLOWED by a supervised token; the
+    trailing pad run has no successor and is skipped. Both the raw span and the wrapper-peeled
+    span are hashed, because the packs disagree on the wrapper and checking both can only make
+    the test more sensitive, never less.
+    """
+    if tok is None:
+        tok = Tokenizer.from_file(TOK_PATH)
+    d = torch.load(path, map_location="cpu", weights_only=False)
+    ids, lab = d["input_ids"], d["labels"]
+    n = hits = 0
+    examples = []
+    for r in range(ids.shape[0]):
+        L, I = lab[r].tolist(), ids[r].tolist()
+        start = None
+        for i, x in enumerate(L):
+            if x == -100:
+                if start is None:
+                    start = i
+            else:
+                if start is not None:
+                    n += 1
+                    text = tok.decode(I[start:i])
+                    if any(is_holdout(c) for c in {text, text.strip(), _peel_chat_wrapper(text)} if c):
+                        hits += 1
+                        if len(examples) < 5:
+                            examples.append(_peel_chat_wrapper(text)[:160])
+                    start = None
+    return n, hits, examples
+
+
+def restamp_holdout_fp(path, tok=None):
+    """Re-verify a pack against the CURRENT holdout set and, only then, update its holdout_fp.
+
+    sft_math.py refuses a pack whose holdout_fp is stale, and every pack on the pod went stale
+    when 5b9ea4af added 1,821 lines to data/eval/holdout_hashes.txt (e252f0f6d82c0237 ->
+    b382de09159701c0). The refusal is right and must not gain an escape hatch: a flag that let a
+    stale pack through would let a genuinely contaminated one through on the same argument.
+
+    So the VERIFICATION is the gate. This re-runs is_holdout over the pack's own prompts against
+    the live set and refuses to touch a pack with a single hit. A contaminated pack cannot be
+    re-stamped by this path at all; it has to be repacked.
+
+    Written temp+rename, never in place: a pack may be hardlinked (the same inode), and writing
+    a "copy" in place truncates whatever else points at it.
+    """
+    if tok is None:
+        tok = Tokenizer.from_file(TOK_PATH)
+    live = _fp_file(os.path.join(ROOT, "data", "eval", "holdout_hashes.txt"))
+    d = torch.load(path, map_location="cpu", weights_only=False)
+    old = d.get("holdout_fp")
+    n, hits, examples = pack_holdout_hits(path, tok)
+    if hits:
+        raise SystemExit(
+            f"REFUSING to re-stamp {path}: {hits} of {n} packed prompts are held-out questions "
+            f"under the current holdout set {live}. Examples: {examples}. This pack is "
+            f"contaminated, not merely stale -- repack it with the holdout filter on.")
+    if old == live:
+        print(f"{path}: already stamped {live}, {n} prompts verified clean")
+        return live
+    # BOTH fingerprints, and the scope that produced the 0. Overwriting holdout_fp alone would
+    # make a re-verified 2026-09-28 build indistinguishable from a fresh repack -- the
+    # derived-artifact-provenance failure this repo has already paid for three times. A reader
+    # asking "was this rebuilt or re-certified?" gets an answer from the pack itself.
+    d["holdout_fp_built"] = d.get("holdout_fp_built", old)
+    d["holdout_fp"] = live
+    d.setdefault("build_stats", {})["restamped"] = {
+        "built_against": old,
+        "verified_against": live,
+        "scope": "every labels==-100 prompt span followed by a supervised token, decoded with "
+                 "data/tokenizer.json and hashed raw AND wrapper-peeled",
+        "prompts_verified": n,
+        "hits": hits,
+        "method": "datagen/prepare_sft.pack_holdout_hits (the pack's own bytes, not its sources)",
+        "by": "datagen/prepare_sft.py --restamp (de)",
+        "date": "2026-09-30",
+    }
+    tmp = path + ".restamp.tmp"
+    torch.save(d, tmp)
+    os.replace(tmp, path)
+    print(f"{path}: {n} prompts verified clean, holdout_fp {old} -> {live}")
+    return live
+
+
 def main():
     global SOURCES
+    if "--restamp" in sys.argv:
+        # `--restamp <pack.pt> [more.pt ...]`: re-verify and re-certify, never repack. Every
+        # following argument up to the next flag is a pack path.
+        i = sys.argv.index("--restamp") + 1
+        packs = []
+        while i < len(sys.argv) and not sys.argv[i].startswith("--"):
+            packs.append(sys.argv[i])
+            i += 1
+        if not packs:
+            raise SystemExit("--restamp takes one or more pack paths")
+        tok = Tokenizer.from_file(TOK_PATH)
+        for p in packs:
+            restamp_holdout_fp(p, tok)
+        return
     out_path = OUT_PATH
     if "--out" in sys.argv:
         out_path = sys.argv[sys.argv.index("--out") + 1]
