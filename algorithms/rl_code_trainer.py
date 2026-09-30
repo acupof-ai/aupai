@@ -151,6 +151,10 @@ def score_row(row, source, timeout_call=30, timeout_stdin=10):
 
     Returns float in {0.0, 1.0}. call-style rows carry pytest `tests`; stdin rows
     carry `cases`. Both reward entries refuse to run under ALLOW_UNISOLATED=1.
+
+    code_reward.ExecutionFacilityError PROPAGATES and is not caught here on purpose: it
+    means the sandbox failed before the rollout ran, so the row has no reward, not a
+    reward of 0. Catching it would put an infrastructure fault into the advantage.
     """
     if not source.strip():
         return 0.0
