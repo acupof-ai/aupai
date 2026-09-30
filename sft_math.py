@@ -29,9 +29,9 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 import fone
 from train import (
     Cfg,
-    HybridLM,
     RunLog,
-    SOFTCAP,
+    _softcap,
+    build_model,
     build_optimizers,
     convert_to_fp8_compute,
     ddp_even_len,
@@ -53,6 +53,135 @@ LOG_INTERVAL = 10
 MOE_KEYS = ("moe_experts", "moe_top_k", "moe_shared", "moe_expert_ffn", "moe_layers")
 
 
+def refuse_v42_unsupported(args):
+    """The SFT-side twin of the `REFUSING --arch v42` list train.py's main() raises before the build.
+
+    Every flag here is INERT under v42 rather than wrong-but-working, which is the dangerous
+    kind: the run starts, the loss falls, and the thing the flag names never happens.
+
+      --fp32_master     MasterWeights.map is an argument of train.build_optimizers.
+                        build_v42_optimizers takes no master map, so the masters would be built,
+                        pulled into, stepped past, and master.push() would then write the
+                        UNSTEPPED fp32 copies back over the weights the optimizer just moved --
+                        a silent revert of every step.
+      --stochastic_round  read only by train.Muon, via the `sr = bool(getattr(cfg, "stochastic_round", False))` line in train.build_optimizers. V42Muon does not read it, so
+                        the flag would be recorded on the checkpoint and do nothing.
+      --fone            v41f.lm.V42LM.forward raises on num_vals; there is no FoNE head.
+      --loop            eval/loop_wrapper.patch_body patches HybridLM's _body.
+      --prefix          the prefix-LM mask is applied to HybridLM's MLA blocks.
+
+    v42 SFT therefore runs plain bf16 weights under the V4.1 optimizer, which is what the v42
+    PRETRAIN runs -- no master, no stochastic rounding. Stated rather than implied, because
+    "not supported" and "supported and silently off" are the same log line (de, 2026-09-30).
+    """
+    if getattr(Cfg, "arch", "hybrid") != "v42":
+        return
+    bad = [f for f, on in (
+        ("--fp32_master", args.fp32_master),
+        ("--stochastic_round", args.stochastic_round),
+        ("--fone (Cfg.fone from the checkpoint)", getattr(Cfg, "fone", False)),
+        ("--loop", getattr(args, "loop", None)),
+        # Spelled with its parenthetical, not bare: scripts/test_sft_prefix.py:158 locates the
+        # argparse action by splitting this file on the first occurrence of that flag name
+        # followed by a comma, and a bare spelling here would send it to this tuple instead,
+        # where it would read --lr_decay's choices as the prefix arms. Do not write the bare
+        # form anywhere above the parser, comments included.
+        ("--prefix (prefix-LM mask on HybridLM MLA blocks)", getattr(args, "prefix", None)),
+    ) if on]
+    if bad:
+        raise SystemExit(
+            f"REFUSING --arch v42 SFT: {'; '.join(bad)}. These are implemented against HybridLM "
+            f"and are inert or actively wrong under the v41f stack -- see "
+            f"sft_math.refuse_v42_unsupported. v42 SFT is bf16 weights + build_v42_optimizers.")
+
+
+def build_sft_model(device):
+    """The model main() fine-tunes, built from the live Cfg (which main() has already overwritten
+    with the resumed checkpoint's cfg).
+
+    build_model, not HybridLM: it dispatches on Cfg.arch and returns the v41f V42LM under
+    --arch v42, rebuilt from the checkpoint's own cfg.v42_cfg. Constructing HybridLM here made a
+    v42 checkpoint unloadable -- the two state dicts have zero key overlap -- so the SFT path
+    could not touch the v42 line at all (de, 2026-09-30; the same defect scripts/loader.py
+    carried, fixed at 4357b65b). A function rather than one line inside main() so the CPU
+    known-answer test can drive the decision instead of restating it.
+    """
+    return build_model(Cfg).to(device)
+
+
+def build_sft_optimizers(raw_model, master=None):
+    """The optimizer set for the live Cfg.arch, branching exactly as train.py's main() does at its `if Cfg.arch == "v42": ... build_v42_optimizers` site.
+
+    train.build_optimizers routes parameters by NAME pattern against HybridLM's names
+    (blocks.N.mixer.qkv, ffn.w13, ...). Not one V42LM parameter (layers.N.attn.qproj.wq_a,
+    layers.N.ffn.gate.weight) matches, so under --arch v42 every weight fell through to the
+    fallback group: no Muon on the backbone matrices, no Sinkhorn on embed/head, no per-group
+    weight decay. Nothing raises and the run converges -- to a different model than the one the
+    v42 pretrain was producing (de, 2026-09-30).
+    """
+    if getattr(Cfg, "arch", "hybrid") != "v42":
+        return build_optimizers(raw_model, Cfg, master.map if master is not None else None)
+    assert master is None, (
+        "--fp32_master maps HybridLM parameters into build_optimizers; build_v42_optimizers "
+        "takes no master map, so the masters would be built and never stepped from")
+    from v41f.optim import build_v42_optimizers
+
+    # Cfg.v42_lr bare, NOT * args.lr_scale: set_schedule applies lr_scale to every group as
+    # initial_lr * lr_scale * m, so scaling it here would square it -- 0.1 becoming 0.01.
+    return build_v42_optimizers(raw_model, raw_model.v41f_cfg, Cfg.v42_lr)
+
+
+#: The v42 MoE fields that change what the weights MEAN, in v41f.config.V41FConfig's names.
+V42_MOE_KEYS = ("n_routed_experts", "n_activated_experts", "n_shared_experts", "moe_inter_dim")
+
+
+def _assert_v42_moe_matches_ckpt(model, ck_cfg):
+    """The v42 arm of assert_moe_matches_ckpt, reading the shape where v42 keeps it.
+
+    The hybrid arm read `ck_cfg["moe_experts"]` against `b.ffn.w13.shape[0]` and BOTH sides are
+    absent under --arch v42: the launch line (runs/v42_arch_b.sh) passes no --moe_experts, so
+    Cfg.moe_experts stays at its class default 0, and v41f.moe.MoE has no `w13` -- it holds
+    either stacked w1/w3/w2 of shape [E, inter, dim] or an `experts` ModuleList. So `want` was 0,
+    the hasattr filter matched no block, `got` was 0, and the assertion passed on 0 == 0 while
+    the real stack is 64 routed / top-8 (v41f.config.v42_s24). Measured 2026-09-30: vacuous.
+
+    Same discipline as the hybrid arm -- the count comes off a real tensor dimension, never off
+    self.n_routed_experts, which only restates the config the model was built from.
+    """
+    v = ck_cfg.get("v42_cfg") or {}
+    if not v:
+        raise SystemExit(
+            "REFUSING: the checkpoint says arch=v42 but carries no v42_cfg, so nothing states "
+            "the MoE shape it was trained with. train.build_model writes cfg.v42_cfg on every "
+            "build; a checkpoint without it predates that and cannot be verified.")
+    want = int(v["n_routed_experts"])
+    ffns = [b.ffn for b in getattr(model, "layers", []) if getattr(b, "ffn", None) is not None]
+    counts = set()
+    for f in ffns:
+        if getattr(f, "w1", None) is not None and hasattr(f.w1, "shape"):
+            counts.add(int(f.w1.shape[0]))          # stacked: [E, inter, dim]
+        elif getattr(f, "experts", None) is not None:
+            counts.add(len(f.experts))              # loop: one Expert module per routed expert
+    if counts != {want}:
+        raise SystemExit(
+            f"REFUSING: the checkpoint was trained with n_routed_experts={want} but the model "
+            f"built here has {sorted(counts) or 'no'} routed expert(s) over {len(ffns)} MoE "
+            f"layer(s). cfg.v42_cfg did not reach build_model.")
+    got_top = {int(f.top_k) for f in ffns}
+    if got_top != {int(v["n_activated_experts"])}:
+        raise SystemExit(
+            f"REFUSING: the checkpoint routes top-{v['n_activated_experts']} but the model built "
+            f"here routes top-{sorted(got_top)}. Routing changes no tensor shape, so "
+            f"load_state_dict accepts it and the SFT trains a different model.")
+    live = getattr(Cfg, "v42_cfg", None) or {}
+    bad = {k: (v[k], live.get(k)) for k in V42_MOE_KEYS if k in v and live.get(k) != v[k]}
+    if bad:
+        raise SystemExit(
+            f"REFUSING: Cfg.v42_cfg disagrees with the checkpoint on {', '.join(sorted(bad))}: "
+            + "; ".join(f"{k} ckpt={c!r} live={lv!r}" for k, (c, lv) in sorted(bad.items())))
+    return want
+
+
 def assert_moe_matches_ckpt(model, ck_cfg):
     """The built model's MoE shape is the checkpoint's, checked before load_state_dict.
 
@@ -71,6 +200,8 @@ def assert_moe_matches_ckpt(model, ck_cfg):
     load_state_dict would catch a wrong expert COUNT on its own; it would not catch
     moe_top_k or moe_layers, which change routing and leave every tensor shape intact.
     """
+    if ck_cfg.get("arch", "hybrid") == "v42":
+        return _assert_v42_moe_matches_ckpt(model, ck_cfg)
     want = int(ck_cfg.get("moe_experts", 0) or 0)
     blocks = [b for b in getattr(model, "blocks", []) if hasattr(getattr(b, "ffn", None), "w13")]
     got = int(blocks[0].ffn.w13.shape[0]) if blocks else 0
@@ -353,7 +484,10 @@ def main():
     if is_main:
         print(f"sft rows {len(X)} per rank (world {world})", flush=True)
 
-    raw_model = HybridLM(Cfg).to(device)
+    # After the ck["cfg"] copy set Cfg.arch, before anything is built: an inert flag must stop
+    # the run at the top, not be discovered from a checkpoint six hours later.
+    refuse_v42_unsupported(args)
+    raw_model = build_sft_model(device)
     assert_moe_matches_ckpt(raw_model, ck.get("cfg", {}))
     raw_model.load_state_dict(ck["model"])
     fp8 = not args.no_fp8 and amp
@@ -402,7 +536,7 @@ def main():
             flush=True,
         )
 
-    optimizers = build_optimizers(raw_model, Cfg, master.map if master is not None else None)
+    optimizers = build_sft_optimizers(raw_model, master)
 
     if args.loop:
         # BEFORE torch.compile and before DDP: the patch replaces a bound method, and compile
@@ -536,7 +670,30 @@ def main():
     if Cfg.compile and amp:
         torch._dynamo.config.cache_size_limit = 64
         torch._dynamo.config.accumulated_cache_size_limit = 256
+        # DDPOptimizer splits the compiled graph at DDP bucket boundaries. On v42 (2026-09-29,
+        # world 8) that split forward returned a hidden with NO grad_fn -- backward raised "does
+        # not require grad" on the first step -- while the same model compiled single-process
+        # trained, and optimize_ddp=False made the same launch train (the `_ddp_opt_default` block in
+        # train.py's main(), runs/v42_arch_b_0929.step20.txt). This SFT loop has no accum, so the splitter's
+        # backward/allreduce overlap is the one thing it does buy; it is given up under v42 and
+        # kept under hybrid. DYNAMO_OPTIMIZE_DDP=1/0 overrides either way, same env name as
+        # train.py so one variable answers for both.
+        _ddp_opt_default = "0" if getattr(Cfg, "arch", "hybrid") == "v42" else "1"
+        if os.environ.get("DYNAMO_OPTIMIZE_DDP", _ddp_opt_default) == "0":
+            torch._dynamo.config.optimize_ddp = False
+            if is_main:
+                print(f"dynamo optimize_ddp=False (default {_ddp_opt_default!r} for arch "
+                      f"{getattr(Cfg, 'arch', 'hybrid')})", flush=True)
         model = torch.compile(model, dynamic=False)
+
+    # The balancer's scope, resolved ONCE from the built model. Empty on a dense or hybrid
+    # checkpoint, so the call site below is a no-op there without a second arch test.
+    _moe_balance_layers = (
+        [b.ffn for b in raw_model.layers] if getattr(Cfg, "arch", "hybrid") == "v42" else [])
+    if _moe_balance_layers and is_main:
+        _g = {float(getattr(f, "gamma", 0.0)) for f in _moe_balance_layers}
+        print(f"v42 expert-bias balancer: {len(_moe_balance_layers)} MoE layer(s), gamma {_g}, "
+              f"once per optimizer step on rank-summed counts", flush=True)
 
     good_state = {k: v.cpu().clone() for k, v in raw_model.state_dict().items()}
     good_opt = [None] * len(optimizers)
@@ -575,15 +732,20 @@ def main():
 
     step = 0
     weight = raw_model.head.weight[: raw_model.cfg.vocab]
+    # The FUNCTION, not the SOFTCAP constant: train._softcap() returns None under --arch v42,
+    # because V4.1 has no router/logit softcap. Importing the constant made SFT squash logits
+    # through tanh(x/30)*30 that the v42 pretrain never applied -- a different loss surface than
+    # the one the checkpoint was trained on, with nothing raising (de, 2026-09-30).
+    softcap = _softcap()
 
     def _cpu_ce(hidden_flat, targets):
         # Liger FLCE has no CPU kernel (it raises "0 active drivers" without CUDA). The CPU
         # 2-step smoke exercises the load/pack/step path only, so materialize logits and use
-        # torch CE with the same tanh softcap Liger applies (model.SOFTCAP). 537 MiB fp32 at
+        # torch CE with the same tanh softcap Liger applies (train._softcap()). 537 MiB fp32 at
         # B1/seq4096 -- fine for a smoke, never the training path.
         logits = F.linear(hidden_flat.float(), weight.float())
-        if SOFTCAP:
-            logits = SOFTCAP * torch.tanh(logits / SOFTCAP)
+        if softcap:
+            logits = softcap * torch.tanh(logits / softcap)
         return F.cross_entropy(logits, targets, ignore_index=-100)
 
     # Is the FLCE symbol the real CUDA-only liger kernel? The CI SFT CED gate injects a
@@ -602,13 +764,13 @@ def main():
         # A symbol that exists but is not the liger_kernel class (a CPU test substitute on a
         # CUDA run) must not silently take the fused-linear path.
         assert is_real_liger, "CUDA SFT requires the real liger_kernel FLCE, got a substitute"
-        flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
+        flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=softcap)
 
         def ce_loss(hidden_flat, targets):
             return flce(weight, hidden_flat.to(weight.dtype), targets)
     elif not is_real_liger and LigerFusedLinearCrossEntropyLoss is not None:
         # CPU with a CPU-capable substitute injected (scripts/test_sft_ced_cpu.py's FakeFLCE).
-        flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)
+        flce = LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=softcap)
 
         def ce_loss(hidden_flat, targets):
             return flce(weight, hidden_flat, targets)
@@ -641,6 +803,17 @@ def main():
                 hidden, _ = model(xb, yb, cub, vb)
             B, T, D = hidden.shape
             loss = ce_loss(hidden.reshape(-1, D), yb.reshape(-1))
+            # THE v42 AUXILIARY TERM, as train.py's train step adds it beside its LigerFusedLinearCrossEntropyLoss call. It carries two things, and the
+            # second is why its absence is not a small numerical difference: the per-layer MoE
+            # sequence-balance loss, AND V42LM.indexer_loss, the KL that trains the sparse-
+            # attention indexer (indexer_train_mode "kl"). The indexer's inputs are detached, so
+            # this term is the ONLY gradient it ever receives -- omit it and the indexer stops
+            # learning for the whole SFT while the CE falls normally and every log line looks
+            # healthy. None on a dense/hybrid model, so the branch is the arch, not a hasattr.
+            if getattr(Cfg, "arch", "hybrid") == "v42":
+                _aux = raw_model.aux_loss()
+                if _aux is not None:
+                    loss = loss + _aux
             if Cfg.fone:
                 # Supervised [NUM] positions only: a prompt-masked one must not be scored
                 nmask = yb == Cfg.num_id
@@ -699,6 +872,26 @@ def main():
             for opt in optimizers:
                 opt.step()
                 opt.zero_grad(set_to_none=True)
+            # THE AUX-LOSS-FREE BALANCER'S STEP under v42, the policy train.py's `if _moe_balance_layers:` block runs and the
+            # one this SFT inherits: every MoE layer, once per optimizer step, on counts SUMMED
+            # across ranks, then the counter zeroed. Named rather than left undefined --
+            # Cfg.moe_bias_gamma reached V42LM.__init__ and set every layer's gamma, so the bias
+            # machinery is live on the model and only its CALLER was missing here; without this
+            # call expert_bias stays identically zero for the whole SFT and the sequence-balance
+            # loss is the only balancer, which is a different intervention than the pretrain ran.
+            #
+            # After opt.step() and not on a rolled-back step: the NaN branch above `continue`s
+            # before reaching here, so a dropped step leaves the bias alone and folds its load
+            # into the next one that lands. Outside any is_main guard, because all_reduce is a
+            # collective every rank must enter, and because expert_bias is a buffer DDP never
+            # synchronises -- the ranks would diverge if only rank 0 updated it.
+            if _moe_balance_layers:
+                for _bl in _moe_balance_layers:
+                    _c = _bl.step_tokens_per_expert
+                    if ddp:
+                        dist.all_reduce(_c, op=dist.ReduceOp.SUM)
+                    _bl.update_bias(_c)
+                    _c.zero_()
             if master is not None:
                 master.push()
             step += 1

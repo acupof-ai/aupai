@@ -2634,6 +2634,14 @@ def main():
         # only thing in the tree that can see the silent case: a hidden state argmaxes to a valid
         # token id, so an eval scored garbage pass@1 with nothing raised.
         "tests/test_loader_arch.py",
+        # sft_math.py builds, optimises and constrains the arch the checkpoint names (de,
+        # 2026-09-30). Registered because six of its eight cases cover SILENT defects: name-pattern
+        # optimizer routing that steps every v42 parameter in the wrong group, a logit softcap the
+        # v42 pretrain never applied, a MoE assertion that passed on 0 == 0, a missing aux_loss
+        # that leaves the sparse-attention indexer with no gradient at all, --fp32_master and
+        # --stochastic_round running as no-ops, and an expert bias that never moves. Every one of
+        # them converges to something and prints a healthy log line.
+        "tests/test_sft_math_v42.py",
         # The width check the five raw decode loops read through (de, 2026-09-30). Its broken
         # world is a forward returning a dim-16 hidden state where the loop reads logits: the
         # argmax lands on a valid token id, so the only possible signal is this raise.
