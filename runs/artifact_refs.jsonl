@@ -46,3 +46,4 @@
 {"path": "data/eval/mbpp_holdouts.jsonl", "sha256": "ccf64ceae9c5403bf50a044cb6d505bfd2a2963ee58338ba268fd65beab92a9f", "bytes": 563743, "rows": 974, "written_at": "2026-09-21 06:05:19"}
 {"path": "data/eval/gsm8k_test.jsonl", "sha256": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14", "bytes": 749738, "rows": 1319, "written_at": "2026-09-28 13:17:56"}
 {"path": "data/eval/math_500_en_test.jsonl", "sha256": "35dc41080a3680858b27fa7e0533d2d547825316fc5dafe5d316f4ccc5a06132", "bytes": 446564, "rows": 500, "written_at": "2026-09-28 13:17:56"}
+{"path": "data/eval/preds_humaneval_ckpt_v41_ced_0923.pt.rstripnl.he_gpu_ctrl_p1.jsonl", "sha256": "13c08b3fe87279afe9b7969cdce1b2a4e19546faf687f81caeaff99e4c5948a9", "bytes": 70848, "rows": 165, "written_at": "2026-09-30 14:55:00", "note": "attested by de 2026-09-30 from the pod copy, read-only; source of v41.humaneval_greedy_vs_anyk_0930 base greedy"}
