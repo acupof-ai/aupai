@@ -1,6 +1,6 @@
 {
   "_measured": "2026-09-24",
-  "_source": "https://github.com/acupof-ai/aupai/actions/runs/35992833222 (job check, step 'harness ci-selftests'; each value is the wall gap between consecutive CI-SELFTESTS RUN lines, so the last target's value includes process teardown noise)",
+  "_source": "https://github.com/acupof-ai/aupai/actions/runs/35992833222 (job check, step 'harness ci-selftests'; each value is the wall gap between consecutive CI-SELFTESTS RUN lines, so the last target's value includes process teardown noise) scripts/metrics_feed.py: 0.2 is LAPTOP-measured (0.15s wall, pure stdlib, no corpus, no network), NOT from this run -- it is a bin-packing weight for a target the partition check requires to exist; regenerate with the others.",
   "_unit": "seconds per driver target on the GitHub-hosted ubuntu-latest CI image",
   "_use": "LPT bin packing for `harness ci-selftests --shard K/N`; check_ci_selftest_partition requires these keys to equal the hook map's driver bucket exactly. To regenerate, download a completed ci run log (`gh run view <id> --log`) and take the wall gap between consecutive CI-SELFTESTS RUN lines in the ci-selftests step; laptop timings are not CI-representative.",
   "targets": {
@@ -159,6 +159,7 @@
     "scripts/merge_drivers.py": 0.1,
     "scripts/merge_main.sh": 124.6,
     "scripts/merge_score_row.py": 0.0,
+    "scripts/metrics_feed.py": 0.2,
     "scripts/moe_diag.py": 0.0,
     "scripts/moe_dispatch_bench.py": 2.3,
     "scripts/moe_health.py": 1.0,
