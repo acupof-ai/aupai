@@ -4517,7 +4517,7 @@ def main():
                     _row = _recorder.row(step, loss=float(loss) * Cfg.accum, healthy=healthy,
                                          mem_alloc_gib=torch.cuda.memory_allocated() / 2**30 if device.startswith("cuda") else None)
                     if is_main or _recorder.any_nonfinite(_row):
-                        _recorder.write(os.path.join(ROOT, "runs", f"{Cfg.name}.record.jsonl"), _row)
+                        _recorder.write(os.path.join(ROOT, "runs", f"{args.name}.record.jsonl"), _row)
                         print(f"rank {_recorder.rank} {_recorder.summary_line(_row)}", flush=True)
                     _recorder = None
                 if not healthy:
