@@ -21,7 +21,7 @@ from allclose import cmp
 from ref_oracle import build_engram_transformer, load_reference, synthetic_tokenizer
 from test_p0_attention import _patched_reference
 from test_p1_block import _split_ref_3d
-from test_p1_model import _build_pair, _copy_layer, _model_args, _run_full
+from test_p1_model import _build_pair, _copy_layer, _model_args, _run_full, _to_fp32
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from v41f.config import v41f_small
@@ -143,10 +143,20 @@ def _run_ref_full(ref, ids):
 def test_engram_on_whole_model_allclose():
     """G-A3: with the engram ON, whole-network logits match the vendored Transformer.
 
-    The mechanism-ON half. bf16 full sequence, the production dtype; the mutation at the end
-    proves the equality is non-vacuous (a moved engram weight must break it).
+    The mechanism-ON half. Full sequence in fp32, the mutation at the end proves the
+    equality is non-vacuous (a moved engram weight must break it).
+
+    Why fp32 and not the production bf16: on this seed 2 of the 80 (token, layer) top-k
+    routing decisions sit within 3e-4 of a tie (min margin 2.957e-4, measured 2026-09-30),
+    and the two sides reach the router through different op orders, so one bf16 ulp of the
+    hidden state (3.9e-3 at |h|~1) can flip an expert on a host whose bf16 kernels round
+    differently. That happened on the GitHub runner: 3.970e-3 on three runs, 1.975e-1 on one
+    (CI at 2898e4b4), identical 4.070e-3 locally at both shas. A route flip is a property of
+    the seed and the host, not of the wiring this test asserts; fp32 puts the router 1e3
+    ulps from the tie. Healthy fp32 value 1.311e-6; atol 1e-4 is 75x that and 1e3x below a flip.
     """
     ref, ours, cfg, tok = _build_on_pair()
+    _to_fp32(ref, ours)
     torch.manual_seed(123)
     ids = torch.randint(0, cfg.vocab_size, (_B, _S), dtype=torch.long)
     rlogits, _ = _run_ref_full(ref, ids)
@@ -154,7 +164,7 @@ def test_engram_on_whole_model_allclose():
         ologits, oeng = ours(ids)
     assert oeng is None  # dspark_target_layer_ids is () on this config
     assert rlogits.shape == (_B, _S, cfg.vocab_size) == ologits.shape
-    m, _ = cmp("engram-ON bf16 full-sequence logits", ologits, rlogits, atol=5e-2)
+    m, _ = cmp("engram-ON fp32 full-sequence logits", ologits, rlogits, atol=1e-4)
 
     # mutation: moving OUR engram table must break the equality (the ON path is live)
     with torch.no_grad():
@@ -163,7 +173,7 @@ def test_engram_on_whole_model_allclose():
         ours.engrams[_ENGRAM_LAYER].embed.weight.sub_(0.5)
     d = (mut - rlogits).abs().max().item()
     assert d > 1e-2, f"engram table mutation did not move the logits ({d}) -- path is dead"
-    print(f"  engram-ON bf16 max_abs={m:.4e}; engram-table mutation={d:.4f} (red if ~0)")
+    print(f"  engram-ON fp32 max_abs={m:.4e}; engram-table mutation={d:.4f} (red if ~0)")
 
 
 def test_engram_off_path_bit_identical():
@@ -177,6 +187,7 @@ def test_engram_off_path_bit_identical():
     at the documented tolerance.
     """
     ref, ours, cfg = _build_pair(cfg=v41f_small())
+    _to_fp32(ref, ours)  # same route-flip exposure as the ON case; healthy fp32 value 2.682e-6
     assert ours.engram_hash is None and all(s is None for s in ours.engrams), (
         "the OFF config now builds engram machinery: engram_layer_ids=() must leave every "
         "slot None and no hash state")
@@ -185,7 +196,7 @@ def test_engram_off_path_bit_identical():
     rlogits, _ = _run_ref_full(ref, ids)
     with torch.no_grad():
         ologits, _ = ours(ids)
-    cmp("engram-OFF bf16 full-sequence logits", ologits, rlogits, atol=5e-2)
+    cmp("engram-OFF fp32 full-sequence logits", ologits, rlogits, atol=1e-4)
 
 
 def test_engram_injection_site_is_consumed():
