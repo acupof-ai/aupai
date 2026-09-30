@@ -85,6 +85,35 @@ def _ids(cfg, seed, seq=16):
     return torch.randint(0, cfg.vocab_size, (2, seq), generator=g)
 
 
+def test_collect_master_grads_clears_missing():
+    """An expert used last step but skipped this step must not reuse its master grad."""
+    m = torch.nn.ParameterDict({
+        "used": torch.nn.Parameter(torch.ones(2, dtype=torch.bfloat16)),
+        "skipped": torch.nn.Parameter(torch.ones(2, dtype=torch.bfloat16)),
+        "native": torch.nn.Parameter(torch.ones(2, dtype=torch.float32)),
+    })
+    st = TrainState(m, lr=1e-2)
+    sum(p.float().sum() for p in m.values()).backward()
+    st.collect_master_grads()
+    st.optimizer.step()
+    before = st.master["skipped"].detach().clone()
+    step = st.optimizer.state[st.master["skipped"]]["step"].clone()
+
+    st.zero_model_grads()
+    st.refresh_bf16()
+    (m["used"].float().sum() * 0 + m["native"].sum()).backward()
+    st.collect_master_grads()
+    assert st.master["skipped"].grad is None, "unrouted expert retained stale master grad"
+    assert st.master["used"].grad is not None
+    assert torch.equal(st.master["used"].grad, torch.zeros(2))
+    assert st.master["native"] is m["native"]
+    assert torch.equal(st.master["native"].grad, torch.ones(2))
+    st.optimizer.step()
+    assert torch.equal(st.master["skipped"], before)
+    assert torch.equal(st.optimizer.state[st.master["skipped"]]["step"], step)
+    print("  missing model grad clears master grad; AdamW skips weight and state update")
+
+
 # G1/G5: membership census, two configs of the SAME small network --------------------------
 
 
@@ -954,6 +983,7 @@ def _selftest():
     # a failed run leaves multi-GB blobs, so remove only our own root, never a shared prefix.
     root = _scratch(prefix="td_p1_root_")
     gates = [
+        "test_collect_master_grads_clears_missing",
         "gate_census_membership",
         "gate_buffers_in_model_not_master",
         "gate_alias_survives_save_load",
