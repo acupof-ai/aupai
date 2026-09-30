@@ -394,7 +394,17 @@ def main():
 def _greedy(model, tok, prompt_ids, max_new, device, seq_window):
     x = torch.tensor([prompt_ids], device=torch.device(device))
     is_cuda = str(device).startswith("cuda")
-    ctx = torch.autocast(device_type="cuda", dtype=torch.bfloat16) if is_cuda else contextlib.nullcontext()
+    # bf16 autocast on BOTH devices, not a null context on CPU. A bf16 checkpoint
+    # under no autocast puts bf16 weights against fp32 activations, and v42 raises
+    # "expected m1 and m2 to have the same dtype, but got: float != c10::BFloat16"
+    # inside the first nn.Linear -- measured on the pod 2026-10-01 loading
+    # ckpt_v42_arch_d_0930.pt.step2000 on CPU. So the CPU arm could not score a v42
+    # checkpoint at all, which is the only arm available while the gate run holds all
+    # eight cards. It also makes the two arms the SAME computation: the CUDA arm was
+    # already bf16 autocast, so matching it narrows the gap between them rather than
+    # widening it. With CPU autocast the same forward returns logits (1, 32768) and a
+    # plausible greedy token.
+    ctx = torch.autocast(device_type="cuda" if is_cuda else "cpu", dtype=torch.bfloat16)
     with ctx:
         for _ in range(max_new):
             lg = model(x[:, -seq_window:])[0][:, -1]

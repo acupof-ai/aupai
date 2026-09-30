@@ -17,7 +17,6 @@ pass@1 estimator: c/n per problem -- for k=1 the unbiased estimator
 """
 
 import argparse
-import contextlib
 import json
 import os
 import sys
@@ -295,7 +294,17 @@ def main():
         new = []
         # CPU runs fp32 with no autocast, same as humaneval_gen: bf16 autocast is a cuda-only
         # context and the chain must run cardless on a checkpoint dry-run.
-        ctx = torch.autocast(device_type="cuda", dtype=torch.bfloat16) if not is_cpu else contextlib.nullcontext()
+        # bf16 autocast on BOTH devices, not a null context on CPU. A bf16 checkpoint
+        # under no autocast puts bf16 weights against fp32 activations, and v42 raises
+        # "expected m1 and m2 to have the same dtype, but got: float != c10::BFloat16"
+        # inside the first nn.Linear -- measured on the pod 2026-10-01 loading
+        # ckpt_v42_arch_d_0930.pt.step2000 on CPU. So the CPU arm could not score a v42
+        # checkpoint at all, which is the only arm available while the gate run holds all
+        # eight cards. It also makes the two arms the SAME computation: the CUDA arm was
+        # already bf16 autocast, so matching it narrows the gap between them rather than
+        # widening it. With CPU autocast the same forward returns logits (1, 32768) and a
+        # plausible greedy token.
+        ctx = torch.autocast(device_type="cpu" if is_cpu else "cuda", dtype=torch.bfloat16)
         with torch.no_grad(), ctx:
             for step in range(args.max_new):
                 lg = model(x[:, -cfg.seq:])[0][:, -1]
