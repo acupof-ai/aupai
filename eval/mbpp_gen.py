@@ -157,12 +157,29 @@ def canonical_body(rec):
     return "\n".join(lines[i + 1:])
 
 
-def judge(rec, completion):
-    src = (model_prompt(rec) + completion + "\n"
-           + "\n".join(rec.get("test_imports", [])) + "\n"
-           + "\n".join(rec["test_list"]) + "\n")
+#: Set by main() from --exec-in-process, mirroring eval/humaneval_gen.py. False means model
+#: output goes to the chroot sandbox; True restores the historical in-process scorer and is a
+#: protocol change, not a speed knob.
+#: RLIMIT_NPROC counts uid 65534's tasks MACHINE-WIDE, so the sandbox default of 64 is
+#: not enough to exec CPython on this pod: measured 2026-10-01, run_sandboxed("print(1)")
+#: returns rc 126 (`setpriv: failed to execute`) at 64 and rc 0 at 4096. A scorer that
+#: took the default read EVERY problem as failed. Same value as datagen/vet_textbooks.py
+#: and scripts/sft_verify_code.py, the two callers that already passed it.
+SANDBOX_NPROC = 4096
+
+EXEC_IN_PROCESS = False
+
+EXEC_TIMEOUT = 6
+
+
+def _exec_in_process(src):
+    """The historical scorer. SIGALRM is a TIMEOUT, not isolation: `g` gets the real
+    __builtins__, so executed source can reach the filesystem and a socket, and can mutate
+    interpreter state (recursionlimit, signal handlers, cwd, closed stdio) in ways that alter
+    LATER problems' verdicts in the same process. Reachable only behind --exec-in-process.
+    """
     g = {"__name__": "__main__"}
-    signal.alarm(6)
+    signal.alarm(EXEC_TIMEOUT)
     try:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             exec(src, g)
@@ -171,6 +188,39 @@ def judge(rec, completion):
         return False
     finally:
         signal.alarm(0)
+
+
+def _exec_untrusted(src):
+    """Model output. Goes to datagen.sandbox_exec.run_sandboxed, the executor every other
+    code-execution path in this repo already uses (chroot + mount/net/pid namespaces, uid
+    drop, rlimits) and the one eval/humaneval_gen.py's judge already takes. Off the pod, or
+    without root, run_sandboxed raises -- loud, never a silent fallback to the in-process path.
+    """
+    if EXEC_IN_PROCESS:
+        return _exec_in_process(src)
+    from datagen.sandbox_exec import run_sandboxed
+
+    rc, _out, _err = run_sandboxed(src, timeout=EXEC_TIMEOUT, nproc=SANDBOX_NPROC)
+    return rc == 0
+
+
+def judge(rec, completion):
+    """prompt + completion + test_imports + test_list; pass iff clean exit.
+
+    No `trusted` bypass, deliberately, and this is where it differs from
+    eval/humaneval_gen.py's judge: --control judges the dataset's own canonical solutions and
+    is the ONLY known-answer case this scorer has, so it must exercise the scorer that
+    produces the real number. MBPP's exec source is a different shape from HumanEval's --
+    test_imports plus bare `assert` lines rather than one check(entry_point) call -- so a
+    sandbox that rejected correct MBPP source would read as a score of zero, and routing the
+    control past the sandbox is exactly what would hide that. `--control ALL` on the pod is
+    therefore a test of run_sandboxed on this shape; off the pod it raises rather than
+    quietly scoring in-process.
+    """
+    src = (model_prompt(rec) + completion + "\n"
+           + "\n".join(rec.get("test_imports", [])) + "\n"
+           + "\n".join(rec["test_list"]) + "\n")
+    return _exec_untrusted(src)
 
 
 def truncate(raw, entry):
@@ -216,7 +266,25 @@ def main():
     ap.add_argument("--shard_n", type=int, default=None)
     ap.add_argument("--control", choices=["20", "ALL"], default=None,
                     help="judge canonical solutions, no model; ALL must pass")
+    ap.add_argument("--exec-in-process", dest="exec_in_process", action="store_true",
+                    help="score model completions with the historical in-process exec instead "
+                         "of the chroot sandbox. Requires ALLOW_UNISOLATED=1. This is a "
+                         "PROTOCOL CHANGE, not a speed knob: every MBPP number taken before "
+                         "2026-10-01 was scored this way, and the preds header records which "
+                         "scorer produced it.")
     args = ap.parse_args()
+
+    if args.exec_in_process:
+        if os.environ.get("ALLOW_UNISOLATED") != "1":
+            ap.error("--exec-in-process runs model-generated code in THIS interpreter under a "
+                     "SIGALRM ceiling, which is a timeout and not isolation: it stops neither a "
+                     "filesystem read of /work/aupai nor a socket, and interpreter state it "
+                     "mutates changes LATER problems' verdicts. Set ALLOW_UNISOLATED=1 to say "
+                     "so explicitly.")
+        global EXEC_IN_PROCESS
+        EXEC_IN_PROCESS = True
+        print("PROTOCOL: model completions scored by IN-PROCESS exec (pre-2026-10-01 scorer), "
+              "not the chroot sandbox.", flush=True)
 
     recs_all = json.load(open(args.data, encoding="utf-8"))
     shard_validate(args.shard_i, args.shard_n)
@@ -275,6 +343,7 @@ def main():
             "n": args.n, "temperature": args.temperature,
             "max_new": args.max_new, "ckpt": os.path.basename(str(args.ckpt).rstrip("/")),
             "clean_denominator": (len(clean_ids) if clean_ids else None),
+            "exec_isolation": "in_process" if EXEC_IN_PROCESS else "sandbox",
         }, ensure_ascii=False) + "\n")
         for i, rec in enumerate(recs, 1):
             _sig, entry = signature(rec)

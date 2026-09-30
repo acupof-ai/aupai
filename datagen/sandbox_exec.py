@@ -20,11 +20,26 @@ Usage:
   rc, out, err = run_sandboxed("print(1)")   # (0, "1\\n", "")
 """
 import os
+import re
 import shutil
 import signal
 import subprocess
 import sys
 import tempfile
+
+
+class SandboxLaunchError(RuntimeError):
+    """The sandbox could not start the candidate, so there is no verdict to report.
+
+    Distinct from a nonzero rc, which IS a verdict. Raised rather than returned because
+    every caller reads rc == 0 as "passed": handing back an rc for a launch that never
+    happened turns an infrastructure fault into a benchmark score of zero.
+    """
+
+
+#: stderr signatures of a launch that never reached the candidate: setpriv failing to exec
+#: python after the uid drop, and this script's own fail-closed rlimit exits.
+_LAUNCH_FAILED = re.compile(r"failed to execute|could not set RLIMIT|cannot execute")
 
 _SETUP = r"""set -e
 ROOT="$1"
@@ -246,14 +261,26 @@ def run_sandboxed(code, timeout=10, stdin=None, files=None, argv=None, site=Fals
                 import seccomp as _sec
 
                 ok, _why = _sec.available()
-                if ok:
-                    shutil.copy(_sec.__file__, os.path.join(root, "work", "seccomp.py"))
-                    with open(os.path.join(root, "work", "_boot.py"), "w",
-                              encoding="utf-8") as f:
-                        f.write(_sec.BOOTSTRAP)
-                    seccomp_ok = True
-            except ImportError:
-                pass
+            except ImportError as exc:
+                ok, _why, _sec = False, f"algorithms/seccomp.py not importable: {exc}", None
+            # A FILTER THAT WAS ASKED FOR AND DID NOT INSTALL MUST NOT BE SILENT. Both arms
+            # used to fall through to seccomp_ok=False, so `seccomp=True` ran an UNFILTERED
+            # sandbox and said nothing. Measured 2026-10-01: a tree holding datagen/ but not
+            # algorithms/ takes the ImportError arm, and AF_UNIX then succeeds under
+            # seccomp=True exactly as it does under seccomp=False -- the parameter had no
+            # observable effect and no message. The netns still blocks external network, so
+            # this was not a wide hole; it was an unannounced one, which is worse to reason
+            # about. A caller that genuinely wants no filter passes seccomp=False and says so.
+            if not ok:
+                raise SandboxLaunchError(
+                    f"seccomp=True but the filter could not be installed ({_why}); refusing to "
+                    f"run untrusted code in a sandbox weaker than the caller asked for. Pass "
+                    f"seccomp=False to accept netns+chroot+rlimits only."
+                )
+            shutil.copy(_sec.__file__, os.path.join(root, "work", "seccomp.py"))
+            with open(os.path.join(root, "work", "_boot.py"), "w", encoding="utf-8") as f:
+                f.write(_sec.BOOTSTRAP)
+            seccomp_ok = True
         setup = _SETUP.replace('shift\n', 'shift\nSITE=""\nBOOT=""\n', 1)
         setup = setup.replace('set -e\n',
                               f'set -e\nLOOPBACK="{1 if loopback else 0}"\nNPROC="{int(nproc)}"\n'
@@ -306,9 +333,25 @@ def run_sandboxed(code, timeout=10, stdin=None, files=None, argv=None, site=Fals
             os.killpg(p.pid, signal.SIGKILL)
             stdout, stderr = p.communicate()
             return -1, (stdout or b"").decode("utf-8", "replace"), "TIMEOUT"
-        return (p.returncode,
-                stdout.decode("utf-8", "replace"),
-                stderr.decode("utf-8", "replace")[-500:])
+        err_tail = stderr.decode("utf-8", "replace")[-500:]
+        # A SANDBOX THAT COULD NOT START THE CODE MUST NOT RETURN AN EXIT CODE FOR IT.
+        # Every caller reads `rc == 0` as "the candidate passed", so a nonzero rc from a
+        # FAILED LAUNCH reads as "the candidate failed" -- print-and-continue, in the one
+        # place where the output is a benchmark number. Measured 2026-10-01 on this pod:
+        # run_sandboxed("print(1)") at the default nproc=64 returns rc 126 with
+        # `setpriv: failed to execute /usr/bin/python3.12: Resource temporarily unavailable`,
+        # because RLIMIT_NPROC counts the shared uid 65534's tasks machine-wide (see the
+        # NPROC comment above). Every eval scorer in this repo omitted nproc, so on a busy
+        # pod each one scored EVERY problem as failed and reported it as a score.
+        # exit 98 is this script's own fail-closed rlimit exit; 126/127 are exec failures
+        # from setpriv, which happen before the candidate runs at all.
+        if p.returncode in (98, 126, 127) and _LAUNCH_FAILED.search(err_tail):
+            raise SandboxLaunchError(
+                f"sandbox did not run the code (rc={p.returncode}): {err_tail.strip()[-300:]}. "
+                f"This is NOT a verdict on the code. nproc={nproc} draws on uid 65534's "
+                f"machine-wide task count; callers that need headroom pass nproc explicitly."
+            )
+        return (p.returncode, stdout.decode("utf-8", "replace"), err_tail)
     finally:
         # mounts die with the namespace; what remains is empty dirs
         shutil.rmtree(root, ignore_errors=True)
@@ -340,8 +383,11 @@ def _self_check():
         ("import socket\nsocket.socket().connect(('1.1.1.1', 80))", 1, "", "network blocked"),
         ("print(open('/work/aupai/data/eval/code_holdout_500.jsonl').read()[:10])",
          1, "", "filesystem isolation (eval answers invisible)"),
-        ("import os\nprint(sorted(os.listdir('/work')))", 0, "code.py",
-         "the workdir holds code.py plus the seccomp bootstrap when the filter is in force"),
+        # "code.py" was the expected substring, which ['code.py'] satisfies with the filter
+        # OFF -- the case could not detect the thing its own label names. _boot.py is present
+        # only when the bootstrap was installed, so it is the discriminating string.
+        ("import os\nprint(sorted(os.listdir('/work')))", 0, "_boot.py",
+         "the workdir holds the seccomp bootstrap, which is absent when the filter is off"),
         # seccomp specifically, as opposed to the network namespace: AF_UNIX and socketpair
         # are NOT blocked by a netns, so these two fail only because a filter denied the
         # syscall. Without seccomp they succeed -- asserted from the other side in
@@ -387,9 +433,39 @@ def _self_check():
          0, "blocked", "cannot read a secret out of another process's environ"),
     ]
     fails = 0
+
+    # A FAILED LAUNCH RAISES AND IS NEVER AN rc. Both directions, because a raise that fired
+    # on every call would be worse than the bug it replaces. nproc=1 cannot exec CPython under
+    # any machine load, so this is deterministic where nproc=64 is not: 64 depends on uid
+    # 65534's machine-wide task count and passes on a quiet box (see the NPROC comment above),
+    # which is exactly why no eval scorer noticed it was scoring every problem as failed.
+    for nproc_arg, want_raise in ((1, True), (4096, False)):
+        try:
+            rc0, out0, _ = run_sandboxed("print(1)", timeout=15, nproc=nproc_arg)
+            raised = False
+        except SandboxLaunchError:
+            rc0, out0, raised = None, "", True
+        ok = raised == want_raise and (raised or (rc0 == 0 and "1" in out0))
+        fails += 0 if ok else 1
+        print(f"  {'OK ' if ok else 'FAIL'} nproc={nproc_arg} raised={raised} "
+              f"exp_raise={want_raise} | launch failure is loud, not a verdict")
+    if not _LAUNCH_FAILED.search("setpriv: failed to execute /usr/bin/python3.12"):
+        fails += 1
+        print("  FAIL: _LAUNCH_FAILED does not match the measured setpriv stderr")
+    if _LAUNCH_FAILED.search("AssertionError: expected 3, got 4"):
+        fails += 1
+        print("  FAIL: _LAUNCH_FAILED matches an ordinary test failure")
+
     for code, exp_rc, exp_out, label in cases:
+        # nproc=4096, not the default 64: these cases assert sandbox SEMANTICS (cpu, memory,
+        # network, filesystem, seccomp, pid namespace), and at 64 none of them reaches the
+        # candidate at all -- the uid drop cannot exec CPython, so every case would report the
+        # launch failure instead of its own property. That is the measured cause of the
+        # "eval/score_code_exec.py --selftest stays red on a busy pod" note above: the
+        # selftest was as exposed to the shared-uid limit as the scorers were. The nproc cap
+        # itself is asserted by the two cases above, which own that variable.
         kw = {"stdin": "hello"} if label.startswith("stdin") else {}
-        rc, out, err = run_sandboxed(code, timeout=15, **kw)
+        rc, out, err = run_sandboxed(code, timeout=15, nproc=4096, **kw)
         ok = (rc == exp_rc or (exp_rc == -1 and rc < 0)) and exp_out in out
         if not ok:
             fails += 1
