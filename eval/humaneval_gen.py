@@ -51,6 +51,7 @@ from eval.shard import label as shard_label
 from eval.shard import runs_full_control
 from eval.shard import select as shard_select
 from eval.shard import validate as shard_validate
+from scripts.decode_guard import last_logits
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_PATH = os.path.join(ROOT, "data", "eval", "humaneval", "humaneval_164.jsonl")
@@ -556,7 +557,7 @@ def main():
         ctx = torch.autocast(device_type="cuda", dtype=torch.bfloat16) if not is_cpu else _nullctx()
         with torch.no_grad(), ctx:
             for step in range(args.max_new):
-                lg = model(x[:, -cfg.seq:])[0][:, -1]
+                lg = last_logits(model, model(x[:, -cfg.seq:]))
                 nxt = lg.argmax(-1, keepdim=True)
                 tid = nxt.item()
                 if tid == 1:
