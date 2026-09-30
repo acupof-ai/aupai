@@ -102,17 +102,25 @@ def build_items(tok, src_path, n=1000, seed=20260830):
             })
     # Distractors: rotate within char-length buckets (same token length by
     # construction -- every target is one token; char length matches frequency).
+    # ROTATE OVER THE DISTINCT TARGET STRINGS, NOT OVER THE ITEM INDICES. Rotating by index
+    # hands item k the NEXT ITEM's target, which is the SAME STRING whenever two neighbours
+    # in the bucket end on the same token. score_two_way drops every such item, so the
+    # two-way n shrank silently and it shrank on the FREQUENT targets, which is the part of
+    # the distribution the instrument most needs: 42 of the 1000 items in
+    # data/eval/lambada_zh.jsonl, 9 of them the single target 公告 (measured 2026-09-30).
     buckets = defaultdict(list)
     for k, it in enumerate(items):
         buckets[len(it["target"])].append(k)
-    for L, idxs in buckets.items():
-        if len(idxs) < 2:
+    for _L, idxs in buckets.items():
+        uniq = sorted({items[k]["target"] for k in idxs})
+        if len(uniq) < 2:
             for k in idxs:
                 items[k]["distractor"] = items[k]["target"]  # degenerate; scored as skip
-            stats["singleton_bucket"] = stats.get("singleton_bucket", 0) + len(idxs)
+            stats["single_target_bucket"] = stats.get("single_target_bucket", 0) + len(idxs)
             continue
-        for pos, k in enumerate(idxs):
-            items[k]["distractor"] = items[idxs[(pos + 1) % len(idxs)]]["target"]
+        at = {t: i for i, t in enumerate(uniq)}
+        for k in idxs:
+            items[k]["distractor"] = uniq[(at[items[k]["target"]] + 1) % len(uniq)]
     random.Random(seed).shuffle(items)
     return items, dict(stats)
 
@@ -162,25 +170,85 @@ def load_items(path, tok):
 
 
 def _selftest():
+    import shutil
+    import tempfile
     import types
+    from collections import Counter
+
     tok = load_tokenizer(TOK_PATH, types.SimpleNamespace(vocab=None, vocab_id=None))
-    prose = [
-        json.dumps({"content": "他推开门，看见桌上放着一杯还冒着热气的茶。"}, ensure_ascii=False),
-        json.dumps({"content": "雨下了一整夜，早上院子里落满了黄色的叶子。"}, ensure_ascii=False),
-        json.dumps({"content": "她把信折好，轻轻放进了上衣最里面的口袋。"}, ensure_ascii=False),
-        json.dumps({"content": "火车开动的时候，他才想起自己忘了带那本旧书。"}, ensure_ascii=False),
-    ]
-    tmp = os.path.join("/tmp", "_lzh_selftest.jsonl")
-    open(tmp, "w", encoding="utf-8").write("\n".join(prose))
-    items, stats = build_items(tok, tmp, n=10)
+
+    def build(sentences):
+        d = tempfile.mkdtemp(prefix="lzh_selftest.")
+        try:
+            path = os.path.join(d, "prose.jsonl")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(json.dumps({"content": c}, ensure_ascii=False)
+                                    for c in sentences))
+            return build_items(tok, path, n=10)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    # WORLD A carries the defect. Two sentences end on the same one-token target 子 and a
+    # third ends on 路, so the one-char bucket holds three items and two distinct strings.
+    # That is the only shape the old index rotation got wrong: it handed item k the NEXT
+    # ITEM's target, which is the same STRING when two neighbours share one. A fixture
+    # without a repeated target would pass by not containing the defect.
+    #
+    # The three sentences that are NOT here in earlier versions of this test were dropped by
+    # build_items with no_cjk_target: their final BPE token is a byte fragment, not a whole
+    # hanzi. Only one item survived, its bucket was a singleton, and the unconditional
+    # `distractor != target` assertion then fired on the degenerate value the code assigns
+    # on purpose. That is why this test was red, and it is a different defect from the
+    # rotation one below.
+    items, stats = build([
+        "雨下了一整夜，早上院子里落满了黄色的叶子。",
+        "她一句话也没说，转身走进了厨房旁边的小屋子。",
+        "天快黑的时候，他们终于找到了那条回家的小路。",
+        "他推开门，看见桌上放着一杯还冒着热气的茶。",
+    ])
     assert items, f"no items built: {stats}"
+    repeated = [t for t, c in Counter(it["target"] for it in items).items() if c > 1]
+    assert repeated, (
+        f"no target repeats in {[it['target'] for it in items]}: the index-rotation defect "
+        "cannot fire on this fixture, so a pass here means nothing"
+    )
+    # The old rule, recomputed here: it must collide on this fixture. If a tokenizer rebuild
+    # ever makes it stop colliding, this test says so instead of going quietly green.
+    by_len = defaultdict(list)
+    for k, it in enumerate(items):
+        by_len[len(it["target"])].append(k)
+    old_collisions = sum(
+        1 for idxs in by_len.values() for pos, k in enumerate(idxs)
+        if len(idxs) >= 2 and items[idxs[(pos + 1) % len(idxs)]]["target"] == items[k]["target"]
+    )
+    assert old_collisions > 0, (
+        "the index rotation would not collide on this fixture, so the fix has no subject here"
+    )
+
+    distinct_per_len = {L: len({items[k]["target"] for k in idxs}) for L, idxs in by_len.items()}
     for it in items:
         ids = tok.encode(it["context"] + it["target"], add_special_tokens=False).ids
         assert ids[-1] == it["target_id"], it
         assert _CJK.fullmatch(it["target"]), it
-        assert it["distractor"] != it["target"], it
         assert len(it["distractor"]) == len(it["target"]), it
-    print(f"lambada_zh self-test OK ({len(items)} items, {stats})")
+        # A distractor may equal its target ONLY where the bucket holds one distinct target
+        # and has nothing else to offer; score_two_way skips exactly those.
+        if distinct_per_len[len(it["target"])] > 1:
+            assert it["distractor"] != it["target"], it
+        else:
+            assert it["distractor"] == it["target"], it
+
+    # WORLD B is the degenerate branch, asserted rather than assumed: one item, one distinct
+    # target in its bucket, distractor == target, and stats says so by name.
+    lone, lone_stats = build(["天快黑的时候，他们终于找到了那条回家的小路。"])
+    assert len(lone) == 1, lone
+    assert lone[0]["distractor"] == lone[0]["target"], lone
+    assert lone_stats.get("single_target_bucket") == 1, lone_stats
+
+    scored = [it for it in items if it["distractor"] != it["target"]]
+    print(f"lambada_zh self-test OK ({len(items)} items, {len(scored)} two-way scorable, "
+          f"repeated targets {repeated}, {old_collisions} collisions under the old index "
+          f"rotation, degenerate branch asserted, {stats})")
 
 
 def main():

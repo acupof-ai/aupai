@@ -7,6 +7,7 @@ import sys
 import torch
 
 from sampling import top_p_sample
+from scripts.decode_guard import last_logits
 from scripts.loader import format_prompt, load_checkpoint, load_tokenizer
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -19,7 +20,7 @@ def generate(model, tok, prompt, max_new=512, temp=0.8, top_p=0.95):
     model.eval()
     for _ in range(max_new):
         with torch.no_grad():
-            logits = model(x[:, -model.cfg.seq :])[0][:, -1] / temp
+            logits = last_logits(model, model(x[:, -model.cfg.seq :])) / temp
         nxt = top_p_sample(logits, top_p)
         x = torch.cat([x, nxt], dim=1)
         if nxt.item() == eos:

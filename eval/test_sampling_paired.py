@@ -11,6 +11,7 @@ misaligns si>=1.
 import ast
 import os
 import sys
+from types import SimpleNamespace
 
 import torch
 
@@ -34,6 +35,7 @@ class FakeModel:
 
     def __init__(self, stop_after):
         self.stop_after = stop_after
+        self.cfg = SimpleNamespace(vocab=V)
 
     def __call__(self, x):
         gen = x.shape[1] - len(PROMPT)
@@ -58,6 +60,8 @@ class TokenHistoryModel:
     id 2 acts as a per-row early stop (prob raised with step so most rows stop
     before max_new at different times).
     """
+
+    cfg = SimpleNamespace(vocab=V)
 
     def __call__(self, x):
         b, t = x.shape
