@@ -121,6 +121,7 @@ class DivergeDetector:
         self.g_consec = g_consec
         self.loss_thresh = loss_thresh
         self.losses = collections.deque(maxlen=loss_window)
+        self._loss_steps = collections.deque(maxlen=loss_window)
         self._g_run = 0
         self.last_step = None
         # Arm only at/after this step (live tail honors it; --once also filters at scan time).
@@ -152,10 +153,19 @@ class DivergeDetector:
         else:
             self._g_run = 0
         self.losses.append(loss)
+        self._loss_steps.append(step)
         if len(self.losses) == self.losses.maxlen:
             mean = sum(self.losses) / len(self.losses)
             if mean > self.loss_thresh:
-                return f"{self.losses.maxlen}-step mean loss {mean:.3f} > {self.loss_thresh:g} at step {step}"
+                # Report the SPAN, not maxlen. maxlen counts LOGGED steps and train.py logs every
+                # Cfg.log_every (10) steps, so a 50-entry window spans ~500 steps -- and the window
+                # is judged the instant it first fills, so on a cold start its oldest entries are
+                # warmup steps whose loss is several times the settled value. Printing "50-step
+                # mean" there cost v42_gate_1001 a false kill at step 500: the message read
+                # "50-step mean loss 4.973 > 3.5" while steps 451-500 actually read 1.890..4.050,
+                # and the 4.973 was the mean over the whole run so far.
+                return (f"mean loss {mean:.3f} > {self.loss_thresh:g} over steps "
+                        f"{self._loss_steps[0]}..{step} ({len(self.losses)} logged points)")
         self.last_step = step
         return None
 
