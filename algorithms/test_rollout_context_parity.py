@@ -132,14 +132,20 @@ def selftest():
     import re
 
     offenders = []
-    # Excluding this file by its own name is not enough: the commit hook runs the STAGED blob as
-    # .hookstaged_<name>.py, so __file__ no longer matches and the scan finds its own control
-    # fixtures. Match the suffix, which both spellings share.
-    me = os.path.basename(__file__).lstrip(".").removeprefix("hookstaged_")
     for path in glob.glob(os.path.join(HERE, "*.py")):
         # rlvr_generate.py DEFINES the parameter; every other module may only not pass it.
-        base = os.path.basename(path)
-        if base.endswith(me) or base == "rlvr_generate.py":
+        #
+        # STRIP THE HOOK'S PREFIX BEFORE COMPARING. The pre-commit hook runs the STAGED blob
+        # as algorithms/.hookstaged_<name>.py, so __file__'s basename is
+        # `.hookstaged_test_rollout_context_parity.py` and never equals this file's own name:
+        # the scan then finds its own 8 ctx_window= lines and every commit that stages or
+        # merges this file dies on its own assertion. Measured 2026-09-30 on a merge of main
+        # into de-rlfix, where it blocked the commit while `python3 <this file> --selftest`
+        # passed -- the file searching a space that holds its own text, shapes 282 and 293.
+        self_name = os.path.basename(__file__)
+        if self_name.startswith(".hookstaged_"):
+            self_name = self_name[len(".hookstaged_"):]
+        if os.path.basename(path) in (self_name, "rlvr_generate.py"):
             continue
         for i, line in enumerate(open(path, encoding="utf-8"), 1):
             if re.search(r"\bctx_window\s*=", line):
