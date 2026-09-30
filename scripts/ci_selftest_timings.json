@@ -293,6 +293,7 @@
     "scripts/watch_router_scale.py": 1.5,
     "scripts/write_mix_500m.py": 8.7,
     "tests/v41f/diag_resume_bimodal.py": 60,
+    "tests/v41f/hc_grad_floor_probe.py": 2.6,
     "tests/v41f/resume_gate_retry.py": 5.0,
     "tests/v41f/test_p1_docpack.py": 15.0,
     "tests/v41f/test_p1_fused.py": 40.0,

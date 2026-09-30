@@ -2603,6 +2603,7 @@ def main():
         # v42 packed-row path (1e): packed [A;B] == separate documents through the reference
         # path, chunked == ref attention in logits and every grad, the KL indexer loss reaches
         # exactly the indexer leaves, and a positions-not-restarted mutant goes red.
+        "tests/v41f/hc_grad_floor_probe.py",
         "tests/v41f/test_p1_docpack.py",
         # track P (1e): attn_impl fused == chunked (logits+grads, KL lse), rope real == complex,
         # stacked MoE bit-equal to the loop with remap both ways, dynamo.explain 0 breaks.
