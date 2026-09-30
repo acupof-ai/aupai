@@ -2642,6 +2642,10 @@ def main():
         # --stochastic_round running as no-ops, and an expert bias that never moves. Every one of
         # them converges to something and prints a healthy log line.
         "tests/test_sft_math_v42.py",
+        # The width check the five raw decode loops read through (de, 2026-09-30). Its broken
+        # world is a forward returning a dim-16 hidden state where the loop reads logits: the
+        # argmax lands on a valid token id, so the only possible signal is this raise.
+        "scripts/decode_guard.py",
         # Assembly A/B key-set + dtype structural gate (98, #468 prep). --selftest freezes the
         # all-off v41f_small floor (241 sd keys/236 params, fp32 head+hc+sink+gate-bias contract,
         # no non-persistent leak), the ModelArgs<->V41FConfig field intersection (a ref-only

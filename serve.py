@@ -9,6 +9,7 @@ import torch
 from flask import Flask, Response, jsonify, request
 
 from sampling import top_p_sample
+from scripts.decode_guard import last_logits
 from scripts.loader import load_checkpoint, load_tokenizer
 
 # ── load model ──
@@ -34,7 +35,7 @@ def generate(prompt, max_new=200, temp=0.8, top_p=0.95, rep_penalty=1.2):
     seen = {}
     for _ in range(max_new):
         with torch.no_grad():
-            logits = model(x[:, -cfg.seq :])[0][:, -1] / temp
+            logits = last_logits(model, model(x[:, -cfg.seq :])) / temp
         # mask padding tokens (never trained, avoid random high logits)
         logits[:, tok.get_vocab_size() :] = float("-inf")
         if rep_penalty > 1.0:
