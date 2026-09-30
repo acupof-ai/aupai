@@ -125,9 +125,10 @@ class V41FConfig:
     # DEVIATIONS FROM THE V4.1 REFERENCE, default off, for the qproj-grad-growth arm (2026-09-30):
     # qk_norm: RMSNorm per head (over head_dim, learned weight, norm_eps) on q after wq_b and before
     # RoPE, and the same on the indexer query after its wq_b. The reference bounds only the latent qr.
-    # attn_logit_softcap C > 0: scores := C * tanh(scores / C) after the softmax scale, in every
-    # attention path (sparse_attn, the chunked window/entry branches, the flash window branch via
-    # flash_attn.cute's softcap); the sink is not capped. 0 = off = the reference softmax.
+    # attn_logit_softcap C > 0: scores := C * tanh(scores / C) after the softmax scale, on the
+    # compressed-entry scores ONLY (both impls); the window branch and the sink are uncapped --
+    # cute's varlen backward has no score_mod, and the v42_arch_b_0930 runaway lives on the shared
+    # compressed-KV path while qk_norm/kv_norm bound the window logits. 0 = off = the reference.
     qk_norm: bool = False
     attn_logit_softcap: float = 0.0
 

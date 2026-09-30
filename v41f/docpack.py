@@ -69,7 +69,10 @@ def _sel_mask(idx, nv: int):
 
 def cap(sc, softcap: float):
     """cfg.attn_logit_softcap: C * tanh(sc / C) on scaled scores, identity at 0. A deviation from the
-    reference softmax, applied to every score path but never to the sink."""
+    reference softmax, applied to the compressed-entry scores only, never to the window branch or the
+    sink: flash_attn.cute's varlen backward has no score_mod, and the runaway the cap answers lives on
+    the shared compressed-KV path (v42_arch_b_0930), while the window branch is bounded by qk_norm and
+    kv_norm. Both impls (fused and chunked) leave the window part uncapped so they stay comparable."""
     return softcap * torch.tanh(sc / softcap) if softcap else sc
 
 
@@ -80,7 +83,7 @@ def _attn_chunk(qc, kvw, compc, idxc, sink, docq, dock, c0: int, k0: int, window
     j = torch.arange(k0, k0 + kvw.size(1), device=qc.device)
     mw = (j[None, :] <= t[:, None]) & (t[:, None] - j[None, :] < window)
     mw = mw[None] & (docq[:, :, None] == dock[:, None, :])  # [b,q,kw]
-    parts = [cap(torch.einsum("bqhd,bkd->bhqk", qc, kvw).float() * scale, softcap).masked_fill(~mw[:, None], float("-inf"))]
+    parts = [(torch.einsum("bqhd,bkd->bhqk", qc, kvw).float() * scale).masked_fill(~mw[:, None], float("-inf"))]
     if compc is not None:
         sel = _sel_mask(idxc, compc.size(1))
         parts.append(cap(torch.einsum("bqhd,bnd->bhqn", qc, compc).float() * scale, softcap)
@@ -202,28 +205,30 @@ class _FlashWindow(torch.autograd.Function):
     both K and V (the model's MQA latent is one vector). lse comes back [h, N]."""
 
     @staticmethod
-    def forward(ctx, q, kv, cu, max_len, window, scale, softcap=0.0):
-        # flash_attn.cute's softcap is the same C*tanh(scaled score / C) as docpack.cap
+    def forward(ctx, q, kv, cu, max_len, window, scale):
+        # No softcap here on purpose: cute's varlen backward has no score_mod ("varlen + score_mod
+        # not supported in bwd yet", killed v42_arch_c_0930's first launch), and the window branch
+        # is uncapped by design -- cfg.attn_logit_softcap acts on the entry scores only.
         o, lse = _fa._flash_attn_fwd(
             q, kv, kv, cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=max_len, max_seqlen_k=max_len,
             causal=True, window_size_left=window - 1, window_size_right=0,
-            softmax_scale=scale, softcap=softcap or None, return_lse=True)
+            softmax_scale=scale, return_lse=True)
         ctx.save_for_backward(q, kv, o, lse)
-        ctx.meta = (cu, max_len, window, scale, softcap)
+        ctx.meta = (cu, max_len, window, scale)
         return o, lse
 
     @staticmethod
     def backward(ctx, go, glse):
         q, kv, o, lse = ctx.saved_tensors
-        cu, max_len, window, scale, softcap = ctx.meta
+        cu, max_len, window, scale = ctx.meta
         dq, dk, dv = _fa._flash_attn_bwd(
             q, kv, kv, o, go.to(o.dtype), lse, dlse=glse.contiguous() if glse is not None else None,
-            softmax_scale=scale, softcap=float(softcap), causal=True, window_size_left=window - 1, window_size_right=0,
+            softmax_scale=scale, causal=True, window_size_left=window - 1, window_size_right=0,
             cu_seqlens_q=cu, cu_seqlens_k=cu, max_seqlen_q=max_len, max_seqlen_k=max_len)
-        return dq, dk + dv, None, None, None, None, None
+        return dq, dk + dv, None, None, None, None
 
 
-def _window_torch(q, kv, doc, window, scale, softcap: float = 0.0):
+def _window_torch(q, kv, doc, window, scale):
     """Pure-torch window branch (CPU / no flash): chunked masked softmax without the sink.
     Returns o [b,s,h,d] fp32-accumulated in q's dtype and lse [b,h,s] fp32."""
     b, s, h, _ = q.shape
@@ -236,7 +241,7 @@ def _window_torch(q, kv, doc, window, scale, softcap: float = 0.0):
         j = torch.arange(k0, c1, device=q.device)
         mw = (j[None, :] <= t[:, None]) & (t[:, None] - j[None, :] < window)
         mw = mw[None] & (doc[:, c0:c1, None] == doc[:, None, k0:c1])
-        sc = cap(torch.einsum("bqhd,bkd->bhqk", qc, kvw).float() * scale, softcap).masked_fill(~mw[:, None], float("-inf"))
+        sc = (torch.einsum("bqhd,bkd->bhqk", qc, kvw).float() * scale).masked_fill(~mw[:, None], float("-inf"))
         lse = torch.logsumexp(sc, -1)
         p = torch.exp(sc - lse[..., None])
         outs.append(torch.einsum("bhqk,bkd->bqhd", p.to(kvw.dtype), kvw))
@@ -261,11 +266,11 @@ def fused_sparse_attn(q, kv, comp, comp_idx, sink, scale: float, doc, cu_docs, w
     b*s stream, from doc_layout."""
     b, s, h, d = q.shape
     if HAS_FA_CUTE and q.is_cuda:
-        ow, lw = _FlashWindow.apply(q.reshape(b * s, h, d), kv.reshape(b * s, 1, d), cu_docs, s, window, scale, softcap)
+        ow, lw = _FlashWindow.apply(q.reshape(b * s, h, d), kv.reshape(b * s, 1, d), cu_docs, s, window, scale)
         ow = ow.view(b, s, h, d)
         lw = lw.view(h, b, s).permute(1, 0, 2).float()      # [b,h,s]
     else:
-        ow, lw = _window_torch(q, kv, doc, window, scale, softcap)
+        ow, lw = _window_torch(q, kv, doc, window, scale)
     le = torch.full_like(lw, float("-inf"))
     oe = torch.zeros_like(ow)
     if comp is not None:
