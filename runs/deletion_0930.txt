@@ -1,0 +1,22 @@
+# Deletion 2026-09-30 -- one-off artifacts from retired lines and departed sessions.
+# Method: scripts/ and runs/ audited file by file (853 judged), 46 proposed, each proposal
+# then handed to an independent refutation pass that searched for a glob, an importlib or
+# subprocess load, a citation in AGENTS.md / docs / facts source / harness CHECKS / .github /
+# runs/*.sh / runs/prereg.jsonl, or status as a ledger or audit record. 12 survived refutation.
+# Every file is tracked, so git history holds the bytes; this manifest is the audit record.
+
+kind  bytes  path                                reason
+log     3281 runs/ct_overlap.log                 stdout of scripts/ct_overlap.py; the cited artifact is runs/ct_overlap.json, which stays
+log     2027 runs/e1_n8_row_edge.log             probe stdout; the fact source is runs/e1_n8_row_edge.json, which stays
+log     2796 runs/n7c_p7.log                     retired 0830v1 prefix-LM arm; only the arm name is cited, never the log
+log     1621 runs/n7c_score_p3.log               scoring dump of the same retired arm; string absent elsewhere in the tree
+log     1642 runs/n7c_score_p7.log               scoring dump of the same retired arm; string absent elsewhere in the tree
+log    38332 runs/sm_b0_n8_fixed.log             score-matrix side dump for a departed b0 arm; string absent elsewhere
+py      9627 runs/audit_0904/b0_rc_watchdog.py   one-off remediation for a single 2026-09-04 launch made without harness launch
+py      3146 runs/count_dir.py                   pod-only duplicate of scripts/count_dir.py with ROOT hardcoded and no selftest
+sh      2007 runs/v41_smoke_0920k.sh             flat-line smoke from 2026-09-20, two days before the CED pivot
+sh      1130 runs/stage2_timing_calib.sh         timing calibration for the retired v41_r3 stage-2, written up in docs/lessons
+py     21136 scripts/b0_27_recompute_count.py    one-off known-answer probe by departed session b0
+sh       715 scripts/launch_cot_ot3_fetch.sh     one-off fetch detacher gated on departed session b0's arm-2 result
+
+total 87460 bytes, 12 files
