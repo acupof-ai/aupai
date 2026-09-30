@@ -185,3 +185,31 @@ def test_forward_backward_reaches_hc_fn():
     g2 = ours.hc_ffn_fn.grad
     # second backward doubles the gradient, exactly (same graph, same params)
     assert torch.allclose(g2, 2 * g1, atol=1e-5), (g2 - 2 * g1).abs().max().item()
+
+
+def test_init_is_static_residual():
+    """At init the mHC coefficients are the static residual: alpha (hc_*_scale) is 0.01 (arXiv
+    2512.24880 Table 5), so on a unit-rms stream pre ~ 0.5, post ~ 1.0, comb ~ 1/hc uniform. The
+    band is derived, not tuned: raw mixes have std 0.02*sqrt(hc*d) = 1.28 and |m| <= 5 over these
+    88 draws, post = 2*sigmoid(alpha*m) deviates by <= 0.5*alpha*|m| = 0.025 (measured max 0.017),
+    pre by <= 0.25*alpha*|m|. Anti-tautology: alpha = 1.0 on the same tables must spread post
+    past that band. A state_dict saved with scale = 1.0 loads its own values back (no remap)."""
+    torch.manual_seed(3)
+    ours = HyperConn(1024, HC, IT, EPS, NORM_EPS)
+    for p in (ours.hc_attn_scale, ours.hc_ffn_scale):
+        assert torch.equal(p, torch.full_like(p, 0.01)), p
+    x = torch.randn(B, S, 1, 1024).repeat(1, 1, HC, 1)
+    pre, post, comb = ours.hc_mixes(x, ours.hc_attn_fn, ours.hc_attn_scale, ours.hc_attn_base)
+    assert (pre - 0.5).abs().max() < 0.025, (pre - 0.5).abs().max().item()
+    assert (post - 1.0).abs().max() < 0.025, (post - 1.0).abs().max().item()
+    assert (comb - 1.0 / HC).abs().max() < 0.025, (comb - 1.0 / HC).abs().max().item()
+    with torch.no_grad():
+        ours.hc_attn_scale.fill_(1.0)
+    _, post1, _ = ours.hc_mixes(x, ours.hc_attn_fn, ours.hc_attn_scale, ours.hc_attn_base)
+    assert (post1 - 1.0).abs().max() > 0.5, "alpha=1.0 did not spread post: the assertion above is vacuous"
+    sd = ours.state_dict()
+    fresh = HyperConn(1024, HC, IT, EPS, NORM_EPS)
+    fresh.load_state_dict(sd)
+    assert torch.equal(fresh.hc_attn_scale, torch.ones(3)) and torch.equal(fresh.hc_ffn_scale, torch.full((3,), 0.01))
+    print(f"  init: pre {pre.mean():.3f} post {post.mean():.3f}+-{(post - 1).abs().max():.4f} comb {comb.mean():.3f}; "
+          f"alpha=1 post spread {(post1 - 1).abs().max():.2f}; scale=1.0 checkpoint reloads 1.0")

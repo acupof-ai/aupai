@@ -77,13 +77,22 @@ class HyperConn(nn.Module):
         self.hc_ffn_scale = nn.Parameter(torch.empty(3, dtype=torch.float32))
         self.reset_parameters()
 
+    # The paper's gating factor alpha (arXiv 2512.24880 Eq. 7, Table 5 "Gating Factor Init 0.01").
+    # The reference is inference-only and carries no init (model_ref :941-946), so this is ours.
+    # With fn std 0.02 over hc*d = 4096 inputs the raw mixes have std 1.28; alpha 1.0 made pre/
+    # post/comb fully token-dependent from step 0 (post std 0.49 around 1.0), and the v42 arch_b
+    # trial's block outputs grew 2x per 100 steps through post. At 0.01 the start is the static
+    # residual: pre = 0.5, post = 1.0, comb = 1/hc uniform, and the dynamic term ramps as alpha
+    # learns (scratchpad hc_gain.py, 2026-09-30).
+    HC_SCALE_INIT = 0.01
+
     def reset_parameters(self):
         for p in (self.hc_attn_fn, self.hc_ffn_fn):
             nn.init.normal_(p, std=0.02)
         for p in (self.hc_attn_base, self.hc_ffn_base):
             nn.init.zeros_(p)
-        nn.init.ones_(self.hc_attn_scale)
-        nn.init.ones_(self.hc_ffn_scale)
+        nn.init.constant_(self.hc_attn_scale, self.HC_SCALE_INIT)
+        nn.init.constant_(self.hc_ffn_scale, self.HC_SCALE_INIT)
 
     def hc_mixes(self, x, hc_fn, hc_scale, hc_base):
         """x [b,s,hc,d] -> (pre,post,comb). One RMS-normalized linear over the flat
