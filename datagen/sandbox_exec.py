@@ -124,7 +124,20 @@ ulimit -f 262144 2>/dev/null || true   # 262144 x 1024 = 256 MiB
 # nproc caps the fork bomb, and ONLY WORKS ON A NON-ROOT UID: RLIMIT_NPROC is not
 # enforced for uid 0 (fb, survey A.3). It is set here, in the shell that is about to
 # setuid, because a limit set after the drop cannot be raised back.
-ulimit -u "${NPROC:-64}" 2>/dev/null || true
+#
+# THE DEFAULT IS 4096 AND WAS 64. RLIMIT_NPROC is a per-uid cap over every process uid
+# 65534 already owns on the box, not a per-sandbox budget, so the headroom a sandbox gets
+# is the cap minus whatever else the machine is running. Measured on the pod 2026-09-30 at
+# 2,144 processes: nproc=64 made `run_sandboxed("print(7)")` return rc 126, `setpriv:
+# failed to execute /usr/bin/python3.12: Resource temporarily unavailable` -- the execve
+# after the uid drop, not a fork bomb; 128, 256 and 512 all returned (0, "7\n", ""), and
+# 72/80/88/96/104/112/120 all failed, so the boundary that day sat in (120, 128]. A quieter
+# box passes at 64, which is why this was a flaky gate rather than a hard red.
+# 4096 is the value datagen/vet_textbooks.py:37 and scripts/sft_verify_code.py:45 already
+# pass explicitly; this only makes the default agree with them. The ceiling still binds: at
+# nproc=512 a fork loop in the sandbox got 390 children and then EAGAIN (measured the same
+# day, same box) -- 390 rather than 511 because the count is shared.
+ulimit -u "${NPROC:-4096}" 2>/dev/null || true
 # /usr/bin/python3 is a symlink through /etc/alternatives, which the chroot
 # deliberately does not contain; resolve to the real binary on the host.
 PY=$(readlink -f /usr/bin/python3)
@@ -163,7 +176,7 @@ exec chroot "$ROOT" /usr/bin/env -i -C /work PATH=/usr/bin:/bin PYTHONIOENCODING
 
 
 def run_sandboxed(code, timeout=10, stdin=None, files=None, argv=None, site=False,
-                  seccomp=True, profile="hardened", nproc=64, cpu_secs=5, loopback=False):
+                  seccomp=True, profile="hardened", nproc=4096, cpu_secs=5, loopback=False):
     """Run code in the sandbox. Returns (rc, stdout, stderr_tail).
 
     code:   written to /work/code.py and executed. Pass None with `files`+`argv` to run
