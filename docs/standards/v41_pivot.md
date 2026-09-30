@@ -2,7 +2,9 @@
 
 User order 2026-09-10: stop all V2 work; build DeepSeek-V4.1-Flash's architecture.
 Source: DeepSeek_V41_Tech_Report.pdf (51 pp), read in full 2026-09-10. The acceptance gate is
-unchanged: HumanEval pass@1 >= 30% at ~350M (docs/standards/p1_data_recipe.md:256).
+unchanged: HumanEval pass@1 >= 30% at ~350M, read over the decontaminated 156 of 164 tasks
+(user ruling 2026-09-30; the criterion and the 8 excluded task_ids are in
+docs/standards/p1_data_recipe.md, section "Acceptance: one falsifiable gate").
 
 ## What V4.1 is, in the terms we will build
 
