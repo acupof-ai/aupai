@@ -1833,6 +1833,13 @@ def main():
         "algorithms/test_rollout_context_parity.py",
         "algorithms/test_rl_code.py",
         "algorithms/test_rl_code_ced_smoke.py",
+        # The RL trainer must group v42 parameters the way v41f/optim.py does (de, 2026-09-30).
+        # Registered because the defect is silent and three-directional: under the old
+        # `p.ndim == 2` rule embed/head go to Muon instead of Sinkhorn, *norm.weight to AdamW
+        # wd 0 instead of 0.1, and the 3-D stacked expert tensors out of Muon entirely -- the
+        # run trains and nothing raises. Asserts the exact partition by name plus the
+        # block_ckpt-vs-grad_ckpt flag, with the old rule as the negative control. ~7s CPU.
+        "algorithms/test_rl_v42_optimizer_groups.py",
         "algorithms/test_rlvr_reward_suite.py",
         "datagen/test_near_dedup_known.py",
         "datagen/test_parallel_exact_identity.py",
@@ -3205,7 +3212,8 @@ def main():
         "algorithms/rlvr_trainer.py": {"algorithms/test_gspo_ratio.py",
                                        "algorithms/test_rollout_context_parity.py"},
         "algorithms/rl_code_trainer.py": {"algorithms/test_rl_code.py",
-                                          "algorithms/test_rl_code_ced_smoke.py"},
+                                          "algorithms/test_rl_code_ced_smoke.py",
+                                          "algorithms/test_rl_v42_optimizer_groups.py"},
         "datagen/l2_code_chunk_pool.py": {"datagen/test_l2_code_chunks_edges.py"},
         "datagen/l3_rubric.py": {"datagen/test_l3_label_pipeline.py"},
         "datagen/l3_stratified_sample.py": {"datagen/test_l3_label_pipeline.py"},
