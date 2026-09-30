@@ -210,9 +210,31 @@ def score_file(path, oracles, demo_codes=(), seed=0, timeout=10, limit=None):
     rec["pass_rate"] = {"rate": round(sum(hits) / n_scored, 4), "n": n_scored,
                         "of_rows": n}
 
-    # control 1: each span against another problem's oracle, same aggregation
-    sh = [e for e in exps]
-    random.Random(seed).shuffle(sh)
+    # control 1: each span against ANOTHER problem's oracle, same aggregation.
+    #
+    # A shuffle is not a derangement, and the difference is the whole control: a fixed
+    # point scores a span against its OWN oracle, which is the rate, not a floor. The
+    # permutation is built over INDICES rather than over the oracle strings, because two
+    # rows may legitimately carry the same expected output and pairing them is a real
+    # cross-pairing, not a self-pairing. Fixed points are then repaired by swapping with
+    # the next position, which cannot create a new one.
+    #
+    # MEASURED, not reasoned: at n_scored=3 with seed 0 the plain shuffle left one row on
+    # its own oracle and the selftest's known-answer fixture (spans printing 1/2/3 against
+    # oracles 1/2/3, where the control must be exactly 0.0) read 0.3333. Small n is where
+    # it is visible; at n=164 the expected fixed-point count is 1 whatever the seed, so the
+    # floor was biased upward there too, just below the noise.
+    #
+    # n_scored < 2 has no derangement. The control keeps the identity pairing there and is
+    # meaningless at that size either way; nothing this repo reports runs at n=1.
+    idx = list(range(n_scored))
+    random.Random(seed).shuffle(idx)
+    if n_scored >= 2:
+        for i in range(n_scored):
+            if idx[i] == i:
+                j = (i + 1) % n_scored
+                idx[i], idx[j] = idx[j], idx[i]
+    sh = [exps[j] for j in idx]
     ctrl = sum(runs_to(s, e, timeout) for s, e in zip(spans, sh, strict=True))
     rec["shuffled_control"] = {"rate": round(ctrl / n_scored, 4), "n": n_scored}
 
