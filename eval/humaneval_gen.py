@@ -96,6 +96,13 @@ signal.signal(signal.SIGALRM, _h)
 
 #: Set by main() from --exec-in-process. False means untrusted source goes to the chroot
 #: sandbox; True restores the historical in-process scorer and is a protocol change.
+#: RLIMIT_NPROC counts uid 65534's tasks MACHINE-WIDE, so the sandbox default of 64 is
+#: not enough to exec CPython on this pod: measured 2026-10-01, run_sandboxed("print(1)")
+#: returns rc 126 (`setpriv: failed to execute`) at 64 and rc 0 at 4096. A scorer that
+#: took the default read EVERY problem as failed. Same value as datagen/vet_textbooks.py
+#: and scripts/sft_verify_code.py, the two callers that already passed it.
+SANDBOX_NPROC = 4096
+
 EXEC_IN_PROCESS = False
 
 EXEC_TIMEOUT = 6
@@ -131,7 +138,7 @@ def _exec_untrusted(src):
         return _exec_in_process(src)
     from datagen.sandbox_exec import run_sandboxed
 
-    rc, _out, _err = run_sandboxed(src, timeout=EXEC_TIMEOUT)
+    rc, _out, _err = run_sandboxed(src, timeout=EXEC_TIMEOUT, nproc=SANDBOX_NPROC)
     return rc == 0
 
 
