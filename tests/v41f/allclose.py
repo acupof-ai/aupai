@@ -34,10 +34,11 @@ def seed_everything(seed=0):
 
 
 HC_GRAD_RTOL = 3e-4
+HC_GRAD_RTOL_SOFTCAP = 4e-3
 GRAD_RTOL = 1e-4
 
 
-def grad_rtol(name):
+def grad_rtol(name, hc=HC_GRAD_RTOL):
     """Relative tolerance for comparing one parameter's gradient between two implementations
     that are meant to be numerically equivalent.
 
@@ -46,5 +47,13 @@ def grad_rtol(name):
     normalization, so a relative comparison of THEIR gradients measures float accumulation order
     rather than disagreement between the implementations. The measured healthy floor and the
     mutant signal that sets this threshold are facts/v41.json#v41.hc_grad_rel_floor_0930.
+
+    hc raises the hc_* allowance for one comparison. A threshold's comparability is set by the
+    set it acts on: attn_logit_softcap=0.5 puts tanh on the entry scores, and the fp32 rounding
+    it adds to the LSE merge lifts the healthy hc floor about 4x, to 4.6e-4..5.4e-4 on pod x86
+    against 1.1e-4..1.4e-4 uncapped, and to 1.3e-3..2.2e-3 on the two CI runners.
+    HC_GRAD_RTOL_SOFTCAP is that arm's own threshold, measured on both sides and placed at the
+    geometric middle of the worst healthy reading and the coarse mutant, with the resolution it
+    loses stated: facts/v41.json#v41.hc_grad_rel_softcap_0930.
     """
-    return HC_GRAD_RTOL if ".hc.hc_" in name else GRAD_RTOL
+    return (hc if ".hc.hc_" in name else GRAD_RTOL)
