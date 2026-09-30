@@ -227,10 +227,12 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
     """Execute `code` (a str) or `argv` (a list) under isolation. Returns a dict.
 
     nproc (sandbox_exec only): the chroot user's RLIMIT_NPROC fork cap. Leave None for the
-    sandbox default (64). Raise it for a workload that legitimately starts more threads: a
-    stock CPython 3.12 can now need >64 just to START UP inside the chroot (measured on the pod
-    2026-09-27 -- at 64 even `print(1)` failed with setpriv EAGAIN; 4096 ran). This is only the
-    fork-bomb ceiling, not the other axes; the chroot/namespaces/uid-drop/net/fs guarantees are
+    sandbox default, which is 4096 since 2026-09-30 and was 64. The cap is per-uid over
+    everything uid 65534 already owns on the box, so at 64 the execve after the uid drop
+    failed with EAGAIN and `print(7)` returned rc 126 on a pod carrying 2,144 processes
+    (measured 2026-09-27 and again 2026-09-30; the pass/fail boundary sat in (120, 128] that
+    day, so a quiet box passed at 64 and a busy one did not). This is only the fork-bomb
+    ceiling, not the other axes; the chroot/namespaces/uid-drop/net/fs guarantees are
     unchanged. Record the value you pass -- it is not comparable across runs at different caps.
 
     Keys: level, rc, stdout, stderr, timed_out, isolates. `level` is the level actually
