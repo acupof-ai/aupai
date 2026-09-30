@@ -69,7 +69,10 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True, claim=True, lo
     """
     import torch
 
-    from train import Cfg, HybridLM  # delayed: this pulls torch; consumers already require it
+    # build_model, not HybridLM: it returns HybridLM for arch=hybrid and the v41f V42LM for
+    # arch=v42, rebuilding the shape from the checkpoint's own cfg.v42_cfg. Constructing HybridLM
+    # here made every eval unable to score a v42 checkpoint (2026-09-30).
+    from train import Cfg, build_model  # delayed: this pulls torch; consumers already require it
 
     if claim and "cuda" in str(device):
         # sys imported HERE, not assumed. train.py's version of this fix wrapped a cache_guard
@@ -120,7 +123,7 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True, claim=True, lo
     if low_mem and dtype is not None:
         torch.set_default_dtype(dtype)
     try:
-        model = HybridLM(cfg).to(device)
+        model = build_model(cfg).to(device)
     finally:
         torch.set_default_dtype(_prev)
     if "model" in ck:

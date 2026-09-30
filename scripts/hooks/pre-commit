@@ -2608,6 +2608,11 @@ def main():
         # track P (1e): attn_impl fused == chunked (logits+grads, KL lse), rope real == complex,
         # stacked MoE bit-equal to the loop with remap both ways, dynamo.explain 0 breaks.
         "tests/v41f/test_p1_fused.py",
+        # scripts/loader.py builds the arch the checkpoint names, and V42LM returns logits where
+        # callers argmax logits (de, 2026-09-30). Registered because the width assertion is the
+        # only thing in the tree that can see the silent case: a hidden state argmaxes to a valid
+        # token id, so an eval scored garbage pass@1 with nothing raised.
+        "tests/test_loader_arch.py",
         # Assembly A/B key-set + dtype structural gate (98, #468 prep). --selftest freezes the
         # all-off v41f_small floor (241 sd keys/236 params, fp32 head+hc+sink+gate-bias contract,
         # no non-persistent leak), the ModelArgs<->V41FConfig field intersection (a ref-only
