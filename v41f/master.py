@@ -87,8 +87,7 @@ class TrainState:
         with torch.no_grad():
             for n in self.in_group_names:
                 g = named[n].grad
-                if g is not None:
-                    self.master[n].grad = g.float()
+                self.master[n].grad = None if g is None else g.float()
 
     def zero_model_grads(self) -> None:
         self.model.zero_grad(set_to_none=True)
