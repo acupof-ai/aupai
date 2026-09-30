@@ -41,13 +41,21 @@ derived number below is a plug-in at p-hat and says so.
     python3 algorithms/rl_admission.py preds_merged.jsonl [--group_size 8] [--json out.json]
     python3 algorithms/rl_admission.py --selftest
 
-THE THRESHOLD IS NOT PICKED HERE. See `derivation` in the output and the commit message: the
-bar is a function of the trainer's prompts-per-rank-per-step, and choosing it is the user's
-decision.
+THE BAR IS f*B >= 1: one gradient-carrying group per rank per optimizer step. Ruling by de,
+2026-10-01, on the user's delegation -- "门槛你说了算看情况吧不定死" (you decide, depending on
+circumstances, do not fix it rigidly). It is deliberately a product and not a percentage: B is an
+input, so the criterion follows --batch instead of rotting the moment someone changes it. At the
+trainer's default B=4 it reads as f >= 25%, and at B=5 as f >= 20%, which is the same rule.
+
+It reports and never refuses. Below the bar the answer is not "reject the checkpoint" -- raising B,
+or starting from a checkpoint whose p-hat is further from 1, satisfies it equally, and which is
+cheaper is not something this file can know, so it prints the B that would reach 1.00 and stops.
+`_verdict` carries the rest, including the one argument that must not be used to lower the bar.
 """
 
 import argparse
 import json
+import math
 import sys
 
 #: the trainer's default --group_size (algorithms/rl_code_trainer.py:208 and
@@ -160,6 +168,11 @@ def report(by_task, n, g=DEFAULT_G, b=DEFAULT_B):
         # any() indicator eval/math_hard.py reports; pass@1 is p-hat itself.
         "old_bar_hit_at_k_minus_p_pt": 100.0 * (sum(hit_at_k(p, g) - p for p in ps) / t),
         "old_bar_threshold_pt": 15.0,
+        # The B at which this checkpoint would carry one gradient-bearing group per rank per
+        # step. Reported so the criterion reads as a function of B rather than a percentage:
+        # at f=0.20 it says B=5, which is the same statement as "20% is below the bar at B=4"
+        # without hard-coding either number. None when f is 0 and no B can help.
+        "batch_needed_for_one_kept_group": (math.ceil(1.0 / f) if f > 0 else None),
     }
 
 
@@ -183,9 +196,35 @@ def fmt(r):
         f"OLD BAR hit@{r['group_size']} - pass@1 = {r['old_bar_hit_at_k_minus_p_pt']:.3f} pt "
         f"against its {r['old_bar_threshold_pt']:.0f} pt -- reported for comparison only; "
         f"it is not the quantity a group-relative method consumes.",
-        "THRESHOLD: not applied here. The bar is a function of B, not a constant; see the "
-        "module docstring and the PR. User's decision.",
+        f"CRITERION  f*B >= 1  ->  {r['kept_groups_per_rank_step']:.2f}  {_verdict(r)}",
     ])
+
+
+def _verdict(r):
+    """The admission criterion, as the joint quantity f*B and never as a bare percentage.
+
+    Ruling: de, 2026-10-01, on the user's delegation -- "门槛你说了算看情况吧不定死" (you decide,
+    depending on circumstances, do not fix it rigidly). So the bar is f*B >= 1, one
+    gradient-carrying group per rank per optimizer step, and what it reports is that product plus
+    the B that would satisfy it. A percentage would rot the moment someone changes --batch; this
+    cannot, because B is an input to it.
+
+    It reports and never refuses. Below the bar the answer is not "reject the checkpoint": raising
+    B, or starting from a checkpoint whose p-hat is further from 1, satisfies it just as well, and
+    which of those is cheaper is not something this file can know.
+
+    What must NOT be used to argue the bar down: the DDP keep is all-reduced with MAX
+    (rl_code_trainer.py:384-385), so a group index survives if ANY rank found it mixed. That buys
+    lockstep, not learning -- the other ranks run a full forward on an all-zero advantage.
+    """
+    kept = r["kept_groups_per_rank_step"]
+    need = r["batch_needed_for_one_kept_group"]
+    if kept >= 1.0:
+        return "GO"
+    if need is None:
+        return "NO-GO: no group is ever mixed, so no B helps"
+    return (f"BELOW THE BAR: {100 * r['steps_with_a_gradient']:.1f}% of steps carry any gradient; "
+            f"B={need} would reach 1.00, or start from a checkpoint with lower p-hat")
 
 
 def _selftest():
@@ -240,13 +279,31 @@ def _selftest():
     old = sat["old_bar_hit_at_k_minus_p_pt"]
     assert abs(old - 5.0) < 1e-6, old  # (1 - 0.05^8) - 0.95 = 0.05000000000
     assert old < sat["old_bar_threshold_pt"], "the old bar must REJECT this checkpoint"
-    assert sat["mixed_fraction"] > 0.20, "P(mixed) must ACCEPT it at the pilot 20%"
-    # and at the derivation's own bar, 1/B with the trainer's B=4:
-    assert sat["mixed_fraction"] > 1.0 / DEFAULT_B, "P(mixed) must clear 1/B = 25% too"
-    assert abs(sat["kept_groups_per_rank_step"] - 4 * want) < 1e-12  # 1.346 groups/rank/step
+    # The criterion in force (de's ruling on the user's delegation, 2026-10-01) is f*B >= 1,
+    # never a percentage. At the trainer's B it is the same statement as "f >= 1/B", and the
+    # assertion is written on the product so it follows DEFAULT_B instead of freezing 25%.
+    assert sat["mixed_fraction"] > 1.0 / DEFAULT_B, "P(mixed) must clear 1/B at this p-hat"
+    assert abs(sat["kept_groups_per_rank_step"] - DEFAULT_B * want) < 1e-12  # 1.346 per rank/step
+    assert _verdict(sat) == "GO", _verdict(sat)
+    assert sat["batch_needed_for_one_kept_group"] == 3, sat["batch_needed_for_one_kept_group"]
     print(f"  p=0.95, G=8: old bar {old:.3f} pt < 15 pt REJECTS; "
-          f"P(mixed) {100 * want:.3f}% > 25% = 1/B ACCEPTS; "
-          f"{sat['kept_groups_per_rank_step']:.3f} kept groups per rank per step")
+          f"f*B = {sat['kept_groups_per_rank_step']:.3f} >= 1 -> GO (B=3 would already do)")
+
+    # THE OTHER SIDE OF THE CRITERION, so it is not a line that can only ever say GO. p = 0.98
+    # puts f at 14.9%, i.e. 0.597 groups per rank per step at B=4 -- below the bar, and the
+    # verdict must name the B that reaches it rather than reject the checkpoint.
+    near = write("p098.jsonl", 50, [49] * 20)
+    fw = 1 - 0.98**8 - 0.02**8
+    assert abs(near["mixed_fraction"] - fw) < 1e-12, (near["mixed_fraction"], fw)
+    assert near["kept_groups_per_rank_step"] < 1.0, near["kept_groups_per_rank_step"]
+    assert near["batch_needed_for_one_kept_group"] == 7, near["batch_needed_for_one_kept_group"]
+    assert _verdict(near).startswith("BELOW THE BAR"), _verdict(near)
+    assert "B=7" in _verdict(near), _verdict(near)
+    print(f"  p=0.98, G=8: f*B = {near['kept_groups_per_rank_step']:.3f} < 1 -> "
+          f"below the bar, B=7 reaches it")
+    # and the degenerate end: no group is ever mixed, so no B helps and the verdict says so.
+    assert allpass["batch_needed_for_one_kept_group"] is None
+    assert "no B helps" in _verdict(allpass), _verdict(allpass)
 
     # 3. An unequal file must refuse, not average (same contract as humaneval_hitrate).
     bad = os.path.join(d, "bad.jsonl")

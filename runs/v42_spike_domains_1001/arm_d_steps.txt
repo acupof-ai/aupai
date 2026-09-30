@@ -1,0 +1,39 @@
+WARNING co-residency cost partly unknown: 6 domain(s) with no recorded cache size (code_py_starcoder_dc, code_ultra_l2_dc, code_ultra_l3_noexec_dc, cot_dc) while cards 0,1,2,3,4,5,6,7 are claimed by v42_gate_1001. Proceeding on a lower bound of 0.0 GB. Measure with scripts/eval_load_cost.py and add the domain to its CACHE_BYTES.
+VALIDATED rebuilt prefix at step 2000 == row_cursor (384000 cols, 6 domains)
+
+steps 1600..1600  global cols [307200,307392)  total 192 (rows/step 192)
+  code_ultra_l2_dc                89 (46.4%) pool_row 67469..3095651
+  code_ultra_l3_noexec_dc         58 (30.2%) pool_row 17264..1929540
+  code_py_starcoder_dc            19 ( 9.9%) pool_row 8605..463894
+  math_owm_stage2_dc              17 ( 8.9%) pool_row 9054..497415
+  en_c4_stage2_dc                  9 ( 4.7%) pool_row 35319..272837
+WARNING co-residency cost partly unknown: 6 domain(s) with no recorded cache size (code_py_starcoder_dc, code_ultra_l2_dc, code_ultra_l3_noexec_dc, cot_dc) while cards 0,1,2,3,4,5,6,7 are claimed by v42_gate_1001. Proceeding on a lower bound of 0.0 GB. Measure with scripts/eval_load_cost.py and add the domain to its CACHE_BYTES.
+VALIDATED rebuilt prefix at step 2000 == row_cursor (384000 cols, 6 domains)
+
+steps 1700..1700  global cols [326400,326592)  total 192 (rows/step 192)
+  code_ultra_l2_dc                81 (42.2%) pool_row 49466..3074331
+  code_ultra_l3_noexec_dc         74 (38.5%) pool_row 29197..2068445
+  math_owm_stage2_dc              14 ( 7.3%) pool_row 6776..525701
+  code_py_starcoder_dc            12 ( 6.2%) pool_row 12158..472441
+  en_c4_stage2_dc                  7 ( 3.6%) pool_row 1959..288541
+  cot_dc                           4 ( 2.1%) pool_row 28455..60079
+WARNING co-residency cost partly unknown: 6 domain(s) with no recorded cache size (code_py_starcoder_dc, code_ultra_l2_dc, code_ultra_l3_noexec_dc, cot_dc) while cards 0,1,2,3,4,5,6,7 are claimed by v42_gate_1001. Proceeding on a lower bound of 0.0 GB. Measure with scripts/eval_load_cost.py and add the domain to its CACHE_BYTES.
+VALIDATED rebuilt prefix at step 2000 == row_cursor (384000 cols, 6 domains)
+
+steps 1800..1800  global cols [345600,345792)  total 192 (rows/step 192)
+  code_ultra_l2_dc                97 (50.5%) pool_row 4700..3097097
+  code_ultra_l3_noexec_dc         59 (30.7%) pool_row 4624..2025972
+  math_owm_stage2_dc              14 ( 7.3%) pool_row 47177..509901
+  code_py_starcoder_dc            12 ( 6.2%) pool_row 43143..478380
+  en_c4_stage2_dc                  8 ( 4.2%) pool_row 5251..237448
+  cot_dc                           2 ( 1.0%) pool_row 78520..92298
+WARNING co-residency cost partly unknown: 6 domain(s) with no recorded cache size (code_py_starcoder_dc, code_ultra_l2_dc, code_ultra_l3_noexec_dc, cot_dc) while cards 0,1,2,3,4,5,6,7 are claimed by v42_gate_1001. Proceeding on a lower bound of 0.0 GB. Measure with scripts/eval_load_cost.py and add the domain to its CACHE_BYTES.
+VALIDATED rebuilt prefix at step 2000 == row_cursor (384000 cols, 6 domains)
+
+steps 1900..1900  global cols [364800,364992)  total 192 (rows/step 192)
+  code_ultra_l2_dc                94 (49.0%) pool_row 8993..3107490
+  code_ultra_l3_noexec_dc         52 (27.1%) pool_row 28430..2058246
+  code_py_starcoder_dc            20 (10.4%) pool_row 30608..444359
+  math_owm_stage2_dc              18 ( 9.4%) pool_row 38164..517761
+  en_c4_stage2_dc                  7 ( 3.6%) pool_row 37472..290580
+  cot_dc                           1 ( 0.5%) pool_row 45956..45956

@@ -105,6 +105,23 @@ def t_loss_mean_window():
     assert feed(d2, pairs) is None
 
 
+def t_loss_trigger_names_its_real_span():
+    # t_loss_mean_window feeds one entry PER STEP, so its window spans 50 steps and the old
+    # "50-step mean" label happened to be true there. train.py logs every Cfg.log_every (10)
+    # steps, so the real window spans ~500 steps, and the rule is judged the instant the deque
+    # first fills -- whose oldest entries are then warmup. That cost v42_gate_1001 a kill at step
+    # 500 on a message reading "50-step mean loss 4.973 > 3.5" while steps 451-500 read
+    # 1.890..4.050. The fixture must stride like the log it watches or it cannot show this.
+    det = DivergeDetector(g_thresh=99.0, loss_window=50, loss_thresh=3.0)
+    # a cold start: loss decays 11 -> 2 over 500 steps, logged every 10th step
+    pairs = [(s, max(2.0, 11.0 - 9.0 * s / 500.0), 0.5) for s in range(10, 5010, 10)]
+    msg = feed(det, pairs)
+    assert msg is not None, "a window whose oldest entries are warmup must still be able to fire"
+    assert "steps 10..500" in msg, f"trigger must name the span it averaged, got: {msg}"
+    assert "50-step" not in msg, f"maxlen is logged points, not steps; got: {msg}"
+    assert "50 logged points" in msg, f"trigger must say the unit of its count, got: {msg}"
+
+
 def t_duplicate_steps_counted_once():
     # The step-450 false kill: the [main] line is emitted twice per step on a world run
     # (rank echo + runlog duplicate). A window/g-run that counts LINES double-counts each
@@ -435,6 +452,7 @@ TESTS = [
     t_gnorm_consecutive,
     t_val_line_does_not_break_count,
     t_loss_mean_window,
+    t_loss_trigger_names_its_real_span,
     t_duplicate_steps_counted_once,
     t_from_step_arms_detector,
     t_nonfinite_fires,
