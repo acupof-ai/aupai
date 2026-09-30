@@ -80,6 +80,21 @@ def test_v42_checkpoint_loads_and_returns_vocab_wide_logits():
     )
     print(f"  v42 ckpt -> {type(got).__name__}, logits {tuple(logits.shape)} vocab-wide")
 
+    # The other three branches of the contract, each with a real consumer: targets given is the
+    # train/val step, no_head is generate_batch, return_hidden is scripts/logit_dist.py and
+    # arith_probe_fone.py -- the last one raised TypeError until the signature took the argument.
+    with torch.no_grad():
+        h_tr, snd_tr = got(ids, torch.zeros_like(ids))
+        snd_nh = got(ids, no_head=True)
+        lg_rh, h_rh = got(ids, return_hidden=True)
+        lg_no, h_no = got(ids)
+    d = gcfg.v42_cfg["dim"]
+    assert h_tr.shape[-1] == d and snd_tr is None, "targets given must be (hidden, None)"
+    assert snd_nh[0] is None and snd_nh[1].shape[-1] == d, "no_head must be (None, hidden)"
+    assert lg_rh.shape[-1] == VOCAB and h_rh.shape[-1] == d, "return_hidden must be (logits, hidden)"
+    assert lg_no.shape[-1] == VOCAB and h_no is None, "without return_hidden position 1 is None"
+    print("  contract: targets->(hidden,None), no_head->(None,hidden), return_hidden->(logits,hidden)")
+
 
 def test_hybrid_checkpoint_still_loads():
     import loader
