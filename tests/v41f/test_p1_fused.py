@@ -19,6 +19,7 @@ import torch.nn.functional as F
 
 sys.path.insert(0, str(Path(__file__).absolute().parents[2]))
 sys.path.insert(0, str(Path(__file__).absolute().parent))
+from allclose import grad_rtol  # noqa: E402
 from test_p1_docpack import _batch, _cfg, _grads, _model  # noqa: E402
 from v41f import docpack  # noqa: E402
 from v41f.moe import MoE  # noqa: E402
@@ -37,7 +38,8 @@ def _compare(a, b, ids, cu, tag, tol=1e-4):
     for n in ga:
         rel = ((ga[n] - gb[n]).norm() / ga[n].norm().clamp_min(1e-12)).item()
         worst = max(worst, rel)
-        assert rel < tol, f"{tag}: grad {n} differs rel {rel:.3e}"
+        ntol = max(tol, grad_rtol(n))
+        assert rel < ntol, f"{tag}: grad {n} differs rel {rel:.3e} (tol {ntol:.0e})"
     return d, worst, len(ga)
 
 

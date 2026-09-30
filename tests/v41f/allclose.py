@@ -31,3 +31,20 @@ def cmp(name, got, want, atol, rtol=1e-3):
 
 def seed_everything(seed=0):
     torch.manual_seed(seed)
+
+
+HC_GRAD_RTOL = 3e-4
+GRAD_RTOL = 1e-4
+
+
+def grad_rtol(name):
+    """Relative tolerance for comparing one parameter's gradient between two implementations
+    that are meant to be numerically equivalent.
+
+    The hyperconnection coefficient parameters (hc_attn_fn/base/scale, hc_ffn_*) carry gradient
+    norms of 1e-5..1e-4, and their path is pinned to fp32 inside hc_mixes with iterative Sinkhorn
+    normalization, so a relative comparison of THEIR gradients measures float accumulation order
+    rather than disagreement between the implementations. The measured healthy floor and the
+    mutant signal that sets this threshold are facts/v41.json#v41.hc_grad_rel_floor_0930.
+    """
+    return HC_GRAD_RTOL if ".hc.hc_" in name else GRAD_RTOL
