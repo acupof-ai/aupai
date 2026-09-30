@@ -35,14 +35,14 @@ sys.path.insert(0, ROOT)
 import torch  # noqa: E402
 from eval.gsm8k import generate_batch  # noqa: E402
 from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
-from datagen.sandbox_exec import run_sandboxed
+from datagen.sandbox_exec import run_sandboxed  # noqa: E402
 
 #: RLIMIT_NPROC counts uid 65534's tasks MACHINE-WIDE, so the sandbox default of 64 is
 #: not enough to exec CPython on this pod: measured 2026-10-01, run_sandboxed("print(1)")
 #: returns rc 126 (`setpriv: failed to execute`) at 64 and rc 0 at 4096. A scorer that
 #: took the default read EVERY problem as failed. Same value as datagen/vet_textbooks.py
 #: and scripts/sft_verify_code.py, the two callers that already passed it.
-SANDBOX_NPROC = 4096  # noqa: E402
+SANDBOX_NPROC = 4096
 
 TEST_PATH = os.path.join(ROOT, "data", "eval", "code_holdout_500.jsonl")
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
