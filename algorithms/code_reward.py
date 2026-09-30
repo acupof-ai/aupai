@@ -3,7 +3,17 @@
 
 The contract, and it is deliberately the whole contract:
 
-    1.0 if every test passes inside the timeout, 0.0 otherwise.
+    1.0 if every test passes inside the timeout, 0.0 if the candidate failed, and
+    ExecutionFacilityError raised if the SANDBOX failed before the candidate ran.
+
+THREE STATES, NOT TWO (fb review 2026-09-30). The third used to be the second: verdict()
+scored any nonzero rc as a candidate failure, so a setpriv/unshare/mount fault became
+reward 0.0 -- an infrastructure fault written down as a training label. Measured on the pod
+that day, every call returned `rc 126: setpriv: failed to execute /usr/bin/python3.12:
+Resource temporarily unavailable`, which would have handed GRPO eight zeros per group,
+zero advantage everywhere, and a run that trains on noise while holding eight cards. The
+facility state raises rather than returning, so no caller can average it in.
+See facility_failure() for the discrimination and its residual.
 
 Binary, not partial credit by test count. A fraction would reward a rollout that makes 9 of
 10 tests pass by deleting the tenth's assertion, and partial credit on a reward the model
@@ -187,6 +197,84 @@ def verdict(rc, timed_out, stdout):
     return True, f"{counts['passed']} passed"
 
 
+class ExecutionFacilityError(RuntimeError):
+    """The sandbox failed before the candidate ran. NOT a reward of any value.
+
+    The reward has three states, not two: PASS, CANDIDATE-FAILED, and
+    EXECUTION-FACILITY-FAILED. Reading the third as the second is how an
+    infrastructure fault becomes a training label -- a GRPO group whose sandbox is
+    broken gets eight zeros, every advantage is 0, and the run trains on noise at the
+    cost of eight cards while every log line looks like a hard problem.
+
+    MEASURED, and it is not hypothetical: on 2026-09-30 every run_sandboxed call on the
+    pod returned rc 126 with `setpriv: failed to execute /usr/bin/python3.12: Resource
+    temporarily unavailable`, because RLIMIT_NPROC for the shared uid was exhausted by
+    121 tasks on the host. verdict() scored that `rc 126` -> reward 0.0.
+
+    This raises instead of returning, because the caller must not be able to average it
+    in. Invalidate the measurement and stop; do not retry into the same fault.
+    """
+
+    def __init__(self, reason, rc=None, stderr=""):
+        super().__init__(reason)
+        self.reason = reason
+        self.rc = rc
+        self.stderr = stderr
+
+
+# Exit codes the facility reserves for itself: 97 is sandbox_exec's /dev/null assert, 98 its
+# fail-closed ulimit, 126/127 a shell or setpriv that could not execute the target at all.
+_FACILITY_RCS = (97, 98, 126, 127)
+
+# First-token markers the FACILITY writes and a python candidate does not: these are the
+# setup tools' own diagnostics, emitted before the interpreter starts.
+_FACILITY_MARKERS = (
+    "sandbox:", "setpriv:", "unshare:", "mount:", "umount:", "chroot:", "mknod:",
+    "bwrap:", "nsjail:", "firejail:", "sandbox-exec:",
+)
+
+
+def facility_failure(rc, stdout, stderr):
+    """Reason string when the SANDBOX failed, None when the candidate did.
+
+    Three conditions, all required, because rc alone cannot discriminate -- a candidate is
+    free to call sys.exit(126) and a shell that could not exec also exits 126:
+
+      1. rc is one the facility reserves (_FACILITY_RCS).
+      2. the FIRST non-empty stderr line starts with a setup tool's marker. The facility
+         speaks before the interpreter exists, so its diagnostic is first; a candidate's
+         traceback is a `Traceback (most recent call last):` block.
+      3. stdout is empty. The facility fails before the candidate can print.
+
+    THE RESIDUAL, and which side it lands on. A candidate CAN forge all three: exit 126,
+    print nothing, and write `setpriv: ...` as its first stderr line. That buys it an
+    invalidated measurement, not a reward -- it can refuse to be scored 0, it cannot earn
+    a 1. The opposite error, a real facility fault read as a candidate failure, is the one
+    that silently poisons training, so the ambiguity is resolved toward raising.
+    """
+    if rc not in _FACILITY_RCS:
+        return None
+    if (stdout or "").strip():
+        return None
+    first = next((ln for ln in (stderr or "").splitlines() if ln.strip()), "")
+    if not first.strip().startswith(_FACILITY_MARKERS):
+        return None
+    return f"rc {rc}: {first.strip()[:200]}"
+
+
+def _raise_if_facility(r, where):
+    """Raise ExecutionFacilityError when the executor's result is a facility fault."""
+    reason = facility_failure(r.get("rc"), r.get("stdout", ""), r.get("stderr", ""))
+    if reason is not None:
+        raise ExecutionFacilityError(
+            f"the execution facility failed before the candidate ran ({where}): {reason}. "
+            f"This is NOT a reward of 0 -- the measurement is invalid. Fix the sandbox "
+            f"(level={r.get('level')}) before scoring anything else.",
+            rc=r.get("rc"),
+            stderr=(r.get("stderr") or "")[-2000:],
+        )
+
+
 def _norm_stdout(text):
     """Line-normalise stdout for exact comparison: drop trailing whitespace on
     every line, then drop leading/trailing blank lines. NO fuzzy matching and
@@ -280,6 +368,9 @@ def score_stdin(code, cases, timeout=10, executor=None, level=None, workdir=None
                 stdin_data=case["input"],
             )
             lvl_used = r["level"]
+            # Facility before verdict: a sandbox that never started the candidate must not
+            # be scored as the candidate failing.
+            _raise_if_facility(r, f"score_stdin case {i}")
             if r["timed_out"]:
                 return {
                     "reward": 0.0,
@@ -401,6 +492,9 @@ def score(code, tests, timeout=30, executor=None, level=None, workdir=None, gene
         with open(os.path.join(workdir, TEST_NAME), "w", encoding="utf-8") as f:
             f.write(tests)
         r = ex(None, workdir=workdir, timeout=timeout, level=level, argv=_runner_argv(tests))
+        # Facility before verdict: verdict() scores an unstarted sandbox `rc 126` -> 0.0,
+        # which turns an infrastructure fault into a training label.
+        _raise_if_facility(r, "score")
         passed, reason = verdict(r["rc"], r["timed_out"], r["stdout"])
         return {
             "reward": 1.0 if passed else 0.0,
@@ -711,6 +805,9 @@ def _detector_cases():
         ok = (n == 0) if want == 0 or want == [] else (n >= 1)
         bugs += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'BUG '} {n} risk(s)  {note}")
+    print("== facility vs candidate (three-state reward, fb review 2026-09-30) ==")
+    fac_bugs, fac_n = _facility_cases()
+    bugs += fac_bugs
     print("== generated-code isolation guard (1e 2026-09-25) ==")
     guard_bugs = _generated_isolation_guard_cases()
     if guard_bugs:
@@ -719,7 +816,67 @@ def _detector_cases():
             print("  BUG  " + b)
     else:
         print("  ok   reward_fn/reward_fn_stdin refuse ALLOW_UNISOLATED=1; trusted path clear")
-    return bugs, len(vcases) + 2 + len(det)
+    return bugs, len(vcases) + 2 + len(det) + fac_n
+
+
+def _facility_cases():
+    """Known answers for the third state, positive and negative, with a fake executor.
+
+    The positive case is VERBATIM the pod's 2026-09-30 failure: rc 126, empty stdout,
+    `setpriv: failed to execute /usr/bin/python3.12: Resource temporarily unavailable`.
+    The negatives are the discriminations that make it a criterion rather than an rc test:
+    a candidate calling sys.exit(126) with its own traceback, a candidate that exited 1,
+    and a facility marker arriving AFTER the candidate already printed.
+    """
+    POD_STDERR = "setpriv: failed to execute /usr/bin/python3.12: Resource temporarily unavailable\n"
+    cases = [
+        (126, "", POD_STDERR, True, "the pod's measured fault: rc 126, setpriv could not exec"),
+        (98, "", "sandbox: could not set RLIMIT_NPROC=64\n", True, "fail-closed ulimit exit"),
+        (97, "", "sandbox: /dev/null is missing or not writable in the chroot\n", True,
+         "the chroot /dev assert"),
+        (126, "", "Traceback (most recent call last):\n  File \"/work/code.py\"\nSystemExit: 126\n",
+         False, "a candidate calling sys.exit(126): rc matches, first stderr line does not"),
+        (1, "", POD_STDERR, False, "rc 1 is not a facility rc, whatever stderr says"),
+        (126, "partial answer\n", POD_STDERR, False,
+         "stdout is non-empty, so the candidate ran: not a pre-run facility fault"),
+        (0, "", "", False, "a clean run is not a facility fault"),
+    ]
+    bugs = 0
+    for rc, out, err, want, note in cases:
+        got = facility_failure(rc, out, err) is not None
+        ok = got == want
+        bugs += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'BUG '} facility={got} want={want}  {note}")
+
+    # And the wiring: score() must RAISE on the facility fault, not return 0.0, and must
+    # still return 0.0 for a candidate that genuinely failed. A fake executor, so this
+    # needs no isolation and runs in the commit hook.
+    def _fake(result):
+        def ex(code, workdir=None, timeout=None, level=None, argv=None, stdin_data=None):
+            return dict(result, level="fake")
+        return ex
+
+    fault = {"rc": 126, "stdout": "", "stderr": POD_STDERR, "timed_out": False}
+    try:
+        score(_GOOD_IMPL, _GOOD_TEST, executor=_fake(fault))
+        bugs += 1
+        print("  BUG  score() returned a reward for a facility fault instead of raising")
+    except ExecutionFacilityError:
+        print("  ok   score() raises ExecutionFacilityError; no zero reaches the caller")
+    try:
+        score_stdin("print(1)", [{"input": "", "output": "1"}], executor=_fake(fault))
+        bugs += 1
+        print("  BUG  score_stdin() returned a reward for a facility fault instead of raising")
+    except ExecutionFacilityError:
+        print("  ok   score_stdin() raises ExecutionFacilityError")
+    real_fail = {"rc": 1, "stdout": "F  [100%]\n1 failed in 0.01s\n", "stderr": "", "timed_out": False}
+    r = score(_GOOD_IMPL, _GOOD_TEST, executor=_fake(real_fail))
+    if r["reward"] != 0.0:
+        bugs += 1
+        print(f"  BUG  a genuine candidate failure must still score 0.0, got {r['reward']}")
+    else:
+        print("  ok   a genuine candidate failure still scores 0.0 (the guard is not a blanket)")
+    return bugs, len(cases) + 3
 
 
 def _generated_isolation_guard_cases():
