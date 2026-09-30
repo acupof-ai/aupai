@@ -7,6 +7,11 @@ points, and nothing in the logs says why.
     python scripts/test_sft_pack.py
 """
 
+# restartable: every write this file makes goes into a tempfile.TemporaryDirectory that is
+# removed on the way out, so an interrupt leaves nothing behind to resume from and nothing to
+# clean up. The whole run is ~2 s on 40 synthetic examples; the way to recover from an interrupt
+# is to run it again.
+
 import os
 import sys
 import tempfile
@@ -48,15 +53,92 @@ def tool_spans_masked(row, labels, tok):
     return True
 
 
+def _check_restamp_fails_closed_on_a_blind_scan():
+    """prepare_sft.restamp_holdout_fp must refuse a pack it could read NOTHING out of.
+
+    It certifies a pack when pack_holdout_hits reports 0 hits -- and a scan that extracted
+    nothing also reports 0 hits. That is the whole failure mode: the first version of
+    pack_holdout_hits returned 0 for zh_think_v1, whose sources hold 1,285 held-out questions,
+    because it did not peel the chat wrapper. The peel fixed the 2026-09-28 packs and does
+    nothing for a future pack with a different convention (de, 2026-09-30).
+
+    Two worlds, both MUTATED from real pack_and_save output rather than hand-written: one where
+    every label is -100, so no span is followed by a supervised token and the scan sees nothing,
+    and the unmutated pack, which must still be readable. The second is the negative control --
+    a guard that refused everything would pass the first case on its own.
+
+    No vocabulary needed, so this runs on a laptop where the rest of this file SKIPs. The fake
+    tokenizer's decode is never reached in the blind world (there is no span to decode) and
+    returns a fixed non-holdout string in the control.
+    """
+    import torch
+
+    from prepare_sft import pack_and_save, pack_holdout_hits, restamp_holdout_fp
+
+    class _Enc:
+        def __init__(self, ids):
+            self.ids = ids
+
+    class _FakeTok:
+        def encode_batch(self, texts):
+            # One id per character, so the full string's ids ARE a token prefix extension of the
+            # prompt's. A fake that broke that invariant would make pack_and_save fall back to a
+            # zero-length mask, leaving no -100 span at all -- and then the control would measure
+            # the fake rather than the guard.
+            return [_Enc([ord(c) % 900 + 100 for c in t]) for t in texts]
+
+        def decode(self, ids):
+            return "a question no holdout set contains " + str(len(ids))
+
+        def get_vocab(self):  # pack_and_save stamps vocab_id through loader.vocab_fingerprint
+            return {"<eos>": 1, "a": 0, "b": 2}
+
+    tok = _FakeTok()
+    pairs = [(f"q{i} ", f"a{i} ") for i in range(40)]
+    with tempfile.TemporaryDirectory() as td:
+        good = os.path.join(td, "good.pt")
+        pack_and_save(pairs, tok, 1, good, 255)
+        n_good, hits_good, _ = pack_holdout_hits(good, tok)
+        assert n_good > 0 and hits_good == 0, (
+            f"the control pack yields {n_good} spans / {hits_good} hits; it must be readable and "
+            "clean, or this case proves nothing about the guard")
+
+        blind = os.path.join(td, "blind.pt")
+        d = torch.load(good, weights_only=True)
+        rows = int(d["input_ids"].shape[0])
+        d["labels"] = torch.full_like(d["labels"], -100)   # every position masked
+        torch.save(d, blind)
+        n_blind, hits_blind = pack_holdout_hits(blind, tok)[:2]
+        assert (n_blind, hits_blind) == (0, 0), (
+            f"the blind world does not reproduce the shape: {n_blind} spans, {hits_blind} hits. "
+            "To the hit count it must look exactly like a clean pack, or the guard is not being "
+            "tested against the case it exists for")
+        try:
+            restamp_holdout_fp(blind, tok)
+        except SystemExit as e:
+            assert "BLIND, NOT CLEAN" in str(e), f"refused for the wrong reason: {e}"
+        else:
+            raise AssertionError(
+                "a pack the scan could read NOTHING out of was certified holdout-clean -- "
+                "hits == 0 because nothing was looked at, the silent false-clean")
+    print(f"test_sft_pack restamp-guard OK (control {n_good} spans readable; blind pack 0 spans "
+          f"over {rows} rows -> refused 'BLIND, NOT CLEAN')")
+
+
 def main():
     import torch
     from loader import format_agentic, format_example, format_prompt
     from prepare_sft import pack_and_save
     from tokenizers import Tokenizer
 
+    # FIRST, and deliberately ABOVE the tokenizer SKIP below: this case needs no vocabulary, and
+    # a guard that only runs where data/tokenizer.json exists would not run on a laptop commit at
+    # all -- a check that passes by not running.
+    _check_restamp_fails_closed_on_a_blind_scan()
+
     tok_path = os.path.join(ROOT, "data", "tokenizer.json")
     if not os.path.exists(tok_path):
-        print("test_sft_pack SKIP (no data/tokenizer.json)")
+        print("test_sft_pack SKIP (no data/tokenizer.json; the re-stamp guard above still ran)")
         return
     tok = Tokenizer.from_file(tok_path)
     eos = tok.token_to_id("<eos>")
