@@ -482,6 +482,24 @@ def restamp_holdout_fp(path, tok=None):
     d = torch.load(path, map_location="cpu", weights_only=False)
     old = d.get("holdout_fp")
     n, hits, examples = pack_holdout_hits(path, tok)
+    # FAIL CLOSED ON A BLIND SCAN, before reading `hits` at all. A scan that extracted nothing
+    # returns hits == 0, and hits == 0 is the certify condition -- so without this, a pack whose
+    # wrapper or label convention this scan cannot read certifies itself. That is not
+    # hypothetical: the first version of pack_holdout_hits returned 0 for zh_think_v1, whose
+    # sources hold 1,285 held-out questions, because it did not peel the chat wrapper. The peel
+    # fixed today's packs and does nothing for tomorrow's.
+    #
+    # The floor is derived from the pack's own shape, not a tuned constant: the packer places
+    # WHOLE examples and never emits an empty row, so every row carries at least one example and
+    # therefore at least one prompt span. n < rows means spans are being missed. Measured on the
+    # six 2026-09-28 packs the ratio is 13x to 22x, so the floor is nowhere near the live values.
+    rows = int(d["input_ids"].shape[0])
+    if n < rows:
+        raise SystemExit(
+            f"REFUSING to re-stamp {path}: the scan extracted {n} prompt span(s) from {rows} "
+            f"packed row(s). Every row holds at least one whole example, so this is BLIND, NOT "
+            f"CLEAN -- the pack's wrapper or label convention is one this scan cannot read, and "
+            f"its zero hit count means nothing. Fix the extraction before certifying the pack.")
     if hits:
         raise SystemExit(
             f"REFUSING to re-stamp {path}: {hits} of {n} packed prompts are held-out questions "
