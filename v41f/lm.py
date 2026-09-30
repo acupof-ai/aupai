@@ -47,7 +47,17 @@ class V42LM(V41FModel):
         if num_vals is not None:
             raise ValueError("v42 has no FoNE path")
         hidden, _ = super().forward(x, cu=cu, return_hidden=True)
-        return hidden, hidden
+        # HybridLM.forward's three-branch contract, mirrored so v42 satisfies the interface every
+        # eval assumes. Returning (hidden, hidden) unconditionally was right for the two paths
+        # train.py uses -- targets given in the train and val steps, which read position 0, and
+        # no_head in generate_batch, which reads position 1 -- and silently wrong for the eval
+        # default, where the caller argmaxes position 0 as logits and got a dim-1024 hidden state:
+        # ids 0-1023 are all valid tokens, so nothing raised (2026-09-30).
+        if targets is not None:
+            return hidden, None          # training: the loss is computed in the loop
+        if no_head:
+            return None, hidden          # the caller gathers its positions, then calls lm_logits
+        return self.lm_logits(hidden), hidden
 
     def lm_logits(self, hidden):
         return self.head(hidden)
