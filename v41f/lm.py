@@ -43,7 +43,10 @@ class V42LM(V41FModel):
     def blocks(self):
         return self.layers
 
-    def forward(self, x, targets=None, cu=None, num_vals=None, no_head=False):
+    def forward(self, x, targets=None, cu=None, num_vals=None, return_hidden=False, no_head=False):
+        # The parameter ORDER is HybridLM.forward's, not a convenience: callers were written
+        # against it, and return_hidden sits fifth there. scripts/logit_dist.py and
+        # arith_probe_fone.py pass return_hidden=True and hit TypeError without it.
         if num_vals is not None:
             raise ValueError("v42 has no FoNE path")
         hidden, _ = super().forward(x, cu=cu, return_hidden=True)
@@ -57,7 +60,7 @@ class V42LM(V41FModel):
             return hidden, None          # training: the loss is computed in the loop
         if no_head:
             return None, hidden          # the caller gathers its positions, then calls lm_logits
-        return self.lm_logits(hidden), hidden
+        return self.lm_logits(hidden), (hidden if return_hidden else None)
 
     def lm_logits(self, hidden):
         return self.head(hidden)

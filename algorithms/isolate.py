@@ -226,14 +226,17 @@ def run(code, workdir=None, timeout=10, cpu_s=5, mem_mb=2048, level=None, argv=N
         stdin_data=None, nproc=None):
     """Execute `code` (a str) or `argv` (a list) under isolation. Returns a dict.
 
-    nproc (sandbox_exec only): the chroot user's RLIMIT_NPROC fork cap. Leave None for the
-    sandbox default, which is 4096 since 2026-09-30 and was 64. The cap is per-uid over
-    everything uid 65534 already owns on the box, so at 64 the execve after the uid drop
-    failed with EAGAIN and `print(7)` returned rc 126 on a pod carrying 2,144 processes
-    (measured 2026-09-27 and again 2026-09-30; the pass/fail boundary sat in (120, 128] that
-    day, so a quiet box passed at 64 and a busy one did not). This is only the fork-bomb
-    ceiling, not the other axes; the chroot/namespaces/uid-drop/net/fs guarantees are
-    unchanged. Record the value you pass -- it is not comparable across runs at different caps.
+    nproc (sandbox_exec only): the chroot user's RLIMIT_NPROC fork cap, default 64. It is
+    NOT a per-sandbox budget: RLIMIT_NPROC counts the real uid's tasks machine-wide, every
+    sandbox drops to the same uid 65534, and the pod's HOST already carries 121 tasks under
+    that uid (measured 2026-09-30; the container's own ps shows 0 of them). At 64 the execve
+    after the uid drop therefore fails with EAGAIN before any code runs and `print(7)`
+    returns rc 126; the boundary that day sat in (120, 128], and at 512 a fork loop got 390
+    children, 121 + 390 = 511. Raising the number is not the fix -- it borrows headroom from
+    a count we do not control and lifts the ceiling for every concurrent task on the uid.
+    Pass a value explicitly if you need one now, and record it: results at different caps are
+    not comparable. This is only the fork ceiling; chroot/namespaces/uid-drop/net/fs are
+    unchanged.
 
     Keys: level, rc, stdout, stderr, timed_out, isolates. `level` is the level actually
     used -- callers record it, they do not assume it.
