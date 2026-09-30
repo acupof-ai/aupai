@@ -1797,6 +1797,25 @@
       "status": "measured",
       "unit": "relative L2 difference of a parameter gradient between two implementations",
       "boundary": "Says nothing about GPU or bf16 autocast agreement, nor about whether either implementation is correct -- only how closely two of them can be expected to agree on CPU fp32."
+    },
+    {
+      "id": "v41.hc_grad_rel_softcap_0930",
+      "value": "attn_logit_softcap=0.5 raises the hc_* gradient noise floor of the fused-vs-chunked comparison about 4x over the uncapped floor in v41.hc_grad_rel_floor_0930, and the threshold has to be that arm's own. Worst relative gradient difference over the hc_* group for the implementation pair that AGREES, both models at softcap 0.5 and loaded from one state_dict, pod x86_64: OMP_NUM_THREADS 1 5.442e-4, OMP 8 4.751e-4, OMP 16 4.631e-4 (worst parameter layers.1.hc.hc_ffn_scale at all three), against 1.079e-4..1.362e-4 for the same host uncapped. Every parameter outside the hc_* group agrees to 1.2e-6..1.4e-6 and the logits to 1.192e-6, so the cap moves the hc group alone. GitHub CI ubuntu-24.04 measured 1.339e-3 on this arm (job ci-selftests (3)), 2.5x the worst pod value, while the same host's uncapped floor is only 1.13x the pod's -- the cap amplifies more on CI than on the pod. Mutant signal on the same arm, pod x86_64: adding 1e-3 to one layers.3.hc.hc_attn_base gives 6.728e-3 (OMP 4) and 6.734e-3 (OMP 16); multiplying one layers.3.hc.hc_attn_fn by 1+1e-4 gives 3.011e-4 (OMP 4) and 1.231e-4 (OMP 16). Threshold for this arm set to 3e-3 (allclose.HC_GRAD_RTOL_SOFTCAP, passed only by test_p1_fused's `softcap 0.5 fused == chunked` case; every other comparison keeps 3e-4), which is 2.2x over the worst healthy value observed on any host and 2.2x under the coarse mutant. What it gives up, stated rather than hidden: the 1+1e-4 hc_attn_fn mutant is BELOW the healthy floor on this arm (3.0e-4 against 4.6e-4..5.4e-4), so it is undetectable here at any threshold, not merely above the one chosen -- the cap compresses the hc gradient signal itself. That mutant is detected by the uncapped arms, which keep the 3e-4 threshold.",
+      "measured": "2026-09-30",
+      "source": "tests/v41f/hc_grad_floor_probe.py MUTANTS over tests/v41f/test_p1_fused.py::_model and ::_batch at attn_logit_softcap 0.5; gh run view --log-failed, job ci-selftests (3)",
+      "config": {
+        "comparison": "test_p1_fused.py::test_qk_norm_and_softcap_switches, the `softcap 0.5 fused == chunked` case",
+        "mutants": "tests/v41f/hc_grad_floor_probe.py MUTANTS, applied to the chunked model only",
+        "model": "v41f_small vocab 97 dim 64 heads 4 head_dim 32 layers 5 hc_mult 2, 4 routed experts top-2, indexer_train_mode kl",
+        "attn_logit_softcap": 0.5,
+        "loss": "logits.float().square().mean()",
+        "device": "CPU only, CUDA_VISIBLE_DEVICES empty",
+        "hosts": "pod x86_64 torch 2.11.0+cu129 at OMP_NUM_THREADS 1/4/8/16; GitHub ubuntu-24.04 x86_64 (failure reading only)"
+      },
+      "uncertainty": "One draw per (host, thread count): the fixture seeds model and batch, so repeats at one setting are byte-identical and are one sample. The CI value 1.339e-3 is read from a failing run, not from a probe run on that host, so it is one observation of that host's floor and could be exceeded; the 3e-3 threshold is 2.2x above it on the strength of that single reading.",
+      "status": "measured",
+      "unit": "relative L2 difference of a parameter gradient between two implementations",
+      "boundary": "CPU fp32 only. Says nothing about GPU or bf16 autocast agreement, nor about C=50, the value the gate line actually runs (v42_arch_b/d_0930), where the entry scores are ~2.4 and the cap is numerically identity -- this arm exists to exercise a cap that engages, not the configured one."
     }
   ]
 }
