@@ -185,6 +185,63 @@ def build_optimizer(params, lr, muon_lr=None, rounder=None):
     return opts
 
 
+def is_v42(cfg):
+    """True when the checkpoint's own cfg names the v41f V4.1 stack (train.build_model's
+    dispatch key). Read from the checkpoint, never from a flag: the arch is a property of the
+    weights, and a filename cannot carry it."""
+    return getattr(cfg, "arch", "hybrid") == "v42"
+
+
+def build_rl_optimizers(model, cfg, lr, muon_lr=None, rounder=None):
+    """The optimizer the ARCHITECTURE requires, not the one this file was written against.
+
+    v42 -> v41f.optim.build_v42_optimizers: [V42Muon, SinkhornMomentum, AdamW] with
+    name-pattern groups (v41f/optim.py:130 v42_param_groups) -- embed.weight/head.weight to
+    Sinkhorn, *norm.weight and *ffn.gate.weight to AdamW at weight_decay 0.1, every other
+    ndim>=2 to Muon, 1-D to AdamW at weight_decay 0. It is what train.py's own optimizer branch
+    (`if Cfg.arch == "v42"`) builds for an --arch v42 run, and RL must not train the same weights under a different rule.
+
+    The path this replaces assigned by `p.ndim == 2` alone. On a v42 model that mis-groups
+    SILENTLY and in three directions at once: embed.weight and head.weight are 2-D, so they
+    would be orthogonalised by Muon instead of Sinkhorn-balanced; every *norm.weight is 1-D, so
+    it would land in AdamW at weight_decay 0 instead of 0.1; and the stacked expert tensors are
+    3-D, so they would fall out of Muon into AdamW-nodecay -- the bulk of the model's
+    parameters on the wrong rule. Nothing raises in any of the three. Asserted by
+    algorithms/test_rl_v42_optimizer_groups.py, which checks MEMBERSHIP, not that it runs.
+
+    hybrid -> the unchanged ndim==2 Muon split with the shared stochastic rounder.
+    """
+    if is_v42(cfg):
+        from v41f.optim import build_v42_optimizers
+
+        return build_v42_optimizers(model, model.v41f_cfg, muon_lr or lr)
+    return build_optimizer(list(model.parameters()), lr, muon_lr, rounder=rounder)
+
+
+def set_activation_checkpointing(model, cfg, on=True):
+    """Turn per-block recompute on, under the name the model's own architecture reads.
+
+    Returns the attribute actually set, so a caller can print what took effect.
+
+    v42 has no `grad_ckpt`. V41FModel reads `self.block_ckpt`, assigned once at construction
+    from V41FConfig.block_ckpt (v41f/model.py:82, consumed at :239); train.build_model sets
+    that field from cfg.grad_ckpt at BUILD time. So the two lines this replaces
+    --  `cfg.grad_ckpt = True; model.grad_ckpt = True` after load_checkpoint had already built
+    the model -- set a dead attribute on a V42LM and left every block un-checkpointed, with no
+    error and only a memory number to notice it by. V41FConfig is frozen, so the live attribute
+    is what is set here; cfg.v42_cfg is updated too so a checkpoint saved from this run records
+    the flag it trained under.
+    """
+    if is_v42(cfg):
+        model.block_ckpt = bool(on)
+        if getattr(cfg, "v42_cfg", None):
+            cfg.v42_cfg = {**cfg.v42_cfg, "block_ckpt": bool(on)}
+        return "block_ckpt"
+    cfg.grad_ckpt = bool(on)
+    model.grad_ckpt = bool(on)
+    return "grad_ckpt"
+
+
 RL_SR_SEED = 20260925
 
 
@@ -272,9 +329,21 @@ def main():
     if is_main:
         print(f"rlcode on a {kind} checkpoint, raw-continuation prompts", flush=True)
 
-    cfg.grad_ckpt = True
-    model.grad_ckpt = True
-    model = model.to(torch.bfloat16)
+    # load_checkpoint goes through train.build_model (scripts/loader.py, 4357b65b), so `model`
+    # is HybridLM or V42LM according to the checkpoint's own cfg.arch. Assert it rather than
+    # trust it: this trainer's optimizer and checkpointing both branch on cfg.arch below, and a
+    # loader that silently built the other class would put them on the wrong model.
+    _want = "V42LM" if is_v42(cfg) else "HybridLM"
+    if type(model).__name__ != _want:
+        raise SystemExit(
+            f"refusing: cfg.arch={getattr(cfg, 'arch', 'hybrid')} wants {_want}, "
+            f"scripts/loader.load_checkpoint built {type(model).__name__}")
+    ckpt_flag = set_activation_checkpointing(model, cfg, True)
+    # v42 trains in fp32 params under bf16 autocast (train.py), and its optimizers step fp32
+    # weights directly; casting the parameters to bf16 here would make the Sinkhorn and Muon
+    # updates land below the bf16 ULP with no master and no stochastic rounding to catch them.
+    if not is_v42(cfg):
+        model = model.to(torch.bfloat16)
     model.train()
     # One frozen bf16 KL reference, the only duplicated weights.
     import copy
@@ -313,8 +382,15 @@ def main():
     # with nothing pulling them back -- rank 0 would then save a model no other rank
     # trained (the same bug #717 fixed in train.py, see test_muon_stochastic).
     rounder = build_rounder()
-    optimizers = build_optimizer(list(train_core.parameters()), args.lr, args.muon_lr,
-                                 rounder=rounder)
+    optimizers = build_rl_optimizers(train_core, cfg, args.lr, args.muon_lr, rounder=rounder)
+    if is_main:
+        from v41f.optim import v42_param_groups
+
+        print(f"optimizer: {'v42 (' + ', '.join(o.aupai_group for o in optimizers) + ')' if is_v42(cfg) else 'hybrid Muon/AdamW'} | "
+              f"activation checkpointing via {ckpt_flag}={getattr(train_core, ckpt_flag)}"
+              + (" | groups " + " ".join(
+                  f"{k}={len(v)}" for k, v in v42_param_groups(train_core).items())
+                 if is_v42(cfg) else ""), flush=True)
 
     if is_main:
         n_call = sum(1 for r in problems if r.get("kind") != "stdin")
@@ -417,7 +493,13 @@ def main():
         # 1-D params are stepped as fp32 deltas and stochastically rounded back so a
         # 1e-6 update is not absorbed by the bf16 ULP.
         for opt in optimizers:
-            if isinstance(opt, torch.optim.AdamW):
+            # v42 keeps fp32 parameters and its three optimizers step them directly, exactly as
+            # train.py does; there is no bf16 param to stochastically round back into, and
+            # _adam_step_fp32's COUPLED weight decay (g += wd*w) is not AdamW's decoupled one,
+            # which the v42 group carries at 0.1.
+            if is_v42(cfg):
+                opt.step()
+            elif isinstance(opt, torch.optim.AdamW):
                 for g in opt.param_groups:
                     for p in g["params"]:
                         if p.grad is None:
