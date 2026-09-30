@@ -24,6 +24,27 @@ Prereg: runs/prereg.jsonl#format_sft_humaneval_0909 (threshold >=5/164,
 Fisher one-sided p=0.030 vs the 0/164 baseline; failure discriminators
 empty-completion rate and P(<eos>) after docstring).
 
+SCORER PROTOCOL CHANGE, 2026-09-30 (de). Model completions are executed in
+datagen.sandbox_exec.run_sandboxed -- chroot, mount/net/pid namespaces, uid drop, rlimits --
+which is the executor every other code-execution path in this repo already uses. The
+in-process exec + SIGALRM this file inherited from the pod runner is a timeout, not
+isolation: it stops neither a read of /work/aupai (the eval answers and the training data)
+nor a socket, and it cannot stop code blocked in a syscall. Every HumanEval number in this
+repo dated before 2026-09-30 was taken under the in-process scorer; the run artifact now
+records `exec_isolation` so the two populations are distinguishable. --exec-in-process
+(with ALLOW_UNISOLATED=1) restores the old scorer for reproducing an old number.
+
+The KNOWN-ANSWER CONTROLS keep the in-process scorer. They execute the repo's own canonical
+solutions, not model output, so the trust property the sandbox exists for does not apply to
+them -- and keeping them cardless and rootless is what lets --control run off the pod.
+
+The decode loop is NOT train.generate_batch. The differences are protocol, not style: the
+STOPS list checked every 16 tokens with the row's own entry_point, the <|im_end|> stop in
+the ChatML arm, the cfg.seq context window, and the eos/stop_at_0 stop_reason that
+runs/prereg.jsonl#format_sft_humaneval_0909 amendment 1 reads. generate_batch offers no hook
+for any of them and applies a repetition stop this arm does not; wiring one in edits
+train.py. The loop stays, guarded by scripts.decode_guard.last_logits.
+
 Usage:
     CUDA_VISIBLE_DEVICES="" python3 eval/humaneval_gen.py --control   # scorer self-check, CPU
     python3 eval/humaneval_gen.py --ckpt <ckpt>                       # docstring arm
@@ -73,20 +94,23 @@ def _h(*a):
 signal.signal(signal.SIGALRM, _h)
 
 
-def judge(prob, completion, prompt_text=None):
-    """prompt + completion + test + check(entry_point); pass iff clean exit.
+#: Set by main() from --exec-in-process. False means untrusted source goes to the chroot
+#: sandbox; True restores the historical in-process scorer and is a protocol change.
+EXEC_IN_PROCESS = False
 
-    Verbatim from _humaneval_run.py: in-process exec with a 6s SIGALRM ceiling.
-    NOT the chroot sandbox -- the baseline was scored this way, and the SFT
-    comparison is only valid on the same scorer.
+EXEC_TIMEOUT = 6
 
-    prompt_text overrides prob["prompt"] for the --rstrip_nl arm: that arm feeds
-    the model prompt.rstrip("\\n") and must judge the same bytes it fed, otherwise
-    the exec source would reintroduce the very newline the arm removes."""
-    prompt_src = prob["prompt"] if prompt_text is None else prompt_text
-    src = prompt_src + completion + "\n" + prob["test"] + f"\ncheck({prob['entry_point']})\n"
+
+def _exec_in_process(src):
+    """The historical scorer: exec in THIS interpreter under a SIGALRM ceiling.
+
+    SIGALRM is a timeout, not isolation. It does not stop a filesystem read, a socket, or
+    code blocked in a syscall that does not take the signal, and the process it runs inside
+    can see /work/aupai -- the eval answers and the training data. Only trusted source, i.e.
+    the repo's own canonical solutions in the known-answer controls, may take this path.
+    """
     g = {"__name__": "__main__"}
-    signal.alarm(6)
+    signal.alarm(EXEC_TIMEOUT)
     try:
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             exec(src, g)
@@ -95,6 +119,34 @@ def judge(prob, completion, prompt_text=None):
         return False
     finally:
         signal.alarm(0)
+
+
+def _exec_untrusted(src):
+    """Model output. Goes to datagen.sandbox_exec.run_sandboxed, the executor every other
+    code-execution path in this repo already uses (chroot + mount/net/pid namespaces, uid
+    drop, rlimits). Off the pod, or without root, run_sandboxed raises -- loud, never a
+    silent fallback to the in-process path.
+    """
+    if EXEC_IN_PROCESS:
+        return _exec_in_process(src)
+    from datagen.sandbox_exec import run_sandboxed
+
+    rc, _out, _err = run_sandboxed(src, timeout=EXEC_TIMEOUT)
+    return rc == 0
+
+
+def judge(prob, completion, prompt_text=None, trusted=False):
+    """prompt + completion + test + check(entry_point); pass iff clean exit.
+
+    trusted=True is the repo's own canonical solutions in the known-answer controls, and
+    takes the in-process scorer. Everything else is model output and goes to the sandbox.
+
+    prompt_text overrides prob["prompt"] for the --rstrip_nl arm: that arm feeds
+    the model prompt.rstrip("\\n") and must judge the same bytes it fed, otherwise
+    the exec source would reintroduce the very newline the arm removes."""
+    prompt_src = prob["prompt"] if prompt_text is None else prompt_text
+    src = prompt_src + completion + "\n" + prob["test"] + f"\ncheck({prob['entry_point']})\n"
+    return _exec_in_process(src) if trusted else _exec_untrusted(src)
 
 
 def truncate(s, entry_point=None):
@@ -155,25 +207,16 @@ def extract_by_name(s, entry_point):
     return None
 
 
-def judge_by_name(prob, fn_src):
+def judge_by_name(prob, fn_src, trusted=False):
     """Judge an extracted by-name function against prompt module prefix + tests."""
     m = re.search(r"(?m)^def\s+" + re.escape(prob["entry_point"]) + r"\b", prob["prompt"])
     prefix = prob["prompt"][:m.start()] if m else ""
     return judge_with_src(prefix + fn_src + "\n" + prob["test"]
-                          + f"\ncheck({prob['entry_point']})\n")
+                          + f"\ncheck({prob['entry_point']})\n", trusted=trusted)
 
 
-def judge_with_src(src):
-    g = {"__name__": "__main__"}
-    signal.alarm(6)
-    try:
-        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            exec(src, g)
-        return True
-    except BaseException:
-        return False
-    finally:
-        signal.alarm(0)
+def judge_with_src(src, trusted=False):
+    return _exec_in_process(src) if trusted else _exec_untrusted(src)
 
 
 def run_control_chatml(probs):
@@ -184,14 +227,14 @@ def run_control_chatml(probs):
         msg = ("Here is the function:\n```python\n"
                + p["prompt"] + p["canonical_solution"] + "\n```\nsome trailing note\n")
         fn = extract_by_name(msg, p["entry_point"])
-        if fn is not None and judge_by_name(p, fn):
+        if fn is not None and judge_by_name(p, fn, trusted=True):
             npass += 1
     print(f"CONTROL chatml by-name canonical = {npass}/{len(probs)} (must be ~164)", flush=True)
     if npass < len(probs) * 0.9:
         sys.exit("CONTROL FAILED: by-name extraction loses canonical functions.")
     p0 = probs[0]
     bad = extract_by_name("def " + p0["entry_point"] + "():\n    return False\n", p0["entry_point"])
-    if bad is not None and judge_by_name(p0, bad):
+    if bad is not None and judge_by_name(p0, bad, trusted=True):
         sys.exit("CONTROL FAILED: wrong by-name body on HumanEval/0 scored correct.")
     if extract_by_name("no function here\n", p0["entry_point"]) is not None:
         sys.exit("CONTROL FAILED: extractor hallucinated a function from prose.")
@@ -298,7 +341,7 @@ def run_control(probs):
     arm is 97.6% empty completions, so a judge that credits them would read
     the SFT gain off the scorer, not the model. Plus the strip self-check.
     """
-    ok = sum(judge(p, p["canonical_solution"]) for p in probs)
+    ok = sum(judge(p, p["canonical_solution"], trusted=True) for p in probs)
     print(f"CONTROL canonical_solution pass = {ok}/{len(probs)} = "
           f"{100 * ok / len(probs):.1f}%  (must be ~100)", flush=True)
     if ok < len(probs) * 0.9:
@@ -307,7 +350,7 @@ def run_control(probs):
         sys.exit(1)
     by_id = {p["task_id"]: p for p in probs}
     p0 = by_id["HumanEval/0"]
-    if judge(p0, "    return False\n"):
+    if judge(p0, "    return False\n", trusted=True):
         sys.exit("CONTROL FAILED: constant-False body on HumanEval/0 scored "
                  "correct -- the scorer passes everything, a model zero would "
                  "be indistinguishable from a harness zero")
@@ -352,19 +395,19 @@ def run_control(probs):
         return None if hdr is None else "\n" + hdr + "\n" + _body_prologue(prob) + body + "\n"
 
     redecl_probs = [(p, c) for p in probs if (c := _redeclares(p)) is not None]
-    rc_redecl = sum(judge(p, c) for p, c in redecl_probs)
+    rc_redecl = sum(judge(p, c, trusted=True) for p, c in redecl_probs)
     if redecl_probs and rc_redecl < len(redecl_probs) * 0.95:
         sys.exit(f"CONTROL FAILED: self-redeclared canonical body passes only "
                  f"{rc_redecl}/{len(redecl_probs)} -- the 66-14 re-declaration path is broken.")
     print(f"CONTROL self-redeclare canonical: {rc_redecl}/{len(redecl_probs)} PASS "
           f"(same-name def, body scored not truncated)", flush=True)
-    wrong_redecl = judge(p0, "\n" + _def_header(p0) + "\n    return False\n")
+    wrong_redecl = judge(p0, "\n" + _def_header(p0) + "\n    return False\n", trusted=True)
     if wrong_redecl:
         sys.exit("CONTROL FAILED: self-redeclared wrong body (constant-False on "
                  "HumanEval/0) scored PASS.")
     print("CONTROL self-redeclare wrong body -> FAIL (must FAIL)", flush=True)
     for label, body in (("empty", ""), ("newline", "\n"), ("pass", "    pass\n")):
-        n = sum(judge(p, body) for p in probs)
+        n = sum(judge(p, body, trusted=True) for p in probs)
         if n:
             sys.exit(f"CONTROL FAILED: the {label} completion scores correct on "
                      f"{n}/{len(probs)} problems. The baseline arm is 97.6% empty "
@@ -437,6 +480,12 @@ def main():
     ap.add_argument("--preds", default=None,
                     help="score an existing preds jsonl (pass/empty/repetition) and exit; "
                          "no model, cardless")
+    ap.add_argument("--exec-in-process", dest="exec_in_process", action="store_true",
+                    help="score model completions with the historical in-process exec instead "
+                         "of the chroot sandbox. Requires ALLOW_UNISOLATED=1. This is a "
+                         "PROTOCOL CHANGE, not a speed knob: every HumanEval number taken "
+                         "before 2026-09-30 was scored this way, and the run artifact records "
+                         "which scorer produced it.")
     args = ap.parse_args()
 
     if args.chatml and (args.strip_docstrings or args.strip_doctests):
@@ -448,6 +497,17 @@ def main():
     if args.n > 1 and args.temperature <= 0:
         ap.error(f"--n {args.n} at temperature 0 draws {args.n} identical greedy answers; "
                  "pass --temperature (stage-2 uses 0.2)")
+
+    if args.exec_in_process:
+        if os.environ.get("ALLOW_UNISOLATED") != "1":
+            ap.error("--exec-in-process runs model-generated code in THIS interpreter under a "
+                     "SIGALRM ceiling, which is a timeout and not isolation: it stops neither a "
+                     "filesystem read of /work/aupai nor a socket. Set ALLOW_UNISOLATED=1 to say "
+                     "so explicitly.")
+        global EXEC_IN_PROCESS
+        EXEC_IN_PROCESS = True
+        print("PROTOCOL: model completions scored by IN-PROCESS exec (pre-2026-09-30 scorer), "
+              "not the chroot sandbox.", flush=True)
 
     if args.preds:
         with open(args.preds, encoding="utf-8") as fh:
@@ -531,12 +591,15 @@ def main():
                  "with CUDA_VISIBLE_DEVICES= to run cardless.")
 
     # load_checkpoint claims the card only when device names cuda; a CPU load claims nothing.
-    from tokenizers import Tokenizer
-
-    from scripts.loader import load_checkpoint
+    from scripts.loader import load_checkpoint, load_tokenizer
     model, cfg = load_checkpoint(args.ckpt, device=args.device)
     model.eval()
-    tok = Tokenizer.from_file(TOK_PATH)
+    # load_tokenizer, not Tokenizer.from_file: it asserts the tokenizer's size against the
+    # checkpoint's vocab_real and its fingerprint against the checkpoint's vocab_id, and
+    # refuses a mismatch. Reading the file directly scored every checkpoint against whatever
+    # data/tokenizer.json happened to be on disk, which is the vocabulary-identity rule's
+    # loudest failure (a k5 SFT trained at loss 4.77 instead of 1.28 with nothing raising).
+    tok = load_tokenizer(TOK_PATH, cfg)
 
     def gen(prompt, entry_point):
         """Verbatim from _humaneval_run.py: greedy, cfg.seq window, eos tid 1,
@@ -597,6 +660,7 @@ def main():
             "rstrip_nl": args.rstrip_nl,
             "chatml": args.chatml,
             "first_n": args.first,
+            "exec_isolation": "in_process" if EXEC_IN_PROCESS else "sandbox",
             "device": str(args.device),
             "cpu_threads": (args.threads if is_cpu else None),
             "max_new": args.max_new,
