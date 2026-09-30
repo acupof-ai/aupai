@@ -1,0 +1,11 @@
+step 100 health qk_scale top5 layers.23=0.0372(mean 0.0363) layers.9=0.0371(mean 0.0362) layers.16=0.037(mean 0.0363) layers.14=0.0368(mean 0.0363) layers.11=0.0368(mean 0.0361) | median=0.0366 layers=24
+step 200 health qk_scale top5 layers.10=0.044(mean 0.0402) layers.11=0.0431(mean 0.0399) layers.9=0.0429(mean 0.0401) layers.18=0.0403(mean 0.0375) layers.13=0.0402(mean 0.0378) | median=0.0395 layers=24
+step 300 health qk_scale top5 layers.10=0.06(mean 0.0564) layers.11=0.0591(mean 0.055) layers.9=0.0591(mean 0.0566) layers.8=0.0541(mean 0.0498) layers.4=0.0536(mean 0.0499) | median=0.0492 layers=24
+step 400 health qk_scale top5 layers.10=0.0928(mean 0.0888) layers.9=0.0918(mean 0.0888) layers.11=0.0909(mean 0.0866) layers.4=0.0842(mean 0.08) layers.2=0.0832(mean 0.0794) | median=0.0626 layers=24
+step 500 health qk_scale top5 layers.10=0.14(mean 0.136) layers.9=0.139(mean 0.135) layers.11=0.136(mean 0.132) layers.4=0.13(mean 0.125) layers.2=0.13(mean 0.125) | median=0.0723 layers=24
+step 600 health qk_scale top5 layers.10=0.194(mean 0.19) layers.9=0.193(mean 0.19) layers.11=0.19(mean 0.186) layers.2=0.184(mean 0.178) layers.4=0.182(mean 0.177) | median=0.0818 layers=24
+step 700 health qk_scale top5 layers.10=0.249(mean 0.245) layers.9=0.248(mean 0.245) layers.11=0.245(mean 0.241) layers.2=0.24(mean 0.232) layers.5=0.236(mean 0.233) | median=0.0823 layers=24
+step 800 health qk_scale top5 layers.10=0.306(mean 0.301) layers.9=0.305(mean 0.301) layers.11=0.301(mean 0.296) layers.2=0.295(mean 0.286) layers.5=0.293(mean 0.289) | median=0.0835 layers=24
+step 900 health qk_scale top5 layers.10=0.362(mean 0.357) layers.9=0.361(mean 0.357) layers.11=0.355(mean 0.35) layers.2=0.349(mean 0.341) layers.8=0.348(mean 0.343) | median=0.104 layers=24
+step 1000 health qk_scale top5 layers.10=0.417(mean 0.412) layers.9=0.416(mean 0.412) layers.11=0.409(mean 0.404) layers.8=0.404(mean 0.399) layers.2=0.404(mean 0.394) | median=0.113 layers=24
+step 1100 health qk_scale top5 layers.10=0.473(mean 0.468) layers.9=0.47(mean 0.466) layers.11=0.463(mean 0.457) layers.8=0.458(mean 0.452) layers.2=0.455(mean 0.446) | median=0.129 layers=24
