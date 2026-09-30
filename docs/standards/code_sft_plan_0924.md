@@ -14,6 +14,8 @@ This is a plan, not a build. 本文不下载、不构建、不占 GPU。配比�
 > 方案 B 保留为 SFT 后第一轮读数（81 类下降、73 类不动时）的第二轮加料。
 
 范围：CED run（`v41_ced_0923`）结束后，面向 HumanEval pass@1 ≥ 30% 门的**一段**代码 SFT。
+该门自 2026-09-30 起按去污后的 156 题读（用户裁定，排除 `runs/contam_r3_he_union.json` 的 8 个
+task_id），口径见 `docs/standards/p1_data_recipe.md` 的 Acceptance 节；按 164 报的分数不回答这个门。
 只覆盖数据。SFT 入口走 `sft.py` 还是 `sft_math.py`、CED 架构的 decoder 段如何接 pack，
 是 de 的实现决定，本文不替代。
 
