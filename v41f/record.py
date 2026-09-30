@@ -2,9 +2,11 @@
 
 Recorder.attach() puts a forward hook and a full backward hook on every LEAF module of the model
 (Linear, RMSNorm, Gate, Embedding, the head, ...; a module with children is covered by its leaves),
-and wraps HyperConn.hc_pre / hc_post, which are method calls rather than module forwards, so the
-mHC collapse and expansion are recorded too. The stacked MoE expert weights (w1/w3/w2 on the MoE
-module, no Linear) appear in the parameter-grad table, not the activation table. detach() removes
+and wraps HyperConn.hc_pre / hc_post and MoE._routed_grouped, which are method calls rather than
+module forwards, so the mHC collapse and expansion and the routed-expert sum (the grouped_mm w2
+result scattered back to tokens, before the shared expert is added) are recorded too. The stacked
+MoE expert weights (w1/w3/w2 on the MoE module, no Linear) appear in the parameter-grad table only.
+GroupedOProj.wo_b is a leaf Linear and is hooked like any other (key layers.N.attn.oproj.wo_b). detach() removes
 everything, so a step without recording runs the untouched (compiled) model.
 
 row(step, ...) is one JSON-able dict:
@@ -25,6 +27,10 @@ import math
 import torch
 
 from .hyperconn import HyperConn
+from .moe import MoE
+
+# method calls to wrap per module type: (method, recorded key suffix)
+_METHODS = {HyperConn: (("hc_pre", "hc_pre"), ("hc_post", "hc_post")), MoE: (("_routed_grouped", "routed"),)}
 
 
 def _stats(tensors):
@@ -61,10 +67,12 @@ class Recorder:
         self.act.clear()
         self.gout.clear()
         for name, mod in self.model.named_modules():
+            for cls, meths in _METHODS.items():
+                if isinstance(mod, cls):
+                    self._patch_methods(name, mod, meths)
             if any(True for _ in mod.children()):
                 continue
             if isinstance(mod, HyperConn):
-                self._patch_hc(name, mod)
                 continue
             self._handles.append(mod.register_forward_hook(self._fwd_hook(name)))
             self._handles.append(mod.register_full_backward_hook(self._bwd_hook(name)))
@@ -98,12 +106,12 @@ class Recorder:
                 self._put(self.gout, name, s)
         return hook
 
-    def _patch_hc(self, name, hc):
-        for meth in ("hc_pre", "hc_post"):
-            orig = getattr(type(hc), meth)
-            key = f"{name}.{meth}"
+    def _patch_methods(self, name, mod, meths):
+        for meth, suffix in meths:
+            orig = getattr(type(mod), meth)
+            key = f"{name}.{suffix}"
 
-            def wrapped(*a, _orig=orig, _key=key, _hc=hc, **kw):
+            def wrapped(*a, _orig=orig, _key=key, _hc=mod, **kw):
                 out = _orig(_hc, *a, **kw)
                 s = _stats([out])
                 if s is not None:
@@ -111,8 +119,8 @@ class Recorder:
                 if isinstance(out, torch.Tensor) and out.requires_grad:
                     out.register_hook(lambda g, _k=_key: self._put(self.gout, _k, _stats([g])))
                 return out
-            setattr(hc, meth, wrapped)
-            self._patched.append((hc, meth))
+            setattr(mod, meth, wrapped)
+            self._patched.append((mod, meth))
 
     def grads(self):
         out = {}

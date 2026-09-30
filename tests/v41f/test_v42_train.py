@@ -141,6 +141,7 @@ def test_recorder_names_a_planted_inf():
     step's break count while an unrecorded step is untouched (0 breaks, test_p1_fused)."""
     import json
 
+    from v41f.moe import MoE
     from v41f.record import Recorder
 
     torch.manual_seed(0)
@@ -165,14 +166,32 @@ def test_recorder_names_a_planted_inf():
     assert any(n.startswith("layers.1.attn.kvproj") or n.startswith("layers.0") or n == "embed.weight"
                for n, _, _ in row["nonfinite_params"]), row["nonfinite_params"][:5]
     assert "layers.1.hc.hc_pre" in row["act"] and "layers.1.hc.hc_post" in row["act"], "hc methods recorded"
+    assert "layers.1.attn.oproj.wo_b" in row["act"], "GroupedOProj.wo_b is a leaf Linear and must be recorded"
+    assert "layers.1.ffn.routed" not in row["act"], "the CPU per-expert loop never calls _routed_grouped"
     back = json.loads(json.dumps(row))
     assert math.isinf(back["summary"]["act_max"][1]) and back["step"] == 7
     line = Recorder.summary_line(row)
     assert line.startswith("step 7 record: act_max layers.1.attn.kvproj.kv_norm=inf"), line
     h.remove()
-    # detached: no hooks left, no patched hc methods
+    # detached: no hooks left, no patched methods
     assert all(not mod._forward_hooks and not mod._backward_hooks for mod in m.modules())
     assert all("hc_pre" not in vars(mod) for mod in m.modules() if isinstance(mod, type(m.layers[0].hc)))
+    assert all("_routed_grouped" not in vars(mod) for mod in m.modules() if isinstance(mod, MoE))
+    # the GPU dispatch path (grouped_on_cpu traces it on CPU) records the routed-expert sum, and it is
+    # the sum before the shared expert: routed + shared_w2 == ffn output on one token, not vacuous
+    MoE.grouped_on_cpu = True
+    try:
+        rec3 = Recorder(m)
+        rec3.attach()
+        with torch.no_grad():
+            m(ids)
+        rec3.detach()
+    finally:
+        MoE.grouped_on_cpu = False
+    routed = rec3.act["layers.1.ffn.routed"]
+    assert routed["finite"] and routed["absmax"] > 0, routed
+    assert abs(routed["absmax"] - rec3.act["layers.1.ffn.shared_experts.w2"]["absmax"]) > 1e-6, (
+        "routed sum equals the shared expert output: the wrapped method is not the routed path")
     # recording-step compile cost, stated: breaks with the recorder attached
     import torch._dynamo as dynamo
 
