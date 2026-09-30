@@ -25,8 +25,13 @@ equal-budget draws, and post-hoc truncation is deterministic given the text.
 """
 import contextlib
 import hashlib
+import os
+import sys
 
 import torch
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from scripts.decode_guard import last_logits  # noqa: E402
 
 EOS_TID = 1
 
@@ -75,7 +80,7 @@ def sample_completions(model, tok, prompt_ids, task_id, n, temperature, max_new,
                 torch.cuda.manual_seed_all(seed)
             x = base
             for _step in range(max_new):
-                logits = model(x[:, -seq_window:])[0][:, -1]
+                logits = last_logits(model, model(x[:, -seq_window:]))
                 nxt = torch.multinomial(torch.softmax(logits.float() / temperature, dim=-1), 1)
                 if nxt.item() == EOS_TID:
                     break
@@ -104,7 +109,7 @@ def _sample_batched(model, tok, base, task_id, n, temperature, max_new, seq_wind
     for _step in range(max_new):
         if not any(active):
             break
-        logits = model(x[:, -seq_window:])[0][:, -1]
+        logits = last_logits(model, model(x[:, -seq_window:]))
         probs = torch.softmax(logits.float() / temperature, dim=-1)
         nxt = torch.full((n, 1), EOS_TID, dtype=torch.long, device=dev)
         for si in range(n):
@@ -124,7 +129,7 @@ def _sample_batched(model, tok, base, task_id, n, temperature, max_new, seq_wind
 @torch.no_grad()
 def _greedy(model, x, max_new, seq_window):
     for _step in range(max_new):
-        logits = model(x[:, -seq_window:])[0][:, -1]
+        logits = last_logits(model, model(x[:, -seq_window:]))
         nxt = logits.argmax(-1, keepdim=True)
         if nxt.item() == EOS_TID:
             break
