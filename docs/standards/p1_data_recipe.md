@@ -269,6 +269,15 @@ reports 45% at that size on 7B tokens, so a run landing far below it says the da
 increase in scale repairs it. The gate costs about a day; the 1.3B run costs about five. It runs
 first.
 
+**The denominator is 156, not 164.** User ruling 2026-09-30, `runs/prereg.jsonl#v41_ced_0923` @amended_9.
+The gate is read over the decontaminated set: the 8 task_ids in
+`runs/contam_r3_he_union.json#r3_humaneval_union` — HumanEval/19, 66, 71, 78, 105, 123, 129, 156 —
+each carry a whitespace-13-gram hit in at least one r3 training domain and are excluded.
+`eval/paired_bootstrap.py:105` is the filter (`--he_union`, an EXCLUDE list, the opposite of MBPP's
+`r3_mbpp_clean` keep-list). 30% of 156 is 46.8 tasks where 30% of 164 is 49.2, so **a pass@1
+reported over 164 does not answer this gate**; every score carries its denominator. Scores recorded
+before this date are over 164 and are not restated retroactively.
+
 ## Per-line acceptance criteria
 
 | line | owner | socket | acceptance |
