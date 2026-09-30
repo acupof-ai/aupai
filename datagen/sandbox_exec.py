@@ -120,24 +120,45 @@ ulimit -t "${CPUSECS:-5}" -v 2097152 -c 0
 # version wrote 1048576 believing it was 512 MiB, so the cap was 2x more permissive than the
 # comment claimed and the 600 MB acceptance case still passed. POSIX says 512; bash's builtin
 # uses 1024. Never state a limit's unit from documentation -- set it and read it back.
-ulimit -f 262144 2>/dev/null || true   # 262144 x 1024 = 256 MiB
+#
+# FAIL CLOSED. This was `2>/dev/null || true`, which swallows a failure to SET the limit
+# and runs untrusted code with no file-size cap at all, printing nothing. A limit that
+# cannot be set is a boundary that is not there; exit 98 says so here rather than letting
+# the caller read the run as clean (fb review, 2026-09-30).
+ulimit -f 262144 || {   # 262144 x 1024 = 256 MiB
+  echo "sandbox: could not set RLIMIT_FSIZE" >&2; exit 98; }
 # nproc caps the fork bomb, and ONLY WORKS ON A NON-ROOT UID: RLIMIT_NPROC is not
 # enforced for uid 0 (fb, survey A.3). It is set here, in the shell that is about to
-# setuid, because a limit set after the drop cannot be raised back.
+# setuid, because a limit set after the drop cannot be raised back. Same fail-closed rule
+# as RLIMIT_FSIZE above, and for the same reason.
 #
-# THE DEFAULT IS 4096 AND WAS 64. RLIMIT_NPROC is a per-uid cap over every process uid
-# 65534 already owns on the box, not a per-sandbox budget, so the headroom a sandbox gets
-# is the cap minus whatever else the machine is running. Measured on the pod 2026-09-30 at
-# 2,144 processes: nproc=64 made `run_sandboxed("print(7)")` return rc 126, `setpriv:
-# failed to execute /usr/bin/python3.12: Resource temporarily unavailable` -- the execve
-# after the uid drop, not a fork bomb; 128, 256 and 512 all returned (0, "7\n", ""), and
-# 72/80/88/96/104/112/120 all failed, so the boundary that day sat in (120, 128]. A quieter
-# box passes at 64, which is why this was a flaky gate rather than a hard red.
-# 4096 is the value datagen/vet_textbooks.py:37 and scripts/sft_verify_code.py:45 already
-# pass explicitly; this only makes the default agree with them. The ceiling still binds: at
-# nproc=512 a fork loop in the sandbox got 390 children and then EAGAIN (measured the same
-# day, same box) -- 390 rather than 511 because the count is shared.
-ulimit -u "${NPROC:-4096}" 2>/dev/null || true
+# THE DEFAULT STAYS 64 AND 64 IS NOT ENOUGH ON THIS POD. This is a known defect with a
+# known wrong fix; raising the number is the wrong fix and was reverted before it shipped.
+#
+# RLIMIT_NPROC counts the tasks of the REAL UID across the whole machine, not this
+# sandbox's descendants. Every sandbox here drops to the one shared uid 65534 and creates
+# no user namespace, so every sandbox on the box, ours and everyone else's, draws on one
+# budget. MEASURED on the pod 2026-09-30, and the two sides agree to the task:
+#   - `ps -eL -o ruid=` ON THE HOST counts 121 tasks owned by 65534. Inside the container
+#     `ps` counts 0 of them -- a different pid namespace, the same uid accounting -- so a
+#     reading taken in the container cannot see the budget at all.
+#   - run_sandboxed("print(7)") at nproc=64 returns rc 126 with `setpriv: failed to
+#     execute /usr/bin/python3.12: Resource temporarily unavailable`: the execve after the
+#     uid drop, before any candidate code runs. 72/80/88/96/104/112/120 fail the same way;
+#     128/256/512 return (0, "7\n", ""). The boundary sits in (120, 128], i.e. at the 121.
+#   - at nproc=512 a fork loop inside the sandbox got 390 children then EAGAIN. 121 + 390
+#     = 511. The cap is the machine-wide count for the uid, exactly.
+# So a higher number buys headroom only until those 121 (other containers' nobody tasks,
+# which we do not control) grow, and it raises the ceiling for every task sharing the uid
+# at the same time -- one runaway then starves the rest. A shared-uid RLIMIT cannot be a
+# per-task limit at any value.
+# The fix is a per-task cgroup `pids.max` plus a distinct uid (or a user namespace) per
+# execution, so the budget is the task's own. Until that lands, callers that need more
+# than the shared headroom pass nproc explicitly -- datagen/vet_textbooks.py:37 and
+# scripts/sft_verify_code.py:45 both pass 4096 -- and eval/score_code_exec.py --selftest
+# stays red on a busy pod.
+ulimit -u "${NPROC:-64}" || {
+  echo "sandbox: could not set RLIMIT_NPROC=${NPROC:-64}" >&2; exit 98; }
 # /usr/bin/python3 is a symlink through /etc/alternatives, which the chroot
 # deliberately does not contain; resolve to the real binary on the host.
 PY=$(readlink -f /usr/bin/python3)
@@ -176,7 +197,7 @@ exec chroot "$ROOT" /usr/bin/env -i -C /work PATH=/usr/bin:/bin PYTHONIOENCODING
 
 
 def run_sandboxed(code, timeout=10, stdin=None, files=None, argv=None, site=False,
-                  seccomp=True, profile="hardened", nproc=4096, cpu_secs=5, loopback=False):
+                  seccomp=True, profile="hardened", nproc=64, cpu_secs=5, loopback=False):
     """Run code in the sandbox. Returns (rc, stdout, stderr_tail).
 
     code:   written to /work/code.py and executed. Pass None with `files`+`argv` to run
