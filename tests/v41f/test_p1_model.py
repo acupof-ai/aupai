@@ -135,37 +135,35 @@ def _to_fp32(*mods):
 def test_whole_model_logits_allclose():
     """Whole-network logits match the vendored Transformer end to end on v41f_small.
 
-    Primary gate is CPU bf16 FULL-sequence logits (production dtype). Deterministic CPU
-    bf16 is bit-identical once every ModelArgs/V41FConfig field aligns (the args derive
-    from one config, see _model_args), so this is 0.0 across seeds/seq lens and atol 5e-2
-    leaves margin without rubber-stamping. An fp32 control attributes precision (the #433
-    non-native path) and a head-weight mutation proves the equality is non-vacuous.
+    Compared in fp32, not the production bf16. On this seed 1 of the 80 (token, layer) top-k
+    routing decisions has a margin of 9.898e-4 (measured 2026-09-30), and the two sides reach
+    the router through different op orders, so one bf16 ulp of hidden-state rounding on a
+    host whose bf16 kernels round differently flips an expert and moves the logits by ~0.2.
+    The sibling engram-ON gate did exactly that on one GitHub runner (1.975e-1 at 2898e4b4
+    against 3.970e-3 on the others). A route flip is a property of the seed and the host,
+    not of the wiring this test asserts; fp32 puts the router ~1e3 ulps from the tie.
+    Healthy fp32 value 2.682e-6; atol 1e-4 is 37x that and 1e3x below a flip. A head-weight
+    mutation proves the equality is non-vacuous.
     """
     b, s = 2, 8
     ref, ours, cfg = _build_pair()
+    _to_fp32(ref, ours)
     torch.manual_seed(123)
     ids = torch.randint(0, cfg.vocab_size, (b, s), dtype=torch.long)
     rlogits, rmain = _run_full(ref, ids)
     ologits, omain = ours(ids)
     assert rmain is None and omain is None
     assert rlogits.shape == (b, s, cfg.vocab_size) == ologits.shape
-    m16, _ = cmp("bf16 full-sequence logits", ologits, rlogits, atol=5e-2)
+    m32, _ = cmp("fp32 full-sequence logits", ologits, rlogits, atol=1e-4)
 
-    # non-native fp32 path: same wiring, the precision-attribution control (#433)
-    r32, o32, _ = _build_pair()
-    _to_fp32(r32, o32)
-    rl32, _ = _run_full(r32, ids)
-    ol32, _ = o32(ids)
-    m32, _ = cmp("fp32 full-sequence logits (control)", ol32, rl32, atol=5e-2)
-
-    # mutation: perturbing OUR head weight must break the bf16 equality (it is not vacuous)
+    # mutation: perturbing OUR head weight must break the equality (it is not vacuous)
     with torch.no_grad():
         ours.head.weight.add_(0.5)
         mut, _ = ours(ids)
         ours.head.weight.sub_(0.5)
     m_mut = (mut - rlogits).abs().max().item()
     assert m_mut > 1.0, m_mut
-    print(f"  bf16 max_abs={m16:.4e}; fp32 max_abs={m32:.4e}; head-weight mutation={m_mut:.3f} (red if ~0)")
+    print(f"  fp32 max_abs={m32:.4e}; head-weight mutation={m_mut:.3f} (red if ~0)")
 
 
 def test_dspark_target_hidden_is_pre_block_attn_input():
