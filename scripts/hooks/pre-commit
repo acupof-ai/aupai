@@ -1497,6 +1497,13 @@ def main():
         # into SFT. The first real build found 515 of 218,095 rows (0.2361%) were holdout
         # questions, so this filter is not hypothetical.
         "algorithms/rlvr_data.py",
+        # The RL admission criterion (de, 2026-09-30). Registered because it replaces a
+        # documented gate with a different quantity, and every number it prints is a closed
+        # form nobody can eyeball: the selftest checks P_mixed and E[sum|adv|] against a
+        # brute-force enumeration over all group compositions, pins the four known-answer
+        # predictions files (all-pass, all-fail, p=0.5, p=0.95), and asserts the p=0.95 case is
+        # exactly the one the old 15pt bar rejects and this one accepts. Pure arithmetic, 0.1s.
+        "algorithms/rl_admission.py",
         # domain BPB: same known answer (log2(V) on a uniform model), and it also pins the
         # first-token exclusion via chunk-invariance and the decode round-trip measure that
         # certifies both arms score the same bytes. Four broken worlds verified red.
