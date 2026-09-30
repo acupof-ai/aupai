@@ -15,6 +15,8 @@ from pathlib import Path
 import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from allclose import grad_rtol  # noqa: E402
 from v41f import docpack  # noqa: E402
 from v41f.config import v41f_small  # noqa: E402
 from v41f.model import V41FModel  # noqa: E402
@@ -115,7 +117,7 @@ def test_chunked_equals_ref():
             assert ga.keys() == gb.keys(), f"grad sets differ: {sorted(ga.keys() ^ gb.keys())}"
             for n in ga:
                 rel = ((ga[n] - gb[n]).norm() / ga[n].norm().clamp_min(1e-12)).item()
-                assert rel < 1e-4, f"grad {n} differs rel {rel:.3e}"
+                assert rel < grad_rtol(n), f"grad {n} differs rel {rel:.3e} (tol {grad_rtol(n):.0e})"
     finally:
         docpack.ATTN_CHUNK = old
     print(f"  chunked == ref: logits and {len(ga)} grads")
