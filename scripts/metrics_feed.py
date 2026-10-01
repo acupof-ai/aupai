@@ -67,6 +67,10 @@ METRICS = {
     "peak": ("peak GiB/card", None), "eta": ("ETA hours", "down"),
     "qk_median": ("qk_scale median", None), "opt_moved": ("params moved %", None),
     "zero_load": ("experts with no tokens", "down"), "alarms": ("alarms", "down"),
+    # The gate itself. Only the 156 series exists here: the 164 reading answers a different
+    # question (30% of 164 is 49.2 tasks against 46.8 of 156), and a card carrying both
+    # unlabelled would invite reading whichever looks better.
+    "humaneval": ("HumanEval pass@1 % (156 decontaminated)", "up"),
 }
 
 
@@ -134,6 +138,54 @@ def parse(text):
     for k, points in seen.items():
         series[k] = [[s, points[s]] for s in sorted(points)]
     return series, meta
+
+
+def add_humaneval(series, run, local=None):
+    """Fold scripts/eval_watch.py's ledger into the series as `humaneval`.
+
+    Reads the pct over the DECONTAMINATED 156 only. `pct_all` (over 164) is deliberately not
+    charted: 30% of 164 is 49.2 tasks against 46.8 of 156, so the two answer different
+    questions and a curve carrying whichever is higher is a curve that lies. The ledger keeps
+    both; the gate's own denominator is what goes on a board people read.
+
+    A failed row contributes NO point. An eval that did not produce a score is not a zero, and
+    a zero on this chart would read as a model that solves nothing.
+    """
+    rows = []
+    try:
+        if local:
+            with open(local, encoding="utf-8") as fh:
+                text = fh.read()
+        else:
+            out = subprocess.run([os.path.expanduser("~/bin/pod"),
+                                  "cat /work/aupai/runs/eval_watch.jsonl"],
+                                 capture_output=True, text=True, timeout=120)
+            if out.returncode != 0:
+                return "no eval ledger on the pod yet"
+            text = out.stdout
+    except (OSError, subprocess.SubprocessError):
+        return "could not read the eval ledger"
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if r.get("name") == run and r.get("status") == "ok" and r.get("pct_dc") is not None:
+            rows.append((int(r["step"]), float(r["pct_dc"]), int(r.get("n_dc", 0))))
+    if not rows:
+        return "no scored HumanEval row yet"
+    bad_n = sorted({n for _, _, n in rows if n != 156})
+    series["humaneval"] = [[s, p] for s, p, _ in sorted(rows)]
+    note = f"{len(rows)} HumanEval point(s), latest {rows[-1][1]}%"
+    if bad_n:
+        # A row scored over a different denominator is NOT comparable to the others; say so
+        # rather than drawing them on one curve.
+        note += (f"; WARNING rows with n_dc={bad_n} are not over 156 and are plotted anyway -- "
+                 f"check eval_watch's exclude list")
+    return note
 
 
 def summary(series, meta):
@@ -359,6 +411,7 @@ def awb_push(series, meta, name, target, awb_dir, state_path, dry=False):
 
 #: the card's charts: (title, [(series key, legend)]). Everything else goes in the table.
 CARD_CHARTS = [
+    ("HumanEval pass@1 %（去污 156 题，目标 30）", [("humaneval", "pass@1")]),
     ("误差（越低越好）", [("val", "验证"), ("loss", "训练")]),
     ("速度", [("tps", "K tok/s/卡"), ("mfu", "MFU %")]),
     ("显存 GiB/卡", [("peak", "峰值")]),
@@ -592,6 +645,29 @@ def selftest():
         assert "step 1000" in nxt and "step 500" not in nxt, nxt
         empty = awb_push({}, meta, "t_val", 1.9, "/nonexistent-board", st, dry=True)
         assert "no val reading yet" in empty, empty
+    # folding eval_watch's ledger in: a failed eval must contribute NO point, because a 0 on
+    # this chart reads as a model that solves nothing rather than as an eval that did not run
+    with tempfile.TemporaryDirectory() as tmp:
+        led = os.path.join(tmp, "eval_watch.jsonl")
+        with open(led, "w", encoding="utf-8") as fh:
+            for r in (
+                {"name": "r", "step": 4000, "status": "ok", "pct_dc": 1.28, "n_dc": 156},
+                {"name": "r", "step": 6000, "status": "fail", "error": "worker died"},
+                {"name": "r", "step": 8000, "status": "ok", "pct_dc": 3.85, "n_dc": 156},
+                {"name": "other", "step": 9000, "status": "ok", "pct_dc": 99.0, "n_dc": 156},
+            ):
+                fh.write(json.dumps(r) + "\n")
+        probe = {}
+        note = add_humaneval(probe, "r", led)
+        assert probe["humaneval"] == [[4000, 1.28], [8000, 3.85]], probe["humaneval"]
+        assert "WARNING" not in note, note
+        # a row over a different denominator is not comparable and must say so
+        with open(led, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"name": "r", "step": 10000, "status": "ok",
+                                 "pct_dc": 9.0, "n_dc": 164}) + "\n")
+        assert "WARNING" in add_humaneval({}, "r", led), "mixed denominators must warn"
+        # no rows at all is not an empty curve that looks like zero
+        assert "no scored" in add_humaneval({}, "nobody", led)
     html = render_html(s, meta, rows, "selftest")
     assert "<title>selftest</title>" in html and "Chart.js" in html
     assert '"loss": [[10, 10.914], [20, 5.0]]' in html.replace("'", '"'), "series must reach the page"
@@ -621,6 +697,8 @@ def main():
                     help="where the rendered page is served; goes in the Feishu message")
     ap.add_argument("--push", action="store_true", help="post to the Feishu group webhook")
     ap.add_argument("--awb", action="store_true", help="also put val on the AWB board")
+    ap.add_argument("--eval-ledger", default=None,
+                    help="a local copy of runs/eval_watch.jsonl; default reads it off the pod")
     ap.add_argument("--card", action="store_true",
                     help="send/patch ONE Feishu card carrying every metric as charts")
     ap.add_argument("--chat", default=os.environ.get("AUPAI_FEISHU_CHAT", ""),
@@ -645,6 +723,7 @@ def main():
         raise SystemExit(f"no metric lines found in the log for {args.run} -- refusing to "
                          f"publish an empty page over a good one")
     meta["run"] = args.run
+    print("humaneval:", add_humaneval(series, args.run, args.eval_ledger))
     rows = summary(series, meta)
     html = render_html(series, meta, rows, args.run)
     with open(args.out, "w", encoding="utf-8") as fh:
