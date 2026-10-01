@@ -244,6 +244,19 @@ def webhook():
 AWB = os.path.expanduser("~/.local/bin/awb")
 
 
+def _med(vals):
+    """The median, printed. Empty is '?', never 0 -- an absent reading is not a zero one."""
+    if not vals:
+        return "?"
+    v = sorted(vals)
+    n = len(v)
+    return f"{(v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2):.3g}"
+
+
+def _mx(vals):
+    return "?" if not vals else f"{max(vals):.3g}"
+
+
 def awb_push(series, meta, name, target, awb_dir, state_path, dry=False):
     """The goal's number on the AWB board, by step, plus one news line.
 
@@ -271,10 +284,48 @@ def awb_push(series, meta, name, target, awb_dir, state_path, dry=False):
     env = dict(os.environ, AWB_DIR=awb_dir)
     last_step = max((p[-1][0] for p in series.values() if p), default=0)
     total = meta.get("total_steps") or 0
-    cmds = [[AWB, "metric", "--step", str(s), name, f"{v:g}", f"{target:g}"] for s, v in fresh]
-    # 人话, <=40 chars: the board is read by people, not by this script
-    cmds.append([AWB, "news", "--key", f"{name}_run",
-                 f"新模型训练到 {last_step}/{total} 步，验证误差 {fresh[-1][1]:g}，一切正常"])
+
+    def at(k, step):
+        """The reading of k nearest at-or-before `step`; None when the series has none."""
+        pts = [v for s, v in (series.get(k) or []) if s <= step]
+        return pts[-1] if pts else None
+
+    def g(k, step, fmt="{:g}", dash="?"):
+        v = at(k, step)
+        return dash if v is None else fmt.format(v)
+
+    cmds = []
+    # The train-loss curve as a reference series: --ref draws it BESIDE the goal, so the card
+    # shows val against train rather than val alone. Its own name, so it is never the goal.
+    for s, _ in fresh:
+        tl = at("loss", s)
+        if tl is not None:
+            cmds.append([AWB, "metric", "--ref", "--step", str(s), f"{name}_train",
+                         f"{tl:g}", f"{target:g}"])
+    # The NOTE under the bar carries the numbers that do not get their own curve on the card.
+    for s, v in fresh:
+        cmds.append([AWB, "metric", "--step", str(s), name, f"{v:g}", f"{target:g}",
+                     f"训练误差 {g('loss', s)} · 速度 {g('tps', s)}K/卡 · MFU {g('mfu', s)}% "
+                     f"· 显存 {g('peak', s, '{:.0f}')}G · 梯度 {g('gnorm', s)}"])
+    last = fresh[-1][0]
+    # One keyed news line per topic: a key holds one fact and the latest shows, so these
+    # refresh in place instead of stacking. 人话 -- the card is read by people.
+    for k, text in (
+        (f"{name}_run", f"新模型训练到 {last_step}/{total} 步（{100 * last_step / (total or 1):.0f}%），"
+                        f"验证误差 {fresh[-1][1]:g}，还要约 {g('eta', last_step, '{:.0f}')} 小时"),
+        (f"{name}_speed", f"速度 {g('tps', last_step)}K tok/s/卡，MFU {g('mfu', last_step)}%，"
+                          f"显存 {g('peak', last_step, '{:.1f}')}G/卡"),
+        # gnorm on this stack is BIMODAL -- consecutive logged steps read 0.17 and 20666 --
+        # so one sample is not a reading of it. Report the recent middle and the worst, or a
+        # board quoting whichever point the poll happened to land on alarms people by luck.
+        (f"{name}_health", f"梯度 中位 {_med([v for _, v in (series.get('gnorm') or [])[-30:]])}"
+                           f"／最大 {_mx([v for _, v in (series.get('gnorm') or [])[-30:]])}"
+                           f"（忽高忽低是这个结构的常态），"
+                           f"告警 {g('alarms', last, '{:.0f}')} 次，"
+                           f"空载专家 {g('zero_load', last, '{:.0f}')} 个，"
+                           f"参数更新率 {g('opt_moved', last, '{:.0f}')}%"),
+    ):
+        cmds.append([AWB, "news", "--key", k, text])
     if dry:
         return "dry-run: " + " ; ".join(" ".join(c[1:]) for c in cmds)
     for c in cmds:
@@ -387,6 +438,17 @@ def selftest():
         first = awb_push(s, meta, "t_val", 1.9, "/nonexistent-board", st, dry=True)
         assert "step 500" in first, first
         assert "news" in first, first
+        # the card must carry more than the one number: a train-loss reference curve, a note
+        # under the bar, and one keyed news line per topic
+        assert "--ref --step 500 t_val_train" in first, first
+        assert "训练误差" in first and "MFU" in first and "显存" in first, first
+        for k in ("t_val_run", "t_val_speed", "t_val_health"):
+            assert f"--key {k}" in first, (k, first)
+        # a series the log did not carry degrades to ? -- never a fabricated 0, and never a crash
+        thin = {"val": [[500, 2.8]]}
+        lean = awb_push(thin, meta, "t_val", 1.9, "/nonexistent-board", st, dry=True)
+        assert "MFU ?%" in lean, lean
+        assert "t_val_train" not in lean, "no train loss means no reference curve"
         # dry-run must not write the watermark, or a real first push would send nothing
         assert not os.path.exists(st), "dry-run wrote the watermark"
         with open(st, "w", encoding="utf-8") as fh:
