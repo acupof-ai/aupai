@@ -357,6 +357,138 @@ def awb_push(series, meta, name, target, awb_dir, state_path, dry=False):
     return note
 
 
+#: the card's charts: (title, [(series key, legend)]). Everything else goes in the table.
+CARD_CHARTS = [
+    ("误差（越低越好）", [("val", "验证"), ("loss", "训练")]),
+    ("速度", [("tps", "K tok/s/卡"), ("mfu", "MFU %")]),
+    ("显存 GiB/卡", [("peak", "峰值")]),
+    ("梯度大小", [("gnorm", "gnorm")]),
+]
+#: latest-value rows under the charts, for series that do not get a curve
+CARD_TABLE = ["eta", "qk_median", "grad_muon", "grad_sinkhorn", "grad_adamw_decay",
+              "grad_adamw_nodecay", "opt_moved", "zero_load", "alarms"]
+FEISHU_MAX = 30 * 1024
+
+
+def _thin(points, n):
+    """At most n points, evenly spaced, always keeping the first and the last.
+
+    The card is capped at 30 KB by Feishu, so the curves there are thinned. The PAGE keeps
+    every point -- the thinning is the card's limit, not the measurement's, and the card says
+    so rather than implying it drew everything.
+    """
+    if len(points) <= n:
+        return points
+    step = (len(points) - 1) / (n - 1)
+    idx = sorted({int(round(i * step)) for i in range(n)} | {len(points) - 1})
+    return [points[i] for i in idx]
+
+
+def build_feishu_card(series, meta, title, page_url, per_chart=50):
+    """One card carrying every metric: four charts plus a row per remaining series."""
+    last_step = max((p[-1][0] for p in series.values() if p), default=0)
+    total = meta.get("total_steps") or 0
+    elements = []
+    drawn = set()
+    for label, keys in CARD_CHARTS:
+        values = []
+        for key, legend in keys:
+            pts = series.get(key) or []
+            if not pts:
+                continue
+            drawn.add(key)
+            for s, v in _thin(pts, per_chart):
+                values.append({"x": str(s), "y": v, "s": legend})
+        if not values:
+            continue
+        elements.append({"tag": "chart", "aspect_ratio": "16:9", "chart_spec": {
+            "type": "line", "title": {"text": label},
+            "data": {"values": values}, "xField": "x", "yField": "y", "seriesField": "s",
+            "legends": {"visible": True, "position": "bottom"}}})
+    rows = []
+    for key in CARD_TABLE:
+        pts = series.get(key) or []
+        if not pts:
+            continue
+        drawn.add(key)
+        label = METRICS.get(key, (key, None))[0]
+        rows.append(f"**{label}** {pts[-1][1]:.4g}")
+    # Anything parsed but neither drawn nor tabled is NAMED, so a new log field cannot go
+    # missing from the card in silence.
+    missed = [k for k, v in series.items() if v and k not in drawn]
+    if rows:
+        elements.append({"tag": "markdown", "content": "　·　".join(rows)})
+    if missed:
+        elements.append({"tag": "markdown",
+                         "content": f"<font color='grey'>未上卡片：{'、'.join(sorted(missed))}"
+                                    f"（见网页）</font>"})
+    n = sum(len(v) for v in series.values())
+    foot = (f"<font color='grey'>{len(series)} 项指标、{n} 个点；卡片上的曲线做了抽稀，"
+            f"全部点在网页上</font>")
+    if page_url:
+        foot += f"\n[看全部曲线]({page_url})"
+    elements.append({"tag": "markdown", "content": foot})
+    return {"schema": "2.0",
+            "config": {"update_multi": True, "width_mode": "fill",
+                       "summary": {"content": f"{title} 第 {last_step} 步"}},
+            "header": {"title": {"tag": "plain_text",
+                                 "content": f"{title}　{last_step}/{total}"
+                                            f"（{100 * last_step / (total or 1):.0f}%）"},
+                       "template": "blue"},
+            "body": {"elements": elements}}
+
+
+def feishu_card_sync(series, meta, title, page_url, chat, state_path, dry=False):
+    """Send the metrics card once, then patch that same message forever.
+
+    One card edited in place, so the group never gets the same numbers twice. The message id
+    is remembered per (chat, title); losing it would post a second card rather than silently
+    stop, which is why it is written only after a send that returned an id.
+    """
+    card = build_feishu_card(series, meta, title, page_url)
+    body = json.dumps(card, ensure_ascii=False)
+    per = 50
+    while len(body.encode()) > FEISHU_MAX and per > 6:
+        per = max(6, per // 2)
+        card = build_feishu_card(series, meta, title, page_url, per_chart=per)
+        body = json.dumps(card, ensure_ascii=False)
+    size = len(body.encode())
+    if size > FEISHU_MAX:
+        raise SystemExit(f"card is {size} B, over Feishu's {FEISHU_MAX} B even at {per} "
+                         f"points per curve -- drop a chart rather than send a truncated one")
+    if dry:
+        return f"dry-run: {size} B, {per} pts/curve, {len(card['body']['elements'])} elements"
+    try:
+        with open(state_path, encoding="utf-8") as fh:
+            st = json.load(fh)
+    except (OSError, ValueError):
+        st = {}
+    key = f"{chat}::{title}::card"
+    mid = st.get(key)
+    if mid:
+        r = subprocess.run(["lark-cli", "im", "messages", "patch", "--message-id", mid,
+                            "--data", json.dumps({"content": body}), "--as", "bot"],
+                           capture_output=True, text=True, timeout=120)
+        ok = r.returncode == 0 and '"ok": true' in r.stdout
+        if ok:
+            return f"card patched ({size} B, {per} pts/curve)"
+        # A patch fails for good reasons (card older than 14 days, rate limit). Say so and
+        # send a fresh one rather than leaving the group with a frozen card.
+        mid = None
+    r = subprocess.run(["lark-cli", "im", "+messages-send", "--chat-id", chat,
+                        "--msg-type", "interactive", "--content", body, "--as", "bot"],
+                       capture_output=True, text=True, timeout=120)
+    try:
+        mid = json.loads(r.stdout)["data"]["message_id"]
+    except (ValueError, KeyError, TypeError):
+        raise SystemExit(f"sending the metrics card failed: "
+                         f"{(r.stderr or r.stdout).strip()[:300]}") from None
+    st[key] = mid
+    with open(state_path, "w", encoding="utf-8") as fh:
+        json.dump(st, fh)
+    return f"card sent {mid} ({size} B, {per} pts/curve)"
+
+
 def push(rows, meta, page_url, title, dry=False):
     """Post the latest reading of every metric to Feishu, with the page's link.
 
@@ -489,6 +621,10 @@ def main():
                     help="where the rendered page is served; goes in the Feishu message")
     ap.add_argument("--push", action="store_true", help="post to the Feishu group webhook")
     ap.add_argument("--awb", action="store_true", help="also put val on the AWB board")
+    ap.add_argument("--card", action="store_true",
+                    help="send/patch ONE Feishu card carrying every metric as charts")
+    ap.add_argument("--chat", default=os.environ.get("AUPAI_FEISHU_CHAT", ""),
+                    help="Feishu chat id (oc_...); defaults to the AWB board's linked group")
     ap.add_argument("--awb-dir", default=os.environ.get(
         "AWB_DIR", os.path.expanduser("~/.aupai-team/awb")))
     ap.add_argument("--awb-metric", default="v42r_val",
@@ -524,6 +660,19 @@ def main():
     if args.awb:
         print("awb:", awb_push(series, meta, args.awb_metric, args.awb_target,
                                args.awb_dir, args.awb_state, dry=args.dry_run))
+    if args.card:
+        chat = args.chat
+        if not chat:  # the board already names the group it is linked to; do not ask twice
+            try:
+                with open(os.path.join(args.awb_dir, "lark.json"), encoding="utf-8") as fh:
+                    chat = json.load(fh).get("chat", "")
+            except (OSError, ValueError):
+                chat = ""
+        if not chat:
+            raise SystemExit("--card needs a Feishu chat id: pass --chat oc_..., set "
+                             "$AUPAI_FEISHU_CHAT, or link the board with awb-lark setup")
+        print("card:", feishu_card_sync(series, meta, args.run, args.page_url, chat,
+                                        args.awb_state, dry=args.dry_run))
     if args.push or args.dry_run:
         print(push(rows, meta, args.page_url, args.run, dry=args.dry_run))
 
