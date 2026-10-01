@@ -1,0 +1,18 @@
+CONTROL canonical_solution pass = 164/164 = 100.0%  (must be ~100)
+CONTROL wrong-answer: constant-False on HumanEval/0 -> FAIL (must FAIL)
+CONTROL self-redeclare canonical: 154/154 PASS (same-name def, body scored not truncated)
+CONTROL self-redeclare wrong body -> FAIL (must FAIL)
+CONTROL empty-completion: empty/newline/pass score 0/164 each (must be 0)
+CONTROL strip: 164/164 prompts carry a docstring the sig-only arm removes
+HumanEval: 4/4 problems (rstrip-nl arm) scoring first 4
+W1001 08:39:49.646000 746677 torch/utils/cpp_extension.py:140] No CUDA runtime is found, using CUDA_HOME='/usr/local/cuda'
+  4/4  pass@1 = 0/4 = 0.00%   (494s)
+
+HUMANEVAL pass@1 (greedy) = 0/4 = 0.00%
+empty-completion split: eos_first 0/4, stop_at_0 0/4 (total empty 0/4 = 0.0%)
+repetitive non-empty (last 200 chars, >=3 consecutive equal lines or tokens): 0/4 = 0.0% of non-empty
+preds saved: /work/aupai/data/eval/preds_humaneval_ckpt_v42_gate_1001r.pt.step4000.rstripnl.jsonl
+
+real	8m41.328s
+user	393m40.542s
+sys	0m46.254s
