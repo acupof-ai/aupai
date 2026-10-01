@@ -1011,6 +1011,13 @@ def main():
     # is not run here, because "not in the map" and "cannot run here" are different
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
+        # The Feishu metrics feed (de). Registered because it is an INSTRUMENT whose output
+        # people will read as the run's state, and its two defects are both silent: float()
+        # accepts "nan" so a diagnostic that did not compute would draw as missing data, and
+        # the runlog echoes each progress line so counting lines doubles every point. The
+        # selftest fixes both on a fixture built from the real log's own line shapes, and
+        # asserts --push REFUSES without a webhook rather than skipping. No pod, no network.
+        "scripts/metrics_feed.py",
         # The frozen scorer-agnostic score ledger (de). Registered because three scorers
         # (KenLM/fineweb-edu/l3-rubric) append through this one schema and a silently
         # accepted malformed row -- score and rubric_dims both null, a non-UTC ts, a rubric

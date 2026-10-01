@@ -61,7 +61,6 @@ import re
 import signal
 import sys
 import time
-from contextlib import nullcontext as _nullctx
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -624,7 +623,17 @@ def main():
         new = []
         stop_reason = "max_new"
         im_end_tid = tok.token_to_id("<|im_end|>") if args.chatml else None
-        ctx = torch.autocast(device_type="cuda", dtype=torch.bfloat16) if not is_cpu else _nullctx()
+        # bf16 autocast on BOTH devices, not a null context on CPU. A bf16 checkpoint
+        # under no autocast puts bf16 weights against fp32 activations, and v42 raises
+        # "expected m1 and m2 to have the same dtype, but got: float != c10::BFloat16"
+        # inside the first nn.Linear -- measured on the pod 2026-10-01 loading
+        # ckpt_v42_arch_d_0930.pt.step2000 on CPU. So the CPU arm could not score a v42
+        # checkpoint at all, which is the only arm available while the gate run holds all
+        # eight cards. It also makes the two arms the SAME computation: the CUDA arm was
+        # already bf16 autocast, so matching it narrows the gap between them rather than
+        # widening it. With CPU autocast the same forward returns logits (1, 32768) and a
+        # plausible greedy token.
+        ctx = torch.autocast(device_type="cpu" if is_cpu else "cuda", dtype=torch.bfloat16)
         with torch.no_grad(), ctx:
             for step in range(args.max_new):
                 lg = last_logits(model, model(x[:, -cfg.seq:]))
@@ -794,6 +803,21 @@ def main():
           f"stop_at_0 {nstop}/{n_done} (total empty {nempty}/{n_done} = "
           f"{100 * nempty / n_done:.1f}%)"
           + (f", im_end_no_func {nimend}" if args.chatml else ""), flush=True)
+    # A NEAR-TOTAL eos_first RATE IS A PROMPT-FORMAT READING, NOT A MODEL VERDICT, and it
+    # arrives wearing a pass@1 of 0.00% that looks like a measurement. Measured on the pod
+    # 2026-10-01 with ckpt_v42_arch_d_0930.pt.step2000 on CPU: on HumanEval/0's canonical
+    # prompt the top-1 next token is id 1 (eos) at logit 15.81, and on the SAME prompt with
+    # its trailing newline stripped the top-1 is '\n   ' at 17.75. The flag's own help already
+    # explains why -- the canonical prompt ends in a bare newline the tokenizer never places
+    # before an indented body -- and --rstrip_nl has been the gate column since 2026-09-14.
+    # The line below exists because the default arm still produces the 0.00%, and I reached
+    # it myself by omitting the flag: the split was already printed and still needs reading.
+    if not args.chatml and not args.rstrip_nl and n_done >= 2 and neos / n_done >= 0.9:
+        print(f"\n  *** {100 * neos / n_done:.0f}% of completions are eos-at-token-0 on the "
+              f"NON-rstrip arm. That is the canonical prompt's trailing newline, not the "
+              f"model: this pass@1 measures the prompt format. The gate column since "
+              f"2026-09-14 is --rstrip_nl; rerun with it before quoting this number.",
+              flush=True)
     rep_frac = f"{100 * nrep / n_nonempty:.1f}%" if n_nonempty else "n/a (0 non-empty)"
     print(f"repetitive non-empty (last 200 chars, >=3 consecutive equal lines or tokens): "
           f"{nrep}/{n_nonempty} = {rep_frac} of non-empty", flush=True)
