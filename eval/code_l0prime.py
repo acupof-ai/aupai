@@ -51,6 +51,13 @@ sys.path.insert(0, ROOT)
 
 import torch  # noqa: E402
 from datagen.sandbox_exec import run_sandboxed  # noqa: E402
+
+#: RLIMIT_NPROC counts uid 65534's tasks MACHINE-WIDE, so the sandbox default of 64 is
+#: not enough to exec CPython on this pod: measured 2026-10-01, run_sandboxed("print(1)")
+#: returns rc 126 (`setpriv: failed to execute`) at 64 and rc 0 at 4096. A scorer that
+#: took the default read EVERY problem as failed. Same value as datagen/vet_textbooks.py
+#: and scripts/sft_verify_code.py, the two callers that already passed it.
+SANDBOX_NPROC = 4096
 from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 
 TEST_PATH = os.path.join(ROOT, "data", "eval", "code_holdout_500.jsonl")
@@ -73,7 +80,7 @@ def _norm_lines(s):
 
 
 def passes(code, expected_output):
-    rc, out, _ = run_sandboxed(code, timeout=EXEC_TIMEOUT)
+    rc, out, _ = run_sandboxed(code, timeout=EXEC_TIMEOUT, nproc=SANDBOX_NPROC)
     return rc == 0 and _norm_lines(out) == _norm_lines(expected_output)
 
 
@@ -200,7 +207,21 @@ def _decode_known_answer():
     treats as success.
     """
     from tokenizers import Tokenizer
-    tok = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
+
+    # data/tokenizer.json is gitignored and lives on the pod only, so this case cannot run
+    # from a checkout. It used to raise there, which made the pre-commit hook refuse EVERY
+    # laptop commit that staged this file -- measured 2026-10-01, and identical at HEAD, so
+    # the one-line nproc fix this file also needs could not be committed at all. A SKIP that
+    # names the missing input is not the same as passing: the vocabulary is a real precondition
+    # and a checkout genuinely does not have it, exactly as the sandbox half below cannot run
+    # without root. What must never happen is a silent pass, so this prints and returns a
+    # marker the caller reports.
+    vocab = os.path.join(ROOT, "data", "tokenizer.json")
+    if not os.path.exists(vocab):
+        print(f"decode known-answer: SKIPPED (no {os.path.relpath(vocab, ROOT)}; "
+              f"gitignored, pod only -- rerun on the pod)")
+        return False
+    tok = Tokenizer.from_file(vocab)
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")][:6]
     bad = 0
     for d in rows:
@@ -214,15 +235,25 @@ def _decode_known_answer():
             print(f"  DECODE FAIL: {d['instruction'][:36]} -> {code[:60]!r}")
     print(f"decode known-answer: {len(rows) - bad}/{len(rows)} recovered")
     assert bad == 0, "freeze_hard's decode does not round-trip a reference solution"
+    return True
 
 
 def _selftest():
-    _decode_known_answer()
+    decoded = _decode_known_answer()
     if os.geteuid() != 0:
         # build_pairs executes mutants, and datagen/sandbox_exec.py:169 refuses without root.
         # Skipping here is what lets the decode case above run in the pre-commit hook on a
         # laptop: gating a decode check behind a sandbox is how the defect it guards survived.
         print("mutant build/invariants: SKIPPED (sandbox_exec needs root; pod only)")
+        # Say out loud when NOTHING ran. The comment above reasons that skipping the sandbox
+        # half is what lets the decode case run on a laptop, but the decode case needs the
+        # pod-only vocabulary, so on a laptop both halves skip and the old code still exited
+        # 0 -- a green selftest that executed no assertion. The exit code now distinguishes
+        # "one half ran" from "neither did".
+        if not decoded:
+            print("code_l0prime selftest RAN NOTHING on this host: the decode case needs "
+                  "data/tokenizer.json and the mutant case needs root. Rerun on the pod:\n"
+                  '    ~/bin/pod "cd /work/aupai && python3 eval/code_l0prime.py --selftest"')
         return
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")]
     pairs, stats = build_pairs(rows)

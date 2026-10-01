@@ -70,6 +70,13 @@ import random
 import re
 import sys
 
+#: RLIMIT_NPROC counts uid 65534's tasks MACHINE-WIDE, so the sandbox default of 64 is
+#: not enough to exec CPython on this pod: measured 2026-10-01, run_sandboxed("print(1)")
+#: returns rc 126 (`setpriv: failed to execute`) at 64 and rc 0 at 4096. A scorer that
+#: took the default read EVERY problem as failed. Same value as datagen/vet_textbooks.py
+#: and scripts/sft_verify_code.py, the two callers that already passed it.
+SANDBOX_NPROC = 4096
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -130,7 +137,7 @@ def runs_to(code, expected, timeout=10):
     if not (code or "").strip():
         return False
     try:
-        rc, out, _ = run_sandboxed(code, timeout=timeout)
+        rc, out, _ = run_sandboxed(code, timeout=timeout, nproc=SANDBOX_NPROC)
     except RuntimeError:
         raise
     except Exception:
@@ -293,7 +300,12 @@ def selftest():
 
     _real = sys.modules.get("datagen.sandbox_exec")
     stub = type(sys)("datagen.sandbox_exec")
-    stub.run_sandboxed = lambda code, timeout=10: (
+    # **kw, so the stub keeps accepting what the real run_sandboxed accepts. Without it,
+    # adding nproc= at the call site made the stub raise TypeError, runs_to's broad
+    # `except Exception: return False` turned that into "the code failed", and the probe
+    # reported "sandbox known-answer FAILED" -- a fixture signature mismatch wearing the
+    # costume of a broken executor. A stand-in has to take the subject's arguments.
+    stub.run_sandboxed = lambda code, timeout=10, **kw: (
         (0, "1\n", "") if code == "print(1)" else          # score_file's own probe
         (0, "7\n", "") if "print(7)" in code else
         (0, "999\n", "") if "print(999)" in code else (0, "", ""))
