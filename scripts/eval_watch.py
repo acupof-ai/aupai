@@ -55,26 +55,36 @@ def excluded():
     return set(ids)
 
 
-def score_preds(path, drop):
-    """pass@1 over all tasks and over the decontaminated subset, each with its n."""
-    rows = []
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line or "_header" in line:
-                continue
-            r = json.loads(line)
-            if "task_id" in r:
-                rows.append(r)
-            # a sharded/sampled preds file repeats a task_id; one row per task is assumed and
-            # asserted below rather than silently averaged
+def score_preds(path, drop, rows=None, expect=None):
+    """pass@1 over all tasks and over the decontaminated subset, each with its n.
+
+    `rows` takes an already-merged {task_id: row} mapping instead of a file. `expect` is the
+    task count the data file holds: when given, a short set REFUSES rather than reporting a
+    percentage over whatever survived.
+    """
+    if rows is None:
+        rows = {}
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or "_header" in line:
+                    continue
+                r = json.loads(line)
+                if "task_id" not in r:
+                    continue
+                # a sampled preds file repeats a task_id; one row per task is asserted below
+                # rather than silently averaged
+                if r["task_id"] in rows:
+                    raise SystemExit(f"{path} has repeated task_ids ({r['task_id']}): this "
+                                     f"scorer assumes one row per task; use the n>1 path for "
+                                     f"pass@k")
+                rows[r["task_id"]] = r
+    if expect is not None and len(rows) != expect:
+        raise SystemExit(f"got {len(rows)} tasks, expected {expect}: a hole in the set shrinks "
+                         f"the denominator, and 40/120 reads better than 40/156. Refusing.")
     seen = {}
-    for r in rows:
-        seen.setdefault(r["task_id"], []).append(bool(r.get("ok")))
-    dupes = {k: len(v) for k, v in seen.items() if len(v) > 1}
-    if dupes:
-        raise SystemExit(f"{path} has repeated task_ids ({list(dupes)[:3]}...): this scorer "
-                         f"assumes one row per task; use the n>1 path for pass@k")
+    for tid, r in rows.items():
+        seen.setdefault(tid, []).append(bool(r.get("ok")))
     all_ids = sorted(seen)
     keep = [t for t in all_ids if t not in drop]
     n_all = len(all_ids)
@@ -121,27 +131,147 @@ def checkpoints(name, every):
     return found
 
 
+def shard_paths(ckpt, workers):
+    """Where humaneval_gen writes each shard, mirroring its own `preds_path` + shard_label."""
+    base = os.path.join(ROOT, "data", "eval",
+                        f"preds_humaneval_{os.path.basename(ckpt.rstrip('/'))}.rstripnl")
+    if workers <= 1:
+        return [base + ".jsonl"]
+    return [f"{base}.shard{i}of{workers}.jsonl" for i in range(workers)]
+
+
+def run_sharded(name, step, ckpt, workers, threads, data, max_new, timeout):
+    """K cardless workers sharing a dynamic task queue, then one merged score.
+
+    Measured 2026-10-01 at 48 threads: 123.5 s/task, so 164 tasks in ONE process is ~5.6 h --
+    longer than the 2000-step save interval, which would leave the eval permanently behind the
+    run. The pod has 180 cores at load ~11 while all 8 GPUs are pinned, so the fix is width,
+    not a longer interval.
+
+    --queue_dir, not fixed positions: humaneval_gen's own help says per-task cost varies ~2x,
+    so fixed modulo positions idle the fast workers.
+    """
+    queue = os.path.join(ROOT, "runs", f"he_queue_{name}_step{step}")
+    outs = shard_paths(ckpt, workers)
+    env = {k: v for k, v in os.environ.items() if k != "ALLOW_UNISOLATED"}
+    env["CUDA_VISIBLE_DEVICES"] = ""
+    env["OMP_NUM_THREADS"] = str(threads)
+    procs, logs = [], []
+    for i in range(workers):
+        cmd = [sys.executable, os.path.join(ROOT, "eval", "humaneval_gen.py"),
+               "--ckpt", ckpt, "--device", "cpu", "--threads", str(threads),
+               "--rstrip_nl", "--max_new", str(max_new), "--force",
+               "--queue_dir", queue, "--shard_i", str(i), "--shard_n", str(workers)]
+        if data:
+            cmd += ["--data", data]
+        log = os.path.join(ROOT, "runs", f"he_{name}_step{step}_w{i}.log")
+        # The handle is kept and closed below: a worker writes to it for hours, so it cannot
+        # live in a with-block around the Popen.
+        fh = open(log, "w", encoding="utf-8")  # noqa: SIM115
+        logs.append(fh)
+        procs.append((i, subprocess.Popen(cmd, env=env, stdout=fh,
+                                          stderr=subprocess.STDOUT), log))
+    bad = []
+    try:
+        for i, p, log in procs:
+            if p.wait(timeout=timeout) != 0:
+                bad.append(f"worker {i} rc={p.returncode} (see {os.path.basename(log)})")
+    finally:
+        for fh in logs:
+            fh.close()
+    return outs, bad, queue
+
+
+def merge_shards(outs):
+    """One row per task_id across the shard files. A task NO shard produced is the failure
+    this exists to catch: a queue worker that died early leaves a hole, and scoring the
+    survivors would silently shrink the denominator -- a 40/120 reads better than 40/156."""
+    rows, where = {}, {}
+    missing_files = [p for p in outs if not os.path.exists(p)]
+    for p in outs:
+        if not os.path.exists(p):
+            continue
+        with open(p, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or "_header" in line:
+                    continue
+                r = json.loads(line)
+                if "task_id" not in r:
+                    continue
+                if r["task_id"] in rows:
+                    raise SystemExit(f"task {r['task_id']} produced by two shards "
+                                     f"({where[r['task_id']]} and {os.path.basename(p)}): the "
+                                     f"queue handed one task out twice")
+                rows[r["task_id"]] = r
+                where[r["task_id"]] = os.path.basename(p)
+    return rows, missing_files
+
+
+def run_cpu(name, step, ckpt, workers, threads, data, max_new, timeout, expect=164):
+    """The CPU path: K sharded workers, merged, scored over both denominators."""
+    t0 = time.time()
+    outs, bad, queue = run_sharded(name, step, ckpt, workers, threads, data, max_new, timeout)
+    secs = round(time.time() - t0, 1)
+    row = {"name": name, "step": step, "ckpt": os.path.basename(ckpt), "device": "cpu",
+           "workers": workers, "threads": threads, "secs": secs, "rstrip_nl": True,
+           "queue": os.path.basename(queue),
+           "ts": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())}
+    try:
+        rows, missing = merge_shards(outs)
+        if bad or missing:
+            # A dead worker leaves a hole. Report it as a FAILED eval, never as a score over
+            # what survived: the denominator is the whole point of this file.
+            row.update(status="fail", error=("; ".join(bad) +
+                       (f"; no preds from {[os.path.basename(p) for p in missing]}"
+                        if missing else ""))[:400], got_tasks=len(rows))
+            return row
+        row.update(status="ok", **score_preds(None, excluded(), rows=rows, expect=expect))
+    except SystemExit as e:
+        row.update(status="fail", error=str(e)[:400])
+    return row
+
+
 def run_one(name, step, ckpt, device, data=None, max_new=280, timeout=7200):
     """Score one checkpoint. Returns the ledger row, written by the caller."""
-    preds = os.path.join(ROOT, "runs", f"he_{name}_step{step}.jsonl")
+    # humaneval_gen DERIVES its output path from the checkpoint name and the flags that change
+    # the prompt; --preds is the opposite flag, a re-score of an existing file. Mirrored from
+    # eval/humaneval_gen.py's `preds_path`, so a change there must change here -- asserted
+    # against the real file after the run rather than trusted.
+    preds = os.path.join(ROOT, "data", "eval",
+                         f"preds_humaneval_{os.path.basename(ckpt.rstrip('/'))}.rstripnl.jsonl")
     cmd = [sys.executable, os.path.join(ROOT, "eval", "humaneval_gen.py"),
            "--ckpt", ckpt, "--device", device, "--rstrip_nl",
-           "--max_new", str(max_new), "--preds", preds, "--force"]
+           "--max_new", str(max_new), "--force"]
     if data:
         cmd += ["--data", data]
     t0 = time.time()
     # ALLOW_UNISOLATED must never reach the scorer: it runs candidate code, and the sandbox
     # is the only thing between that code and this box.
     env = {k: v for k, v in os.environ.items() if k != "ALLOW_UNISOLATED"}
+    if device == "cpu":
+        # humaneval_gen refuses --device cpu unless CUDA_VISIBLE_DEVICES is explicitly EMPTY,
+        # so a cardless run cannot silently grab a card. Set it rather than make the operator
+        # remember it; it is the same statement of intent --device cpu already makes.
+        env["CUDA_VISIBLE_DEVICES"] = ""
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, env=env)
     secs = round(time.time() - t0, 1)
     row = {"name": name, "step": step, "ckpt": os.path.basename(ckpt), "device": device,
            "preds": os.path.basename(preds), "secs": secs, "rstrip_nl": True,
            "ts": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
            "cmd": " ".join(cmd[1:])}
-    if p.returncode != 0 or not os.path.exists(preds):
+    if p.returncode != 0:
         row.update(status="fail", rc=p.returncode,
                    error=(p.stderr or p.stdout).strip()[-400:])
+        return row
+    if not os.path.exists(preds):
+        # The scorer ran and we cannot find its output: the derived path above has drifted
+        # from eval/humaneval_gen.py. Say THAT, with the path it actually printed, rather
+        # than reporting a failed eval -- the eval succeeded and this scorer lost it.
+        said = re.findall(r"preds saved: (\S+)", p.stdout or "")
+        row.update(status="fail", rc=0,
+                   error=f"ran ok but no preds at the derived path {preds}; humaneval_gen "
+                         f"printed {said or 'nothing'} -- mirror its preds_path again")
         return row
     try:
         row.update(status="ok", **score_preds(preds, excluded()))
@@ -195,6 +325,43 @@ def selftest():
             assert "repeated task_ids" in str(e), e
         # the real exclude list must be the 8 the ruling names
         assert excluded() == drop, excluded() ^ drop
+
+        # the sharded path: four files covering 164 tasks merge to one row per task
+        shards = []
+        for w in range(4):
+            sp = os.path.join(d, f"s{w}.jsonl")
+            with open(sp, "w", encoding="utf-8") as fh:
+                fh.write('{"_header": "ignored"}\n')
+                for i in range(w, 164, 4):
+                    fh.write(json.dumps({"task_id": f"HumanEval/{i}", "gen": "x",
+                                         "ok": i % 4 == 0}) + "\n")
+            shards.append(sp)
+        merged, miss = merge_shards(shards)
+        assert len(merged) == 164 and not miss, (len(merged), miss)
+        s4 = score_preds(None, drop, rows=merged, expect=164)
+        assert s4["n_all"] == 164 and s4["n_dc"] == 156, s4
+        # A DEAD worker leaves a hole. Scoring the survivors would quietly shrink the
+        # denominator -- 41 fewer tasks and a percentage that still looks like a measurement.
+        lost, miss2 = merge_shards(shards[:3])
+        assert len(lost) == 123, len(lost)
+        assert miss2 == [], miss2  # all three files exist; the hole is in the task set
+        try:
+            score_preds(None, drop, rows=lost, expect=164)
+            raise AssertionError("a short task set must refuse, not report a percentage")
+        except SystemExit as e:
+            assert "expected 164" in str(e), e
+        # a missing shard FILE is named, not ignored
+        _, miss3 = merge_shards(shards + [os.path.join(d, "never.jsonl")])
+        assert miss3 == [os.path.join(d, "never.jsonl")], miss3
+        # one task handed to two workers must refuse: that is a broken queue, not a tie
+        dupshard = os.path.join(d, "dup.jsonl")
+        with open(dupshard, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"task_id": "HumanEval/0", "gen": "z", "ok": True}) + "\n")
+        try:
+            merge_shards(shards + [dupshard])
+            raise AssertionError("two shards producing one task must refuse")
+        except SystemExit as e:
+            assert "two shards" in str(e), e
         # the ledger gates reruns: only status=ok counts as scored
         global LEDGER
         saved, LEDGER = LEDGER, os.path.join(d, "l.jsonl")
@@ -204,14 +371,23 @@ def selftest():
         assert done_steps("n") == {2000}, done_steps("n")
         LEDGER = saved
     print("eval_watch selftest OK: 156 vs 164 differ (25.64% vs 29.27%), exclude list is the "
-          "ruling's 8, repeated task_id refuses, only ok rows count as scored")
+          "ruling's 8, repeated task_id refuses, 4 shards merge to 164, a dead worker's hole "
+          "refuses instead of shrinking the denominator, only ok rows count as scored")
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--name", default="v42_gate_1001r")
     ap.add_argument("--every", type=int, default=2000, help="score steps that are a multiple")
-    ap.add_argument("--device", help="REQUIRED to run: this co-resides with training")
+    ap.add_argument("--device", help="REQUIRED to run: cpu, or a card (co-resides with training)")
+    ap.add_argument("--workers", type=int, default=4,
+                    help="cpu only: sharded workers over a dynamic queue. Measured 2026-10-01: "
+                         "123.5 s/task at 48 threads, so 164 tasks single-process is ~5.6 h, "
+                         "longer than the 2000-step save interval")
+    ap.add_argument("--threads", type=int, default=40,
+                    help="cpu only: threads per worker. 4x40=160 of the pod's 180 cores, "
+                         "leaving the ~11 the training dataloader uses")
+    ap.add_argument("--timeout", type=int, default=7200)
     ap.add_argument("--data", default=None)
     ap.add_argument("--max_new", type=int, default=280)
     ap.add_argument("--once", action="store_true", help="one pass, then exit")
@@ -238,7 +414,12 @@ def main():
         for step in todo:
             print(f"[{time.strftime('%H:%M:%S', time.gmtime())}Z] scoring step "
                   f"{step}", flush=True)
-            row = run_one(a.name, step, have[step], a.device, a.data, a.max_new)
+            if a.device == "cpu":
+                row = run_cpu(a.name, step, have[step], a.workers, a.threads, a.data,
+                              a.max_new, a.timeout)
+            else:
+                row = run_one(a.name, step, have[step], a.device, a.data, a.max_new,
+                              a.timeout)
             append(row)
             if row["status"] == "ok":
                 print(f"  -> step {step}: pass@1 {row['pct_dc']}% ({row['pass_dc']}/"
