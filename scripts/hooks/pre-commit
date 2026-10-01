@@ -1018,6 +1018,14 @@ def main():
         # selftest fixes both on a fixture built from the real log's own line shapes, and
         # asserts --push REFUSES without a webhook rather than skipping. No pod, no network.
         "scripts/metrics_feed.py",
+        # The automatic HumanEval scorer (de). Registered because the number it produces IS
+        # the gate, and its way of being wrong is to answer the other question: pass@1 over
+        # 164 instead of the decontaminated 156. The selftest's known answer puts the two on
+        # OPPOSITE sides of the 30% bar (29.27% vs 25.64%), so a scorer reading the wrong set
+        # cannot pass by rounding; it also asserts a missing exclude list refuses and a
+        # repeated task_id refuses rather than averaging pass@k into pass@1. Pure strings, no
+        # GPU, no checkpoint. ~0.1s.
+        "scripts/eval_watch.py",
         # The frozen scorer-agnostic score ledger (de). Registered because three scorers
         # (KenLM/fineweb-edu/l3-rubric) append through this one schema and a silently
         # accepted malformed row -- score and rubric_dims both null, a non-UTC ts, a rubric

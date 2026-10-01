@@ -136,6 +136,7 @@
     "scripts/eval_heldout.py": 2.2,
     "scripts/eval_heldout_ours.py": 0.0,
     "scripts/eval_load_cost.py": 1.7,
+    "scripts/eval_watch.py": 0.2,
     "scripts/file_claim.py": 0.4,
     "scripts/filter_gate_domains.py": 2.3,
     "scripts/gen_ckpt_listing.py": 1.3,
