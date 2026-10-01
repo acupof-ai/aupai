@@ -89,3 +89,8 @@ runs/prereg.jsonl merge=prereg-union
 # been rebuilt through four versions. Two rows for one ckpt under two item hashes are two
 # measurements, not a replacement.
 runs/novel_ops_4way.jsonl merge=union
+
+# Automatic HumanEval watch ledger (pod scripts/eval_watch.py, one CPU score row per
+# checkpoint step, append_ledger -> O_APPEND). Union: concurrent branches both append; row
+# identity is (name, step, ts) since a watcher relaunch re-scores step numbers.
+runs/eval_watch.jsonl merge=union

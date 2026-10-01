@@ -209,6 +209,11 @@ KEYS = {
     # against the floor and MDE registered for its items, and this set has been through four
     # versions, so one ckpt under two hashes is two measurements rather than a replacement.
     "runs/novel_ops_4way.jsonl": lambda r: (r.get("ckpt"), r.get("items_sha256")),
+    # (name, step, ts) -- same shape and same reason as the diag ledgers: scripts/eval_watch.py
+    # on the pod appends one HumanEval CPU-scoring row per checkpoint step; a relaunch of the
+    # watcher under the same --name re-scores step numbers, so ts separates two runs. Registered
+    # 2026-10-01 (zh) when the v42_gate_1001r watch rows were first brought home.
+    "runs/eval_watch.jsonl":      lambda r: (r.get("name"), r.get("step"), r.get("ts")),
 }
 
 # HOW EACH LEDGER IS WRITTEN decides which predicate is honest for it (1e/44/de, verified at the
@@ -231,6 +236,9 @@ WRITE_STYLE = {
     # eval/novel_ops_4way.py:745 open(..., "a"), one row per checkpoint written INSIDE the loop so
     # an interrupt three arms in leaves those three on disk. Nothing is ever replaced.
     "runs/novel_ops_4way.jsonl": "append",
+    # scripts/eval_watch.py (pod):319 open(..., "a"), one row per scored checkpoint step;
+    # a failed step is re-scored on a later poll, which the distinct ts preserves.
+    "runs/eval_watch.jsonl":      "append",
     "runs/tasks.jsonl":        "rewrite",  # harness.py:5805 _write_tasks, open(..., "w")
     "runs/score_matrix.jsonl": "rewrite",  # score_matrix.py:573 write_records, read-modify-write
     # A ruling is REPLACED when re-issued (a fingerprint mismatch sends the key back for a
@@ -273,6 +281,8 @@ PREDICATE = {
     # DETERMINISTIC re-measurement, verified on control_arm across two processes, so a difference
     # is either a scorer change or a corrupted row and neither should pass silently.
     "runs/novel_ops_4way.jsonl": subsume,
+    # eval_watch.py append_ledger; each (name,step,ts) its own row, a vanished score row is a loss.
+    "runs/eval_watch.jsonl":      subsume,
     "runs/tasks.jsonl":         key_present,  # harness.py:5805 _write_tasks, open(..., "w")
     # score_matrix.py:573 write_records is read-modify-write and replaces same-(ckpt, profile) BY
     # DESIGN -- ":574 the matrix is the current state, not a history". So a changed value is the
