@@ -285,7 +285,25 @@ def awb_push(series, meta, name, target, awb_dir, state_path, dry=False):
     sent[key] = fresh[-1][0]
     with open(state_path, "w", encoding="utf-8") as fh:
         json.dump(sent, fh)
-    return f"{name}: {len(fresh)} point(s) to step {fresh[-1][0]}"
+    note = f"{name}: {len(fresh)} point(s) to step {fresh[-1][0]}"
+
+    # Mirror the board to its Feishu topic. awb-lark EDITS one card in place, so this cannot
+    # spam a group the way a webhook message per poll would -- which is why no webhook is in
+    # this path at all. It only runs for a board that is already linked (lark.json), never
+    # creating a topic on its own.
+    #
+    # The daemon cannot be relied on: the running `awb-lark watch` has cwd ~/.aupai-team, so
+    # with no AWB_DIR it reads ./.awb -- the board abandoned on 2026-09-25, not ./awb which
+    # is the live one. Pointing the sync explicitly is the fix that does not touch someone
+    # else's process.
+    if os.path.exists(os.path.join(awb_dir, "lark.json")):
+        lark = os.path.join(os.path.dirname(AWB), "awb-lark")
+        r = subprocess.run([lark, "sync"], env=env, capture_output=True, text=True, timeout=120)
+        note += "; feishu card updated" if r.returncode == 0 else \
+            f"; FEISHU SYNC FAILED rc={r.returncode}: {(r.stderr or r.stdout).strip()[:200]}"
+    else:
+        note += f"; no feishu topic linked for {awb_dir} (awb-lark setup CHAT_ID)"
+    return note
 
 
 def push(rows, meta, page_url, title, dry=False):
