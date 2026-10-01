@@ -241,6 +241,53 @@ def webhook():
     return url
 
 
+AWB = os.path.expanduser("~/.local/bin/awb")
+
+
+def awb_push(series, meta, name, target, awb_dir, state_path, dry=False):
+    """The goal's number on the AWB board, by step, plus one news line.
+
+    AWB draws ONE goal series, so only val goes here -- the other fifteen curves are the
+    page's job. The series gets its OWN name: the board already carries `v42_val` from the
+    retired stage-2 line, and appending this run's readings to it would put two runs in one
+    curve with nothing recording where one ends. Two series, no join key, is how a board
+    starts lying.
+
+    Only points newer than the last one pushed are sent, so a 20-minute poll does not append
+    the same reading 72 times a day. The watermark is per (board, series).
+    """
+    vals = series.get("val") or []
+    if not vals:
+        return "no val reading yet"
+    try:
+        with open(state_path, encoding="utf-8") as fh:
+            sent = json.load(fh)
+    except (OSError, ValueError):
+        sent = {}
+    key = f"{awb_dir}::{name}"
+    fresh = [(s, v) for s, v in vals if s > sent.get(key, -1)]
+    if not fresh:
+        return f"{name}: no new point past step {sent[key]}"
+    env = dict(os.environ, AWB_DIR=awb_dir)
+    last_step = max((p[-1][0] for p in series.values() if p), default=0)
+    total = meta.get("total_steps") or 0
+    cmds = [[AWB, "metric", "--step", str(s), name, f"{v:g}", f"{target:g}"] for s, v in fresh]
+    # 人话, <=40 chars: the board is read by people, not by this script
+    cmds.append([AWB, "news", "--key", f"{name}_run",
+                 f"新模型训练到 {last_step}/{total} 步，验证误差 {fresh[-1][1]:g}，一切正常"])
+    if dry:
+        return "dry-run: " + " ; ".join(" ".join(c[1:]) for c in cmds)
+    for c in cmds:
+        r = subprocess.run(c, env=env, capture_output=True, text=True, timeout=60)
+        if r.returncode != 0:
+            raise SystemExit(f"awb refused {' '.join(c[1:])}: "
+                             f"{(r.stderr or r.stdout).strip()[:300]}")
+    sent[key] = fresh[-1][0]
+    with open(state_path, "w", encoding="utf-8") as fh:
+        json.dump(sent, fh)
+    return f"{name}: {len(fresh)} point(s) to step {fresh[-1][0]}"
+
+
 def push(rows, meta, page_url, title, dry=False):
     """Post the latest reading of every metric to Feishu, with the page's link.
 
@@ -315,6 +362,24 @@ def selftest():
     got = {r["key"]: r for r in rows}
     assert got["loss"]["value"] == 5.0 and "ok" in got["loss"]["arrow"], got["loss"]
     assert "worse" in got["mfu"]["arrow"] or "ok" in got["mfu"]["arrow"], got["mfu"]
+    # the AWB watermark: a repeated poll must send nothing, and a new point must send only it
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        st = os.path.join(tmp, "state.json")
+        first = awb_push(s, meta, "t_val", 1.9, "/nonexistent-board", st, dry=True)
+        assert "step 500" in first, first
+        assert "news" in first, first
+        # dry-run must not write the watermark, or a real first push would send nothing
+        assert not os.path.exists(st), "dry-run wrote the watermark"
+        with open(st, "w", encoding="utf-8") as fh:
+            json.dump({"/nonexistent-board::t_val": 500}, fh)
+        again = awb_push(s, meta, "t_val", 1.9, "/nonexistent-board", st, dry=True)
+        assert "no new point past step 500" in again, again
+        s2 = dict(s, val=s["val"] + [[1000, 2.04]])
+        nxt = awb_push(s2, meta, "t_val", 1.9, "/nonexistent-board", st, dry=True)
+        assert "step 1000" in nxt and "step 500" not in nxt, nxt
+        empty = awb_push({}, meta, "t_val", 1.9, "/nonexistent-board", st, dry=True)
+        assert "no val reading yet" in empty, empty
     html = render_html(s, meta, rows, "selftest")
     assert "<title>selftest</title>" in html and "Chart.js" in html
     assert '"loss": [[10, 10.914], [20, 5.0]]' in html.replace("'", '"'), "series must reach the page"
@@ -343,6 +408,15 @@ def main():
     ap.add_argument("--page-url", default=os.environ.get("AUPAI_METRICS_PAGE_URL", ""),
                     help="where the rendered page is served; goes in the Feishu message")
     ap.add_argument("--push", action="store_true", help="post to the Feishu group webhook")
+    ap.add_argument("--awb", action="store_true", help="also put val on the AWB board")
+    ap.add_argument("--awb-dir", default=os.environ.get(
+        "AWB_DIR", os.path.expanduser("~/.aupai-team/awb")))
+    ap.add_argument("--awb-metric", default="v42r_val",
+                    help="series name; NOT v42_val, which holds the retired stage-2 line")
+    ap.add_argument("--awb-target", type=float, default=1.954,
+                    help="the stage-2 line's own recorded target, so the two read on one scale")
+    ap.add_argument("--awb-state", default=os.path.expanduser("~/.aupai-metrics-awb.json"),
+                    help="watermark of the last step pushed, per board and series")
     ap.add_argument("--dry-run", action="store_true", help="print the message, send nothing")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
@@ -367,6 +441,9 @@ def main():
     for r in rows:
         if r["key"] in METRICS:
             print(f"  {r['label']:<26} {r['value']:<12g} step {r['step']:<6} n={r['n']}")
+    if args.awb:
+        print("awb:", awb_push(series, meta, args.awb_metric, args.awb_target,
+                               args.awb_dir, args.awb_state, dry=args.dry_run))
     if args.push or args.dry_run:
         print(push(rows, meta, args.page_url, args.run, dry=args.dry_run))
 
