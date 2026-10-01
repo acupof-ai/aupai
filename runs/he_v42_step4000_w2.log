@@ -1,0 +1,10 @@
+CONTROL skipped on shard 2/4 (full-set canonical gate runs on shard 0 only)
+HumanEval: 164/164 problems (rstrip-nl arm) shard 2/4
+W1001 09:32:09.869000 750016 torch/utils/cpp_extension.py:140] No CUDA runtime is found, using CUDA_HOME='/usr/local/cuda'
+  20/0  pass@1 = 3/20 = 15.00%   (3282s)
+  33 tasks claimed from the queue
+
+HUMANEVAL pass@1 (greedy) = 3/33 = 9.09%
+empty-completion split: eos_first 0/33, stop_at_0 0/33 (total empty 0/33 = 0.0%)
+repetitive non-empty (last 200 chars, >=3 consecutive equal lines or tokens): 1/33 = 3.0% of non-empty
+preds saved: /work/aupai/data/eval/preds_humaneval_ckpt_v42_gate_1001r.pt.step4000.rstripnl.shard2of4.jsonl
