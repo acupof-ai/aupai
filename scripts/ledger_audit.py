@@ -545,23 +545,25 @@ def _selftest():
     # 1. KNOWN POSITIVE: a59ac1f dropped the newest ab_zeroinit amendment, whose key is SHARED
     #    with the rows it amends -- invisible to merges-only, to default simplification, and to
     #    key presence.
-    known = _git("rev-parse", "a59ac1f").strip()
+    # Fixtures refreshed after the 2026-10-02 history rewrite (commit messages only, trees
+    # unchanged): old positive a59ac1f -> d71bb447; old negative c3a5a23 -> af1ac565.
+    known = _git("rev-parse", "d71bb447").strip()
     if not known:
-        fails.append("a59ac1f absent; the known-positive case cannot run")
+        fails.append("d71bb447 absent; the known-positive case cannot run")
     else:
         revs, hits = audit(P)
         flagged = {c for c, *_ in hits}
         if known not in revs:
-            fails.append("a59ac1f not in the walked set: SCOPE is wrong (v2's error)")
+            fails.append("d71bb447 not in the walked set: SCOPE is wrong (v2's error)")
         elif known not in flagged:
-            fails.append("a59ac1f walked but NOT flagged: the PREDICATE is wrong (v4's error -- "
+            fails.append("d71bb447 walked but NOT flagged: the PREDICATE is wrong (v4's error -- "
                          "its key is shared with the rows it amends)")
 
         # 2. KNOWN NEGATIVE: c3a5a23 only appends a done event. 6018c62ad is NOT usable here --
         #    it is a declared rewrite, and 1e/44 ruled it a third class rather than a negative.
-        clean = _git("rev-parse", "c3a5a23").strip()
+        clean = _git("rev-parse", "af1ac565").strip()
         if clean and clean in flagged:
-            fails.append("c3a5a23 flagged: appending a done event is not a rollback")
+            fails.append("af1ac565 flagged: appending a done event is not a rollback")
 
     # 3. The predicate on hand-built worlds, so it is not only tested through history.
     def R(**kw):
