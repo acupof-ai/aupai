@@ -9,6 +9,10 @@ set -e
 RESUME="${1:?usage: v42_w16_node1.sh <interrupt-ckpt-basename>}"
 [ -f "/data00/aupai_work/aupai/$RESUME" ] || { echo "resume checkpoint not on h20b: $RESUME"; exit 1; }
 docker rm -f aupai_node1 2>/dev/null || true
+# de-60 escape (ALLOW_DIRECT_RUN=1 below): harness launch cannot run here -- h20b is a
+# borrowed box outside the controller grant file, and the exp row, card claim and
+# watchdog all live with node0 on the pod; a second launch wrapper would double-claim
+# the one run.
 docker run -d --name aupai_node1 \
   --gpus all --network host --ipc host --shm-size 32g \
   --device /dev/infiniband --ulimit memlock=-1 --ulimit stack=67108864 \

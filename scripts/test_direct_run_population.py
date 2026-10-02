@@ -45,6 +45,8 @@ ALLOWED = {
     "auto-resume would fight this script's run 2",
     "scripts/b0_se_launch_arm2.sh": "pins two cards from the caller and hands the torchrun pid to card_claim itself; the "
     "launcher would override those two with the whole block (§188)",
+    "runs/v42_w16_node1.sh": "runs ranks 8-15 on the borrowed h20b box outside the controller grant file; the exp row, "
+    "card claim and watchdog live with node0 on the pod, so a second harness launch would double-claim the one run",
 }
 
 bad = 0
