@@ -2410,3 +2410,6 @@
 {"name": "v42b", "step": 12100, "usage_frac": 1.0, "entropy_norm": 0.9952340195271252, "load_gini": 0.10424113273620605, "tokens": 637272064, "window_steps": 300, "ts": "2026-10-02 09:48:31", "n_routed": 64, "top_k": 8}
 {"name": "v42b", "step": 12200, "usage_frac": 1.0, "entropy_norm": 0.9912866737245221, "load_gini": 0.1373584270477295, "tokens": 635404288, "window_steps": 300, "ts": "2026-10-02 09:57:37", "n_routed": 64, "top_k": 8}
 {"name": "v42b", "step": 12300, "usage_frac": 1.0, "entropy_norm": 0.987367877041962, "load_gini": 0.15753066539764404, "tokens": 644055040, "window_steps": 300, "ts": "2026-10-02 10:06:50", "n_routed": 64, "top_k": 8}
+{"name": "v42b", "step": 12400, "usage_frac": 1.0, "entropy_norm": 0.9893363904637378, "load_gini": 0.15584778785705566, "tokens": 640188416, "window_steps": 300, "ts": "2026-10-02 10:16:00", "n_routed": 64, "top_k": 8}
+{"name": "v42b", "step": 12500, "usage_frac": 1.0, "entropy_norm": 0.9906723516956402, "load_gini": 0.14126908779144287, "tokens": 648691712, "window_steps": 300, "ts": "2026-10-02 10:25:14", "n_routed": 64, "top_k": 8}
+{"name": "v42b", "step": 12600, "usage_frac": 1.0, "entropy_norm": 0.9954099004514076, "load_gini": 0.09955787658691406, "tokens": 635961344, "window_steps": 300, "ts": "2026-10-02 10:34:19", "n_routed": 64, "top_k": 8}
