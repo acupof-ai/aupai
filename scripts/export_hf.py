@@ -150,6 +150,17 @@ def export(ckpt, out, tokenizer=None, card_numbers=None, verify=True):
             file=sys.stderr,
         )
 
+    # THE DTYPE POLICY IS READ OFF THE TENSORS, NOT ASSUMED. train.py holds v41f.lm.KEEP_FP32 in
+    # fp32 while the rest is bf16, and transformers loads everything into fp32 unless told
+    # otherwise -- which doubles the memory and moves the logits by bf16 rounding (measured
+    # 1.7e-2 on the tiny fixture). Recording the majority dtype plus the exceptions lets the
+    # wrapper restore exactly what was saved, for a mixed checkpoint and an all-fp32 one alike.
+    by_dtype = {}
+    for k, v in state.items():
+        by_dtype.setdefault(str(v.dtype).replace("torch.", ""), []).append(k[len("model.") :])
+    default_dtype = max(by_dtype, key=lambda d: len(by_dtype[d]))
+    exceptions = {k: d for d, ks in by_dtype.items() if d != default_dtype for k in ks}
+
     shards, weight_map = plan_shards(state)
     total = sum(_dtype_size(t) for t in state.values())
     for name, keys in shards:
@@ -179,7 +190,9 @@ def export(ckpt, out, tokenizer=None, card_numbers=None, verify=True):
         "max_position_embeddings": v42.get("max_seq_len", 4096),
         "tie_word_embeddings": False,
         "use_cache": False,
-        "torch_dtype": "bfloat16",
+        "torch_dtype": default_dtype,
+        "param_dtype_default": default_dtype,
+        "param_dtype_exceptions": exceptions,
     }
     _write_json(os.path.join(out, "config.json"), cfg_json)
     _write_json(
@@ -256,10 +269,17 @@ lives in `v41f/`, and `trust_remote_code` fetches only the .py modules it can re
 def verify_export(ckpt, out):
     """Logits from the exported directory must equal logits from V42LM built on the checkpoint.
 
-    Both sides run on CPU in float32 over the same fixed token ids. The assertion is exact
-    equality of the argmax and a tight allclose on the values: the wrapper adds no arithmetic,
-    so a difference means a key was renamed, a dtype was cast, or a config field was dropped --
-    each of which a looser tolerance would hide.
+    Both sides run on CPU over the same fixed token ids, and both are given the checkpoint's OWN
+    dtypes: `load_state_dict(..., assign=True)` replaces the freshly built fp32 parameters with
+    the saved tensors rather than copying into them, so the source carries the same bf16/fp32
+    split the export does. Without assign=True the source would be all-fp32 while the export is
+    mixed, and the comparison would measure bf16 rounding instead of the wrapper. The source is
+    then run through the wrapper's own autocast helper, for the same reason.
+
+    The assertion is exact equality of the argmax and a tight bound on the values: with the
+    weights and the dtype context identical, the wrapper adds no arithmetic, so any difference
+    is a renamed key, a cast dtype or a dropped config field -- each of which a looser tolerance
+    would hide.
     """
     import torch
     from transformers import AutoModelForCausalLM
@@ -272,9 +292,10 @@ def verify_export(ckpt, out):
     ids = torch.randint(0, v42["vocab_size"], (1, 16))
 
     src = V42LM(V41FConfig(**v42))
-    src.load_state_dict(ck["model"])
+    src.load_state_dict(ck["model"], assign=True)
     src.eval()
-    with torch.no_grad():
+    mixed = any(p.dtype == torch.bfloat16 for p in src.parameters())
+    with torch.no_grad(), torch.autocast(device_type="cpu", dtype=torch.bfloat16, enabled=mixed):
         want, _ = src(ids)
 
     got_model = AutoModelForCausalLM.from_pretrained(out, trust_remote_code=True)
@@ -439,7 +460,43 @@ def selftest():
                 f"the step and that no number was passed" + ("" if sub else f" -- index={has_index}")
             )
 
-    print(f"export_hf: {6 - bad}/6 pass")
+        # (5) THE SAME PATH ON A MIXED-DTYPE CHECKPOINT, which is what a real one is. Case (4)
+        #     saves a freshly built model, so every tensor is fp32 and the dtype split never
+        #     appears -- it passed on the day the real step16000 export wrote all ten files and
+        #     then died in its own verify with "expected m1 and m2 to have the same dtype". The
+        #     fixture lacked the precondition, so it could not refute anything. Here the saved
+        #     tensors carry the real split: v41f.lm._keep_fp32's set stays fp32, everything else
+        #     goes bf16, exactly as train.py writes it.
+        from v41f.lm import _keep_fp32
+
+        mixed_sd = {
+            k: (v.cpu() if _keep_fp32(k) else v.cpu().to(torch.bfloat16)) for k, v in m.state_dict().items()
+        }
+        n_fp32 = sum(1 for k in mixed_sd if _keep_fp32(k))
+        ckpt_m = os.path.join(d, "tiny_mixed.pt")
+        torch.save(
+            {
+                "model": mixed_sd,
+                "cfg": {"arch": "v42", "v42_cfg": dataclasses.asdict(c)},
+                "vocab_id": None,
+                "step": 8,
+            },
+            ckpt_m,
+        )
+        try:
+            export(ckpt_m, os.path.join(d, "hf_mixed"), tokenizer=os.devnull + "/absent", verify=True)
+            ok, why = True, ""
+        except (SystemExit, RuntimeError) as e:
+            ok, why = False, str(e)[:160]
+        ok = ok and 0 < n_fp32 < len(mixed_sd)
+        bad += 0 if ok else 1
+        print(
+            f"  {'ok  ' if ok else 'BUG '} a MIXED bf16/fp32 checkpoint ({n_fp32} of "
+            f"{len(mixed_sd)} tensors held fp32 by _keep_fp32) exports and reloads with "
+            f"identical logits" + ("" if ok else f" -- {why}")
+        )
+
+    print(f"export_hf: {7 - bad}/7 pass")
     return 1 if bad else 0
 
 
