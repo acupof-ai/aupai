@@ -86,17 +86,25 @@ def _read_ckpt(path):
 
 
 def _tokenizer_vocab_id(path):
-    """The same hash train.py stamps: over the id->token map, not the file bytes."""
-    import hashlib
+    """The fingerprint train.py stamps, by CALLING the repo's implementation rather than
+    restating it.
 
-    with open(path, encoding="utf-8") as f:
-        tok = json.load(f)
-    vocab = tok.get("model", {}).get("vocab", {})
-    pairs = sorted(((int(i), t) for t, i in vocab.items()))
-    h = hashlib.sha256()
-    for i, t in pairs:
-        h.update(f"{i}\t{t}\n".encode())
-    return h.hexdigest()[:16], len(pairs)
+    A hand-written version of this was wrong in two ways at once and refused a correct pair
+    (measured 2026-10-03 on the real gate tokenizer: it computed 9897b9f2 where the checkpoint
+    and AGENTS.md both say f1f860970d15d623). Both mistakes came from guessing the algorithm:
+    it hashed `f"{id}\\t{token}\\n"` where the real one hashes the token BYTES ALONE in id
+    order, and it read the raw JSON's `model.vocab` where the real one reads
+    `Tokenizer.get_vocab()`, which also carries the added tokens -- `<eos>` and `[NUM]` among
+    them. `scripts/loader.vocab_fingerprint` and `train.vocab_fingerprint` are line-for-line
+    the same function and agree on a fixture (selftest below); loader's is used here because
+    it has no torch dependency and imports in 0.1s against train.py's 21s.
+    """
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    from loader import vocab_fingerprint
+    from tokenizers import Tokenizer
+
+    tok = Tokenizer.from_file(path)
+    return vocab_fingerprint(tok), tok.get_vocab_size()
 
 
 def export(ckpt, out, tokenizer=None, card_numbers=None, verify=True):
@@ -321,23 +329,31 @@ def selftest():
         f"model.safetensors" + ("" if ok else f" -- got {shards1[0][0]}")
     )
 
-    # (2) VOCAB_ID IS OVER THE MAP, NOT THE BYTES. Two files with the same id->token map but
-    # different formatting must hash the same; swapping two ids must not.
+    # (2) THE FINGERPRINT IS THE REPO'S, NOT A RESTATEMENT. The known answer is arithmetic a
+    #     reader can check by hand: three tokens a,b,c at ids 0,1,2 hash the bytes "abc" in id
+    #     order, so the value is sha256("abc")[:16] = ba7816bf8f01cfea -- which is also what
+    #     train.vocab_fingerprint returns on the same object (verified 2026-10-03, both 16 chars
+    #     identical). A version that hashed ids alongside tokens, or read the raw JSON vocab
+    #     instead of get_vocab(), lands elsewhere and is what refused a correct pair on the pod.
+    #     The second file swaps two ids: the token ORDER changes, so the value must change.
+    import hashlib
+
+    from tokenizers import Tokenizer, models
+
     with tempfile.TemporaryDirectory() as d:
         a = os.path.join(d, "a.json")
-        b = os.path.join(d, "b.json")
         c = os.path.join(d, "c.json")
-        _write_json(a, {"model": {"vocab": {"x": 0, "y": 1}}})
-        _write_json(b, {"model": {"vocab": {"y": 1, "x": 0}}, "extra": [1, 2, 3]})
-        _write_json(c, {"model": {"vocab": {"x": 1, "y": 0}}})
-        ida, _ = _tokenizer_vocab_id(a)
-        idb, _ = _tokenizer_vocab_id(b)
+        Tokenizer(models.WordLevel(vocab={"a": 0, "b": 1, "c": 2}, unk_token="a")).save(a)
+        Tokenizer(models.WordLevel(vocab={"a": 2, "b": 1, "c": 0}, unk_token="a")).save(c)
+        ida, n_a = _tokenizer_vocab_id(a)
         idc, _ = _tokenizer_vocab_id(c)
-    ok = ida == idb and ida != idc
+    want = hashlib.sha256(b"abc").hexdigest()[:16]
+    ok = ida == want and n_a == 3 and idc != ida
     bad += 0 if ok else 1
     print(
-        f"  {'ok  ' if ok else 'BUG '} vocab_id ignores key order and whitespace, and CHANGES "
-        f"when two ids swap" + ("" if ok else f" -- {ida} {idb} {idc}")
+        f"  {'ok  ' if ok else 'BUG '} vocab_id is sha256 over the token bytes in id order "
+        f"({want}) and changes when two ids swap"
+        + ("" if ok else f" -- got {ida} (want {want}), n={n_a}, swapped={idc}")
     )
 
     # (3) THE REFUSALS EXIST. A non-v42 checkpoint must be refused by name rather than exported
