@@ -234,7 +234,7 @@ class Cfg:
     #
     # 0 IS THE OFF SENTINEL, same shape as mem_values: at moe_experts 0 no MoE module is
     # constructed, no router exists, no optimizer group appears, and Block.ffn is the untouched
-    # dense SwiGLU. scripts/test_moe_defaults_frozen.py pins that (taken pre-flag at e2356ef6).
+    # dense SwiGLU. scripts/test_moe_defaults_frozen.py pins that (taken pre-flag at ce99e8ed).
     moe_experts = 0  # routed experts per MoE layer (0 = off, the dense control)
     moe_top_k = 3    # routed experts a token reaches; (moe_top_k + moe_shared) * moe_expert_ffn
     moe_shared = 1   # must equal ffn_hidden exactly or MoEFFN refuses -- equal-ACTIVE parity,
@@ -2153,7 +2153,7 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
                              f"so the prefix length rows_done x world cannot be derived. "
                              f"WORLD_SIZE says {_env_world}, and taking that would put the "
                              f"striping world and the counting world back on two independent "
-                             f"sources -- the condition 88be635a removed")
+                             f"sources -- the condition ee67dcd3 removed")
                 ck["row_cursor_refused"] = f"step {step}: {_lack}. No cursor written."
             else:
                 # The count comes from the FULL plan, not this rank's stripe. The plan is
@@ -2225,7 +2225,7 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
                         f"x batch {_batch} x accum {_accum} x world {world} = {_want} rows have "
                         f"been consumed. A cursor that is not absolute makes the next resume "
                         f"re-read {_want - _sum} rows silently (the defect measured as "
-                        f"ds.second_resume_rereads_one_segment and fixed in 52aec31). No "
+                        f"ds.second_resume_rereads_one_segment and fixed in bc2cb9e). No "
                         f"domain reported a discarded cursor, so this is not the discard path."
                     )
         else:
@@ -3056,7 +3056,7 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     cursor_base = {}
     vpools, vval = {}, []  # --fone: per-position number values, shadowing pools/val exactly
     # THE BYTES THIS CALL IS ABOUT TO READ, before the first torch.load. de ruled the training
-    # path exempt from assert_not_co_resident (1fd88227) -- a launch is the job the lane exists
+    # path exempt from assert_not_co_resident (31936982) -- a launch is the job the lane exists
     # for -- so this is a number in the log, not a refusal. What it replaces is an offline
     # calculation: the 166.2 GB for the E1 mix was computed by hand and appeared in no log, so
     # the RSS that followed had to be found in /proc/<pid>/status after the fact.
@@ -3400,7 +3400,7 @@ def main():
         "lr_origin_step": "WSD stage-2: absolute step this segment joins at; re-warmup then cosine to zero (default None = single-stage schedule)",
         # "heads %% (N+1)": argparse formats every help string with `% params`, so a
         # literal percent must be doubled. It was not, and --help has raised
-        # ValueError: unsupported format character '(' since 2bc3fe6f -- on every box,
+        # ValueError: unsupported format character '(' since 14a46155 -- on every box,
         # for every flag, because format_help() renders the whole parser or none of it.
         "head_mixed": "head-level hybrid: both mixers in EVERY block on an N:1 KDA:MLA head split (0 = off, layer-level alternation; needs heads %% (N+1) == 0)",
         # --dim, not --d: run_ddp.sh's args pass through torchrun's own parser, where
@@ -4005,8 +4005,8 @@ def main():
     #
     # FOUND BY scripts/test_e2e.py, WHICH DOES NOT PASS --fp8 while run_ddp.sh does -- so the walk
     # ran a configuration the launch never runs and hit this. That is the walk working: it is the
-    # third distinct death of this arm after the module tests were green (expert dtype at 19cc2ddd,
-    # the Muon 3-D stack at 50c9dbbb, this).
+    # third distinct death of this arm after the module tests were green (expert dtype at 6cd0641a,
+    # the Muon 3-D stack at 53d9c920, this).
     #
     # HERE AND NOT IN MoEFFN.forward, and the failed attempt is recorded in model.py's own comment:
     # an unconditional raise there refuses the 10 CPU checks that legitimately run fp32 in eager,

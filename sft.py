@@ -79,7 +79,7 @@ def main():
     # because data/tokenizer.json is rebuilt in place and only the fingerprint separates two
     # vocabularies. AGENTS.md "Vocabulary identity" is the rule.
     #
-    # THIS FILE HAD NO SUCH CHECK UNTIL NOW, while sft_math.py has had one since 7aacbac
+    # THIS FILE HAD NO SUCH CHECK UNTIL NOW, while sft_math.py has had one since e323a7d
     # (2026-09-02) -- and that commit is why the gap survived: it recorded the cause as "the guard
     # was keyed on the wrong key" and fixed the one function, when the cause was "this repo has two
     # pack loaders and only one asks the question". ck["vocab_id"] was read four lines above and

@@ -59,7 +59,7 @@ N_DEMOS = 3  # the pinned default only; --demos sizes the pool (see split_rows)
 # quantity would then be "did the model answer in Chinese", reported as "did the model answer".
 #
 # THE ASCII PERIOD IS ALSO THE DECIMAL POINT, so it terminates only where it is not between
-# digits. The terminator class was `[。.\n]` from 8ab15148 (the commit that added the English
+# digits. The terminator class was `[。.\n]` from a4a82906 (the commit that added the English
 # marker) until 2026-09-08, and the non-greedy capture stopped at the first `.`: `答案是 3.5。`
 # yielded "3", which reward_fn scores 0.0 against a 3.5 gold while answer_marker still counts
 # the line as answer-present. Correctness under-counts, answer-present does not, so the two

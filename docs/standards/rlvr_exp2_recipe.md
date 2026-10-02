@@ -1,7 +1,7 @@
 ---
 question: What exactly is run for experiment 2 — RLVR sample efficiency against pretraining tokens — and what must be true before a card is spent on it?
 status: recorded
-source: algorithms/rlvr_trainer.py at 09041709; docs/lessons/efficiency_gap_views.md:369,376-381,441; runs/controller_board.md:45; facts/data_scaling.json#ds.b_unidentified_from_val_traces; facts/contamination.json#cont.novel_ops_frozen_sets
+source: algorithms/rlvr_trainer.py at 013da919; docs/lessons/efficiency_gap_views.md:369,376-381,441; runs/controller_board.md:45; facts/data_scaling.json#ds.b_unidentified_from_val_traces; facts/contamination.json#cont.novel_ops_frozen_sets
 prereg_row: runs/prereg.jsonl#conversion_rate_0905@amended_12
 ---
 
@@ -64,7 +64,7 @@ in §3.
 
 ## 2. What the code actually does, against what its docstring says
 
-Read at `09041709`. Three disagreements matter for the recipe:
+Read at `013da919`. Three disagreements matter for the recipe:
 
 **The GSPO ratio is identically 1.** `rlvr_trainer.py:110` sets `old_lp = seq_lp.detach()`
 in the same forward, so `ratio = exp(seq_lp - old_lp) == 1` and the clip at 1±0.2 can never

@@ -90,6 +90,6 @@ Batch B: git worktree prune — 67 prunable /private/tmp/44-*, /private/tmp/wt-*
 
 WIP preservation commits (message "wip: preserve before worktree removal (0e)"): aupai-44 (46 files), aupai-ae-dc, aupai-ae-mixdc, aupai-de-ced (shared-file claim acquired; --no-verify: arch test fails on this retired ced tree, CSA2Reuse enc kwarg), aupai-tilerl (--no-verify: pre-existing stale-row/prereg FAILs on abandoned branch), aupai-66docs, aupai-66hefact, aupai-sftv2. No file >5MB; hook never refused on size.
 
-de-idpin: detached worktree removed after pin; keep/de-idpin at 96fb423f (PR #268 merge tip, branch de-idpin-ref already exists); de-idpin-stale-index 3ba417b7 already held the staged index. All unique content reachable.
+de-idpin: detached worktree removed after pin; keep/de-idpin at b9848b9b (PR #268 merge tip, branch de-idpin-ref already exists); de-idpin-stale-index 3ba417b7 already held the staged index. All unique content reachable.
 
 Kept worktrees (10): aupai-0e aupai-3b aupai-66 aupai-98 aupai-ae aupai-de aupai-de-textbooks aupai-fb aupai-phi aupai-genA-work (+ integration tree aupai, detached) and aupai/.claude/worktrees/genB.

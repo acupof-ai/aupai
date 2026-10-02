@@ -9,7 +9,7 @@ is how Stage A's +0.0273 turned out to be measuring the mismatch and not the loo
 
 THE 250-STEP NUMBERS ARE A DIFFERENT RUN, NOT AN EARLIER SNAPSHOT. Those arms could not be
 extended: their checkpoints carry no optimizer state (sft_math.py's mid-run save held the
-snapshot and did not pass it, fixed at 148e6027), so resuming would have restarted Adam moments
+snapshot and did not pass it, fixed at a0743864), so resuming would have restarted Adam moments
 and the LR schedule. The two step counts are therefore two independent runs and the comparison
 below is labelled as such -- "still closing" is a statement about two runs, not about one curve.
 

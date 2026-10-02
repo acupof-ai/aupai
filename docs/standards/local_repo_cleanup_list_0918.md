@@ -11,7 +11,7 @@ The exact lists are committed alongside it for verification at
 The user answers yes/no per row before anything is deleted.
 
 Measured on the canonical checkout `/Users/bytedance/code/aupai` (local main kept current with
-origin/main; tip at audit `11bcde71`). Sizes are local working-tree `du`; the shared
+origin/main; tip at audit `bc4f3aea`). Sizes are local working-tree `du`; the shared
 `.git/` object store is not counted per worktree.
 
 ## TL;DR
@@ -92,7 +92,7 @@ list in `D_merged_branches_no_worktree.txt`. Recommend delete after yes.
 commit. These are safe to delete NOT because the commit sha is an ancestor of main in every
 case, but because the patch content is already on main: e.g. `aupai-gena-gpu41f`'s detached
 tip `97388c3a` is **not** an ancestor of `origin/main` and hangs off no ref (reflog-only), yet
-`git patch-id` is `e51d01b8…`, identical to `c34170b3` which IS on main — same change. So the
+`git patch-id` is `e51d01b8…`, identical to `09aa3863` which IS on main — same change. So the
 safety basis is "the work is on main by content (patch-id / merged PR), re-pushable", and each
 row should be confirmed by that content check (or the PR it reviewed) before delete. Full
 list with shas in `E_detached_persistent.txt`.
@@ -168,7 +168,7 @@ pass rather than hand-deleted.
 The worktree set changed during the audit (155→159 worktrees in minutes): between the first
 and second enumeration bucket A moved by a couple of rows, E by a few, and D gained newly
 merged branches (e.g. `0e-packer-fp-a1`, `3b-review-rows-0917`, `pr507`). The attached
-A–E lists are the evidence snapshot at `11bcde71`; the actual remove/delete step MUST
+A–E lists are the evidence snapshot at `bc4f3aea`; the actual remove/delete step MUST
 re-derive each set on the then-current `origin/main` with the same three predicates
 (`worktree list --porcelain`, `merge-base --is-ancestor <branch> origin/main`,
 `status --porcelain` empty) and re-check every `/tmp` tree for dirty files. Never pipe the

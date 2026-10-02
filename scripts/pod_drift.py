@@ -19,7 +19,7 @@ One gate reads it:
 There is no CI gate any more and it is not missing: --check-head asked "does the committed
 manifest describe HEAD", and with the manifest generated FROM HEAD the question has no
 subject. The loss is real but unrepresentable -- it used to catch a manifest that stopped
-describing HEAD for any reason, which is exactly the 81f091af defect where a clean merge left
+describing HEAD for any reason, which is exactly the f112c12c defect where a clean merge left
 main asserting d07a474f for a roadmap whose tree held 8dc68958.
 
 The pod gate also scans in reverse: a .py file under the repo root that no manifest
@@ -304,7 +304,7 @@ def sha_head(root, path, ref="HEAD"):
     always checked out on main, so `HEAD:` and `main:` named one tree. The tree is now
     DETACHED, and pod_push cds relative to its own copy -- so running the copy that lives
     in the integration tree made every one of these answer about a commit behind main.
-    Measured 2026-09-05: tree detached at 0425accb, main at 1595220e, and --all skipped a
+    Measured 2026-09-05: tree detached at 93948f38, main at 38a743ba, and --all skipped a
     rewritten file rather than refusing it, because a path the manifest never lists is
     never offered to push_one's per-file `main:` gate at all.
     """
@@ -378,7 +378,7 @@ def write_manifest(root=ROOT, ref="main"):
     against `main:<path>` and resolve_stamp_sha stamps main's sha -- so a manifest built from
     HEAD made the two halves of --all speak different refs. The manifest decides WHICH files
     are offered, so a file it omits is skipped silently rather than refused by the per-file
-    gate. Measured: HEAD 0425accb vs main 1595220e, one rewritten file skipped, stamp claimed
+    gate. Measured: HEAD 93948f38 vs main 38a743ba, one rewritten file skipped, stamp claimed
     main. See sha_head for why HEAD was correct before the tree was detached.
 
     A path in scope whose blob cannot be read is an ERROR, not a missing line (de-37).

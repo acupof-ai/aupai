@@ -151,7 +151,7 @@ def test_engram_on_whole_model_allclose():
     and the two sides reach the router through different op orders, so one bf16 ulp of the
     hidden state (3.9e-3 at |h|~1) can flip an expert on a host whose bf16 kernels round
     differently. That happened on the GitHub runner: 3.970e-3 on three runs, 1.975e-1 on one
-    (CI at 2898e4b4), identical 4.070e-3 locally at both shas. A route flip is a property of
+    (CI at e1e00c11), identical 4.070e-3 locally at both shas. A route flip is a property of
     the seed and the host, not of the wiring this test asserts; fp32 puts the router 1e3
     ulps from the tie. Healthy fp32 value 1.311e-6; atol 1e-4 is 75x that and 1e3x below a flip.
     """

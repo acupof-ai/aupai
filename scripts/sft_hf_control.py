@@ -418,7 +418,7 @@ def main():
                 # wrong task. All three checkpoints were discarded.
                 #
                 # WHY IT SURVIVED A FIX TO THE SAME BUG. eval_loss had this exact defect and
-                # was fixed in 0f9d587 -- one commit, one call site. The diagnosis recorded
+                # was fixed in 7cc7e9b -- one commit, one call site. The diagnosis recorded
                 # there was "the evaluator double-shifts", so the fix ended at the evaluator.
                 # The defect was really "in this file, pre-shifting a transformers model
                 # double-shifts", which is a property of the file, not of one function. A

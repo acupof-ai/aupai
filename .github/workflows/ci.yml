@@ -108,7 +108,7 @@ jobs:
       # 2026-09-02: run it before judging it).
       - run: bash scripts/test_eval_rescore.sh
       - run: python scripts/eqcheck.py
-      # --check, not the bare call: the bare call REGENERATES, and d2c95b1c correctly made that
+      # --check, not the bare call: the bare call REGENERATES, and 0a3d2558 correctly made that
       # refuse where any registry path is absent -- a runner holds 5 of 13, so it can only write a
       # fingerprint no other machine reproduces. Regenerating is a deliberate act on the pod.
       #

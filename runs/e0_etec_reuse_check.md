@@ -2,7 +2,7 @@
 
 Read-only audit, 2026-09-15 (66, fb order). E0 was mid-run; no GPU used, no file
 under active generation touched. Subject: `runs/e0_n10.sh` on main (post #359,
-pod stamp c67b7b84).
+pod stamp 2da0fb68).
 
 ## The three commands
 

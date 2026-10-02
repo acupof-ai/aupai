@@ -955,7 +955,7 @@ def check():
     """Assert the committed guard LOADS, without regenerating it. What CI actually wants.
 
     CI ran `python datagen/holdout.py`, which is the REGENERATE path, on a runner that holds 5 of
-    the 13 registry files. d2c95b1c gave that path a correct refusal -- a fingerprint computed from
+    the 13 registry files. 0a3d2558 gave that path a correct refusal -- a fingerprint computed from
     a partial set is reproducible on no other machine -- and CI went red on it, which is the
     refusal working and the caller asking the wrong question. Nothing in CI needs the file rebuilt:
     a runner cannot produce a valid one, and the committed file is what every consumer reads.

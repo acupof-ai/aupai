@@ -1,16 +1,16 @@
 # Non-CED construction surfaces — ANALYSIS, not a deletion broadcast
 
 Owner genB, 2026-09-23. Task from aupai-08/1e (relayed): after the CED 30B run
-`v41_ced_0923` started (prereg `c14ebf72`), enumerate every non-CED construction surface
+`v41_ced_0923` started (prereg `217cf4ee`), enumerate every non-CED construction surface
 so a 24h broadcast can be issued and the user approves per path. **Delete nothing.**
 
-Baseline: `origin/main` = `f11fbb65` (`git rev-parse origin/main`, read 2026-09-23).
+Baseline: `origin/main` = `9a0843c8` (`git rev-parse origin/main`, read 2026-09-23).
 
 ## 0. The task as stated cannot be executed, and the repo has a check that says why
 
 **The broadcast-list mechanism does not apply to this surface.** AGENTS.md §255, enforced by
 `harness.check_deletion_list_no_tracked` (its `def` in `scripts/harness.py`; listed in the
-check table under the name `deletion_list_no_tracked`, `auth=repo`, added in `316580a0`):
+check table under the name `deletion_list_no_tracked`, `auth=repo`, added in `07f7f380`):
 
 > a deletion list may not name tracked content; strike the target or the rm removes what a
 > fresh checkout ships, with every gate green

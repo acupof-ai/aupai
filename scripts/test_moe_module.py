@@ -430,7 +430,7 @@ def main():
         problems = []
         # FOUND BY PREFIX, NOT BY THE WHOLE LINE. The old form matched the exact literal
         # `... and not fp8:` and the guard has since grown a term -- `and not bf16_only` when
-        # --bf16 landed (da5ef8bf) -- so the exact match stopped finding a guard that was right
+        # --bf16 landed (b2bd0076) -- so the exact match stopped finding a guard that was right
         # there, and the test reported "no guard in train.main" for a widened one. That is the
         # worst shape of failure available here: it reads as the guard being GONE. Worse, it went
         # unnoticed, because this test is on model.py's trigger list and not train.py's, so the
@@ -448,7 +448,7 @@ def main():
             if i_guard > i_cast:
                 problems.append("the guard is AFTER the bf16 cast, so it cannot prevent the "
                                 "fp32 run")
-            # SLICE BY INDENTATION, not to the next `if fp8:` (e1's review of e64b549b). The old
+            # SLICE BY INDENTATION, not to the next `if fp8:` (e1's review of 1e9e68ef). The old
             # form sliced from the guard to the next occurrence of that literal, which is fine
             # while the guard PRECEDES the cast and swallows unrelated lines once it does not --
             # so a guard moved after the cast made the exec die on NameError instead of failing
@@ -463,7 +463,7 @@ def main():
                 _block.append(_l)
             body = textwrap.dedent("\n".join(_block))
             # THE WORLDS CARRY bf16_only AND args.bf16 because the guard reads both since
-            # da5ef8bf. Omitting them does not make the check lenient -- it makes it die on
+            # b2bd0076. Omitting them does not make the check lenient -- it makes it die on
             # NameError inside the `except Exception` below, which prints "could not exercise"
             # and counts as a BUG for a reason unrelated to the guard's logic. The two --bf16
             # worlds are the ones the flag exists for: --bf16 alone must PASS (it is the cast,

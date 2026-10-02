@@ -9,9 +9,9 @@ A warning and a source line. Neither is the cause, and I opened e1-41 calling th
 unrecoverable. THAT WAS WRONG, and this script is the correction: the cause is not in the
 record, but it is in the CODE THAT RAN, which git still has.
 
-THE CAUSE. All eight rows were scored under eval/domain_bpb.py at e84fd88b or earlier, which
+THE CAUSE. All eight rows were scored under eval/domain_bpb.py at 47103a14 or earlier, which
 carried MIN_ROUNDTRIP = 0.98 (:49) and skipped any domain whose decode round-trip fell below it
-(:289). Measured in def65db5's own commit message: the id round-trip was 0.9826 overall and
+(:289). Measured in 8ca8e10e's own commit message: the id round-trip was 0.9826 overall and
 below 0.98 for zh_web (0.9375), cot and chatml (0.9688) -- so the gate skipped ALL NINE domains,
 `out` came out empty, and the metric took the `if not out` branch at :316, printing
 "REFUSING: no domain produced a number" and returning 1.
@@ -19,8 +19,8 @@ below 0.98 for zh_web (0.9375), cot and chatml (0.9688) -- so the gate skipped A
 WHY THE RECORD LOST IT. That refusal goes to STDOUT. The capture in score_matrix.py at the
 time was `(r.stderr or r.stdout)`, which discards stdout entirely whenever stderr holds
 anything -- and scripts/loader.py warns on stderr for every old-format checkpoint. So the
-warning survived and the refusal did not. Both defects are since fixed (794299f6 keeps both
-streams, def65db5 replaced the round-trip fraction with exact text identity), and both fixes
+warning survived and the refusal did not. Both defects are since fixed (efde96cf keeps both
+streams, 8ca8e10e replaced the round-trip fraction with exact text identity), and both fixes
 landed AFTER every one of these rows.
 
 WHAT THIS SCRIPT DOES. It proves that attribution against the ledger and the git history
@@ -42,8 +42,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LEDGER = os.path.join(ROOT, "runs", "score_matrix.jsonl")
 
 # The two fixes, and what each one would have changed had it been in place.
-GATE_FIX = "def65db5"     # text identity replaces MIN_ROUNDTRIP: the domains stop being skipped
-CAPTURE_FIX = "794299f6"  # both streams kept: the refusal reaches the record
+GATE_FIX = "8ca8e10e"     # text identity replaces MIN_ROUNDTRIP: the domains stop being skipped
+CAPTURE_FIX = "efde96cf"  # both streams kept: the refusal reaches the record
 
 WARNING_TAIL = "UserWarning: checkpoint has no vocab_id"
 # THE OTHER TAIL, and the reason this is not a one-shape check. e1-41 says "eight rows"; the
@@ -105,7 +105,7 @@ def affected():
 def old_gate_present(sha):
     """Whether eval/domain_bpb.py at sha still carried the round-trip gate.
 
-    THE ASSIGNMENT, not the name. `"MIN_ROUNDTRIP" in src` was here and it passes on def65db5 --
+    THE ASSIGNMENT, not the name. `"MIN_ROUNDTRIP" in src` was here and it passes on 8ca8e10e --
     the commit that DELETED the gate -- because its replacement comment says "MIN_ROUNDTRIP = 0.98
     was here and it was wrong" and three more lines cite the defect by name (4 hits at HEAD). So
     the substring test attributed these rows to a version that could not have produced them, and
@@ -147,14 +147,14 @@ def main():
             bad.append(f"{ckpt}: the record DOES contain {captured} -- the cause was captured "
                        f"after all and this row is not causeless")
 
-    had_gate, src = old_gate_present("e84fd88b")
-    print(f"\neval/domain_bpb.py at e84fd88b (the version live when these ran): "
+    had_gate, src = old_gate_present("47103a14")
+    print(f"\neval/domain_bpb.py at 47103a14 (the version live when these ran): "
           f"MIN_ROUNDTRIP present = {had_gate}")
     if not had_gate:
-        bad.append("e84fd88b does not carry MIN_ROUNDTRIP, so the attribution is wrong")
+        bad.append("47103a14 does not carry MIN_ROUNDTRIP, so the attribution is wrong")
     else:
         m = re.search(r"MIN_ROUNDTRIP\s*=\s*([\d.]+)", src)
-        print(f"  MIN_ROUNDTRIP = {m.group(1) if m else '?'}, and def65db5's message measures the "
+        print(f"  MIN_ROUNDTRIP = {m.group(1) if m else '?'}, and 8ca8e10e's message measures the "
               f"id round-trip at 0.9826 overall,\n  0.9375 (zh_web) / 0.9688 (cot, chatml) -- "
               f"below the threshold, so all nine domains were skipped and\n  the metric took its "
               f"`if not out` branch: 'REFUSING: no domain produced a number', return 1.")

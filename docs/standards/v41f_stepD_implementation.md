@@ -88,7 +88,7 @@ No `SELFTEST_FILES` edit (glob; ae's PR makes the glob run in the gate).
 ## 4. G5 prerequisite: a separate `requires_grad` flip (step D-PRE, de owns)
 
 Step D derives the group from `requires_grad`; it is correct only if the indexer leaves'
-flag actually reflects the mode. Verified on #485 @920e2504: **#485 does NOT set the flag**
+flag actually reflects the mode. Verified on #485 @b0fa5297: **#485 does NOT set the flag**
 — both `off` and `ste` leave `wq_b`/`weights_proj` at `requires_grad=True` (grep over the
 five #485 files is empty); the modes differ only by grad presence. That is exactly the G5
 "in group but grad None" defect, so the fix is NEW code cut as its own small change, not

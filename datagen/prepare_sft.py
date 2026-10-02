@@ -465,7 +465,7 @@ def restamp_holdout_fp(path, tok=None):
     """Re-verify a pack against the CURRENT holdout set and, only then, update its holdout_fp.
 
     sft_math.py refuses a pack whose holdout_fp is stale, and every pack on the pod went stale
-    when 5b9ea4af added 1,821 lines to data/eval/holdout_hashes.txt (e252f0f6d82c0237 ->
+    when 15836799 added 1,821 lines to data/eval/holdout_hashes.txt (e252f0f6d82c0237 ->
     b382de09159701c0). The refusal is right and must not gain an escape hatch: a flag that let a
     stale pack through would let a genuinely contaminated one through on the same argument.
 

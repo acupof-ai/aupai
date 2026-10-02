@@ -18,7 +18,7 @@ Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows 
 
 | cause | n | min lost | resolution |
 |---|---|---|---|
-| manifest merge conflicts (pod_head_manifest regenerated per commit) | 4 | ~16 | fix 56fa71b5 + 89d86882 |
+| manifest merge conflicts (pod_head_manifest regenerated per commit) | 4 | ~16 | fix 63a8d02d + d6053c9e |
 | near_miss/process_failure minutes not reported | 3 | n/r | **fix this commit** — check_friction_minutes_required |
 | flash_attn mask_mod wrong gradients on SM 9.0 (forward correct) | 1 | ~95 | fix carried (1/1 rows) |
 | merge_main.sh pathspec+pipe-filter hid commit failure | 1 | ~40 | fix by habit, controller side (6e) |
@@ -47,11 +47,11 @@ Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows 
 | concurrent peer merges raced controller's merge on HEAD/index | 1 | ~2 | fixed by scripts/merge_main.sh (mkdir lock) |
 | merge tree loses a path only its second parent held | 1 | n/r | fix carried (1/1 rows) |
 | merge that drops a path records D; --no-merges discriminates authorship | 1 | ~0 | fix carried (1/1 rows) |
-| staged-dirty manifest after b0-ve-rownorms merge aborted the next | 1 | n/r | root-fixed by 56fa71b5 |
+| staged-dirty manifest after b0-ve-rownorms merge aborted the next | 1 | n/r | root-fixed by 63a8d02d |
 | e1's edits staged in integration tree blocked three-way merges | 1 | n/r | **unfixed** (0/1 rows) |
 | harness task done refuses --commit not on main; owner cannot merge | 1 | n/r | fix carried (1/1 rows) |
 | pod_push --all refused whole batch (run_ddp.sh executing past resume offset) | 1 | n/r | fix carried (1/1 rows) |
-| launch_tests.json last-write-wins erased L12 arch rows | 1 | n/r | fix carried (f2bd7bc0 re-key) |
+| launch_tests.json last-write-wins erased L12 arch rows | 1 | n/r | fix carried (b1ee8920 re-key) |
 | 3b-14 prior= citation fails tasks_paired_and_prior; merge refused | 1 | n/r | **unfixed** (0/1 rows) |
 | scan_eval_golds.py default use_char=True shredded code/math syntax | 1 | n/r | fix carried (1/1 rows) |
 | gate_failure_shapes.md N collision on concurrent appends | 1 | n/r | fix carried (1/1 rows) |
@@ -61,7 +61,7 @@ Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows 
 
 | cause | n | min lost | resolution |
 |---|---|---|---|
-| manifest merge conflicts (pod_head_manifest regenerated per commit) | 4 | ~16 | **fix 56fa71b5** — untracked + gitignored, pod_push regenerates from HEAD |
+| manifest merge conflicts (pod_head_manifest regenerated per commit) | 4 | ~16 | **fix 63a8d02d** — untracked + gitignored, pod_push regenerates from HEAD |
 | lane card serialization (every non-training job routed to one lane) | 1 | ~40 | **task de-44** (opened 2026-09-04) |
 | sft pack accepted with no holdout_fp on a WARNING | 1 | ~40 | fix carried (1/1 rows) |
 | tasks_closed_by_commit / facts_well_formed subprocess-per-row cost | 1 | ~40 | fix carried (1/1 rows) |
@@ -78,7 +78,7 @@ Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows 
 | friction add --commit used --no-verify, manufactured a manifest refix | 1 | ~3 | fix carried (1/1 rows) |
 | ff merge brings a branch manifest that no longer matches HEAD | 1 | ~2 | fix carried (1/1 rows) |
 | gate_failure_shapes.md N collision on concurrent appends | 1 | n/r | fix carried (1/1 rows) |
-| staged-dirty manifest after b0-ve-rownorms merge aborted the next | 1 | n/r | root-fixed by 56fa71b5 |
+| staged-dirty manifest after b0-ve-rownorms merge aborted the next | 1 | n/r | root-fixed by 63a8d02d |
 
 ## 2026-09-04 (second run; 34 rows, 31 causes; ran 04:31Z)
 
@@ -93,7 +93,7 @@ Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows 
 | score_matrix duplicate after cross-branch union merge | 1 | ~25 | fix carried (1/1 rows) |
 | sft_math.py refuses pack whose holdout_fp mismatches live hashes | 1 | ~25 | fix carried (1/1 rows) |
 | podput tracked-path guard refused pod_push.sh's own calls | 1 | ~20 | fix carried (1/1 rows) |
-| manifest merge conflicts (pod_head_manifest regenerated per commit) | 4 | ~16 | fix 56fa71b5 + 89d86882 |
+| manifest merge conflicts (pod_head_manifest regenerated per commit) | 4 | ~16 | fix 63a8d02d + d6053c9e |
 | podput guard blocks the sanctioned path (PODPUT_TRACKED_OK unset) | 1 | ~12 | fix carried (1/1 rows) |
 | ff merge runs no pre-commit hook; wip lands on main unchecked | 1 | ~10 | **unfixed** |
 | setsid zombie child claimed alive by card_claim (kill-0 says alive) | 1 | ~10 | fix carried (1/1 rows) |
@@ -106,11 +106,11 @@ Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows 
 | friction add --commit used --no-verify, manufactured a manifest refix | 1 | ~3 | fix carried (1/1 rows) |
 | ff merge brings a branch manifest that no longer matches HEAD | 1 | ~2 | fix carried (1/1 rows) |
 | podput of tracked scan_eval_golds.py before merge; drift gate refused launch | 1 | n/r | fix carried (1/1 rows) |
-| staged-dirty manifest after b0-ve-rownorms merge aborted the next | 1 | n/r | root-fixed by 56fa71b5 |
+| staged-dirty manifest after b0-ve-rownorms merge aborted the next | 1 | n/r | root-fixed by 63a8d02d |
 | e1's edits staged in integration tree blocked three-way merges | 1 | n/r | **unfixed** (0/1 rows) |
 | harness task done refuses --commit not on main; owner cannot merge | 1 | n/r | fix carried (1/1 rows) |
 | pod_push --all refused whole batch (run_ddp.sh executing past resume offset) | 1 | n/r | fix carried (1/1 rows) |
-| launch_tests.json last-write-wins erased L12 arch rows | 1 | n/r | fix carried (f2bd7bc0 re-key) |
+| launch_tests.json last-write-wins erased L12 arch rows | 1 | n/r | fix carried (b1ee8920 re-key) |
 | 3b-14 prior= citation fails tasks_paired_and_prior; merge refused | 1 | n/r | **unfixed** (0/1 rows) |
 | scan_eval_golds.py default use_char=True shredded code/math syntax | 1 | n/r | fix carried (1/1 rows) |
 | concurrent peer merges raced controller's merge on HEAD/index | 1 | n/r | fixed by scripts/merge_main.sh (mkdir lock) |
@@ -119,21 +119,21 @@ Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows 
 
 | cause | n | min lost | resolution |
 |---|---|---|---|
-| data/pod_head_manifest.txt is regenerated by the pre-commit hook on ever… | 4 | ~16 | fix 56fa71b5 + 89d86882 (verified untracked 2026-09-05) |
+| data/pod_head_manifest.txt is regenerated by the pre-commit hook on ever… | 4 | ~16 | fix 63a8d02d + d6053c9e (verified untracked 2026-09-05) |
 | near_miss,process_failure (minutes not reported) | 3 | n/r | fix check_friction_minutes_required (09-04); direct-launch → task de-60 |
 | CUDA_VISIBLE_DEVICES=4 was written into the exp rows cmd field and NOT i… | 1 | ~20 | fix carried (1/1 rows) |
 | EXPERIMENTS.md is rendered from runs/experiments.jsonl by exp.py render,… | 1 | ~3 | fix carried (1/1 rows) |
-| I podput datagen/scan_eval_golds.py (f056e238 content) to the pod repo p… | 1 | n/r | fix carried (1/1 rows) |
+| I podput datagen/scan_eval_golds.py (0f2fb7ef content) to the pod repo p… | 1 | n/r | fix carried (1/1 rows) |
 | I ran `git reset HEAD runs/redaction_handread_v14.tsv` on a file that ha… | 1 | ~25 | fix carried (1/1 rows) |
 | MY OWN SEQUENCE, not git merge. I appended the amendment to the worktree… | 1 | ~10 | fix carried (1/1 rows) |
 | UnboundLocalError in run_checks timeout strike handling: strikes[name]=n… | 1 | ~10 | fix carried (1/1 rows) |
-| a dirty runs/friction.jsonl or data/pod_head_manifest.txt aborts the mer… | 1 | ~5 | 56fa71b5 (manifest untracked) + friction add --commit for th |
+| a dirty runs/friction.jsonl or data/pod_head_manifest.txt aborts the mer… | 1 | ~5 | 63a8d02d (manifest untracked) + friction add --commit for th |
 | a fast-forward merge runs no pre-commit hook, so a wip commit that would… | 1 | ~10 | **unfixed** (0/1 rows) |
 | a hand-written tasks.jsonl row reused an id, and the id allocator takes … | 1 | ~6 | fix carried (1/1 rows) |
 | a merge commit's tree can lose a path that only its SECOND parent held, … | 1 | n/r | fix carried (1/1 rows) |
 | a merge that drops a path DOES record a D against the parent that held i… | 1 | ~0 | fix carried (1/1 rows) |
 | a setsid backgrounded child whose wrapper exits immediately leaves nobod… | 1 | ~10 | fix carried (1/1 rows) |
-| after a three-way merge of b0-ve-rownorms the manifest sat staged-dirty … | 1 | n/r | 56fa71b5: no regen in the hook at all |
+| after a three-way merge of b0-ve-rownorms the manifest sat staged-dirty … | 1 | n/r | 63a8d02d: no regen in the hook at all |
 | behind-main refusal livelocks against hook duration: the pre-commit hook… | 1 | n/r | **unfixed** (0/1 rows) |
 | broken world _broken_friction_minutes_required wrote 4 fixture rows to t… | 1 | ~10 | fix carried (1/1 rows) |
 | check_shared_file_claim FAILs during `git merge`, naming INCOMING files … | 1 | ~9 | fix carried (1/1 rows) |
@@ -142,7 +142,7 @@ Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows 
 | data/pod_head_manifest.txt conflicted on a merge I started before instal… | 1 | ~4 | fix carried (1/1 rows) |
 | deadlock between two hooks: the behind-main guard refuses a commit while… | 1 | ~12 | fix carried (1/1 rows) |
 | docs/lessons/gate_failure_shapes.md: new shapes are appended as '## N.' … | 1 | n/r | fix carried (1/1 rows) |
-| e1 committed ed93d879/7ecc860e directly on main while the controller's m… | 1 | ~2 | scripts/merge_main.sh (mkdir lock), AGENTS.md:374 and the ho |
+| e1 committed 67660fa6/a4736aaf directly on main while the controller's m… | 1 | ~2 | scripts/merge_main.sh (mkdir lock), AGENTS.md:374 and the ho |
 | e1's edits staged in the integration tree (A scripts/e1_n8_row_edge_prob… | 1 | n/r | **unfixed** (0/1 rows) |
 | every worktree runs MAIN's copy of scripts/hooks/pre-commit (.git/hooks/… | 1 | ~6 | fix carried (1/1 rows) |
 | fast-forward merge brings a branch manifest that no longer matches HEAD;… | 1 | ~2 | fix carried (1/1 rows) |
@@ -177,12 +177,12 @@ committer-pushes rule not firing: six committers' files on main had not reached 
 
 Top two unfixed causes are the same mechanism (AUPAI_BEHIND_MAIN_OK=1 overrides): task tilerl-? opened — pre-commit behind-main refusal should auto-merge main (the flip's worktree-first workflow) instead of requiring an override; overrides persist post-flip (42-behind at 22:53Z, 164/169-behind at 02:24Z).
 
-**Aggregated view (method fix a8633d9e):** the table below fragments the top cause into ~15 rows. By mechanism:
+**Aggregated view (method fix 3c46ccbe):** the table below fragments the top cause into ~15 rows. By mechanism:
 
 | mechanism | n | min lost | resolution |
 |---|---|---|---|
 | AUPAI_BEHIND_MAIN_OK=1 override (commit from behind main) | 85 | ~3 (1/85 reported) | **task tilerl** (this section) |
-| pod_head_manifest regenerated per commit, merge conflicts | 4 | ~16 | superseded; fix 56fa71b5 + 89d86882 |
+| pod_head_manifest regenerated per commit, merge conflicts | 4 | ~16 | superseded; fix 63a8d02d + d6053c9e |
 | near_miss/process_failure, cause "?" | 3 | n/r | **unfixed** (0/3 rows) |
 | bare train.py launch: no claim, no ledger row, 12 GB unintended ckpt | 1 | ~8 | fix carried (1/1 rows) |
 | bypassed CAS with bare update-ref on refs/heads/main | 1 | ~20 | rule: only merge_main.sh writes main |
@@ -193,7 +193,7 @@ The remaining 14 AUPAI_BEHIND_MAIN_OK rows in the table below are variants of th
 |---|---|---|---|
 | AUPAI_BEHIND_MAIN_OK=1 commit 16 behind (harness.py) | 4 | n/r | **task tilerl** (this section) |
 | AUPAI_BEHIND_MAIN_OK=1 commit 42 behind (test_cursor_sum, test_plan_length, train.py) | 4 | n/r | **task tilerl** (this section) |
-| pod_head_manifest regenerated per commit, merge conflicts | 4 | ~16 | superseded; fix 56fa71b5 + 89d86882 |
+| pod_head_manifest regenerated per commit, merge conflicts | 4 | ~16 | superseded; fix 63a8d02d + d6053c9e |
 | near_miss/process_failure, cause "?" | 3 | n/r | **unfixed** (0/3 rows) |
 | AUPAI_BEHIND_MAIN_OK=1 commit 26 behind (pre-commit, test_cursor_save/sum) | 3 | n/r | **unfixed** (0/3 rows) |
 | AUPAI_BEHIND_MAIN_OK=1 commit 3 behind (pre-commit, test_mix_anneal, train.py) | 3 | n/r | **unfixed** (0/3 rows) |
@@ -215,7 +215,7 @@ The remaining 14 AUPAI_BEHIND_MAIN_OK rows in the table below are variants of th
 
 Top two unfixed causes are unchanged from 09-06:
 
-1. **AUPAI_BEHIND_MAIN_OK=1 override (95 rows, up from 85).** tilerl-31 is open; the path-overlap predicate landed (06ed3b2a) and de's merge_main staged-tree carry is landing (72f01c32, 87b7a0d9, 0f9922c8). No new action — tracking tilerl-31.
+1. **AUPAI_BEHIND_MAIN_OK=1 override (95 rows, up from 85).** tilerl-31 is open; the path-overlap predicate landed (60238629) and de's merge_main staged-tree carry is landing (9baaa228, 3b279194, 22ab51e5). No new action — tracking tilerl-31.
 2. **near_miss/process_failure minutes not reported (3 rows).** Check fixed: `check_friction_minutes_required` now requires `minutes_lost` for kind tuple `("near_miss", "process_failure", "hook")` (baseline 6). The 3 existing rows predate the fix; new rows will FAIL without minutes.
 
 **Aggregated view:**
@@ -223,7 +223,7 @@ Top two unfixed causes are unchanged from 09-06:
 | mechanism | n | min lost | resolution |
 |---|---|---|---|
 | AUPAI_BEHIND_MAIN_OK=1 override (commit from behind main) | 95 | ~3 (1/95 reported) | tilerl-31 open; predicate + carry landing |
-| pod_head_manifest regenerated per commit, merge conflicts | 4 | ~16 | superseded; fix 56fa71b5 + 89d8882 |
+| pod_head_manifest regenerated per commit, merge conflicts | 4 | ~16 | superseded; fix 63a8d02d + 89d8882 |
 | near_miss/process_failure, cause "?" | 3 | n/r | check fixed (check_friction_minutes_required) |
 | defect: tasks_well_formed omissions + selftest temp file | 1 | ~20 | fix carried (1/1 rows) |
 | defect: --save_every 100000 does not suppress epoch-end save | 1 | n/r | **unfixed** (0/1 rows) |
@@ -245,7 +245,7 @@ Top two unfixed causes are unchanged from 09-06:
 | cause | count | minutes | resolution |
 |---|---|---|---|
 | override: AUPAI_BEHIND_MAIN_OK=1 bypass behind-main refusal | 112 | ~3 | **open** (tilerl-31: path-overlap predicate + staged-tree carry) |
-| merge: pod_head_manifest.txt conflicts on every branch | 4 | ~16 | **superseded** (56fa71b5 + 89d86882: untracked, generated by pod_push) |
+| merge: pod_head_manifest.txt conflicts on every branch | 4 | ~16 | **superseded** (63a8d02d + d6053c9e: untracked, generated by pod_push) |
 | near_miss/process_failure: minutes_lost not reported | 3 | n/r | **fixed** (check_friction_minutes_required, 6 baseline rows, 0 new) |
 | defect: task row format + owner_queue_depth + hook temp file | 1 | ~20 | fix carried (1/1 rows) |
 | gate: selftest green but line never executed (pod_backup) | 1 | ~35 | **unfixed** (0/1 rows) |
@@ -268,7 +268,7 @@ Top two unfixed causes are unchanged from 09-06:
 | defect: merge_main.sh exited 0 after lock wait without merging | 1 | ~3 | unfixed (de) |
 | ?: pod_push refused a branch-divergent file | 1 | n/r | unfixed |
 
-## 2026-09-09 (297 rows, 145 mechanisms; ran 05:0xZ at main 4a9bf5f9)
+## 2026-09-09 (297 rows, 145 mechanisms; ran 05:0xZ at main 2e9b5326)
 
 Basis: main, not the worktree file -- the local friction.jsonl had diverged (rows that never reached the repo), so 09-08's 119/14 counts are not directly comparable.
 
@@ -278,14 +278,14 @@ Basis: main, not the worktree file -- the local friction.jsonl had diverged (row
 | merge: git push origin main nonzero after local advance | 43 | n/r | **open** (de-80 owner de: cause-branched push-failure advice + refuse stale local main; unblocked by #126 merge; 0/43, last 09-09 04:41) |
 | hook/near_miss: cause field empty ("?") | 4 | ~25 | **unfixed** (0/4; data quality -- rows carrying no cause) |
 | gate: .git/config hash guard attributes a peer's push to the running selftest | 2 | ~44 | **unfixed** (0/2; largest per-incident minutes this period) |
-| merge: pod_head_manifest.txt conflicts | 2 | ~8 | superseded (56fa71b5 + 89d86882: untracked, generated by pod_push) |
+| merge: pod_head_manifest.txt conflicts | 2 | ~8 | superseded (63a8d02d + d6053c9e: untracked, generated by pod_push) |
 | defect: task row format + owner_queue_depth + hook temp file | 1 | ~20 | fix carried |
 | gate: selftest green but the copying line never executed | 1 | ~35 | **unfixed** |
 | defect: save_every doesn't suppress the epoch-end save | 1 | n/r | **unfixed** |
 | hook: test_launch_claims AST walk misses the refactor | 1 | ~25 | fix carried |
 | other (136 mechanisms, count=1) | 136 | mixed | mixed |
 
-## 2026-09-10 (341 rows, 155 mechanisms; basis 55b27e73 = main at 04:30Z, ran 04:39Z; dedup count — raw 347 lines, union-merge duplicates)
+## 2026-09-10 (341 rows, 155 mechanisms; basis 845b4306 = main at 04:30Z, ran 04:39Z; dedup count — raw 347 lines, union-merge duplicates)
 
 | cause | count | minutes | resolution |
 |---|---|---|---|

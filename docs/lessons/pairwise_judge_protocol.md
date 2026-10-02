@@ -1,7 +1,7 @@
 ---
 question: RL 阶段 4(b) 的成对评委协议——27B 对同一任务两条 rollout 的评分规则、位置交换去偏、弃权与平局处理、验收测试
 status: open
-source: 用户裁定(无训练奖励模型,docs/lessons/claude_code_rl.md Ruling);sandbox_env_survey §C(main f04ef2e);44-19, pair tilerl;tilerl 一审(2026-09-02):验收集与生产集解耦、tie 不进分母、subgroup 字段;tilerl 二审(2026-09-02):参与下限 15/20 预登记——0.8 防判错,参与门防不判;tileRL 半落地(a702c9a,2026-09-02):奖励映射见 §5b
+source: 用户裁定(无训练奖励模型,docs/lessons/claude_code_rl.md Ruling);sandbox_env_survey §C(main 96fb118);44-19, pair tilerl;tilerl 一审(2026-09-02):验收集与生产集解耦、tie 不进分母、subgroup 字段;tilerl 二审(2026-09-02):参与下限 15/20 预登记——0.8 防判错,参与门防不判;tileRL 半落地(a702c9a,2026-09-02):奖励映射见 §5b
 ---
 
 # 成对评委协议(pairwise judge protocol)

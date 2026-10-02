@@ -1020,17 +1020,17 @@
    "source": "/tmp/collide.py and /tmp/glyph.py on the pod, over data/corpus/{math_owm_stage2,cot,textbook_30b,chatml,chat_qa,zh_web,en_c4_stage2}; 2 shards per domain drawn with Random(42), 15,000 docs each, first 4,000 chars per doc",
    "config": {
     "subject": "mathbank/math_programs_l5_ext_novel.py, families S (diamond_chain, diamond_chain4) and P (diamond_single, diamond_single_reverse)",
-    "probes": "operator in mathematical context (a @ b, digit @ digit), the rule 3a-2b+1, and the three Chinese rule sentences verbatim AS WORDED BEFORE 0389a5ef. The carry sentence was reworded that day (先加十 -> 先加十一次…只加一次，结果可能仍为负数) to remove an ambiguity; the reworded sentence was NOT re-scanned. The scan's load-bearing probes are the glyph and the rule 3a-2b+1, both unchanged, and a longer more specific sentence can only be rarer than the shorter one it extends -- so the bound still holds, by an argument rather than by a measurement.",
+    "probes": "operator in mathematical context (a @ b, digit @ digit), the rule 3a-2b+1, and the three Chinese rule sentences verbatim AS WORDED BEFORE b6df5214. The carry sentence was reworded that day (先加十 -> 先加十一次…只加一次，结果可能仍为负数) to remove an ambiguity; the reworded sentence was NOT re-scanned. The scan's load-bearing probes are the glyph and the rule 3a-2b+1, both unchanged, and a longer more specific sentence can only be rarer than the shorter one it extends -- so the bound still holds, by an argument rather than by a measurement.",
     "population": "corpus on disk, an UPPER bound on what the model read (mix_200m_8b consumes code_py_starcoder at 0.301 epochs and the other domains less)"
    },
-   "uncertainty": "105,000 docs is a sample; 2 shards per domain assumes shard homogeneity, unmeasured. The 41 glyph hits were read individually, so their characterisation is not an inference from a count. The Chinese rule-sentence probes were run against the pre-0389a5ef wording; see config.probes.",
+   "uncertainty": "105,000 docs is a sample; 2 shards per domain assumes shard homogeneity, unmeasured. The 41 glyph hits were read individually, so their characterisation is not an inference from a count. The Chinese rule-sentence probes were run against the pre-b6df5214 wording; see config.probes.",
    "status": "measured",
    "boundary": "A ZERO HERE IS A BOUND, NOT AN ABSENCE: by the rule of three, 0 hits in 105,000 docs bounds the rate below 0.0029%, which over the full domains is still hundreds of documents. This fact does NOT establish that the family is absent from pretraining, and it is not what the family's absence rests on -- absence rests on CONSTRUCTION (the operator, its rule and its phrasing were invented for this experiment on 2026-09-05, after every corpus in the mix was built). The scan's job is the narrower one of catching an accidental collision, and the collision it found is '@'-as-at, which shares a glyph and not a meaning."
   },
   {
    "id": "cont.novel_ops_frozen_sets",
    "value": {
-    "commit": "0389a5efd99956e8ad14929ae54a3185f9048cc7",
+    "commit": "b6df5214e8b4d651ccf7708a61c2e6908a219ec2",
     "sha256": {
      "data/probes/novel_ops/S_test.jsonl": "e5859a287d653dd3dd2e1ff5dce0b0423e56e8307177458c75cd2c11ed8e77b3",
      "data/probes/novel_ops/S_pool.jsonl": "bf7e609f0672e07d0800ccaf7d431b0a11ef188fd0c36ab9e538b08b98d04c85",
@@ -1255,12 +1255,12 @@
    },
    "unit": "sha256 of the file as committed",
    "measured": "2026-09-05",
-   "source": "shasum -a 256 data/probes/novel_ops/*.jsonl at 0389a5ef; properties from python3 mathbank/emit_novel_ops.py --selftest (8 worlds) plus a direct re-read of every row; divergence and carry-fire counts reproduced independently by e1 (lessons-58); the 4-way set's per-program floor from python3 mathbank/emit_novel_ops_4way.py --selftest (11 worlds, world 8 rebuilds v3's pooled shape and requires it to fail the per-program threshold), reproduced independently by e1 (lessons-58); nearest_mean_of_options and closest_2a1 contributed by e1 (lessons-58) and reproduced here, raising the recorded maximum without changing an item",
+   "source": "shasum -a 256 data/probes/novel_ops/*.jsonl at b6df5214; properties from python3 mathbank/emit_novel_ops.py --selftest (8 worlds) plus a direct re-read of every row; divergence and carry-fire counts reproduced independently by e1 (lessons-58); the 4-way set's per-program floor from python3 mathbank/emit_novel_ops_4way.py --selftest (11 worlds, world 8 rebuilds v3's pooled shape and requires it to fail the per-program threshold), reproduced independently by e1 (lessons-58); nearest_mean_of_options and closest_2a1 contributed by e1 (lessons-58) and reproduced here, raising the recorded maximum without changing an item",
    "config": {
-    "generator": "mathbank/math_programs_l5_ext_novel.py at 0389a5ef",
-    "emitter": "mathbank/emit_novel_ops.py at 0389a5ef",
+    "generator": "mathbank/math_programs_l5_ext_novel.py at b6df5214",
+    "emitter": "mathbank/emit_novel_ops.py at b6df5214",
     "seeds": "TEST_SEED=20260905, POOL_SEED=20260906",
-    "answer_rule": "the label is the add-once fold: the carry adds 10 exactly once and the result may stay negative. The instruction states this (只加一次，结果可能仍为负数); before 0389a5ef it did not, and the label matched only one of three readings",
+    "answer_rule": "the label is the add-once fold: the carry adds 10 exactly once and the result may stay negative. The instruction states this (只加一次，结果可能仍为负数); before b6df5214 it did not, and the label matched only one of three readings",
     "emitter_4way": "mathbank/emit_novel_ops_4way.py at v4, SHUFFLE_SEED=20260907"
    },
    "uncertainty": "The hashes are exact. What they cannot say is whether a regeneration was intended: the emitter is deterministic at these seeds, so re-running it on the same code reproduces these bytes, and a differing hash means the CODE changed, not the draw.",
@@ -1314,7 +1314,7 @@
    },
    "unit": "counts over the frozen item file; no model is run",
    "measured": "2026-09-05",
-   "source": "data/probes/api_cloze.jsonl at sha256 8524d9cb (commit 9b5b0c9c); recomputed from the file by e1, not copied from the header or from prereg amendment_12",
+   "source": "data/probes/api_cloze.jsonl at sha256 8524d9cb (commit 99f42654); recomputed from the file by e1, not copied from the header or from prereg amendment_12",
    "config": {
     "why_this_exists": "The control floor this file was built for was DROPPED the same day: readout_2_split's estimator is delta_seen - delta_unseen with each arm minus control, and readout_4_result_m1_one_layer STOPS M1 by the pool_touched_frac rule (0.0945 < 0.20) with M2/M3 stopped by controller ruling, so no live readout consumes a control number. The file's INTERNAL consistency is checkable with no GPU, so it is recorded here rather than re-derived by the next reader (4c's instruction).",
     "what_the_label_distribution_rules_out": "A 4-way probe whose gold sits disproportionately in one option slot can be beaten above chance by position alone. Max share is 0.2591 against 0.25, so position carries almost no signal; label_indexes_gold confirms options[label] == gold on every item, which is what makes the label usable at all.",
@@ -1372,14 +1372,14 @@
     "built_twice_and_compared": {
      "why": "the shards are gitignored (.gitignore:28, `data/corpus/*/`), so they cannot travel by commit and cannot be pushed with scripts/pod_push.sh. Each side builds them from committed code, and the shas are the only evidence the two sides hold the same corpus. 114.6 MB locally; podput of a 256k-document shard was not attempted.",
      "local": "/Users/bytedance/code/aupai-e1, shasum -a 256",
-     "pod": "/work/aupai, sha256sum, driven by the committed builder at main 2007250b",
+     "pod": "/work/aupai, sha256sum, driven by the committed builder at main 84932bfd",
      "result": "all five identical on both sides, and the line counts identical -- re-established after the rebuild, not carried over from the retracted measurement",
      "pod_had_no_stale_caches": "checked before the rebuild: all five tokens_<domain>.pt were ABSENT under /mnt/data02/tokens, so no cache built from the retracted format survives to be read as fresh. This mattered: a cache stamped with a matching vocab and srcfp would have been reused, and the arm would have trained on the old encoding's rows.",
      "old_dirs_kept": "the retracted shards were MOVED to /work/aupai/_old_shards_0905 rather than deleted -- write_shard refuses an existing directory, and the old files are the reference the equivalence check reads."
     },
     "provenance": {
-     "builder": "datagen/build_s_inject.py at 93adbadd, which now asserts the shard contract on its own output (shard_contract: every line parses, has \"content\", no \"_header\"; the filename matches train.py's SHARD_RE; non-empty; sidecar present). The retracted build was c97dbeea, file sha256 6391daea660bdecf405d2eccc439148578e42881e8ccc41c792dd7cc5c998d72.",
-     "pod_driver": "runs/s_inject_pod_build.sh at 5d21ac88 -- a committed script, not an inline command, because ~/bin/pod re-parses argv in a shell: parentheses raise a syntax error and quotes are word-split. It calls /usr/bin/python3 by absolute path.",
+     "builder": "datagen/build_s_inject.py at 8c0716ec, which now asserts the shard contract on its own output (shard_contract: every line parses, has \"content\", no \"_header\"; the filename matches train.py's SHARD_RE; non-empty; sidecar present). The retracted build was 31332168, file sha256 6391daea660bdecf405d2eccc439148578e42881e8ccc41c792dd7cc5c998d72.",
+     "pod_driver": "runs/s_inject_pod_build.sh at 18393ca4 -- a committed script, not an inline command, because ~/bin/pod re-parses argv in a shell: parentheses raise a syntax error and quotes are word-split. It calls /usr/bin/python3 by absolute path.",
      "source_pools": {
       "data/probes/novel_ops/S_pool.jsonl": "bf7e609f0672e07d0800ccaf7d431b0a11ef188fd0c36ab9e538b08b98d04c85",
       "data/probes/novel_ops/P_pool.jsonl": "d5a85a05ecb03e28da3cd60cfc5c8219e0292587f9dff0dfcb1f4f1e62dd4f59"
@@ -1411,7 +1411,7 @@
     "document_form": "instruction, then the worked chain one step per line, then the bare answer -- unchanged by the rebuild, and now under the key \"content\" rather than \"text\". Measured on s_inject_n1's first document: the same instruction string the test uses, then `3 * 7 - 2 * 5 + 1 = 12` style lines including the carry line `-11 + 10 = -1`, then `18`.",
     "lines_is_documents": "every line is a document, so lines == documents. This replaces lines_is_documents_plus_one: the header was the +1 and it is no longer in the file.",
     "retracted_value": {
-     "what": "the five sha256 digests and line counts measured 2026-09-05T09:1xZ, superseded by a REBUILD in the same format-fixing change (93adbadd), not by a re-measurement of the same bytes.",
+     "what": "the five sha256 digests and line counts measured 2026-09-05T09:1xZ, superseded by a REBUILD in the same format-fixing change (8c0716ec), not by a re-measurement of the same bytes.",
      "why": "the shards were unreadable by the trainer. train._jsonl_content is json.loads(ln)[\"content\"] on every non-blank line with no header skip, and these shards wrote {\"text\": ...} doc lines under a {\"_header\": true} first line. All five token caches raised KeyError: 'content' when built on the pod, so no arm could start. Each fault was independently fatal (measured: header+text raises, header+content raises, content-with-no-header reads).",
      "digests": {
       "s_inject_n1": {
@@ -1438,10 +1438,10 @@
      "corpus_content_unchanged": "the rebuild changed the ENCODING, not the corpus. Verified row by row against the retracted files: document counts identical (1000/8000/64000/256000/1000), every document's text identical in file order, every (_s_index, _exposure) pair identical in file order, and each sidecar equal to the old header minus its _header key. So the exposure schedule the arms measure is the one this entry always described, and runs/prereg.jsonl#conversion_rate_0905 needs no amendment for it."
     }
    },
-   "source": "shasum -a 256 data/corpus/<name>/<name>_000.jsonl and its .meta.json in /Users/bytedance/code/aupai-e1, and sha256sum on the pod at /work/aupai, both recomputed live 2026-09-05 after the rebuild at 93adbadd. All five agree across the two sides, and the line counts agree. The pod digests were computed by running sha256sum on the pod's files, not read back from any build log.",
+   "source": "shasum -a 256 data/corpus/<name>/<name>_000.jsonl and its .meta.json in /Users/bytedance/code/aupai-e1, and sha256sum on the pod at /work/aupai, both recomputed live 2026-09-05 after the rebuild at 8c0716ec. All five agree across the two sides, and the line counts agree. The pod digests were computed by running sha256sum on the pod's files, not read back from any build log.",
    "config": {
-    "builder": "datagen/build_s_inject.py at c97dbeea",
-    "pod_driver": "runs/s_inject_pod_build.sh at 5d21ac88",
+    "builder": "datagen/build_s_inject.py at 31332168",
+    "pod_driver": "runs/s_inject_pod_build.sh at 18393ca4",
     "n": "[1, 8, 64, 256] exposures, plus p_format as the composition control at 1",
     "n_docs": 1000,
     "base_seed": 20260906,
@@ -1794,11 +1794,11 @@
     "measured": "2026-09-13 code_ultra_l2_dc (decontam_fp=86e19705b05c4b42 build stamp)",
     "false_negative": "28/28 rows the whitespace-13-gram audit flags return NO production hit: 10 solution rows (Heron formula x8, number-dict, by_length, roman table) on '#' lines, 18 HumanEval/78 prompt rows in '#'-headed multilingual prose. Full audit 414 rows/8 domains.",
     "false_positive_control": "same audit scanner over 2608 CPython Lib functions (>=13 whitespace words, seed 0): 0 hits (pod runs/contam_fp_baseline.json)",
-    "fix": "merged PR #324 commit d4233e64: whitespace-collapse-only normaliser identical to audit_gate_contamination._grams; new decontam_fp 0aefe6a2aa5e130f; vetted textbook decontam re-run is 3b's loop",
+    "fix": "merged PR #324 commit eb711163: whitespace-collapse-only normaliser identical to audit_gate_contamination._grams; new decontam_fp 0aefe6a2aa5e130f; vetted textbook decontam re-run is 3b's loop",
     "exclude_manifests": "PR #325 commit 4eb316e6 data/sft/<domain>.gate_exclude_manifest.jsonl (phi_l3_stub_holdout_manifest format), 414 rows/8 domains; r3 HumanEval union {19,66,71,78,105,123,129,156}"
    },
    "measured": "2026-09-13",
-   "source": "scripts/audit_gate_contamination.py full 8-domain scan (tracked; re-runnable): conclusions merged in PR #324 d4233e64 (module fix) and PR #325 4eb316e6 (414-row exclude manifests + r3 HE union); CPython-Lib control protocol: 2608 ordinary stdlib functions seeded 0, 0 hits",
+   "source": "scripts/audit_gate_contamination.py full 8-domain scan (tracked; re-runnable): conclusions merged in PR #324 eb711163 (module fix) and PR #325 4eb316e6 (414-row exclude manifests + r3 HE union); CPython-Lib control protocol: 2608 ordinary stdlib functions seeded 0, 0 hits",
    "config": {
     "audit_scanner": "scripts/audit_gate_contamination.py whitespace-collapse, no comment strip, N=13, HE prompt+canonical_solution / MBPP text+code",
     "production_decon": "filters/decontam_ngram.py, N=13, fp 86e19705->0aefe6a2 (PR#324)",
@@ -1929,7 +1929,7 @@
     "evidence_subset": "all 35,843 grams built from the rebuilt files are a subset of grams built from normalized field text (file-only grams = 0; +84 field-side grams are test_list/test_setup_code the engine does not shingle).",
     "verify": "rebuild --verify: HE 164/164 prompts and MBPP 974/974 texts sha1-hash into the tracked data/eval/holdout_hashes registry; MBPP ids 1..974 key text (the train set, not mbpp_sanitized_427).",
     "old_bytes_unrecoverable": "searched laptop + all 4 digest worktrees: every surviving copy has the new sha1; pod copy destroyed. 12 JSON reserialization variants of the same HE rows reproduce none of the old pin, so the 0904 file was different bytes, not the same questions re-encoded. Option (2) exact-byte recovery had no source.",
-    "fingerprint_effect": "this is a byte-identity break, not a content break. Each _dc domain's decontam_fp (filter_gate_domains.py decontam_fp(HUMANEVAL_REL, MBPP_REL)) will report the new fp loudly; that is the intended derived-artifact-carries-producer-fingerprint behavior, not a defect. REGISTRY_SHA1 in datagen/holdout.py is a 16-entry holdout-registry pin table that includes these two gate files; its humaneval_164 and mbpp_holdouts_974 entries were re-pinned to the rebuilt sha1 (ee3a7471..., c0bb8355...) in 6eab3c66 on main, the same commit that lands a rebuilt-byte change per the table's update rule. The byte break therefore propagates into both decontam_fp and the registry.",
+    "fingerprint_effect": "this is a byte-identity break, not a content break. Each _dc domain's decontam_fp (filter_gate_domains.py decontam_fp(HUMANEVAL_REL, MBPP_REL)) will report the new fp loudly; that is the intended derived-artifact-carries-producer-fingerprint behavior, not a defect. REGISTRY_SHA1 in datagen/holdout.py is a 16-entry holdout-registry pin table that includes these two gate files; its humaneval_164 and mbpp_holdouts_974 entries were re-pinned to the rebuilt sha1 (ee3a7471..., c0bb8355...) in 852f0278 on main, the same commit that lands a rebuilt-byte change per the table's update rule. The byte break therefore propagates into both decontam_fp and the registry.",
     "humaneval_upstream_url": "https://raw.githubusercontent.com/openai/human-eval/master/data/HumanEval.jsonl.gz",
     "mbpp_upstream_url": "https://raw.githubusercontent.com/google-research/google-research/master/mbpp/mbpp.jsonl"
    },
@@ -1945,7 +1945,7 @@
    "value": {
     "question": "Does every domain in data/mix_v41_gate.json close: mix fingerprint -> cont.gate_dc_* fact -> HumanEval/MBPP 13-gram removal ratio -> holdout pin (ee3a7471/c0bb8355 post-#620)?",
     "headline": "ALL 6 TRAINING DOMAINS WERE DECONTAMINATED AGAINST THE CURRENT-PIN GATE. None is un-decontaminated: each pod build_corpus_stats.json stamps decontam_fp=302aa793f7067462, which equals decontam_fp(module filters/decontam_ngram.py + data/eval/humaneval/humaneval_164.jsonl + data/eval/mbpp_holdouts.jsonl) recomputed locally against sha1 ee3a7471.../c0bb8355... (module sha256 943c19ad... identical laptop and pod container). But the NAMED chain the question asks about does not close link-by-link for all six: the mix inline fingerprint link breaks on 6/6, and 3 domains have no cont.gate_dc_* fact for the current build.",
-    "fp_decoding": "decontam_fp = sha256(module bytes + the two gate files)[:16] (filters/decontam_ngram.py:171). Two distinct identifiers are involved: the module's COMMIT is d4233e64 (2026-09-13, stopped stripping comment/heading lines in normalise(); 3801fdc8 is the 0911 original), and the module FILE's blob sha256 under that commit is 943c19ad30d2ac7d3c419b49c6a936d813b4165bbe2b90cf3dbeca218f272559 (identical on origin/main, this branch, and d4233e64, and byte-identical laptop vs pod container). The decontam_fp hashes the blob, not the commit id. 86e19705b05c4b42 = 0911 build (3801fdc8 blob + pre-rebuild gate bytes). 302aa793f7067462 = the 943c19ad module blob + rebuilt gate bytes (HumanEval ee3a7471..., MBPP c0bb8355...). The fp change has TWO legs, both content-relevant: the 0913 normaliser change plus the 0921 gate-byte rebuild; a 0911-dfp corpus is a weaker filter than a 302aa793 corpus.",
+    "fp_decoding": "decontam_fp = sha256(module bytes + the two gate files)[:16] (filters/decontam_ngram.py:171). Two distinct identifiers are involved: the module's COMMIT is eb711163 (2026-09-13, stopped stripping comment/heading lines in normalise(); e8dfc448 is the 0911 original), and the module FILE's blob sha256 under that commit is 943c19ad30d2ac7d3c419b49c6a936d813b4165bbe2b90cf3dbeca218f272559 (identical on origin/main, this branch, and eb711163, and byte-identical laptop vs pod container). The decontam_fp hashes the blob, not the commit id. 86e19705b05c4b42 = 0911 build (e8dfc448 blob + pre-rebuild gate bytes). 302aa793f7067462 = the 943c19ad module blob + rebuilt gate bytes (HumanEval ee3a7471..., MBPP c0bb8355...). The fp change has TWO legs, both content-relevant: the 0913 normaliser change plus the 0921 gate-byte rebuild; a 0911-dfp corpus is a weaker filter than a 302aa793 corpus.",
     "domains": [
      {
       "domain": "code_ultra_l2_dc",
@@ -2022,7 +2022,7 @@
    "config": {
     "method": "for each of the six domains read the pod build stamp corpus fingerprint and decontam_fp, compute removal ratio from the stamp's own rows_scanned/rows_dropped (or decontam_ngram.rows_in/rows_dropped for ultra aggregates), independently recompute decontam_fp from current module + rebuilt gate bytes, compare to the holdout REGISTRY_SHA1 pins, and trace each named cont.gate_dc_* fact to whether it describes the current build or the superseded 0911 build.",
     "read_only": "no GPU, no writes to pod mix domains, no cache reads; pod commands were grep/sha1sum/json reads only.",
-    "module_history": "filters/decontam_ngram.py changed once after the 0911 filter release: d4233e64 (2026-09-13) stopped stripping full-line comment/heading text in normalise(); 3801fdc8 is the 0911 original.",
+    "module_history": "filters/decontam_ngram.py changed once after the 0911 filter release: eb711163 (2026-09-13) stopped stripping full-line comment/heading text in normalise(); e8dfc448 is the 0911 original.",
     "gate_content_equivalence": "cont.decontam_base_byte_rebuild_0921 (merged #620): rebuilt gate bytes differ from the 0904 pins but the 13-gram engine reads parsed fields, and all 35,843 file grams are a subset of field-text grams (file-only=0).",
     "rescan_ruling_0923": "Full output-side residual rescan of all six current-build _dc corpora against the rebuilt ee3a7471/c0bb8355 gate: REQUIRED by user ruling 2026-09-23, DEFERRED until the v41_ced_0923 run stopped (it reads hundreds of GB on the pod and would contend for I/O with a run holding the cards), and COMPLETED 2026-09-24. Owner 3b (taken over from ae, who was decommissioned before the pass ran; the deferral named ae). Result: 3,115 shards / 79,344,695 kept rows / 0 residual hits, every domain's shard and row counts equal to its own build stamp -- recorded in cont.gate_dc_residual_current_0924 and runs/dc_residual_current.json. The check ran AFTER training stopped and BEFORE any HumanEval scoring, which is the sequence the ruling required. The zero-residual claim for the current gate therefore no longer rests on the structural file-only-gram=0 argument alone; it now has a direct output-side measurement on the current gate bytes."
    },

@@ -50,7 +50,7 @@ FRESH_WITHIN_STEPS = 300
 # an empty ledger for it is expected rather than a defect; from this commit on, an arm that
 # passed step 10 and left no row had a dead hook. Recorded as a sha rather than a date because
 # a branch can carry an older tree at a later wall-clock time.
-DIAG_CADENCE_COMMIT = "6b678541"
+DIAG_CADENCE_COMMIT = "608cca54"
 
 
 class DiagRowInvalid(ValueError):

@@ -1,6 +1,6 @@
 44-23 acceptance: eval/domain_loss.py --selftest on the pod
 =============================================================
-Pod stamp: 255401e (main, pushed by 1e 2026-09-03)
+Pod stamp: 302a911 (main, pushed by 1e 2026-09-03)
 Checkpoint: ckpt_p200m_4b_0902.pt
 Run by: 1e (card 2, claimed then released; card back to 0 MiB after)
 

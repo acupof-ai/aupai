@@ -34,7 +34,7 @@ THREE DEFECTS IN THIS FILE, all found by trying to make it fail rather than by r
   red naming the missing call. Same shape as gate_failure_shapes §61 -- a criterion that
   recomputes what it judges.
 
-  That AST walk then read one function body, and 16d08b1c reported 4 BUGs on an intact launcher:
+  That AST walk then read one function body, and f69bbc83 reported 4 BUGs on an intact launcher:
   the commit moved cmd_launch's post-row half into _launch_after_row, leaving `return
   _launch_after_row(...)`, so all four helpers sat one call outside the walk. Main was RED and
   blocking every commit that stages scripts/card_claim.py (84 diagnosed it in a clean clone,
@@ -131,7 +131,7 @@ def selftest():
     #    checked by AST, on the call graph rather than the file's text.
     #
     #    REACHABLE, not "in the body": walking cmd_launch's own body only was the second version
-    #    of this assertion, and 16d08b1c broke it without breaking the launcher. That commit moved
+    #    of this assertion, and f69bbc83 broke it without breaking the launcher. That commit moved
     #    the post-row half of cmd_launch into _launch_after_row and left `return
     #    _launch_after_row(...)` behind, so all four helpers moved one call out of the walk and the
     #    test reported 4 BUGs on an intact tree (84 diagnosed it in a clean clone of main; measured
@@ -197,7 +197,7 @@ def selftest():
 
     #   TEETH -- delete the one edge carrying the four helpers and every one of them must go
     #   missing. All four live in _launch_after_row, so dropping cmd_launch's `return
-    #   _launch_after_row(...)` is exactly 16d08b1c's damage without the call left behind. If this
+    #   _launch_after_row(...)` is exactly f69bbc83's damage without the call left behind. If this
     #   world still resolved them, the assertions above would be about the file and not the path.
     _cut = {k: v for k, v in _fns.items() if k != "cmd_launch"}
     _cut["cmd_launch"] = ast.parse("def cmd_launch(a):\n    return _csv(a)\n").body[0]

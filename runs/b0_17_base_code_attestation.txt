@@ -22,12 +22,12 @@ attestation for b0-17 specifically.
 
 Bounded from both sides, and NEITHER bound is mtime arithmetic:
 
-  lower  2a0096c7 (2026-09-02 16:38Z) -- the commit that ADDED scripts/run_ab_speedrun.sh, and
+  lower  cfd5521c (2026-09-02 16:38Z) -- the commit that ADDED scripts/run_ab_speedrun.sh, and
          the base is named ckpt_ab_shapelr_base.pt, i.e. it was produced BY this launcher, whose
          `--name ab_${ARM}_$v` scheme is the only thing that writes that filename. So the base
          cannot predate the launcher. This is a bound by construction; the 18:19Z mtime agrees
          with it but is not what establishes it.
-  upper  a46c7bc4 (2026-09-02 19:13Z, "log every cfg field that differs from its default")
+  upper  53d78d26 (2026-09-02 19:13Z, "log every cfg field that differs from its default")
          -- runs/ab_shapelr_base.log has NO `cfg non-default` line, and runs after that commit
          do. Measured across the five speedrun logs on the pod rather than assumed:
 
@@ -38,27 +38,27 @@ Bounded from both sides, and NEITHER bound is mtime arithmetic:
              ab_untiehead_untiehead                 1               32
 
          ab_valueembed is the useful row: it has the cfg line but NOT the per-group lr, so it
-         sits between a46c7bc4 (19:13Z) and 4c86dc71 (20:13Z) -- the two format markers bracket
+         sits between 53d78d26 (19:13Z) and 0d046cff (20:13Z) -- the two format markers bracket
          runs independently, which is what makes them evidence rather than a coincidence.
 
-  2a0096c7..69d20bab is inside the lower bound's uncertainty, so the base may or may not carry
+  cfd5521c..ff9253dc is inside the lower bound's uncertainty, so the base may or may not carry
   the value_embed code. It does not matter: that diff is `nn.Embedding` and a gate built only
   `if getattr(cfg, "value_embed", False)`, plus a `_ve` that stays None otherwise. Inert without
   the flag, which the base did not pass. Checked rather than waved at.
 
 Content hashes (md5 of the file as committed):
 
-    train.py  at 69d20bab  996e89b977c217e7514fd8cc7d4e2ea1
-    model.py  at 69d20bab  2ac7dce912f58bc95ac12e0788d314a0
-    train.py  at 6cee3204  98c31345a7142275b5f9a59b9884b497   <- the arms
-    model.py  at 6cee3204  494055e5c90b0e2aaedaeda5dc9de1bb   <- the arms
+    train.py  at ff9253dc  996e89b977c217e7514fd8cc7d4e2ea1
+    model.py  at ff9253dc  2ac7dce912f58bc95ac12e0788d314a0
+    train.py  at 0e0c9f96  98c31345a7142275b5f9a59b9884b497   <- the arms
+    model.py  at 0e0c9f96  494055e5c90b0e2aaedaeda5dc9de1bb   <- the arms
 
 ## What changed in between, and why the base is still comparable
 
-`git diff 69d20bab HEAD -- train.py model.py`, every non-comment non-logging line classified
-(69d20bab is the tighter end of the bound above; the 2a0096c7..69d20bab window is handled there):
+`git diff ff9253dc HEAD -- train.py model.py`, every non-comment non-logging line classified
+(ff9253dc is the tighter end of the bound above; the cfd5521c..ff9253dc window is handled there):
 
-  INERT WITHOUT THE FLAG (b0-17's own wiring, d7f16748)
+  INERT WITHOUT THE FLAG (b0-17's own wiring, 1c5be745)
     model.py    `if not cfg.untie_head: self.head.weight = self.tok.weight` -- the tie is now
                 conditional. With untie_head False (the base's value, and the default) this is
                 byte-identical behaviour to the unconditional assignment.
@@ -68,15 +68,15 @@ Content hashes (md5 of the file as committed):
                 neither, so build_optimizers returns the same three-or-four groups it always did.
     train.py    Cfg.untie_head / Cfg.head_lr defaults, and their argparse flags.
 
-  RAISES OR DOES NOTHING (44-12, 6d664023)
+  RAISES OR DOES NOTHING (44-12, 148a9a9e)
     train.py    the cursor-discard startup refusal. It either raises before step 0 or is a no-op;
                 it cannot alter a step's arithmetic. The base run completed, so it did not raise.
 
-  LOGGING ONLY (a46c7bc4, 4c86dc71)
+  LOGGING ONLY (53d78d26, 0d046cff)
     train.py    the `cfg non-default` line; the per-group lr breakdown on the step line. These are
                 what date the base log above.
 
-  SAVE PATH ONLY (de-31, c9011022)
+  SAVE PATH ONLY (de-31, 7971b8c8)
     train.py    `save_checkpoint(..., opt_snapshot(optimizers), step)` -- the run-end save now
                 carries optimizer state and step. Affects what a checkpoint CONTAINS, not what
                 training computes. Relevant only in that the base predates it, so
@@ -90,4 +90,4 @@ THIS IS A DIFF I READ, NOT A CHECK THAT RAN. That is precisely the gap b0-20 clo
 reason this file exists rather than a sentence in a commit message: the next person to pass
 SKIP_BASE needs to find the reasoning, not reconstruct it.
 
-Attested by b0 at 6cee3204, for experiment row `ab_untie_head`.
+Attested by b0 at 0e0c9f96, for experiment row `ab_untie_head`.

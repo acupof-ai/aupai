@@ -333,7 +333,7 @@ def main():
     if is_main:
         print(f"rlcode on a {kind} checkpoint, raw-continuation prompts", flush=True)
 
-    # load_checkpoint goes through train.build_model (scripts/loader.py, 4357b65b), so `model`
+    # load_checkpoint goes through train.build_model (scripts/loader.py, 9588ee2b), so `model`
     # is HybridLM or V42LM according to the checkpoint's own cfg.arch. Assert it rather than
     # trust it: this trainer's optimizer and checkpointing both branch on cfg.arch below, and a
     # loader that silently built the other class would put them on the wrong model.

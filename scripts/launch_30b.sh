@@ -88,9 +88,9 @@ fi
 # out ahead of it, so a flag whose valid value is 0 or "" IS applied today. This line stays 42
 # because stage 1 ran at 42, not because 0 would be lost.
 # The six flags on the last line are not new decisions: they are the values this script was
-# ALREADY running, spelled out. train.py made the twelve recipe knobs required (ead2d2b), and
+# ALREADY running, spelled out. train.py made the twelve recipe knobs required (6337c30), and
 # every knob this line was missing was one it had been taking from Cfg silently. Read from
-# Cfg at 32a7a4a (the last commit before ead2d2b) and confirmed identical at HEAD.
+# Cfg at 32a7a4a (the last commit before 6337c30) and confirmed identical at HEAD.
 # --layers 12 IS THE OPEN QUESTION, not an endorsement: a script named for a 15B->30B run has
 # been running L12, because Cfg.layers was 12 both today and on 2026-08-31 when stage 1
 # actually ran, and neither scale_36b_plan.md nor readout_30b_prereg.md states a depth. The

@@ -61,7 +61,7 @@ def _accessors():
 
     THE DOCSTRING HERE USED TO SAY harness "delegates to train's when torch is present, so the
     pair is (train's, harness's fallback)". That stopped being true on 2026-09-07 (commit
-    1bd9ed76): harness answers from the source-scrape BEFORE importing train, so with torch
+    5ff4469b): harness answers from the source-scrape BEFORE importing train, so with torch
     present it does NOT delegate. Measured both ways on the current tree --
     harness._token_cache_dir() returns the same string with train importable and with
     sys.modules["train"] = None, and `train` stays out of sys.modules in both. So the second

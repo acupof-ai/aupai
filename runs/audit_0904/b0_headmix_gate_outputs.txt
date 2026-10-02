@@ -1,6 +1,6 @@
 b0 head-hybrid arm B: the equivalence gate's four outputs, PRE-EDIT.
 Recorded 2026-09-04 on the pod, card 5 (granted, runs/card_assignment.json), model.py UNTOUCHED.
-Gate: runs/audit_0904/b0_headmix_bitwise_gate.py at 52fc915a.
+Gate: runs/audit_0904/b0_headmix_bitwise_gate.py at 047c709f.
 
 The two PASSes below are worth nothing on their own -- this gate was adjusted five times before
 it first agreed (bad import, dead CASES list, single-slot baseline, CPU->CUDA, fp32->bf16, the

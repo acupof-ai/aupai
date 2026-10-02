@@ -37,7 +37,7 @@ def _function_source(src, name):
 
     WAS A REGEX: `^def {name}\\(.*?(?=\\n\\n|\\Z)`. It ended the function at the first blank
     line, which was true of train.py's accessor only while its docstring was a single line.
-    68d23a6b (2026-09-05) expanded that docstring to paragraphs separated by blank lines, so
+    9d10317c (2026-09-05) expanded that docstring to paragraphs separated by blank lines, so
     the match stopped at the first one and captured an UNCLOSED triple-quoted string -- an
     unterminated literal that compiled nowhere. The selftest died on every run from then on.
 
@@ -77,7 +77,7 @@ def _cache_path(src, domain, env, fone=False):
     ns["ROOT"] = ROOT
     ns["Cfg"] = type("Cfg", (), {"fone": fone})
     # _domain_cache_path reads this module global (added by the per-domain cache_exclude
-    # work, 88150553) for the `.excl<name>` suffix. An empty mapping is the honest stub:
+    # work, d6d0a171) for the `.excl<name>` suffix. An empty mapping is the honest stub:
     # this test measures the ENV knob, and `{}` is train.py's own initial value, so the
     # exclusions contribute nothing rather than being simulated. Without it the lifted
     # function raised NameError -- a second, independent break that the SyntaxError above
@@ -205,7 +205,7 @@ def main():
             now = _cache_path(live, dom, None)
             if now != os.path.join(hard, f"tokens_{dom}.pt"):
                 # ONLY WHERE THAT IS THE RULE. _token_cache_dir prefers the NVMe mount when
-                # it EXISTS (68d23a6b), so on the pod -- where /mnt/data02/tokens is real --
+                # it EXISTS (9d10317c), so on the pod -- where /mnt/data02/tokens is real --
                 # the unset path is the NVMe one and this literal expectation is simply
                 # false. Asserting it unconditionally makes the test host-dependent: green
                 # on a laptop, red on the pod, for a reason that is not a defect. Compare

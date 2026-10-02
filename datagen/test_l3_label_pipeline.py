@@ -215,7 +215,7 @@ def test_end_to_end_stub_pipeline():
             text=True,
         )
         # a resume run labels nothing NEW: cumulative "kept" still counts the earlier labels,
-        # so the skip assertion must read newly_kept_this_run, not kept (ccac850c split the two).
+        # so the skip assertion must read newly_kept_this_run, not kept (fb3ac285 split the two).
         r2_summary = json.loads(r2.stdout)
         assert r2_summary["newly_kept_this_run"] == 0
         assert r2_summary["kept"] == n_in

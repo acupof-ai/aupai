@@ -1,9 +1,9 @@
 # pod-only code candidates, listed 2026-09-06T08:2xZ by 44 (fb task: inventory pod-only code).
-# Computed against main c15e22ce (`git ls-tree main -r --name-only | grep .py$`).
+# Computed against main 6b9b98ee (`git ls-tree main -r --name-only | grep .py$`).
 # 42 throwaway probes + 1 redundant package marker (filters/__init__.py, listed separately).
 # Method: diff pod find vs main-tracked .py, filtered to dirs holding >=1 tracked .py;
 # excludes __pycache__, inductor_src, vendored trees. fb counted 53 via pod_push manifest;
-# the gap is main advancing + exclusions + 2 scripts b0 tracked at 552428dc.
+# the gap is main advancing + exclusions + 2 scripts b0 tracked at 4724886e.
 #
 # REVIEWED BY de (2026-09-06): method holds; two zeros are scans not absences. Signals added:
 #   39 of 42 basenames start with `_` (one-shot probes); 17 are under 1000 bytes.
@@ -21,9 +21,9 @@
 # live-proc refs: 0 (ps aux scanned; only defunct python zombies).
 # runs/*.log refs: 0 (grep -lF basename; 'harness' control matched, basenames did not).
 # DELETED 2026-09-06T12:2xZ by fb on the user's instruction ("检查一下之后清楚", 12:1xZ): all 42 rows re-verified on the pod
-# (exist, untracked on main 72f85817, 0 live procs, 0 runs/*.sh|*.log citations) and removed by exact path. filters/__init__.py was NOT in fb's rm list (42 paths, 0 matching 'filters'),
+# (exist, untracked on main c5bc1a8e, 0 live procs, 0 runs/*.sh|*.log citations) and removed by exact path. filters/__init__.py was NOT in fb's rm list (42 paths, 0 matching 'filters'),
 # yet b0 found it absent on the pod at 12:3xZ; no ledger row records who removed it (3b hand-wrote it on the pod for the
-# corpus_filters_fp fix, 02480a57, and is asked; window 07:46Z-12:3xZ: b0's 07:46Z pod_push --all drift line still named it, b0's 12:3xZ ls did not). b0 verified `from filters.secrets import redact_text` imports on the pod without it.
+# corpus_filters_fp fix, 81bb6b41, and is asked; window 07:46Z-12:3xZ: b0's 07:46Z pod_push --all drift line still named it, b0's 12:3xZ ls did not). b0 verified `from filters.secrets import redact_text` imports on the pod without it.
 # Prior ruling, kept for the record: DELETE NOTHING. Disposal (fb ruling 2026-09-06): no session deletes anything on the pod without
 # the user's explicit instruction naming the target (user order 2026-09-05). This list is the record;
 # fb puts the 42 to the user as one question when the run results go up. Reviewer: de.

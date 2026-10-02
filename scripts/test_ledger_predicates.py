@@ -6,7 +6,7 @@
 # restartable: reads git history only, no writes; an interrupt costs 0.3s (measured, 10 worlds)
 
 WHAT THIS GUARDS. `runs/*.jsonl` merge by union, so a row that leaves is a record disappearing:
-a59ac1f staged an experiments.jsonl one line shorter than its parent and dropped b0's
+d71bb44 staged an experiments.jsonl one line shorter than its parent and dropped b0's
 ab_zeroinit AMENDMENT row, with all five pre-commit lines green. The predicate that catches it
 goes in the pre-commit hook, and a predicate in a hook is only as good as the worlds it was
 tested against -- so the worlds live here, built by mutating the REAL ledger, never hand-written.
@@ -33,7 +33,7 @@ experiments 11/57 (19.3%), retro 2/18, score_matrix 1/8, board 1/23, review 1/49
 
 Those two 19% figures are NOT the same kind of number, and that is the whole finding.
 experiments' 11 are historical: 9 predate 55b1d41 (2026-08-26 .. 2026-08-31) and the 2 after it
-are a declared history rewrite (1f07ba9) and a pod sync (f401112) -- so after the append-only
+are a declared history rewrite (8729ad3) and a pod sync (f401112) -- so after the append-only
 rule was established, ZERO. tasks' 30 are the live workflow and will keep arriving. A guard
 tuned on the count would have read both as "14.5% noise, add an escape hatch"; the escape would
 then be used weekly and the guard would stop guarding.
@@ -105,7 +105,7 @@ def subsume(head_rows, index_rows, keyfn=exp_key):
 
     Subsumed: every field with a non-empty value in the HEAD row carries the SAME value in the
     candidate. Filling an empty field is allowed; changing or emptying a non-empty one is not.
-    Verbatim equality was the first version of this and it fired on 6018c62's shape500_probe,
+    Verbatim equality was the first version of this and it fired on b472d77's shape500_probe,
     which did not drop the row -- it closed it, filling ended and result on a bare running row.
     """
     last = {}
@@ -150,28 +150,28 @@ def _worlds():
     """(label, head, index, want_refuse, why). Real commits first, then mutations of the real
     ledger -- a hand-written world would share this file's assumptions about the schema."""
     W = []
-    a, b = lines("a59ac1f^"), lines("a59ac1f")
+    a, b = lines("d71bb44^"), lines("d71bb44")
     W.append(
         (
-            "a59ac1f: the incident",
+            "d71bb44: the incident",
             a,
             b,
             True,
             "dropped b0's ab_zeroinit AMENDMENT, which was that key's last row",
         )
     )
-    h, i = lines("71855b8"), lines("e13f09a")
+    h, i = lines("654c45c"), lines("e13f09a")
     if h and i:
-        W.append(("71855b8 -> e13f09a: 1e's fixture", h, i, True, "the same shape across two commits"))
-    a, b = lines("6018c62^"), lines("6018c62")
+        W.append(("654c45c -> e13f09a: 1e's fixture", h, i, True, "the same shape across two commits"))
+    a, b = lines("b472d77^"), lines("b472d77")
     W.append(
-        ("6018c62: key-fold, -97 lines", a, b, False, "folds each key to its last row; audited correct by b0")
+        ("b472d77: key-fold, -97 lines", a, b, False, "folds each key to its last row; audited correct by b0")
     )
     # The acceptance negative control 1e named for the hook (de-33): an ordinary append of one
     # done event. Measured 227 -> 228 rows with 0 keys added, so the close folds onto an
     # existing key -- the shape the guard must never refuse.
-    a, b = lines("c3a5a23^"), lines("c3a5a23")
-    W.append(("c3a5a23: append one done event", a, b, False, "+1 row, 0 keys added"))
+    a, b = lines("af1ac56^"), lines("af1ac56")
+    W.append(("af1ac56: append one done event", a, b, False, "+1 row, 0 keys added"))
 
     real = lines()
     assert real, "runs/experiments.jsonl is absent on main"
@@ -259,7 +259,7 @@ def _worlds():
             real,
             filled,
             False,
-            "what 6018c62 did to shape500_probe, and what exp.py merge does (exp.py:292)",
+            "what b472d77 did to shape500_probe, and what exp.py merge does (exp.py:292)",
         )
     )
     return W
@@ -385,7 +385,7 @@ def selftest():
 
     # de-39's EXEMPTION, on four worlds. ledger_audit._superseded_by_ruling excuses a lost row
     # only when it is the row a recorded ruling SUPERSEDED and the row the ruling installed is
-    # still present. It shipped at 54c77d5e with no test anywhere -- grep found it in
+    # still present. It shipped at fd6fde1f with no test anywhere -- grep found it in
     # ledger_audit.py and nothing else -- which is the "a helper that works and is not called"
     # shape: the logic is right and nothing asserts the WIRING, so a future edit to
     # regressions() could drop the filter and every selftest would stay green.

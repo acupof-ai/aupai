@@ -267,7 +267,7 @@ _CHECK_TIMEOUTS = {
     # rebuilt in the tool that exists to catch it. The named root fix was de-66: move the
     # accessor into a torch-free module both sides import.
     #
-    # WHAT ACTUALLY HAPPENED (2026-09-07, commit 1bd9ed76, de): de-66 was never built. Instead the
+    # WHAT ACTUALLY HAPPENED (2026-09-07, commit 5ff4469b, de): de-66 was never built. Instead the
     # torch-free path was placed INSIDE _token_cache_dir and tried FIRST, with TOKEN_CACHE read
     # from train.py's SOURCE instead of an imported module. So the second definition the ruling
     # refused DOES now exist, and this comment said otherwise for eleven days while the code did
@@ -736,8 +736,8 @@ _MANUAL_RULES = {
 #:      DOMAIN SET, not of a run, and eval_load_cost.py's CACHE_BYTES has held them per
 #:      domain since 2026-09-03. The tok/s delta is still unmeasured and the refusal does not
 #:      need it -- it needs the bytes and whether a live claim holds the box.
-#:   2. 9edaf849 deleted the Language row (T3, 0 recorded incidents).
-#:   3. ea289a89 closed Shared files with a T0 structural change.
+#:   2. 5c72193b deleted the Language row (T3, 0 recorded incidents).
+#:   3. 0ede36fb closed Shared files with a T0 structural change.
 #:   4. The baseline read 36 against a dict of 35, so the ratchet carried a slot of slack and
 #:      would not have fired on a rule going manual again.
 #: Set to the count measured on this tree, not to an arithmetic guess -- three of the four
@@ -808,7 +808,7 @@ def check_reported_path_is_written(root):
     stale name. Only the same function is examined, so a runner that never versions is
     not implicated.
 
-    THE MARKER IS THE DEFECT'S SHAPE, NOT THE NAME (6e, from e1's 29b31367). This matched any
+    THE MARKER IS THE DEFECT'S SHAPE, NOT THE NAME (6e, from e1's c370987f). This matched any
     LOAD of a Name called `preds_path`, so it refused a correct CALL to a function of that name
     -- and e1 renamed a new function to `artifact_path` to get past it, recording the rename's
     reason in its own docstring. A rename to satisfy a check is the check making the codebase
@@ -856,7 +856,7 @@ def check_reported_path_is_written(root):
                     bound = True
             if not bound:
                 # A call to a function named preds_path, or an import, binds nothing here and
-                # cannot carry a stale versioned path. e1's 29b31367 is this case.
+                # cannot carry a stale versioned path. e1's c370987f is this case.
                 continue
             for node in ast.walk(fn):
                 # print(f"... {preds_path}") and {"preds_path": preds_path}
@@ -890,7 +890,7 @@ def _broken_reported_path():
     THE PREVIOUS WORLD STOPPED REPRODUCING THE DEFECT AND STAYED GREEN (found 2026-09-04 while
     fixing the Name-vs-Call false positive). It took today's file and reverted the print from
     out_path to preds_path. That was the whole edit in 47cb01c2, so it was a faithful world at
-    the time -- but e1's 29b31367 deleted the `preds_path` VARIABLE, moving the name into a
+    the time -- but e1's c370987f deleted the `preds_path` VARIABLE, moving the name into a
     function called artifact_path. Reverting only the print then leaves `preds_path` unbound: a
     NameError at runtime, not the stale-name defect, and once the check required the name to be
     a local variable that world reported PASS. The mutation was still applied, the assert on
@@ -932,7 +932,7 @@ def _positive_reported_path():
 
     Not a broken world -- CHECKS holds one per row and that slot carries the defect. This is
     the other half, and without it the fix is unverified in the direction it was made: the
-    check refused a correct call to a function of this name (e1's commit 29b31367 records
+    check refused a correct call to a function of this name (e1's commit c370987f records
     renaming to artifact_path to get past it), so the world that matters asserts the call form
     is accepted. A check made permissive by a mistake would pass the FAIL world too.
     """
@@ -1623,7 +1623,7 @@ def check_mutation_asserted_took(root):
     test" and "the mutation never took effect" printed the same sentence, and it was the second one
     all along -- which is why the first hypothesis (a leaked GIT_INDEX_FILE) survived a day. The
     same shape killed _broken_reported_path silently: its marker is still in eval/l1_fewshot.py
-    today, but e1's 29b31367 deleted the `preds_path` VARIABLE, so the reverted print raised
+    today, but e1's c370987f deleted the `preds_path` VARIABLE, so the reverted print raised
     NameError instead of reproducing the stale-name defect, and the world PASSED with its defect
     unreproduced.
 
@@ -1689,7 +1689,7 @@ def check_mutation_asserted_took(root):
             f"{len(bad)} world(s) mutate a file and then run it without proving the mutation took: "
             f"{', '.join(sorted(bad))} -- a size-preserving edit inside the pyc's one-second mtime "
             f"key silently does nothing, and the world then blames its subject (world 8 blocked "
-            f"b0's merge this way, e5b73d40)")
+            f"b0's merge this way, 1eca6256)")
     return PASS, f"{len(worlds)} worlds; every in-place mutator asserts its edit or purges pycache"
 
 
@@ -1799,7 +1799,7 @@ def _unreachable_sites(src):
 def check_selftest_worlds_reachable(root):
     """No registered selftest file has a statement that cannot execute.
 
-    THE DEFECT (e1, 2026-09-06, 06a47515). Editing eval/equal_token_gap.py to add two worlds, I
+    THE DEFECT (e1, 2026-09-06, dec3e66a). Editing eval/equal_token_gap.py to add two worlds, I
     inserted them plus a `return 0` ABOVE the existing tok/step block. That block then sat after
     a return and never ran -- and `--selftest` still printed OK, because A WORLD THAT DOES NOT
     EXECUTE CANNOT FAIL. It survived a commit, the hook's selftest run, a full harness check, and
@@ -1977,10 +1977,10 @@ def check_executed_hook_matches_main(root):
     MEASURED 2026-09-06, before merge_main gained the re-detach: the executed hook had 169
     SELFTEST_FILES entries against main's 170, and TESTS_FOR_SUBJECT was missing
     test_moe_latent.py under model.py and train.py plus test_moe_module.py under train.py. All
-    three landed in 0a738e75, which was on main. None of them executed anywhere. The
+    three landed in 6d72ac32, which was on main. None of them executed anywhere. The
     test_moe_module registration is the one with a history: the hook's own comment records that
-    it sat on model.py's list only, so da5ef8bf widened the fp8/bf16 guard without running it and
-    the test stayed red on main -- 0a738e75 fixed exactly that, and the fix was inert.
+    it sat on model.py's list only, so b2bd0076 widened the fp8/bf16 guard without running it and
+    the test stayed red on main -- 6d72ac32 fixed exactly that, and the fix was inert.
 
     WHY THIS IS CHECKABLE WHEN "WHICH HOOK BODY RAN FOR COMMIT X" IS NOT. The manual-rule note at
     the top of this file records the hook-symlink rule as unenforceable, and for a PAST commit it
@@ -2507,7 +2507,7 @@ def check_selftests_are_gated(root):
                    and not os.path.exists(os.path.join(root, g)))
     if stale:
         # WHICH DIRECTION, said out loud. "deleted" and "registered before it was written" are
-        # both a map entry with no file, and the message only named the first -- so 8a06c567
+        # both a map entry with no file, and the message only named the first -- so 9911355f
         # (mine) registered scripts/test_eta_window.py in two maps ahead of writing it, main went
         # red for every session, and the FAIL sent readers looking through `git log` for a
         # deletion that never happened. `git cat-file` separates them: a path that exists in HEAD
@@ -4445,8 +4445,8 @@ _SIGNING_FROM = 1788696100
 def check_main_advances_by_ancestry(root):
     """main's reflog must only ever move to a commit that DESCENDS from its previous value.
 
-    MEASURED 2026-09-06: main went bc95abe8 -> 9a11b9ea where 9a11b9ea's parent is f7367fd7,
-    so the ref moved SIDEWAYS and bc95abe8 (carrying ac0ffcbc, a task close) left the history
+    MEASURED 2026-09-06: main went bc95abe8 -> cc2689fd where cc2689fd's parent is 7e63d783,
+    so the ref moved SIDEWAYS and bc95abe8 (carrying 242de155, a task close) left the history
     entirely. tilerl-28 read `open` on main although it had been closed. The cause was a bare
     `git update-ref refs/heads/main <new>` with no expected-old-value, run by hand after
     GitHub's push protection refused a commit; merge_main's CAS would have refused it and was
@@ -4511,7 +4511,7 @@ def check_main_advances_by_ancestry(root):
     # to pass with --no-verify. Recorded, not suppressed: the row stays in runs/friction.jsonl,
     # AGENTS.md names the rule, and any OTHER pair still FAILs.
     #
-    # A PAIR, NOT A SHA. Excusing `9a11b9ea` as a destination would hide a second sideways move
+    # A PAIR, NOT A SHA. Excusing `cc2689fd` as a destination would hide a second sideways move
     # onto the same commit; excusing bc95abe8 as a source would hide the next thing that
     # discards it. Only this exact transition is known.
     #
@@ -4619,6 +4619,9 @@ def check_main_advances_by_ancestry(root):
                  # message-only rewrite: the old commits are gone as OBJECTS, their content is
                  # all present under new shas. Old-sha citations in facts/ were remapped in the
                  # same commit that records this pair.
+                 # Every pair above and below is a REFLOG literal, not a citation: the old side
+                 # names the pre-rewrite object as the reflog recorded it and must never be
+                 # remapped by a sha sweep (one sweep did, and the exemptions went inert).
                  ("7a2929a0517f69ad8c4a1fded7a5bb101b99499c",
                   "0e45537256b6ea0909ffb82ea651fcfe268d4326")}
     jumps = []
@@ -4694,7 +4697,7 @@ def check_main_advances_by_ancestry(root):
             f"an unsigned fast-forward is a hand `git update-ref` -- which bypasses the CAS and "
             f"can discard a peer's advance. TWO INNOCENT CAUSES FIRST: an entry from before "
             f"2026-09-06 is the backlog, and a peer running a merge_main.sh copy older than "
-            f"102e62ac signs nothing until they merge main. Check the commit at the new sha "
+            f"ed821c65 signs nothing until they merge main. Check the commit at the new sha "
             f"before treating this as a bypass."
         )
     return PASS, (f"main advanced by ancestry in all {len(lines)} recorded move(s), each "
@@ -4704,7 +4707,7 @@ def check_main_advances_by_ancestry(root):
 def _describe_jump(root, old, new):
     """One sideways move, rendered so the reader does not have to run a second command.
 
-    MEASURED 2026-09-08 (e1): the FAIL for `a2375098 -> 12ecbf52` printed the sha pair and
+    MEASURED 2026-09-08 (e1): the FAIL for `1dfcdd63 -> d4caf9f8` printed the sha pair and
     nothing else, and the three questions a reader actually has -- what did I lose, how much,
     can I still get it back -- each needed their own `git log`. I ran them by hand and found 2
     commits and 10 lines across two ledgers, one of which was the friction row RECORDING THIS
@@ -4713,8 +4716,8 @@ def _describe_jump(root, old, new):
     THE LINE COUNTS COME FROM `log --numstat` OVER THE DISCARDED COMMITS, NOT FROM A TWO-POINT
     `diff new old`, and this is the whole correctness argument for the function. Measured on the
     real pair: the two-point diff reports THREE ledgers including `runs/prereg.jsonl 0/1`, but
-    `git log 12ecbf52..a2375098 -- runs/prereg.jsonl` is EMPTY -- the discarded side never
-    touched that file. The 0/1 is a line MAIN added (c9f612f8), read backwards by the diff's
+    `git log d4caf9f8..1dfcdd63 -- runs/prereg.jsonl` is EMPTY -- the discarded side never
+    touched that file. The 0/1 is a line MAIN added (c57bee8c), read backwards by the diff's
     direction and printed as if the jump had deleted it. A two-point diff answers "how do these
     two trees differ", which includes everything the surviving side did; the question here is
     "what did the discarded commits carry", and only the log-walk asks it. Over-reporting a loss
@@ -4795,7 +4798,7 @@ def _selftest_sideways_move_names_what_it_discarded():
         base = g("rev-parse", "HEAD").stdout.strip()
         # THE DISCARDED SIDE IS `old`, NOT `new` -- the reflog pair is (previous, current), so a
         # sideways move discards what main was ALREADY on. The real incident had it this way
-        # round (a2375098, fb's two commits, was the previous value). Build it the same way or
+        # round (1dfcdd63, fb's two commits, was the previous value). Build it the same way or
         # the fixture measures the surviving side and the log-walk points backwards.
         #
         # These commits are ALSO left on a branch, because that is what makes the recoverability
@@ -4814,7 +4817,7 @@ def _selftest_sideways_move_names_what_it_discarded():
         g("checkout", "-q", "main")
         g("merge", "-q", "--ff-only", "sidebr")
         # MAIN'S OWN ADVANCE, on a different ledger, descending from `base` rather than from
-        # `lost`. This is the c9f612f8 shape: a two-point `diff new old` attributes prereg.jsonl
+        # `lost`. This is the c57bee8c shape: a two-point `diff new old` attributes prereg.jsonl
         # to the jump; a log-walk over the discarded commits does not.
         g("checkout", "-q", "-b", "mains-own", base)
         open(os.path.join(d, "runs", "prereg.jsonl"), "w").write('{"row":"mains own"}\n')
@@ -6051,7 +6054,7 @@ def _noted_gone(entry, name, tier=None):
     says "[absent] -- not in the listing" is speaking this check's language.
     Name and gone-word must sit in the SAME sentence: concatenating the fields lets
     "measured on X. Y was pruned" disclose a death X never had (de, review of
-    9420c8b, measured True). Semicolons stay inside a sentence -- they join an aside
+    d8accb9, measured True). Semicolons stay inside a sentence -- they join an aside
     to the disclosure that owns it (e1's recal note names the ckpt, then "; its
     siblings ARE listed", then the pruning). ASCII "." is no boundary: checkpoint
     names are built from it.
@@ -6097,7 +6100,7 @@ def check_pod_stamp_is_main(root):
       not an ancestor   the stamp names a commit main does not contain -- pushed from an
                         unmerged branch. pod_push.sh's stamp_sync used `rev-parse HEAD`,
                         which in a per-session worktree is that BRANCH's tip: measured
-                        2026-09-03, this tree's HEAD was 1b85dd0c while main was 69c8bd87.
+                        2026-09-03, this tree's HEAD was 8cfa62c8 while main was f5210e64.
                         Every pushed FILE is main's (push_one refuses any that differs), so
                         such a stamp describes a tree existing on no branch.
       behind main       main moved after the push. Expected and not a fault by itself, so it
@@ -6155,7 +6158,7 @@ def check_pod_stamp_is_main(root):
     # local main moves only under merge_main.sh's CAS, i.e. only for ledger commits. A stamp a
     # merger pushed therefore names a commit the LOCAL ref does not contain, and the local form
     # reported its louder branch falsely ("a tree on no branch"). MEASURED 2026-09-10: the
-    # stamp b4a8a41d WAS origin/main; `git fetch origin main:main` cleared the WARN.
+    # stamp 54e13820 WAS origin/main; `git fetch origin main:main` cleared the WARN.
     # Fall back to local main on a remote-less tree (fixtures/CI) so the check still answers.
     main = (_git("rev-parse", "--verify", "--quiet", "origin/main").stdout.strip()
             or _git("rev-parse", "--verify", "--quiet", "main").stdout.strip())
@@ -6174,7 +6177,7 @@ def check_pod_stamp_is_main(root):
 
 # Self-contained stamp worlds created inside _demo: subject path -> the private temp ROOT the
 # test owns and must remove. ROOT-based worlds (symlinked .git) clean the subject itself. The
-# cleanup reads these rather than guessing a dirname depth (the f19a9474 bug deleted a shared
+# cleanup reads these rather than guessing a dirname depth (the 075879ad bug deleted a shared
 # temp root via dirname() of a _tmp_repo world).
 SELF_CONTAINED_STAMP_WORDS = set()
 SELF_CONTAINED_STAMP_ROOTS = {}
@@ -6234,7 +6237,7 @@ def _stamp_world_nonancestor_synthetic():
     repository (`git rev-list --all --not main origin/main`) and symlinked ROOT/.git. That
     reachability depended on the checkout happening to carry a ref outside main: a PR's
     detached merge checkout had none, the probe returned EMPTY, the world was skipped, and the
-    dangerous cleanup never ran -- a green that depended on runner ref layout (the f19a9474
+    dangerous cleanup never ran -- a green that depended on runner ref layout (the 075879ad
     escape). This world builds its own git repo so world B is reachable on EVERY checkout:
 
       bare origin -> seed commit on main -> subject clone; then a second branch commits a
@@ -6305,7 +6308,7 @@ def _broken_pod_stamp_is_main():
     cannot build the synthetic world -- and distinguishes three probe outcomes on the
     ROOT-ref path (it never builds here in CI): empty result is a legitimate skip, a sha is
     used, and a git FAILURE (rc!=0, e.g. no resolvable main in a detached checkout) is a loud
-    NOT-VERIFIED, never read as "empty" (the f19a9474 fail-open). Returns the subject tree;
+    NOT-VERIFIED, never read as "empty" (the 075879ad fail-open). Returns the subject tree;
     the removable root is recorded in SELF_CONTAINED_STAMP_WORDS for cleanup."""
     try:
         subject, root = _stamp_world_nonancestor_synthetic()
@@ -6504,7 +6507,7 @@ def check_run_commits_resolve(root):
     The cause was width, not a wrong tree. exp.git_commit used `rev-parse --short` on the git
     path and a hardcoded `[:7]` on the pod-stamp path; --short is git's AUTO-SCALING
     abbreviation and began returning 8 characters once the object count grew, so one commit
-    wrote two strings (8cd68340 vs 8cd6834). Both paths now store the full 40, which is why
+    wrote two strings (8922186f vs 8922186). Both paths now store the full 40, which is why
     this check can be exact.
 
     WARN, not FAIL: the rows already written cannot be re-derived by this check, and a FAIL on
@@ -6968,7 +6971,7 @@ def check_keep_claim_reasons_live(root):
     still holds (44-25, 1e ruling 2026-09-03).
 
     step1192's claim was 'the ONLY evidence refuting ds.second_resume_rereads_one_segment';
-    that fact was retracted the same day by 52aec31 and the claim stood. The checkpoint
+    that fact was retracted the same day by bc2cb9e and the claim stood. The checkpoint
     guard cannot see the reason's death -- it asks 'is the ckpt claimed', never 'is the
     fact it was claimed for still alive'. WARN, not FAIL: a retracted fact does not make
     the checkpoint worthless, it makes the claim's justification stale -- a human either
@@ -7658,8 +7661,8 @@ def check_vocab_id_on_load_path(root):
     at ~4x the loss, because every id is wrong, in range, and the sizes match. `data/tokenizer.json`
     is rebuilt in place, so nothing else distinguishes two vocabularies.
 
-    THE ROW THIS CLOSES WAS `manual: enforced at load since 7aacbac`, and reading the tree for it
-    found the enforcement is on ONE of the two pack loaders. 7aacbac fixed sft_math.py, where the
+    THE ROW THIS CLOSES WAS `manual: enforced at load since e323a7d`, and reading the tree for it
+    found the enforcement is on ONE of the two pack loaders. e323a7d fixed sft_math.py, where the
     guard had been keyed on `"vocab" in d` while the packer writes `vocab_id` -- so the assert never
     fired and the run printed "the pack predates vocabulary fingerprinting" about a pack that
     carried the fingerprint. sft.py loads a pack at sft.py:75 and compares nothing: it reads
@@ -7668,7 +7671,7 @@ def check_vocab_id_on_load_path(root):
     records: the cause was recorded as "this function read the wrong key" when it was "this repo has
     two pack loaders and only one asks the question".
 
-    AST, NOT A SUBSTRING, and the reason is this rule's own history. The defect 7aacbac fixed was a
+    AST, NOT A SUBSTRING, and the reason is this rule's own history. The defect e323a7d fixed was a
     guard present in the source, spelled correctly, reading a key that did not exist -- a grep for
     `vocab_id` was GREEN throughout. So the check requires, per loader: the pack dict is subscripted
     or .get() for a vocab key, AND that value reaches a comparison. A guard that reads the key and
@@ -7757,7 +7760,7 @@ def check_vocab_id_on_load_path(root):
         elif not compared:
             bad.append(f"{fn} reads the pack's vocab key ({reads[0]}) but nothing compares that "
                        f"value against the checkpoint's; a guard that reads the key and drops the "
-                       f"value, or only tests it for presence, is the 7aacbac defect")
+                       f"value, or only tests it for presence, is the e323a7d defect")
         else:
             ok.append(fn)
     if bad:
@@ -7866,7 +7869,7 @@ def check_coresident_cache_refusal(root):
     bypass = []
     scanned = 0
     # THE SECOND WAY INTO A CACHE, and the one this check was blind to when it landed
-    # (38af3d47). The rule's quantity is HOST BYTES OFF /data00, and _domain_seqs is only one
+    # (9765c108). The rule's quantity is HOST BYTES OFF /data00, and _domain_seqs is only one
     # door to them: a file can `torch.load("/data00/tokens_<domain>.pt")` by path and read the
     # same 35 GB with neither guard in the stack. e1 walked into it the next day building
     # eval/api_cloze.py, whose whole job is reading that cache -- a 35.1 GB mmap read that
@@ -8072,7 +8075,7 @@ def _broken_coresident_call_removed():
     with open(p, encoding="utf-8") as fh:
         s = fh.read()
     # MATCH THE CALL, NOT ONE SPELLING OF IT. This was the literal
-    # `"    assert_not_co_resident(domains, root=root)\n"`, and on 2026-09-07 21:09 (226564c9)
+    # `"    assert_not_co_resident(domains, root=root)\n"`, and on 2026-09-07 21:09 (50976527)
     # the chokepoint gained a `head_rows=head_rows` argument. The literal stopped matching, the
     # world raised SelftestSkip, and `harness self-test OK` kept printing with this guard dead --
     # for 4.5 hours, over an argument added to the very line it watches. A world keyed to an
@@ -8150,7 +8153,7 @@ def _broken_coresident_path_read():
 
 
 def _broken_vocab_id_load_path():
-    """sft_math.py's guard with the KEY RENAMED, which is the 7aacbac defect itself.
+    """sft_math.py's guard with the KEY RENAMED, which is the e323a7d defect itself.
 
     Not a deleted assert: a deleted one is caught by a substring search too, and would prove
     nothing about why this check reads the AST. The world here keeps the assert, keeps the word
@@ -8409,7 +8412,7 @@ def check_shared_file_claim(root):
     lists every incoming file, so any session merging main after someone else changed AGENTS.md sees
     its own commit refused for a change it did not write -- and the merge cannot be split, because
     git refuses a partial commit during a merge. Measured 2026-09-04, minutes after the check landed:
-    `de` merging main was refused naming AGENTS.md, whose only change came from 38af3d47 on another
+    `de` merging main was refused naming AGENTS.md, whose only change came from 9765c108 on another
     branch; every worktree merging main was blocked the same way, which is a gate that stops the work
     it was written to protect.
 
@@ -8587,7 +8590,7 @@ def merge_reverted_content(root, merge_sha="HEAD", max_files=40):
       loss belongs to whichever merge dropped it, and that merge's own check owned it.
       WARN naming that commit, because every later merge from an older branch inherits
       the same absence and calling inheritance a defect is what made the check unusable.
-      c8a4578 is here: _built_set was dropped in d5aac3d's conflict resolution, which
+      a01e29f is here: _built_set was dropped in d5aac3d's conflict resolution, which
       states its reason, and 117 merges after it inherited the red.
 
     Why plain `-S` still gates the FAIL branch and no flag was added: `git log -S` shows
@@ -8967,7 +8970,7 @@ def check_merge_complete(root):
     # BOTH SIDES' COUNTS, because one of them is legitimately zero. `HEAD^1..HEAD` is what
     # the merge brought into OURS, and it is 0 whenever ours already contained everything
     # the other side had that survived -- a fast-forward-shaped merge, or one whose only
-    # contested path resolved to a DELETION on our side (a0e401e0: 0 against parent 1, 6
+    # contested path resolved to a DELETION on our side (e9dcdc58: 0 against parent 1, 6
     # against parent 2). The selftest's own vacuity rule then reads "0 file(s) changed,
     # 0 contested" as a scan that examined nothing, and refuses a correct PASS. Reporting
     # the second parent's count as well makes the difference visible: 0 and 0 is a merge
@@ -9080,7 +9083,7 @@ def check_entrypoint_help(root):
     bad = []
     # THE REPO-ROOT ENTRY POINTS WERE NOT SCANNED, WHICH IS WHERE THIS DEFECT LIVED LONGEST.
     # This loop covered five subdirectories and no root file, so train.py -- the entry point
-    # every launch goes through -- was outside it. Measured 2026-09-03: train.py:1963 at 169da865
+    # every launch goes through -- was outside it. Measured 2026-09-03: train.py:1963 at 51bca1b8
     # carried "weights 14% off against fp64 truth", so `train.py --help` had been dead
     # with the exact TypeError this check names, and the check passed the whole time. A guard
     # that skips the most-used file in the repo reports on the files that matter least.
@@ -9179,8 +9182,8 @@ def merge_drops(root, rev="HEAD"):
         # Which of those a NON-MERGE commit on the merge's side actually deleted. `--no-merges`
         # is the whole discrimination and it took two wrong versions to find (de, 2026-09-04).
         # A merge commit that drops a path DOES record `D` against the parent that held it --
-        # measured on d9c9614f, whose parent2 acbdbdd1 added the file: `git diff --diff-filter=D
-        # acbdbdd1 d9c9614f` prints the path, and `git log -m --diff-filter=D` lists all seven
+        # measured on 807c93c7, whose parent2 25a8eb28 added the file: `git diff --diff-filter=D
+        # 25a8eb28 807c93c7` prints the path, and `git log -m --diff-filter=D` lists all seven
         # merges. So "some commit records a D" is true of the silent drops themselves and rules
         # every one of them deliberate. What no silent drop has is a deletion someone WROTE: a
         # single-parent commit removing the path, which is what `git rm` produces. The
@@ -9202,16 +9205,16 @@ def merge_drops(root, rev="HEAD"):
 def check_merge_keeps_parent_paths(root):
     """HEAD, if it is a merge, holds every path EITHER parent held, unless someone deleted it.
 
-    runs/redaction_handread_v14.tsv (44's v14 hand-read, 51 lines, committed acbdbdd1) left main
+    runs/redaction_handread_v14.tsv (44's v14 hand-read, 51 lines, committed 25a8eb28) left main
     with no written deletion anywhere, and was restored four times because each restore was
-    dropped again: 6f8361ec, 8f13f5a8, 72ba3c92, 8499a3cf. Seven merges dropped it -- d9c9614f
-    (the drop site), d42e766c, 3f3568ad, 26e060af, 0c787961, 74b67ca3, c2cc8bba.
+    dropped again: c6f0b8a5, 6dd91b02, c09018e2, 110f3d63. Seven merges dropped it -- 807c93c7
+    (the drop site), 267ab244, faf69081, d14b19b2, ba2dbb48, 7226cf5a, fe1d04ec.
 
     TWO NAIVE PREDICATES MISS IT, both verified against the real repository 2026-09-04:
 
-      - first-parent only: 74b67ca3's parent1 bbf1e354 already lacked the path, so
-        `git diff --diff-filter=D 74b67ca3^1 74b67ca3` is EMPTY. The loss is against parent2.
-      - "the second parent added it": c2cc8bba's first parent held it instead (6e).
+      - first-parent only: 7226cf5a's parent1 7f624345 already lacked the path, so
+        `git diff --diff-filter=D 7226cf5a^1 7226cf5a` is EMPTY. The loss is against parent2.
+      - "the second parent added it": fe1d04ec's first parent held it instead (6e).
 
     And the shape that looks decisive is not: a merge that drops a path DOES record a `D`
     against the parent that held it, so "no commit records a deletion" is false of every one of
@@ -9264,16 +9267,16 @@ def _broken_merge_keeps_parent_paths():
     property cannot be built by running git commands that delete a file, because every such
     command records the deletion. It has to be taken from the history that has it.
 
-    So the world is a worktree of this repository at d9c9614f -- the drop site, whose second
-    parent acbdbdd1 added the file and whose tree lacks it. The check reads HEAD, so a detached
+    So the world is a worktree of this repository at 807c93c7 -- the drop site, whose second
+    parent 25a8eb28 added the file and whose tree lacks it. The check reads HEAD, so a detached
     checkout at that commit IS the failing case, with the real object database behind it.
     """
     import shutil as _sh
     import tempfile as _tf
 
-    if subprocess.run(["git", "-C", ROOT, "cat-file", "-e", "d9c9614f^{commit}"],
+    if subprocess.run(["git", "-C", ROOT, "cat-file", "-e", "807c93c7^{commit}"],
                       capture_output=True, stdin=subprocess.DEVNULL).returncode:
-        raise SelftestSkip("d9c9614f is not in this repository; the drop site is unavailable", reason="environment")
+        raise SelftestSkip("807c93c7 is not in this repository; the drop site is unavailable", reason="environment")
     d = _tf.mkdtemp(prefix="merge_drop_")
     # A linked worktree would register itself in the shared .git and need removing; a clone of
     # the local repo is self-contained and cheap (--no-checkout, then a detached read).
@@ -9285,7 +9288,7 @@ def _broken_merge_keeps_parent_paths():
         _sh.rmtree(d, ignore_errors=True)
         raise SelftestSkip(f"cannot clone this repository for the world: {r.stderr[:80]}", reason="environment")
     w = os.path.join(d, "r")
-    subprocess.run(["git", "-C", w, "checkout", "-q", "--detach", "d9c9614f"],
+    subprocess.run(["git", "-C", w, "checkout", "-q", "--detach", "807c93c7"],
                    capture_output=True, stdin=subprocess.DEVNULL)
     return w
 
@@ -9715,7 +9718,7 @@ def _broken_corpus_filters_fp():
     # real tree. fp_filters raises FileNotFoundError on a missing member
     # (datagen/corpus_fingerprint.py:80) rather than hashing "absent", so a world holding only
     # pass1 makes the check RAISE -- and a raise is reported as "cannot be made to fail", not as
-    # a FAIL. Writing only pass1_garbage.py was correct until f93f99f6 (2026-09-06 10:17Z) added
+    # a FAIL. Writing only pass1_garbage.py was correct until 08efa944 (2026-09-06 10:17Z) added
     # the three-file tuple; that commit touched neither this file nor any check.
     #
     # THE TUPLE IS IMPORTED, NOT RESTATED. Restating the three names here is the same drift in
@@ -10716,14 +10719,14 @@ FACT_NEEDS_CLAIM = {"unmeasured", "retracted"}
 # them: FIVE of the nine retract a CONCLUSION while their numbers stand. be.l1_3shot_retracted's
 # rerun reproduced 0.2/63.6/8.9; cont.sft_all_code_holdout_leak's v2 2.2% and v3 40.0% are
 # restored; ds.second_resume_rereads_one_segment's 8,192 rows was true of every checkpoint written
-# before 52aec31. A field that marked all nine's numbers dead would kill five entries' correct
+# before bc2cb9e. A field that marked all nine's numbers dead would kill five entries' correct
 # values -- the same defect in a new place. So the list holds only values that are wrong, and an
 # empty list states that no number died, which is the common case.
 FACT_RETRACTED_VALUE = "retracted_value"
 FACT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 FACT_SOURCE_PATH = re.compile(
     # probes/ was absent until 2026-09-02 and its absence was a blind spot, not a scoping
-    # decision: 44's 22 probe deletions in 30b9010 rewrote 39 refs to path@rev, and this
+    # decision: 44's 22 probe deletions in e45e4fa rewrote 39 refs to path@rev, and this
     # check would have passed them either way because it never looked in that directory.
     # The same retirements under eval/ or scripts/ FAILed the day de wrote them (de-21).
     # Added once @rev was understood here; all 27 probes/ citations resolve, 21 by rev and
@@ -10738,7 +10741,7 @@ FACT_SOURCE_PATH = re.compile(
 # `/tmp/count_30b.py` as the counter behind its token total, and nothing else. That counter
 # omitted the <eos> terminator and the value was short by 1,029,505 -- exactly the document
 # count. Nobody found it by reading the counter, because the path was unreadable. Row as it
-# stood: `git show b4095851^:facts/corpus_supply.json`.
+# stood: `git show 723c1f0e^:facts/corpus_supply.json`.
 #
 # "ONLY" IS THE WHOLE PREDICATE, and the measurements that put it there also set the scope.
 # 84 proposed "a source must yield at least one path the tree can resolve"; applied to facts/:
@@ -10921,7 +10924,7 @@ def check_tasks_closed_by_commit(root):
     rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"), index_root=root)
     # THE MAP MUST SEE MERGE COMMITS. `git log --name-only` prints no paths for a merge, so this
     # check silently could not verify any delivery that landed in one -- 607 of main's 2755
-    # commits (22%) read as touching nothing, and closing de-30 against c889bc2 was refused with
+    # commits (22%) read as touching nothing, and closing de-30 against 8ee64ed was refused with
     # `touches []` while `git show --stat` listed 7 files. Asserted here rather than trusted,
     # because the failure is invisible: the check stays green and simply cannot see a whole class
     # of commit. A merge on main with zero paths means _main_touched lost its `-m` or its union.
@@ -11391,7 +11394,7 @@ def _selftest_one_deliverable_names_the_fixture():
     """one_deliverable_per_owner sees its world's seed: 4 members with it, 3 without.
 
     BOTH DIRECTIONS AND THE COUNT, because the registered broken world discriminates
-    nothing on its own (db, 2026-09-06, driving ea82d2e2 rather than reading it). This
+    nothing on its own (db, 2026-09-06, driving 5de26944 rather than reading it). This
     check is in --selftest's warn_only set, where the predicate is `state not in (PASS,
     SKIP)` rather than `state == FAIL`. The real ledger already holds violators, so the
     world WARNs, the world minus its seed WARNs, and the bare real tree WARNs -- measured
@@ -11770,9 +11773,9 @@ def check_facts_well_formed(root):
                         continue
                     # `path@rev` is the repo's retirement form for a deleted file: the
                     # content is reachable at that sha, so the citation resolves even
-                    # though the path does not. launch_gate learned this in 4676118; this
+                    # though the path does not. launch_gate learned this in c399ad5; this
                     # check did not, and it FAILed on the seven retirements of de-21 while
-                    # 44's 22 in 30b9010 passed only because `probes/` is absent from
+                    # 44's 22 in e45e4fa passed only because `probes/` is absent from
                     # FACT_SOURCE_PATH's directory list -- the same deletions in eval/ or
                     # scripts/ would have failed. Verify the rev, do not just accept the
                     # syntax: a sha that names nothing is a dead citation wearing the
@@ -12171,7 +12174,7 @@ CMD_PATH_RE = re.compile(r"(?<![\w.-])([\w./-]+\.(?:sh|py))(?![\w.-])")
 #: HOW THE GAP HID FOR SO LONG: the old `(?:bash|sh|shell)?` pattern could not OPEN at the
 #: ```python fence (AGENTS.md:156), so it opened at that block's CLOSING fence and every later
 #: marker alternated the other way -- pairing 173-181, 187-249 and 251-380, which are PROSE. It was
-#: scanning most of the document by accident and finding 29 paths. 3fd80424 corrected the pairing to
+#: scanning most of the document by accident and finding 29 paths. 16ac3721 corrected the pairing to
 #: `(?:\w+)?`, which is right, and the reach fell 29 -> 2 while the check went on PASSing: correct
 #: fence pairing cannot reach those paths, because they are not in fenced blocks. Three candidate
 #: regexes were measured (closer-alone-on-its-line, positional pairing on markers, tag-optional) and
@@ -12812,7 +12815,7 @@ def check_ci_line_number_citations(root):
 
     SCOPE, and why `docs/audits/` is exempt. A LIVE citation must name something a reader can
     find today, so it is checked. A DATED audit is a record of what was true at its own sha
-    (`deletion_audit_2026-09-02.md` is `status: recorded`, `main 6814a72`) -- its citations are
+    (`deletion_audit_2026-09-02.md` is `status: recorded`, `main 8da61fd`) -- its citations are
     part of the evidence for the ruling it made, and rewriting them to today's line numbers would
     falsify the record while making it look current. The line number is the correct form THERE.
     The exemption is the directory, not the frontmatter: `status:` is `measured` on 8 of the 16
@@ -12903,7 +12906,7 @@ def check_doc_commands(root):
         return FAIL, f"doc(s) cite path(s) not in the repo: {sorted(missing)[:5]}"
     if not os.path.exists(agents) and not _doc_data_paths(root):
         return SKIP, "no docs present"
-    # THE COUNT IS IN THE EVIDENCE because this check's reach silently fell 29 -> 2 at 3fd80424 and
+    # THE COUNT IS IN THE EVIDENCE because this check's reach silently fell 29 -> 2 at 16ac3721 and
     # went on PASSing. A reader can now tell "64 citations resolved" from "2 resolved" without
     # reading the regex.
     return PASS, (f"{n_scanned} script citation(s) in AGENTS.md (fenced blocks and inline spans) "
@@ -13227,7 +13230,7 @@ def _broken_readme_current():
 def _selftest_inline_citations_are_scanned():
     """An INLINE `nonexistent.py` in AGENTS.md must FAIL, and a real one must not (de-72).
 
-    THE WORLD 3fd80424 WOULD HAVE PASSED. That commit corrected CMD_BLOCK_RE's fence pairing --
+    THE WORLD 16ac3721 WOULD HAVE PASSED. That commit corrected CMD_BLOCK_RE's fence pairing --
     rightly: the old `(?:bash|sh|shell)?` could not open at the ```python fence, so it opened at
     that block's CLOSER and paired prose as command blocks, scanning most of the document by
     accident. The reach fell from 29 paths to 2 and the check kept PASSing, because AGENTS.md cites
@@ -13328,7 +13331,7 @@ def _selftest_inline_citations_are_scanned():
                     open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read()))
                 assert re.search(rf"\b{_live_n} script citation", ev), (
                     f"{label}: the PASS must state how many citations it resolved "
-                    f"({_live_n}), or a collapse like 3fd80424's is invisible again: {ev}")
+                    f"({_live_n}), or a collapse like 16ac3721's is invisible again: {ev}")
         finally:
             shutil.rmtree(d, ignore_errors=True)
     n = len(cited_script_paths(open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read()))
@@ -14260,7 +14263,7 @@ def _token_cache_dir():
     reported the overlay's copy: stale or absent, either way an answer about the wrong file.
 
     The source-scrape had one virtue worth keeping: it does not import train, which pulls in torch.
-    On 2026-09-07 (commit 1bd9ed76) that virtue was promoted to the DEFAULT: the scrape is tried
+    On 2026-09-07 (commit 5ff4469b) that virtue was promoted to the DEFAULT: the scrape is tried
     FIRST and `import train` becomes the authority it falls through to when the scrape cannot read
     the same inputs (a non-literal TOKEN_CACHE). The docstring here said "the scrape stays as the
     FALLBACK" for eleven days after that reversal -- the code was right and this paragraph was not,
@@ -14483,7 +14486,7 @@ def check_tokens_status_honest(root):
     build_corpus.py wrote that label unconditionally while counting min(3, len(shards))
     shards and extrapolating by bytes, so on 2026-09-07 seven landed domains carried a
     false "measured" over 34.5B tokens -- four of them 30B-mix supply fields, including
-    code_rp1t's 7,569,415,401 from 3 of 235 shards. The producer is fixed (835ff5a4);
+    code_rp1t's 7,569,415,401 from 3 of 235 shards. The producer is fixed (9f727ce4);
     this reads the artifacts, because a stamp written before that fix keeps its label
     until someone recounts, and the mix is budgeted against the field, not the fix.
 
@@ -14922,7 +14925,7 @@ def _broken_env():
 FRICTION_PATH = os.path.join(ROOT, "runs", "friction.jsonl")
 # The five original kinds name WHAT BLOCKED someone -- a merge, a hook, a check, the pod, a
 # launch -- and every one of them is a mechanism in our own tooling. 44's policy_metrics.py
-# (1ad28540) needs two more, and they are a different axis rather than two more mechanisms:
+# (95db9ab9) needs two more, and they are a different axis rather than two more mechanisms:
 #
 #   misroute  a message or a task reached the wrong session. Nothing in the tooling blocked it;
 #             the cost was paid in a session doing work that was not theirs, or in work nobody
@@ -15755,7 +15758,7 @@ def check_tasks_well_formed(root):
     `drop_reason` is a separate field from `why` and the distinction is the point: `why` is the
     justification the row was OPENED with, and it survives a drop unchanged, so a dropped row
     always has a `why` and that tells a reader nothing about why the work stopped. Measured
-    2026-09-04 (tilerl's triage d039a32e, verified here): 52 dropped rows, 45 carried
+    2026-09-04 (tilerl's triage d146ef80, verified here): 52 dropped rows, 45 carried
     `drop_reason` and 7 did not -- e1-21, e1-25, e1-27, e1-29, e1-30, tilerl-1, tilerl-10 -- and
     this check passed on all seven, because it only ever asserted `why`.
 
@@ -15767,7 +15770,7 @@ def check_tasks_well_formed(root):
     the permanent-red shape -- a red nobody can clear is the same as no signal. So the clause
     shipped with DROP_REASON_GRANDFATHERED: a dated literal list, WARN by name, shrink-only,
     to be deleted when it emptied. tilerl filled two within the hour and e1 all five at
-    aaf02e47; at 482 events / 51 dropped / 51 carrying the field the list was empty and is gone,
+    5ea61872; at 482 events / 51 dropped / 51 carrying the field the list was empty and is gone,
     exactly as its own comment said. Recorded because the ratchet is the reusable part: a new
     required field on existing rows their author cannot fill is a dated WARN list plus a deletion
     condition, not a FAIL that blocks every session and not a rule left unenforced.
@@ -16496,7 +16499,7 @@ def _broken_lane_respected():
         # is a block card, so the world read "training cards [1,2,4,6]: idle" and the check
         # correctly PASSed -- reported by _demo as "lane_respected cannot be made to fail".
         # A world that cannot express the defect SKIPs by name; it does not build a green one and
-        # let the selftest interpret it. Measured: grant 8a7a0662 set lane_card empty for the
+        # let the selftest interpret it. Measured: grant 6a5e8176 set lane_card empty for the
         # head-hybrid A/B, which runs with no lane card at all, and this selftest went red on a
         # check that works.
         raise SelftestSkip(
@@ -16509,7 +16512,7 @@ def _broken_lane_respected():
         # and marking block[0] busy lands on "all 1 busy (block used as block)" -- a correct
         # PASS. The world then asserts nothing and _demo reports "broken world cannot be made
         # to fail" against a check that works, which is what main's CI went red on at
-        # 5a5c833d: the grant of 2026-09-09 narrowed block_cards to "4" because one card is
+        # 28ba06b1: the grant of 2026-09-09 narrowed block_cards to "4" because one card is
         # genuinely all aupai holds besides the lane (5 and 7 went to another container, 0/1/3/6
         # to tileRL). The grant is honest and the world is the thing that cannot be built, so
         # this SKIPs by name rather than widening the grant to suit the test -- the same ruling
@@ -16754,7 +16757,7 @@ def check_dirty_aged(root):
     # THE POPULATION IS THE TRACKED FILE SET, not the dirty count, and my first version of this
     # line got that wrong (de-71, 2026-09-07). It read "0 dirty tracked file(s), none older than
     # 6h" -- and on a CLEAN tree that is all-zero, which the vacuous-PASS sweep correctly flags as
-    # a PASS verifying nothing. It read green at 79e9dd8f only because the tree happened to be
+    # a PASS verifying nothing. It read green at c82510a6 only because the tree happened to be
     # dirty when I ran it. The two zeros T0-2 exists to separate are "read 606 files, none dirty"
     # (the pass condition) and "read nothing" (git failed, empty checkout); `n_dirty` distinguishes
     # neither, because zero dirty files is the GOOD state here. `git ls-files` is the population.
@@ -16848,7 +16851,7 @@ def check_frozen_paths(root):
     """While a run holds the block, main does not change what the run is made of.
 
     A commit message saying HOLD binds the person who wrote it, and `git merge` does not
-    read English: da06097 carried "do not merge to main while p500m_20b_0902 is training"
+    read English: 3debe53 carried "do not merge to main while p500m_20b_0902 is training"
     in its own first line, and I merged the branch that contained it 40 minutes later
     (2026-09-02). The revert was clean and that is not the point -- the same mistake with
     train.py would have made the tree describe a model the running job is not training.
@@ -17292,10 +17295,10 @@ def check_train_cite_targets(root):
 
     THE ONE EXCEPTION, and it is load-bearing: a line number qualified by a commit sha in
     the same sentence cannot rot, because the tree it resolves against is frozen in the
-    citation itself. Two such citations were converted in 59245542 and had to be reverted --
+    citation itself. Two such citations were converted in 315cb93e and had to be reverted --
     both were describing a defect's PRE-FIX state, so repointing them at HEAD made the
     sentence contradict the line it cited and destroyed the only pointer to the state that
-    justified the guard. `git show 169da865:train.py | sed -n 1963p` still returns the
+    justified the guard. `git show 51bca1b8:train.py | sed -n 1963p` still returns the
     quoted text character-for-character. Without this carve-out the check would ban the one
     spelling that is permanently correct, and the conversion would destroy evidence.
 
@@ -17514,7 +17517,7 @@ def _selftest_train_cite_abbreviated_form():
     worlds = [
         (f"# train.py's cast lives at :{victim_line} and this sentence names train.py.", 1),
         (f"# an unrelated comment mentioning :{victim_line} and no python file at all.", 0),
-        (f"# train.py:{victim_line} AT 169da865 held the cast, and :{victim_line} names it.", 1),
+        (f"# train.py:{victim_line} AT 51bca1b8 held the cast, and :{victim_line} names it.", 1),
         # ASSEMBLED, NOT WRITTEN OUT. Spelling the slice literally here would put the shape
         # into this file's own source, where the check walks it -- the trap that caught this
         # PR's first draft comment. The braces and the bracket are joined at runtime so the
@@ -17552,7 +17555,7 @@ def _selftest_cite_sentence_wraps():
     """A sha on the NEXT comment line anchors the citation; four things stop the continuation.
 
     4c's second finding, 2026-09-07. `_cite_sentence` bounded the sha search by punctuation
-    inside one line, so `# the cast at train.py:2315 AT` / `# 169da865 held the fp8 branch.`
+    inside one line, so `# the cast at train.py:2315 AT` / `# 51bca1b8 held the fp8 branch.`
     found no sha and the check reported a correctly ANCHORED citation as bare debt -- the same
     class of false red as the position-keyed baseline, and worse, it pushes an author toward
     deleting the one spelling that cannot rot.
@@ -17578,13 +17581,13 @@ def _selftest_cite_sentence_wraps():
     cite = f"    # the cast at {fname}:2315 AT"
     closed = f"    # the cast at {fname}:2315 moved. Unrelated text follows"
     cases = [
-        ("sha on the next comment line", cite, ["    # 169da865 held the fp8 branch."], True),
-        ("a blank line ends the block", cite, ["", "    # 169da865 later."], False),
-        ("code is a different kind", cite, ['    x = "169da865"'], False),
+        ("sha on the next comment line", cite, ["    # 51bca1b8 held the fp8 branch."], True),
+        ("a blank line ends the block", cite, ["", "    # 51bca1b8 later."], False),
+        ("code is a different kind", cite, ['    x = "51bca1b8"'], False),
         ("three lines is past the reach", cite,
-         ["    # more", "    # words", "    # 169da865 here."], False),
+         ["    # more", "    # words", "    # 51bca1b8 here."], False),
         ("the citing line's own punctuation stops it", closed,
-         ["    # 169da865 unrelated."], False),
+         ["    # 51bca1b8 unrelated."], False),
     ]
     for label, line, following, want in cases:
         pos = line.index("train.py")
@@ -18463,7 +18466,7 @@ def check_no_conflict_markers(root):
     """No tracked source or doc holds a merge/stash conflict marker.
 
     Found by reading, not by a gate: `docs/lessons/gate_failure_shapes.md:870` carried a
-    bare `>>>>>>> Stashed changes` in 9420c8b, committed, with every hook line green (de,
+    bare `>>>>>>> Stashed changes` in d8accb9, committed, with every hook line green (de,
     2026-09-02). Nothing in CHECKS looked for it, ruff does not read Markdown, and a
     trailing marker at the end of a long doc is invisible to a reviewer scrolling to the
     section they came for.
@@ -18504,7 +18507,7 @@ def _broken_no_conflict_markers():
 
     Mutating the actual file, not a hand-written stub: the check reads tracked files under
     a repo-shaped tree, and a stub would share the check's assumption about where docs
-    live. This is the exact byte sequence 9420c8b committed."""
+    live. This is the exact byte sequence d8accb9 committed."""
     import shutil
 
     d = _tmp_repo_shaped()
@@ -18534,7 +18537,7 @@ def check_main_in_no_worktree(root):
     AGENTS.md states the invariant as a property of the integration tree -- "/Users/bytedance/
     code/aupai is the integration tree and is DETACHED; main is checked out in no worktree at
     all, which is what makes the compare-and-swap below legal". Nothing enforced it, and it
-    stopped being true tonight: aupai-b0 holds refs/heads/main at 47148ae3, and 44
+    stopped being true tonight: aupai-b0 holds refs/heads/main at 8706afd9, and 44
     fast-forwarded main there by hand. Measured 2026-09-08, reported by 4c.
 
     WARN, not FAIL, and the reason is the failure mode rather than caution: nothing is
@@ -19399,7 +19402,7 @@ def check_no_ghost_close(root):
     NARROW: a key with a terminal event whose `started` is later than a still-open key of the SAME
     name. That is a close which minted an identity while the row it should have folded onto was
     open. Measured on the live ledger 2026-09-04: 0 today, and exactly 1 -- the armA pair -- if the
-    two events f4d48444 pulled home are removed. So the check goes green the moment the repair
+    two events f62224a7 pulled home are removed. So the check goes green the moment the repair
     lands, which is the property that makes it a gate rather than a standing red.
 
     POSITION IS NOT IN THE PREDICATE, and this is the part that took three measurements to get
@@ -19599,7 +19602,7 @@ def check_memory_diag_fresh(root):
         # ambiguous between three states and reported as one (62, 2026-09-05): (a) launched,
         # has not reached the first cadence point, (b) launched, writer broken, (c) no arm has
         # run since the writer existed. On 2026-09-05 the ledger was in (c) -- every b0_mem_m1
-        # row closed, the 10/20/30 cadence landed at 6b678541 AFTER the last arm was killed at
+        # row closed, the 10/20/30 cadence landed at 608cca54 AFTER the last arm was killed at
         # step 83 -- and this branch SKIPped with "no memory arm is running", which reads as
         # "nothing to check" for a state where a finished arm may have produced no rows at all.
         #
@@ -19907,7 +19910,7 @@ def _data_paths_named_by_pod_code(root):
     return named, scoped, missing
 
 
-#: Lowered from 2 to 0 at 8e78664a (58 routed probes/arm_token_corr.py:212 through
+#: Lowered from 2 to 0 at a29f8a63 (58 routed probes/arm_token_corr.py:212 through
 #: train._domain_cache_path and DROPPED runs/arm_corr_run.sh's --cache rather than re-deriving it
 #: from the shell). Zero is the only value that leaves no free slot for the next literal: at 2, two
 #: more could land at WARN and nobody would look.
@@ -20325,7 +20328,7 @@ def check_fixture_not_live_state(root):
     d9ba571d: test_free_card.py built a fake nvidia-smi in a mkdtemp, then invoked the
     subject with cwd=ROOT and no allocation override -- so it read the LIVE
     runs/card_assignment.json and its verdict moved with today's grant. It went red when
-    2eccf977 cleared the head-hybrid grant. The test had a fixture AND reached past it, which
+    00e3a3a2 cleared the head-hybrid grant. The test had a fixture AND reached past it, which
     is worse than having no fixture: the fixture is what makes a reader believe the test is
     isolated.
 
@@ -20474,7 +20477,7 @@ CHECKS = [
         "a test that builds a fixture does not then run its subject against the live tree",
         "d9ba571d: test_free_card.py faked nvidia-smi in a mkdtemp and then invoked the subject "
         "at cwd=ROOT, so it read the LIVE runs/card_assignment.json -- its verdict moved with "
-        "today's grant and it went red when 2eccf977 cleared the head-hybrid allocation. A "
+        "today's grant and it went red when 00e3a3a2 cleared the head-hybrid allocation. A "
         "fixture that is reached past is worse than no fixture: it is what makes a reader "
         "believe the test is isolated",
         check_fixture_not_live_state,
@@ -20628,7 +20631,7 @@ CHECKS = [
     (
         "pod_stamp_is_main",
         "the pod's sync stamp names a commit main contains",
-        "launch condition 2' clause three had no code: run_ddp.sh printed the stamp's sha and never compared it, so a human read two hex strings off a 66-hour log; pod_push stamped `rev-parse HEAD`, which in a per-session worktree is that branch's tip (1b85dd0c while main was 69c8bd87)",
+        "launch condition 2' clause three had no code: run_ddp.sh printed the stamp's sha and never compared it, so a human read two hex strings off a 66-hour log; pod_push stamped `rev-parse HEAD`, which in a per-session worktree is that branch's tip (8cfa62c8 while main was f5210e64)",
         check_pod_stamp_is_main,
         _broken_pod_stamp_is_main,
     ),
@@ -20642,7 +20645,7 @@ CHECKS = [
     (
         "keep_claim_reasons_live",
         "no KEEP claim in the candidates listing cites a fact whose status is retracted",
-        "step1192's claim was 'the ONLY evidence refuting ds.second_resume_rereads_one_segment'; that fact was retracted the same day by 52aec31 and the claim stood",
+        "step1192's claim was 'the ONLY evidence refuting ds.second_resume_rereads_one_segment'; that fact was retracted the same day by bc2cb9e and the claim stood",
         check_keep_claim_reasons_live,
         _broken_keep_claim_reasons,
     ),
@@ -20706,7 +20709,7 @@ CHECKS = [
     (
         "vocab_id_on_load_path",
         "every trainer that loads an SFT pack compares the pack's vocab_id to the checkpoint's",
-        "a pack from another vocabulary trains silently at ~4x the loss -- every id is wrong, in range, and the sizes match; 7aacbac fixed sft_math.py's guard, which had read a key the packer never writes, and sft.py loads a pack and compares nothing",
+        "a pack from another vocabulary trains silently at ~4x the loss -- every id is wrong, in range, and the sizes match; e323a7d fixed sft_math.py's guard, which had read a key the packer never writes, and sft.py loads a pack and compares nothing",
         check_vocab_id_on_load_path,
         _broken_vocab_id_load_path,
     ),
@@ -21238,14 +21241,14 @@ CHECKS = [
     (
         "test_integration_tree_guard",
         "tasks/friction/board writers refuse in the integration tree -- the main worktree of a common git dir with linked worktrees",
-        "two rows landed in the integration tree ten minutes apart on 2026-09-05 (b0's task row, 44's board row); the rule was prose because 'the invoking directory is a shell fact no artifact records' -- half right, since the tree's IDENTITY is recorded, and the refusal has to be at the write because by the time the hook refuses the commit the ledger is already dirty in the tree everyone merges through. The first predicate read the branch and went inert hours later when the integration tree was detached on purpose (main 0425accb)",
+        "two rows landed in the integration tree ten minutes apart on 2026-09-05 (b0's task row, 44's board row); the rule was prose because 'the invoking directory is a shell fact no artifact records' -- half right, since the tree's IDENTITY is recorded, and the refusal has to be at the write because by the time the hook refuses the commit the ledger is already dirty in the tree everyone merges through. The first predicate read the branch and went inert hours later when the integration tree was detached on purpose (main 93948f38)",
         check_test_integration_tree_guard,
         _broken_test_integration_tree_guard,
     ),
     (
         "main_advances_by_ancestry",
         "refs/heads/main only ever moves to a commit that descends from its previous value",
-        "main went bc95abe8 -> 9a11b9ea sideways on 2026-09-06 and a task-close commit left the history with nothing red; the cause was a bare `git update-ref refs/heads/main` after a refused push, which bypasses merge_main's CAS entirely",
+        "main went bc95abe8 -> cc2689fd sideways on 2026-09-06 and a task-close commit left the history with nothing red; the cause was a bare `git update-ref refs/heads/main` after a refused push, which bypasses merge_main's CAS entirely",
         check_main_advances_by_ancestry,
         _broken_main_advances_by_ancestry,
     ),
@@ -21354,14 +21357,14 @@ CHECKS = [
     (
         "frozen_paths",
         "main does not change what a running job is made of, while it is running",
-        "a HOLD in a commit message binds the person who wrote it; git merge does not read English (da06097)",
+        "a HOLD in a commit message binds the person who wrote it; git merge does not read English (3debe53)",
         check_frozen_paths,
         _broken_frozen_paths,
     ),
     (
         "main_in_no_worktree",
         "refs/heads/main is checked out in no worktree; that is what makes merge_main's CAS legal",
-        "AGENTS.md asserted it as a property and nothing checked it: aupai-b0 held main at 47148ae3 and main was fast-forwarded there by hand (4c, 2026-09-08)",
+        "AGENTS.md asserted it as a property and nothing checked it: aupai-b0 held main at 8706afd9 and main was fast-forwarded there by hand (4c, 2026-09-08)",
         check_main_in_no_worktree,
         _broken_main_in_no_worktree,
     ),
@@ -21389,7 +21392,7 @@ CHECKS = [
     (
         "no_conflict_markers",
         "no tracked doc or source holds a merge/stash conflict marker",
-        "a bare '>>>>>>> Stashed changes' sat committed at gate_failure_shapes.md:870 under green hooks (9420c8b)",
+        "a bare '>>>>>>> Stashed changes' sat committed at gate_failure_shapes.md:870 under green hooks (d8accb9)",
         check_no_conflict_markers,
         _broken_no_conflict_markers,
     ),
@@ -22233,9 +22236,9 @@ BRIEF_KINDS = {
 BRIEF_EXTRA = {
     "write_check": [
         ("the hook you edited runs main's copy until merged -- a green measured through it "
-         "is a green of the old hook", "friction 2026-09-05, sha 1c9517bd"),
+         "is a green of the old hook", "friction 2026-09-05, sha dfe62c97"),
         ("a stale worktree answers a question about main with yesterday's tree; read "
-         "`git show main:<path>`", "friction 2026-09-05, sha 1c9517bd"),
+         "`git show main:<path>`", "friction 2026-09-05, sha dfe62c97"),
         ("a broken world must mutate a REAL artifact, and must use the names the real "
          "system produces -- a fixture name your matcher also happens to match verifies "
          "the check against itself", "memory_diag_fresh matched none of b0_mem_m1/m2/m3"),
@@ -22250,12 +22253,12 @@ BRIEF_EXTRA = {
         ("verify a peer's premise before acting on it; a correct conclusion does not "
          "certify its argument", "R1, 16 shapes"),
         ("a number is a claim: compute it before printing it",
-         "58 asserted train.py:1478 AT 1fd88227 without running the grep, 2026-09-05"),
+         "58 asserted train.py:1478 AT 3193698293ded97e without running the grep, 2026-09-05"),
     ],
     "git": [
         ("working around an un-loaded hook by reordering commits can produce an "
          "intermediate commit that does not stand on its own",
-         "friction 2026-09-05, sha 95579a06"),
+         "friction 2026-09-05, sha 6e0c1cec"),
     ],
     "pod": [
         ("a validator and the file it validates against are one unit: every boundary "
@@ -23312,7 +23315,7 @@ def _selftest_diag_closed_arms():
         # live at run time: once b0_mem_m1 was launched and OPEN, `arms` was non-empty, the check
         # took the running-arm path instead of the closed-arm branch these four worlds exist to
         # test, and the FAIL world returned `WARN 1 open memory arm(s) with no diagnostics row at
-        # all: b0_mem_m1`. CI red on ed6f5f5d and e9a96103 (4c, 2026-09-05). The copy bought
+        # all: b0_mem_m1`. CI red on e1f26ed3 and 0e29a92c (4c, 2026-09-05). The copy bought
         # nothing -- the check reads only arm-named rows, and every one it should see is written
         # here. A test whose answer moves with the pod is the shape check_fixture_not_live_state
         # gates for; this one built the fixture and then handed it the live file's contents.
@@ -23795,7 +23798,7 @@ def _selftest_content_restored_read_failure():
             # and the whole selftest hangs with no output. 4c lost 29 minutes to exactly that here
             # (2026-09-08) and had to kill it by PID. The offending call was a dead placeholder --
             # `hash-object -w --stdin` whose value was overwritten three lines later, from
-            # 95193c47 -- and it is deleted below; DEVNULL is here so the next accidental
+            # 1a6350e5 -- and it is deleted below; DEVNULL is here so the next accidental
             # input-wanting git call fails fast instead of blocking. A hang is worse than a
             # failure: a red names its cause, a hang looks like a slow test.
             return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True,
@@ -23856,7 +23859,7 @@ def _selftest_merge_reverted_content():
     retiring a function on purpose must not be flagged, or every intentional deletion
     becomes a red and the check gets bypassed.
 
-    c8a4578 is the third case and the reason the return value grew a fourth field
+    a01e29f is the third case and the reason the return value grew a fourth field
     (de-22, 2026-09-02): _built_set was dropped in d5aac3d's conflict resolution, ours
     already lacked it when this merge ran, and calling that a defect put the same red on
     117 merges. It must land in the ALREADY-DROPPED class, naming d5aac3d, while 21da619
@@ -23873,7 +23876,7 @@ def _selftest_merge_reverted_content():
         assert not merge_reverted_content(real, "41294c1"), "41294c1 lost nothing; must be clean"
         # The inherited class, and the whole point of the fourth field: the same scan must
         # report _built_set with a sha, not None, or the caller FAILs on inheritance again.
-        inh = merge_reverted_content(real, "c8a4578")
+        inh = merge_reverted_content(real, "a01e29f")
         # startswith, not ==, and the producer now returns %H (de-35). The previous form
         # pinned `at == "d5aac3d"` against git's auto-scaling abbreviation: it printed 7
         # chars when de-22 wrote this and 8 once the object count crossed a threshold, so
@@ -23882,7 +23885,7 @@ def _selftest_merge_reverted_content():
         # The full sha is the stable identity; a prefix test states the fact being
         # asserted -- which commit -- without depending on how git chose to print it.
         assert any(n == "_built_set" and at and at.startswith("d5aac3d") for _, n, _, at in inh), \
-            f"c8a4578 must report _built_set as already dropped by d5aac3d, got {inh}"
+            f"a01e29f must report _built_set as already dropped by d5aac3d, got {inh}"
         # And the identity is the FULL sha, asserted directly: startswith alone is
         # satisfied by any longer-but-wrong value and by the abbreviation this fix
         # removes, so without this the same time bomb could be reintroduced at the
@@ -23926,7 +23929,7 @@ def _selftest_merge_reverted_content():
         w = tempfile.mkdtemp(prefix="mergecls_")
         try:
             for merge, want, needle in ((("21da619"), FAIL, "_selftest_gpu_descendants"),
-                                        (("c8a4578"), WARN, "d5aac3d")):
+                                        (("a01e29f"), WARN, "d5aac3d")):
                 c = os.path.join(w, merge)
                 assert subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout", real, c],
                                       capture_output=True).returncode == 0
@@ -23938,7 +23941,7 @@ def _selftest_merge_reverted_content():
         finally:
             shutil.rmtree(w, ignore_errors=True)
 
-    print("  merge revert: 21da619 FAIL, c8a4578 WARN naming d5aac3d, 41294c1 clean, "
+    print("  merge revert: 21da619 FAIL, a01e29f WARN naming d5aac3d, 41294c1 clean, "
           "deliberate deletion not flagged")
 
 
@@ -24270,7 +24273,7 @@ def _selftest_scoped_index_is_read():
         assert got == {"beta"}, (
             f"a path-scoped commit's staged diff selected {sorted(got)}: with GIT_INDEX_FILE "
             f"stripped, `git diff --cached` reads .git/index, which that commit never touches "
-            f"-- this is 7fd8bc68's 'no CHECK function is changed'")
+            f"-- this is 93de1bdc's 'no CHECK function is changed'")
         # and the guard itself: without the env, the same world selects nothing.
         _ORIG_GIT_INDEX_FILE = ""
         assert _funcs_in_diff(["m.py"]) == set(), (
@@ -24856,7 +24859,7 @@ def _selftest_repo_auth_mirror():
         # pod_push excludes from the manifest by design (pod_drift._pod_written). So a row
         # satisfiable on main can read as dangling on the pod, and the mirror is the only reason
         # that is a SKIP rather than a NO-GO. The world existed for real: 62 filed it on
-        # 2026-09-06 with runs/b0_headmix_block_paired.json tracked on main at ea8bf6f6 and absent
+        # 2026-09-06 with runs/b0_headmix_block_paired.json tracked on main at 33ddb3ac and absent
         # on the pod for ~20 minutes, and check_score_matrix named that path. They reported it as
         # FAILing there, which it never did -- they called the check function directly instead of
         # through run_checks, so they read the raw predicate rather than the harness's verdict.
@@ -25270,7 +25273,7 @@ def _selftest_check_timeout_skips():
 
         # (c) AN UNREACHABLE POD IS A SKIP AND BANKS NO STRIKE (6e's ruling 2026-09-04, world
         # de-25 2026-09-05). pod_reachable() existed with no world at all: the branch was
-        # committed at ca4945c0 and nothing had ever exercised it, so whether an unreachable
+        # committed at ecf968f8 and nothing had ever exercised it, so whether an unreachable
         # pod produced the SKIP or fell through to the strike path was unmeasured.
         #
         # THE WORLD IS A REAL EXECUTABLE THAT TIMES OUT, not a stubbed pod_reachable. 6e
@@ -26528,7 +26531,7 @@ def _selftest_auto_resume():
         # (measured: the `=` form comes back removed whole), so this world was failing on its
         # own fixture's naming rather than on the property, and the failure message named the
         # right property while pointing at the wrong cause (e1, 2026-09-06; assertion from
-        # e186fc06).
+        # b46120f0).
         assert not any(c == "--resume" or c.startswith("--resume=") for c in _eq), \
             f"--resume=<path> is removed whole: {_eq!r}"
         assert child in _eq, f"the script path was eaten with the flag: {_eq!r}"
@@ -26561,7 +26564,7 @@ def _staged_index_env():
     variable is .git/index and both forms agree, which is why the defect was invisible:
     every test of the scoped selftest had staged with `git add` first.
 
-    The consequence was real. 7fd8bc68 rewrote check_tasks_well_formed and added a broken
+    The consequence was real. 93de1bdc rewrote check_tasks_well_formed and added a broken
     world, was committed path-scoped, and the hook printed "no CHECK function is changed by
     the staged diff" -- zero of 80 verified, reported as nothing-to-do. That is the shape the
     scoped substitute exists to prevent, in the substitute itself.
@@ -26647,13 +26650,13 @@ def _checks_touching(paths, rev=None):
 def _tree_under_test(root):
     """The tree the selftest actually ran against, as a printable stamp.
 
-    MEASURED 2026-09-08 (e1): a full `--selftest` went green on `db976f2b`, then a merge brought
-    main's 40 files and 2168 lines in and HEAD became `5d370780`. The green was still on screen
+    MEASURED 2026-09-08 (e1): a full `--selftest` went green on `1c9b47fc`, then a merge brought
+    main's 40 files and 2168 lines in and HEAD became `c107255a`. The green was still on screen
     and still true of a tree that no longer existed, and nothing in its wording said which one.
     "I verified it" carries a tense that points at a tree, and the OK line named no tree at all.
 
     THE SHA IS THE WORKING TREE'S, NOT `HEAD`'s, and the distinction is the whole point. In the
-    incident above the two differed: the run happened on the tree checked out as `db976f2b`, and
+    incident above the two differed: the run happened on the tree checked out as `1c9b47fc`, and
     reading `HEAD` at print time -- after a merge, in a long session, in another worktree -- would
     stamp the run with a tree it never touched. An implementation that reads HEAD commits the very
     error this stamp exists to expose.
@@ -26734,7 +26737,7 @@ def _selftest_ok_line_names_the_tree_it_ran_on():
             f"C: the stamp must keep naming the tree the run happened on. It reads {stamped!r} "
             f"against a HEAD now at {second} -- an implementation that resolves HEAD at PRINT "
             f"time would relabel a finished run with a tree it never touched, which is the "
-            f"error this field exists to expose (measured: green on db976f2b, HEAD 5d370780).")
+            f"error this field exists to expose (measured: green on 1c9b47fc, HEAD c107255a).")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -26799,7 +26802,7 @@ def _demo(only=None):
     assert score_from("math-hard 1.7% (18/1032) vs k5 1.9%") == 1.7
 
     # _noted_gone: name and gone-word must share a sentence; the tier vocabulary counts.
-    # The cross-sentence case is de's review finding (9420c8b): concatenating the fields
+    # The cross-sentence case is de's review finding (d8accb9): concatenating the fields
     # read "measured on X. Y was pruned" as X's own death disclosure.
     assert _noted_gone({"uncertainty": "ckpt_k5_clean_0827.pt [absent] -- not in the listing"},
                        "ckpt_k5_clean_0827.pt")
@@ -27064,7 +27067,7 @@ def _demo(only=None):
 
     # coresident_cache_refusal has THREE halves and CHECKS carries one world per row, so the
     # two population halves were written and never run -- the §71 shape, in the commit that
-    # added the check (e1, 38af3d47, caught 2026-09-05 while using it). The registered world
+    # added the check (e1, 9765c108, caught 2026-09-05 while using it). The registered world
     # breaks the CHOKEPOINT (call deleted); these break the POPULATIONS, which is where the
     # check's real coverage lives:
     #   bypass    a new eval calling train._domain_seqs itself
@@ -27217,7 +27220,7 @@ def _demo(only=None):
     # reported_path_is_written needs a POSITIVE world, and it is the only reason the fix is
     # verified in the direction it was made. The check used to match any LOAD of a Name called
     # preds_path, so it refused a correct CALL to a function of that name and e1 renamed to
-    # artifact_path to get past it (29b31367 records the rename's reason in its own docstring).
+    # artifact_path to get past it (c370987f records the rename's reason in its own docstring).
     # A rename to satisfy a check is the check making the codebase worse. MEASURED both ways on
     # 2026-09-04: on the call-form world the pre-fix logic FAILs at l1_fewshot.py:518 and the
     # fixed logic PASSes, while on the defect world both FAIL -- so the fix is not merely a
@@ -27255,7 +27258,7 @@ def _demo(only=None):
     # DEFERRED, NOT ASSERTED HERE. This assertion used to fire at this point, and everything
     # below it -- 39 _selftest_* calls, the real-tree sweep, the EVIDENCE equality, the
     # non-vacuous-PASS sweep -- is in this same function, so ONE unbuildable broken world made
-    # all of them unreachable. MEASURED 2026-09-06: f93f99f6 (10:17Z) made fp_filters raise on a
+    # all of them unreachable. MEASURED 2026-09-06: 08efa944 (10:17Z) made fp_filters raise on a
     # missing PIPELINE_FILTERS member; _broken_corpus_filters_fp wrote only pass1_garbage.py, so
     # `corpus_filters_fp raised instead of reporting FAIL` landed in `untested` and aborted here.
     # CI ran `harness.py --selftest` on every push (the `python scripts/harness.py --selftest`
@@ -27513,7 +27516,7 @@ def _demo(only=None):
     #
     # ON A BRANCH, NOT main. This world invokes the REAL hook directly, so every gate in it
     # fires, and _refuse_committing_on_main (de, 2026-09-08) refuses when HEAD is the branch
-    # main -- which broke main's CI at 60a6f0af on the "allowed data file must pass" assertion.
+    # main -- which broke main's CI at 301d569a on the "allowed data file must pass" assertion.
     # `git init -b fixture` rather than a checkout: -b names the initial branch, and this world's
     # first hook run happens before any commit exists, where HEAD is unborn.
     #
@@ -27724,7 +27727,7 @@ def _demo(only=None):
 
     # RUN AS A LIST, NOT 37 BARE CALLS. Each of these is a direct selftest, and a bare call
     # that raises takes every later one with it -- the same defect this commit fixes for the
-    # broken-world assert, at a second site. MEASURED on main at ee81fe91: once the
+    # broken-world assert, at a second site. MEASURED on main at 93946876: once the
     # corpus_filters_fp world was fixed and the loop got this far,
     # _broken_one_deliverable_per_owner raised SelftestSkip ("no roster member with exactly one
     # open task") and aborted the 3 selftests after it plus the real-tree sweep, the EVIDENCE
@@ -28946,7 +28949,7 @@ def cmd_free_card(argv):
     # defaults `root` to ROOT -- the harness's own tree -- so free-card read the live grant no
     # matter what directory it ran in, and scripts/test_free_card.py could fake nvidia-smi but had
     # no way to fake the allocation. Its verdict therefore moved with whatever the controller
-    # granted an hour ago: 2eccf977 cleared the head-hybrid grant and the test went red on CI while
+    # granted an hour ago: 00e3a3a2 cleared the head-hybrid grant and the test went red on CI while
     # passing on any checkout that predated the clear. AUPAI_ALLOC_ROOT names the tree to read the
     # two allocation files from, so a caller can supply a fixture; unset it stays ROOT, which is the
     # production behaviour and the only correct one for a real launch (a job must not get its cards
@@ -29512,7 +29515,7 @@ def _acquire_cards(name, cards, pid, note, require_device=False):
     process after wait_for_device has proved it holds a card, so asserting the fact costs nothing
     and catches the wrong-pid bind (b0_mem_m1). A process claiming ITSELF before it opens the
     device it named through CVD holds zero fds by construction -- scripts/loader.py's
-    claim_my_cards -- and refusing there turned CI red on main for two hours at 121a865d while
+    claim_my_cards -- and refusing there turned CI red on main for two hours at 27b7ff90 while
     passing on macOS, where no /proc means the predicate has no opinion."""
     cmd = [sys.executable, os.path.join(HERE, "card_claim.py"), "acquire",
            "--name", name, "--cards", cards, "--pid", str(pid), "--note", note]
@@ -29589,7 +29592,7 @@ def cmd_launch(rest):
     ap = argparse.ArgumentParser(prog="harness launch")
     ap.add_argument("name", help="run name (also the log and exp row name)")
     # NOT required=True, and that is a correction of my own defect rather than a weakening.
-    # Landed required at 315755cc; E1's relaunch died in argparse at 08:02Z 2026-09-05 because the
+    # Landed required at 03cf7177; E1's relaunch died in argparse at 08:02Z 2026-09-05 because the
     # pre-registered launch line was written before the flag existed. A required flag on the SHARED
     # launcher breaks every launch line already written, in the one place a session types blind and
     # a failure costs a card-hour rather than a retry. 4c's rule from it: a new required launcher

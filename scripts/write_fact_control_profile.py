@@ -160,7 +160,7 @@ def main():
             f"runs/score_matrix.jsonl, the last row for each ckpt at profile={PROFILE}: "
             f"{MOE_CKPT} and {DENSE_CKPT}, cu_path=cu_none, both type=base. One job on card 7, "
             f"launched 2026-09-07T03:06:59Z and finished 03:48Z (~41 min), claim held by the job's "
-            f"own pid for the whole run; pod stamp e5d39f8e, which is main and carries eval/ "
+            f"own pid for the whole run; pod stamp 22370d43, which is main and carries eval/ "
             f"byte-identical to the pushed tree. Written by scripts/write_fact_control_profile.py, "
             f"which recomputes every number from those rows and refuses on a missing metric, an "
             f"unequal n, a partial domain panel, or humaneval estimators that stop disagreeing."

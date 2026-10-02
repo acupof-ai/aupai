@@ -1,6 +1,6 @@
 """sft_math.py must build, optimise and constrain the architecture the checkpoint names.
 
-Four defects, all silent under --arch v42, all measured on the tree at d6678137 (de, 2026-09-30):
+Four defects, all silent under --arch v42, all measured on the tree at 29e2ab13 (de, 2026-09-30):
 
   a  sft_math.py:356 built HybridLM(Cfg) unconditionally. A v42 checkpoint's state dict has
      zero key overlap with it, so the SFT path could not touch the v42 line at all. Loud, but

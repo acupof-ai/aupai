@@ -100,7 +100,7 @@ def _live_run_cards():
 
     The cost of getting it wrong was not a stuck job: the refusal exited 0, so three rows
     landed in runs/score_matrix.jsonl with every metric an {"error": ...} dict and nothing
-    said they were not scores (e1; main 5c0319dc makes score_matrix_present see them).
+    said they were not scores (e1; main c750c798 makes score_matrix_present see them).
 
     Ancestry by the real ppid chain from card_claim, capped at MAX_DEPTH, so this cannot loop
     on a cyclic ppid table. A pid the table cannot see is treated as foreign -- the safe
@@ -779,7 +779,7 @@ def _selftest_co_resident():
             n += 1
 
         # 10. THE MIXED DIR, which is what production actually looks like (e1's finding 2 on
-        #     91531b49): score_matrix claims its own cards WHILE the lane job holds its own.
+        #     b7a31046): score_matrix claims its own cards WHILE the lane job holds its own.
         #     Every world above points AUPAI_CLAIM_DIR at a directory holding exactly one
         #     claim, so none of them distinguishes "filter the self claim out of the set" from
         #     "if any claim is mine, disable the guard entirely" -- and that second mutant
@@ -817,7 +817,7 @@ def _selftest_co_resident():
         #     None of those is reachable from a claim-dir world: 8-10 run where `ps` works, so
         #     the `if not table` fallback and the MAX_DEPTH cap could be deleted or inverted
         #     unnoticed. e1 reported the fallback as mutation-RED on 2026-09-06 and then
-        #     RETRACTED it (review row 073f725b): both shapes SURVIVE, because the ancestor
+        #     RETRACTED it (review row 88f7a909): both shapes SURVIVE, because the ancestor
         #     world's claim names getppid() and the fallback supplies exactly that. A coverage
         #     gap that a measurement was briefly claimed for is a reason to write the world.
         #

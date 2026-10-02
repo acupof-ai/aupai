@@ -70,7 +70,7 @@ with prior probability well above 1/2 must not be scored against 1/2.
 
 The 0.24 bar was fixed before the run (`eval/score_matrix.py:150`, in the tree
 2026-08-31, two days before this A/B), the directional prediction is timestamped
-in `169da865`, and no reading for either arm existed anywhere when it was
+in `51bca1b8`, and no reading for either arm existed anywhere when it was
 written. **The interesting pattern turned up after the data did, and it did not
 become a criterion.** `docs/lessons/gate_failure_shapes.md` §149 is the same
 failure with the sign flipped: there, a threshold that already existed in the

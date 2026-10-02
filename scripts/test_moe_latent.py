@@ -238,7 +238,7 @@ def main():
         # of each token -- identical shapes, top_k times the projection cost, which breaks the
         # parity the constructor asserts.
         #   top_k > 1 IS LOAD-BEARING FOR EXACTLY ONE OF THEM, and the first version of this
-        # comment claimed both (e1's review of 0a738e75). The DOWN-PER-ROW mutant needs it: at
+        # comment claimed both (e1's review of 6d72ac32). The DOWN-PER-ROW mutant needs it: at
         # top_k=1 "per token" and "per row" are the same number and the count cannot separate
         # them. The SHARED-FROM-up(xr) mutant does NOT: it adds a second up() call per forward and
         # is distinguishable at any top_k including 1, because up() and down() are counted
@@ -258,7 +258,7 @@ def main():
         ntok = 3 * 4
         m2(torch.randn(3, 4, 64))
         _check("down projects each TOKEN once, not each dispatched row", seen["down"][0][0], ntok)
-        # A REAL NEGATIVE CONTROL, replacing a vacuous line (e1's review of 0a738e75). It read
+        # A REAL NEGATIVE CONTROL, replacing a vacuous line (e1's review of 6d72ac32). It read
         #   _check("... would have read this many rows", ntok * 2, 24)
         # and both sides were constants OF THE TEST: ntok*2 = 24 and moe_latent = 24 coincided by
         # accident, so it compared the test's own arithmetic to a literal and could not fail on any

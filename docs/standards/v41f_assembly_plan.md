@@ -4,7 +4,7 @@ Status: PROPOSAL for fb + 98. 本 PR 只有这一份文档，不改任何 `.py`�
 #447（训练 ckpt）、#456（indexer STE）三篇返修合并之后才开工；`v41f/model.py`、`v41f/train.py`
 是共享文件，由 de 一人串行接。
 
-现状（main `0ba88c03`，实测）：`tests/v41f` 全绿 **87 passed in 54.20s**。本文件要保证的是——
+现状（main `610a1a52`，实测）：`tests/v41f` 全绿 **87 passed in 54.20s**。本文件要保证的是——
 每一步接完之后，这 87 条里**属于该步的那部分必须保持绿**，且每步只动该步该动的东西。
 
 ---
@@ -12,7 +12,7 @@ Status: PROPOSAL for fb + 98. 本 PR 只有这一份文档，不改任何 `.py`�
 ## 0. 接线前的可复现基线
 
 ```bash
-python -m pytest tests/v41f -q          # 0ba88c03: 87 passed in 54.20s
+python -m pytest tests/v41f -q          # 610a1a52: 87 passed in 54.20s
 python tests/v41f/p0_selftest.py        # P0 逐模块对拍
 python tests/v41f/p1_selftest.py        # P1 整 Block / 整网
 python scripts/v41f_param_count.py      # 904,583,784 total / 210,950,760 active

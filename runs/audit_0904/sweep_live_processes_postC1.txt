@@ -1,11 +1,11 @@
 # Live (non-zombie) container processes, /work/aupai pod, 2026-09-04
 #
-# POST-C1. tilerl's sweep (ff035f77, 13:35 +0800) killed 306 orphaned `tail -F
+# POST-C1. tilerl's sweep (7302067b, 13:35 +0800) killed 306 orphaned `tail -F
 # runs/events.jsonl`, 3 `until [ -f data/code_supply/measure_*.json ]` loops and 5 stale
 # `tail -f runs/*.log` roughly 90 minutes before this capture. Do NOT read the absence of
 # those shapes here as evidence about the classes -- that is the mistake
 # runs/audit_0904/sweep_population.md corrects at its top. The pre-sweep populations are
-# recorded in ff035f77 and PR-11, and those are the fixtures for the matchers.
+# recorded in 7302067b and PR-11, and those are the fixtures for the matchers.
 #
 # Also on this box at capture time: 3,975 ZOMBIES (PID 1 is `sleep infinity` and reaps
 # nothing). They are not listed here and are not sweepable -- a zombie has already exited.

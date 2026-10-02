@@ -9,7 +9,7 @@ source: container view via ~/bin/pod, 2026-09-04; correction at the top invalida
 Container view (`~/bin/pod`, `/work/aupai`), 2026-09-04.
 
 > **CORRECTION, and it invalidates this document's first conclusion.** This was measured
-> **after** tilerl's C1 sweep (`ff035f77`, 13:35 +0800) killed exactly the populations I then
+> **after** tilerl's C1 sweep (`7302067b`, 13:35 +0800) killed exactly the populations I then
 > reported as absent — verified in that commit: **306 orphaned `tail -F runs/events.jsonl`**
 > (class a), **3 `until [ -f data/code_supply/measure_*.json ]` loops** (class b), **5 stale
 > `tail -f runs/*.log`** (class c). My "class (a) has no instance", "class (c) is empty" and
@@ -18,7 +18,7 @@ Container view (`~/bin/pod`, `/work/aupai`), 2026-09-04.
 >
 > This is the repo's own named defect — absence measured on a mutated world and reported as a
 > property of the class. I made it while writing a document about not doing that. The matchers
-> are to be built against the pre-sweep populations recorded in `ff035f77` and PR-11, not
+> are to be built against the pre-sweep populations recorded in `7302067b` and PR-11, not
 > against the table below. Everything below stands as *post-C1* state and nothing more.
 
 ## The population (POST-C1 — not the state the classes should be designed against)
@@ -131,7 +131,7 @@ was wrong for the reason at the top: I counted after the sweep. The correct coun
 by hand this morning** (306 + 3 + 5), and those classes accumulate — 307 watchers built up over
 24 h once and will again. The value is not this box this hour.
 
-Build, against the pre-sweep populations in `ff035f77`:
+Build, against the pre-sweep populations in `7302067b`:
 
 1. Class (a), from the 306 recorded watchers.
 2. Class (b) file-existence shape, from the 3 recorded loops.

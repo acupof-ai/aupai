@@ -141,11 +141,11 @@ def main():
         env = {"step": STEP, "total_steps": TOTAL, "phase": " [main]", "last": 2.451,
                "lrs": "muon 7.00e-03 embed 1.00e-01", "mfu": 0.41, "peak_gib": 61.01,
                "tps": 82000.0, "eta": 12.3 * 3600, "world": 8,
-               # `dt` is 62's field (a65f595e): the step line now ends `| s/step {dt / 10:.4f}`.
+               # `dt` is 62's field (481bd8be): the step line now ends `| s/step {dt / 10:.4f}`.
                # Bound HERE rather than stubbed away, because the template is EXTRACTED from
                # train.main -- so every name the real line interpolates has to be bound or the
                # render raises NameError and worlds 6-7 report a fixture failure as a defect.
-               # That is what happened when a65f595e landed: two BUGs reading "could not render
+               # That is what happened when 481bd8be landed: two BUGs reading "could not render
                # the step line: NameError: name 'dt' is not defined", which is the test correctly
                # noticing the line changed and incorrectly describing why.
                "dt": 22.824,

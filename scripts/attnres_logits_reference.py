@@ -109,7 +109,7 @@ def gates(verbose=True):
 
     dv, dlogit = fused_backward(v, gq, scale, a, dout)
     # GATE 1: dV against autograd's TOTAL, relative. Absolute 1e-6 was calibrated at
-    # D=32 and rejects a correct implementation at D=1024 (b0-review-7899ea1).
+    # D=32 and rejects a correct implementation at D=1024 (b0-review-76a8fd3).
     g1 = rel(dv, dv_ref)
     assert g1 <= 1e-5, f"gate 1: dV relative {g1:.2e} > 1e-5"
     # GATE 2: the softmax backward, checked at the logits where both sides have the

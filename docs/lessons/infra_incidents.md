@@ -97,7 +97,7 @@ A perturbation was injected at a scale below the instrument's resolution; the pr
 open: a check that perturbation scale exceeds instrument resolution; none exists.
 
 ### §180 (2026-09-05, R2-b)
-A co-residency refusal check's population was narrower than the rule's quantity. `check_coresident_cache_refusal` (38af3d47) guarded `train._domain_seqs` callers, but the rule's quantity is host bytes off /data00 — any file that `torch.load`s `/data00/tokens_<domain>.pt` by path read 35 GB with no refusal. The check's author's own new probe was that file. In the same commit, `_broken_coresident_bypass` was written as the broken world but never wired to a selftest — a check that cannot fail, in the commit that added the check. Evidence: scripts/harness.py:3752,3943, 38af3d47.
+A co-residency refusal check's population was narrower than the rule's quantity. `check_coresident_cache_refusal` (9765c108) guarded `train._domain_seqs` callers, but the rule's quantity is host bytes off /data00 — any file that `torch.load`s `/data00/tokens_<domain>.pt` by path read 35 GB with no refusal. The check's author's own new probe was that file. In the same commit, `_broken_coresident_bypass` was written as the broken world but never wired to a selftest — a check that cannot fail, in the commit that added the check. Evidence: scripts/harness.py:3752,3943, 9765c108.
 open: a check that the population of a refusal check matches the rule's quantity (all readers of a resource, not callers of one function); none exists.
 
 ### §61 (2026-09-02, R2-d)
@@ -367,11 +367,11 @@ A resource's exclusivity was inferred from "0 MiB" in nvidia-smi; idle is not a 
 open: a check that exclusivity is read from the claim ledger, not from utilization; none exists.
 
 ### §194 (2026-09-05, R8)
-A claim held by a live pid was read as evidence the job was progressing. The m1 decomposition cell hung after writing its row; `card_claim status` named `tilerl_mem_decomp_m1` correctly for 17 minutes while rank 1 held 76 GiB at 0% util. A claim answers who intends to hold a card and carries nothing about whether work is happening — the two questions have different evidence, and only 0% util against a large reservation showed the hang. Evidence: runs/mem_decomp_0905.log, commit acfb67bb.
+A claim held by a live pid was read as evidence the job was progressing. The m1 decomposition cell hung after writing its row; `card_claim status` named `tilerl_mem_decomp_m1` correctly for 17 minutes while rank 1 held 76 GiB at 0% util. A claim answers who intends to hold a card and carries nothing about whether work is happening — the two questions have different evidence, and only 0% util against a large reservation showed the hang. Evidence: runs/mem_decomp_0905.log, commit 1a9bc36c.
 open: a check that flags a claimed card at ~0% util for N minutes; none exists. `card_claim status` reports claim-vs-memory disagreements and would report this one as agreeing.
 
 ### §195 (2026-09-05, R8)
-A rank-0-only phase inside a world-2 job desynchronised the ranks: profile_step_cost times save (33.6 s here) and val after the loop, save runs on rank 0 alone, and rank 1 entered the next collective with nothing to meet. The cells' timings were already complete and correct when it hung, so the failure cost card time and no data. Fixed by `--skip-save-val`, which skips both and still writes the JSON row (`--peak-only` skips them but returns before the record is built). Evidence: scripts/profile_step_cost.py, commit acfb67bb.
+A rank-0-only phase inside a world-2 job desynchronised the ranks: profile_step_cost times save (33.6 s here) and val after the loop, save runs on rank 0 alone, and rank 1 entered the next collective with nothing to meet. The cells' timings were already complete and correct when it hung, so the failure cost card time and no data. Fixed by `--skip-save-val`, which skips both and still writes the JSON row (`--peak-only` skips them but returns before the record is built). Evidence: scripts/profile_step_cost.py, commit 1a9bc36c.
 open: manual — nothing checks that a multi-rank script's post-loop phases are collective or rank-symmetric.
 
 ### §214 (2026-09-05, R8)

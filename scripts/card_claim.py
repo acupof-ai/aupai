@@ -90,7 +90,7 @@ def _cmdline(pid):
     except OSError:
         pass
     try:
-        r = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True)
+        r = subprocess.run(["ps", "-o", "args=", "-p", str(pid)], capture_output=True, text=True, errors="replace")
         return r.stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
@@ -103,7 +103,7 @@ def _proc_stat(pid, table=None):
     _alive: signal 0 and /proc both report a ZOMBIE as present.
     """
     try:
-        r = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+        r = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, errors="replace")
     except (OSError, subprocess.SubprocessError):
         return ""
     return r.stdout.strip().split()[0] if r.stdout.strip() else ""
@@ -157,9 +157,9 @@ def _cvd(pid):
         pass
     try:
         cmd = subprocess.run(
-            ["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True
+            ["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True, errors="replace"
         ).stdout.strip()
-        full = subprocess.run(["ps", "eww", "-p", str(pid)], capture_output=True, text=True).stdout
+        full = subprocess.run(["ps", "eww", "-p", str(pid)], capture_output=True, text=True, errors="replace").stdout
     except (OSError, subprocess.SubprocessError):
         return None
     if not cmd or not full.strip():
@@ -369,7 +369,7 @@ def _start_time(pid):
     except (OSError, IndexError, ValueError):
         pass
     try:
-        r = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True)
+        r = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, errors="replace")
         return r.stdout.strip() or None
     except (OSError, subprocess.SubprocessError):
         return None
@@ -420,7 +420,7 @@ def _ps_table():
     rather than per pid -- a 900-row table is one fork, and pgrep -P per level is not.
     """
     try:
-        r = subprocess.run(["ps", "-eo", "pid,ppid,args"], capture_output=True, text=True)
+        r = subprocess.run(["ps", "-eo", "pid,ppid,args"], capture_output=True, text=True, errors="replace")
     except (OSError, subprocess.SubprocessError):
         return []
     out = []
@@ -744,6 +744,7 @@ def card_memory():
             ["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=20,
         )
     except (OSError, subprocess.SubprocessError):
@@ -881,7 +882,7 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
     `harness launch`, and it claims the card it is about to use precisely so nothing else takes
     it in between -- so at claim time it holds zero device fds by construction. Refusing there
     unconditionally broke `python scripts/loader.py selftest` on every Linux host (CI red on main
-    at 121a865d for two hours; reproduced on the pod: "demo_set: pid 902861 holds no GPU device
+    at 27b7ff90 for two hours; reproduced on the pod: "demo_set: pid 902861 holds no GPU device
     fd") while passing on macOS, where no /proc means the predicate has no opinion.
 
     A process claiming ITSELF by CVD cannot claim the wrong pid -- CVD is the only thing it could
@@ -1553,7 +1554,7 @@ def _selftest():
     # before its children and a forked child has to be SCHEDULED, and on a loaded shared runner
     # that loses the race: `time.sleep(1.5)` followed by one `_ps_table()` returned an empty
     # descendant list, which is the state `_job_descendants` reads at t=0 -- no python child was
-    # running as far as the kernel was concerned. Measured in CI run 35712886484 at a3ac2588: the
+    # running as far as the kernel was concerned. Measured in CI run 35712886484 at f559f1ee: the
     # same sha PASSED as a pull_request run (35712988441) and FAILED as a push run, 1 of 262
     # targets, with "world: it really has a python descendant (0 found)". The empty list then
     # cascaded -- nothing was killed for the ORPHAN-SHELL case, so that read green-to-BUG too --
@@ -1588,7 +1589,7 @@ def _selftest():
     # holder is os.getppid(), so these cases bound to whatever invoked the selftest -- python
     # when run from a wrapper (22/22 green) and the SHELL when a human types
     # `python3 scripts/card_claim.py --selftest`, where acquire correctly refuses a shell and
-    # the first four cases go red. Measured 2026-09-03 at 8393d579, before this commit's edits:
+    # the first four cases go red. Measured 2026-09-03 at 0e50b85b, before this commit's edits:
     # red from zsh, green from python, same code. A selftest whose answer depends on its caller
     # is testing the caller. This process is a python process by construction, so naming it
     # removes the dependency without weakening any case -- the shell-refusal behaviour has its
@@ -1637,20 +1638,20 @@ def _selftest():
         good,
         f"a claim survives the claiming COMMAND's exit (first rc={r1.returncode}, second rc={r2.returncode})",
     )
-    r3 = _sp.run([sys.executable, here, "release", "--name", "cliA"], capture_output=True, text=True, env=env)
+    r3 = _sp.run([sys.executable, here, "release", "--name", "cliA"], capture_output=True, text=True, errors="replace", env=env)
     good = r3.returncode == 0
     _case(good, f"and the original holder can release it ({r3.stdout.strip() or r3.stderr.strip()})")
 
     # CLI RELEASE --CARDS: must release only the named card, not every claim under the name.
     # 2026-09-10: the CLI path called release(a.name) without passing a.cards, freeing all
     # claims under the name -- including cards still in use.
-    _sp.run([sys.executable, here, "acquire", "--name", "cliMulti", "--cards", "7", "--wait", "0"], capture_output=True, text=True, env=env)
-    _sp.run([sys.executable, here, "acquire", "--name", "cliMulti", "--cards", "8", "--wait", "0"], capture_output=True, text=True, env=env)
-    r4 = _sp.run([sys.executable, here, "release", "--name", "cliMulti", "--cards", "7"], capture_output=True, text=True, env=env)
+    _sp.run([sys.executable, here, "acquire", "--name", "cliMulti", "--cards", "7", "--wait", "0"], capture_output=True, text=True, errors="replace", env=env)
+    _sp.run([sys.executable, here, "acquire", "--name", "cliMulti", "--cards", "8", "--wait", "0"], capture_output=True, text=True, errors="replace", env=env)
+    r4 = _sp.run([sys.executable, here, "release", "--name", "cliMulti", "--cards", "7"], capture_output=True, text=True, errors="replace", env=env)
     live_m = [c for c in claims()[0] if c.get("name") == "cliMulti"]
     good = r4.returncode == 0 and [c.get("cards") for c in live_m] == [["8"]]
     _case(good, f"CLI release --cards frees only that card ({r4.stdout.strip() or r4.stderr.strip()}; left {[c.get('cards') for c in live_m]})")
-    _sp.run([sys.executable, here, "release", "--name", "cliMulti"], capture_output=True, text=True, env=env)
+    _sp.run([sys.executable, here, "release", "--name", "cliMulti"], capture_output=True, text=True, errors="replace", env=env)
 
     # THE STAT CAN RACE. Both grace readers stat a path a concurrent caller may have just
     # removed -- acquire's sweep deletes what claims() files stale, release unlinks the row --
@@ -2392,7 +2393,7 @@ def _selftest():
             release("w4_noproc")
 
         # THE SELF-CLAIM SHAPE, and it is the world that was missing. CI went red on main for two
-        # hours at 121a865d because `python scripts/loader.py selftest` claims from
+        # hours at 27b7ff90 because `python scripts/loader.py selftest` claims from
         # CUDA_VISIBLE_DEVICES BEFORE the process opens the device -- zero fds by construction --
         # and the refusal was unconditional. It passed on macOS, where no /proc means the
         # predicate abstains, so every local gate was green while every Linux host failed. The
@@ -3418,7 +3419,7 @@ def _selftest():
              "ok, why = card_claim.acquire('anc_child', ['3'], pid=os.getpid(), wait=0);"
              "print('OK=%%s' %% ok); print('WHY=%%s' %% why.replace(chr(10), ' ')[:160])"
              % (os.path.dirname(os.path.abspath(__file__)), CLAIM_DIR)],
-            capture_output=True, text=True, timeout=120)
+            capture_output=True, text=True, errors="replace", timeout=120)
         # A CHILD OF THIS PROCESS, i.e. a SIBLING of the holder: outside the holder's subtree, so
         # it must be refused exactly as an unrelated job is.
         _case("OK=False" in _kid.stdout,
@@ -3442,7 +3443,7 @@ def _selftest():
          "ok, why = card_claim.acquire('anc_subeval', ['4'], pid=os.getpid(), wait=0);"
          "print('OK=%%s' %% ok); print('WHY=%%s' %% why.replace(chr(10), ' ')[:160])"
          % (os.path.dirname(os.path.abspath(__file__)), CLAIM_DIR)],
-        capture_output=True, text=True, timeout=120)
+        capture_output=True, text=True, errors="replace", timeout=120)
     _case("OK=True" in _sub.stdout,
           f"a DESCENDANT asking under its own name shares the card "
           f"({_sub.stdout.strip().splitlines()[-1][:80] if _sub.stdout.strip() else _sub.stderr[:80]})")

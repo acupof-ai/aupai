@@ -73,7 +73,7 @@ and a red can be the same code on the same tree.
 under test, so a push whose only failure is this signature is **not** a reason to hold a merge. It is
 also **not** grounds to keep rerunning until green: the correct read is that the check is
 runner-dependent, and the falsifiable question moves to the **master-weight family**, which no red has
-ever recorded — `#624` (merged `c13e9d06`) dumps exactly those two tensors, and **the next red on a sha
+ever recorded — `#624` (merged `0975bdba`) dumps exactly those two tensors, and **the next red on a sha
 carrying it decides that family.** The launch does not wait on it.
 
 ### Adjudication: what a code-free PR may do with this red (2026-09-22)
@@ -108,7 +108,7 @@ tree are not the difference. If the weight family later turns out to diverge, th
 call and the PRs it passed need re-examination; that is the cost being accepted, and it is bounded
 because the affected merges are docs and ledgers, which no gate re-reads.
 
-**Next step, and it is the only one.** The next red on a sha carrying `c13e9d06` decides the family.
+**Next step, and it is the only one.** The next red on a sha carrying `0975bdba` decides the family.
 Nothing further should be specified before that artifact exists.
 
 ## The first red-after-instrumentation, and what it falsified (2026-09-21)
@@ -163,9 +163,9 @@ the **master-weight family is untested**, not excluded: the fp32→bf16→fp32 p
 the save-time dtype truncation assertions at `v41f/master.py:246-249` were never observed by any
 artifact from this run.
 
-**`#624` (merged `c13e9d06`) closes exactly that gap** — it dumps the two fp32 master tensors and the
+**`#624` (merged `0975bdba`) closes exactly that gap** — it dumps the two fp32 master tensors and the
 bf16 run weight that actually differed, plus a `call_site`/`values` record. **No red has uploaded one
-yet.** The next red on a sha that carries `c13e9d06` is the decisive artifact; nothing further should
+yet.** The next red on a sha that carries `0975bdba` is the decisive artifact; nothing further should
 be specified until it exists.
 
 ## Candidate causes, and the measurement that separates them

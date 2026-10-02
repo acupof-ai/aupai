@@ -2,7 +2,7 @@
 
 serve.py, chat.py, infer.py, eval/humaneval_gen.py and eval/sampling.py each take position 0
 of a model's forward return and argmax it as logits. v41f/lm.py V42LM.forward returned
-(hidden, hidden) until 4357b65b, so position 0 was a dim-1024 hidden state: argmax over it
+(hidden, hidden) until 9588ee2b, so position 0 was a dim-1024 hidden state: argmax over it
 yields ids 0-1023, every one a valid token in a 32,768-slot vocabulary. Nothing raised, and
 the pass@1 that came out was garbage.
 

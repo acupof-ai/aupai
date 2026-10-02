@@ -12,8 +12,8 @@ in temp repos built from this repo's real blobs.
 
 The five readings:
 
-  1  a59ac1f's shape staged        pre-commit rc!=0, names (file, key)
-  2  c3a5a23's shape staged        pre-commit rc=0
+  1  d71bb44's shape staged        pre-commit rc!=0, names (file, key)
+  2  af1ac56's shape staged        pre-commit rc=0
   3  loss + AUPAI_LEDGER_REWRITE   pre-commit rc=0, prints the list, drops the marker file
   4  same, message lacks marker    commit-msg rc!=0
   5  a duplicate key ADDED         pre-commit rc!=0, names the key
@@ -101,8 +101,8 @@ def marker_file(d):
 
 def _selftest():
     fails = []
-    before, after = blob("a59ac1f^", EXP), blob("a59ac1f", EXP)
-    good_b, good_a = blob("c3a5a23^", EXP), blob("c3a5a23", EXP)
+    before, after = blob("d71bb44^", EXP), blob("d71bb44", EXP)
+    good_b, good_a = blob("af1ac56^", EXP), blob("af1ac56", EXP)
     if not all((before, after, good_b, good_a)):
         print("SKIP: a required revision is absent from this clone")
         return 0
@@ -112,7 +112,7 @@ def _selftest():
     rc, out = run(PRE, d)
     ok = rc != 0 and "REFUSING" in out and EXP in out and "ab_zeroinit" in out
     fails += [] if ok else [f"1: incident shape must refuse and name the key (rc={rc})"]
-    print(f"  {'ok  ' if ok else 'BUG '} 1 a59ac1f shape: rc={rc}, names file+key="
+    print(f"  {'ok  ' if ok else 'BUG '} 1 d71bb44 shape: rc={rc}, names file+key="
           f"{EXP in out and 'ab_zeroinit' in out}")
 
     # 2. An ordinary append passes.
@@ -120,7 +120,7 @@ def _selftest():
     rc, out = run(PRE, d)
     ok = rc == 0 or "REFUSING" not in out
     fails += [] if ok else [f"2: an appended done event must pass (rc={rc}, {out[:200]})"]
-    print(f"  {'ok  ' if ok else 'BUG '} 2 c3a5a23 shape: rc={rc}, no ledger refusal="
+    print(f"  {'ok  ' if ok else 'BUG '} 2 af1ac56 shape: rc={rc}, no ledger refusal="
           f"{'REFUSING' not in out}")
 
     # 3. The env var allows the loss, prints the list, and drops the marker.

@@ -116,7 +116,7 @@ def main():
     if not sheet:
         sys.exit(f"REFUSE: sample is empty -- no docs matched the {a.mode} draw")
     # the shuffle lesson: a sample that equals the corpus head is a draw that did
-    # not happen (handread_criterion_0908, fixed at 796fec85). Live in random
+    # not happen (handread_criterion_0908, fixed at 372d5b19). Live in random
     # mode; stratified groups by stratum and highlow takes score tails, so
     # either can match the head only if the corpus is already ordered that way.
     if [s["text"] for s in sheet] == [r["text"] for r in rows[: len(sheet)]]:

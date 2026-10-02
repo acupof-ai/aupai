@@ -6,7 +6,7 @@ provisioning (container/hostPath mounts, claims, `~/bin/pod`, H20 assignment, pe
 backup) is a separate document owned by 66 and is a precondition assumed here, not described.
 
 This is a recipe, not an executable plan: nothing here fetches or starts anything until a new
-pod is provisioned and the user releases it. All code is on `main` (merge `0f5aa15e`,
+pod is provisioned and the user releases it. All code is on `main` (merge `ff1577d9`,
 PR #400; earlier #396). The destroyed emptyDir `/work/aupai` held no code and no irreplaceable
 byte that is not regenerable by these steps from upstream corpora; the cost is re-fetch and
 re-score, not recovery.

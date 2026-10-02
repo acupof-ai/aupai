@@ -23,7 +23,7 @@ train.py:164(`36328ab`)。原因是可复现的:**我只读了 `facts/efficiency
 | 量 | 值 | 出处 |
 |---|---|---|
 | 当前 500M 运行 | 12K tok/s/gpu, MFU 12%, batch 32 accum 1, grad_ckpt ON, FP8, 8 卡 | 运行日志(2026-09-02) |
-| 200M 参照(本轮实测,首选) | **77K tok/s/gpu, MFU 32%, micro-batch 16 accum 2, no grad_ckpt, 8 卡, peak 49.5 GiB** | `eff.p200m_b16a2_8card`(**待落**,de 关 p200m_4b_0902 行时写);当前来源 p200m attempt 3, `5342b61`, step 30, 2026-09-02 12:05Z |
+| 200M 参照(本轮实测,首选) | **77K tok/s/gpu, MFU 32%, micro-batch 16 accum 2, no grad_ckpt, 8 卡, peak 49.5 GiB** | `eff.p200m_b16a2_8card`(**待落**,de 关 p200m_4b_0902 行时写);当前来源 p200m attempt 3, `80f478a`, step 30, 2026-09-02 12:05Z |
 | 200M 早前实测(7 卡) | 72K tok/s/gpu, MFU 30%, micro-batch 16 accum 2 | `eff.microbatch_32_oom` |
 | 200M 转述值(勿用) | 73K, MFU 31%, batch 32, 8 卡 | `eff.fb_mfu`,已降为 recorded:b32 被实测否决,73K 未独立复测 |
 | 稳态 step 分解 | busy 1600.25 ms / span 1676.63 ms,idle 76.38 ms(95.44% busy) | `eff.steady_state_composition` |
@@ -98,7 +98,7 @@ L=32 batch4:OFF 2069.5 ms / 54.50 GiB,ON 2309.4 ms / 13.36 GiB;按倍增找最�
 约 41 GiB。
 
 对本轮两条新启动行的直接结论,现在已经由实测收口:200M(L12)用 `--no-grad_ckpt --batch 16
---accum 2`,`5342b61` 就是这条,attempt 3 跑起来了并读到 77K/MFU 32%/peak 49.5 GiB。**b32 不是
+--accum 2`,`80f478a` 就是这条,attempt 3 跑起来了并读到 77K/MFU 32%/peak 49.5 GiB。**b32 不是
 "不可比",是装不下**:attempt 1/2 按 b32 起,两次 OOM,与 `eff.microbatch_32_oom`(08-31,
 b32a1 在 seq 4096 fp8 下 93.8/95.2 GB)一致。这一点 argparse 看不见——我早先对那两条行报了
 PARSED OK 并列出解析值,而显存不是解析属性,parser 绿和跑得起来是两个判据。
@@ -175,7 +175,7 @@ grep,不是一份 fact 表。
 | 300M | d1024/L18,293.05M | 待定 | 未测 | 间隙 A/B:gc b16a2 vs no-gc b8a4 |
 
 3× 来自 **L12 无重算 vs L32 重算**这个组合,不是任何一个内核技巧,而且现在有了**本轮自己的实测**:
-p200m attempt 3(`5342b61`,12:05:39Z 起,八卡,micro-batch 16 accum 2,no grad_ckpt)在 step 30
+p200m attempt 3(`80f478a`,12:05:39Z 起,八卡,micro-batch 16 accum 2,no grad_ckpt)在 step 30
 读到 **77K tok/s/gpu, MFU 32%, peak 49.5 GiB, loss 5.77**。对比当前 500M 的 12K/MFU 12%,
 比值 6.4×,而两者的差就是深度加 grad_ckpt(`eff.grad_ckpt_inverts_with_depth`:L=12 时 ckpt 慢
 2.4×,L=32 时只慢 1.116×)。

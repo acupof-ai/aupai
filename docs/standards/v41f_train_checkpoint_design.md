@@ -215,7 +215,7 @@ The truncation is impossible-by-construction, not merely untested:
    This is the standard bf16-mixed-with-fp32-master pattern. Membership is `requires_grad`,
    so the off-mode indexer leaves must be built `requires_grad_(False)` (present-dormant) and
    the STE switch flips exactly those 6 to True — no hand-maintained name list in the
-   trainer (#487 G5). IMPORTANT (verified on #485 @920e2504): #485 does NOT own this flip —
+   trainer (#487 G5). IMPORTANT (verified on #485 @b0fa5297): #485 does NOT own this flip —
    both modes leave the leaves `requires_grad=True` and differ only by grad presence, so
    "in group but grad None" is exactly the G5 defect and the `requires_grad_(False)` at build
    is NEW code, a small standalone change (step D-PRE, de owns) that must merge before the

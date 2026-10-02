@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reviewer's mutant: TableMaster.resync on the rollback path, which nothing exercises.
 
-Second-reader review of 1928e13e / 15d45870 / 440bd579 (tilerl for b0, 2026-09-05). The nine
+Second-reader review of 1a91094b / f02985bc / 23f1bf51 (tilerl for b0, 2026-09-05). The nine
 listed cases cover construction, the disjointness of the two masters, pull_grads/push, the
 optimizer group, the FP8 exclusion and readout 6's freeze detection. `resync` is called at
 exactly one site -- train.py's `for _m in _masters` resync loop in the 20-skip rollback -- and

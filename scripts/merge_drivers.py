@@ -17,7 +17,7 @@ runs/experiments.jsonl, merges by union and does not conflict.
 data/pod_head_manifest.txt was the second driver here and is REMOVED. It is untracked now
 (pod_push.sh generates it from the HEAD it ships), and the driver never fired for it in any
 case: a merge driver runs only on a CONFLICT, and two branches touching different manifest
-lines merge CLEANLY. At 81f091af git spliced one side's manifest line with the other side's
+lines merge CLEANLY. At f112c12c git spliced one side's manifest line with the other side's
 file content -- main asserting d07a474f for a roadmap whose tree held 8dc68958 -- with the
 attribute live and the driver configured throughout. A driver cannot defend a derived file
 against a merge that never asks it anything.

@@ -18,7 +18,7 @@ looping do not separate the arms; both do both.
 
 WHAT DOES SEPARATE THEM UNDER THE STOP-ON CELLS IS LENGTH: 794-851 characters at the median against
 84-86, because the 12-character CJK repetition stop was running on the control and not on us. That
-asymmetry is the defect d165a905 voided, and the shared-decoder rerun (--no_rep_stop on both arms,
+asymmetry is the defect d2c93ee7 voided, and the shared-decoder rerun (--no_rep_stop on both arms,
 e1-31b) settled what it was hiding:
 
   - The control's 0.6% is NOT the stop rule. At 450 characters and the full 512-token budget it
@@ -78,7 +78,7 @@ REPEAT_MIN = 3     # a span occurring this often inside one generation is a loop
 # base generative metrics rather than writing 0.
 SATURATED_HIGH = 0.95
 SATURATED_LOW = 0.05
-# The stop-ON cells (rep_stop asymmetric between the arms -- the defect d165a905 voided). Kept as
+# The stop-ON cells (rep_stop asymmetric between the arms -- the defect d2c93ee7 voided). Kept as
 # the default so the published numbers stay reproducible from this script, NOT because they are the
 # current reading: the arm comparison on them is retracted. --preds names the four files for any
 # other run, e.g. the shared-decoder rerun's .norepstop cells. Hardcoding one filename set is how a

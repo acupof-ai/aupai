@@ -329,7 +329,7 @@ def main():
     # boundary that promotes immediately. So eff.grad_ckpt_inverts_with_depth's 325/2145 (peak
     # 65/25) is the shipped configuration and is correct. An earlier version of this file
     # asserted 181/1121 was "the real call" on the strength of the argument being named
-    # `blocks=0`; blocks=L is a configuration no run has ever used. Retracted d4a0f78.
+    # `blocks=0`; blocks=L is a configuration no run has ever used. Retracted e4b36b0.
     def reads(L, blocks=0):
         n_sub = 2 * L
         nb = min(n_sub, blocks or n_sub)  # same expression as model.py:330

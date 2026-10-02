@@ -1,5 +1,5 @@
 # scripts/n7c_pack_isolation.py -- run output, pod card 4, 2026-09-04
-# repo commit at capture: 4c47d0e01d3055a15295912f5ed0ab10e0b06b2d
+# repo commit at capture: 6319a1ad256a38914afa3192f046ba38fe0dba6e
 # FLAG ON (--isolated forces conv_doc_isolated for the 9 KDA mixers): the fix at model.py:109-113.
 #   Block 0 positions 0-2 exactly 0.0000; every block 0.2-2.3 ulps against the T-parity noise of
 #   6.7 ulps measured in this same run, so the residual is below the floor bf16 imposes anyway.

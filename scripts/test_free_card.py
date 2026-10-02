@@ -58,7 +58,7 @@ def free_card(busy, wait=0, settle=1, grant=None, extra=()):
 
     THE GRANT IS A FIXTURE, not the live file, and that is the whole of CI red #4 (2026-09-04).
     This faked nvidia-smi and then ran against the real runs/card_assignment.json in cwd=ROOT, so
-    its verdict moved with today's card allocation: 2eccf977 cleared the head-hybrid grant --
+    its verdict moved with today's card allocation: 00e3a3a2 cleared the head-hybrid grant --
     launch_block_granted false, no block_cards, no lane_card, which is a correct and ordinary state
     -- and `an idle lane yields a card` went red on a CI runner while passing on every laptop whose
     checkout predated the clear. A test whose answer depends on which cards the controller granted
@@ -136,7 +136,7 @@ def main():
          f"an idle lane yields a card (rc={rc}, out={out!r})")
     # THE FIXTURE IS IN EFFECT, asserted rather than assumed. Before d9ba571d this ran in cwd=ROOT
     # against the live runs/card_assignment.json, so it answered a question about today's grant:
-    # 2eccf977 cleared the head-hybrid block (launch_block_granted false, no lane_card -- correct,
+    # 00e3a3a2 cleared the head-hybrid block (launch_block_granted false, no lane_card -- correct,
     # no job is granted) and the case above went red on CI while passing on any checkout that
     # predated the clear. If the fixture were ever bypassed again, `out` would be whatever card the
     # controller happens to have granted, so pinning it to the fixture's own lane is what makes the
@@ -144,7 +144,7 @@ def main():
     want(out == "4", f"and it is the FIXTURE's lane card, not today's grant (out={out!r})")
 
     # NO LANE GRANTED -> refuse, naming the missing grant (6e's second case). Returning nothing when
-    # no lane exists is the correct production behaviour and is exactly the state 2eccf977 wrote;
+    # no lane exists is the correct production behaviour and is exactly the state 00e3a3a2 wrote;
     # what must not happen is silence, because a caller reading an empty stdout as "no card yet"
     # queues forever against a grant that will never appear.
     rc_ng, out_ng, err_ng = free_card(

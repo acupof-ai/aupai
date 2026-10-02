@@ -57,7 +57,7 @@ runs/moe_diag.jsonl merge=union
 # data/pod_head_manifest.txt had a driver and it is REMOVED: the file is untracked now, and
 # the driver never fired for it anyway. A merge driver only runs on a CONFLICT, and two
 # branches touching different manifest lines merge cleanly -- git spliced one side's line
-# with the other side's file content at 81f091af, so main asserted a hash for a file it did
+# with the other side's file content at f112c12c, so main asserted a hash for a file it did
 # not contain, with the driver configured and attributed the whole time.
 EXPERIMENTS.md merge=aupai-experiments
 

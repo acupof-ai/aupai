@@ -992,7 +992,7 @@ def _evaluated_reasons(phase, near_dedup=False):
     without the tier-3 scan carries a stamp identical to one that had it. The evidence for
     a given build is the code content itself: the worker run that produced this rebuild's
     shards used build_corpus.py sha256 `aea79cfe7845c1455d85f3e916cd4b2cbec51a87c4604ed3a23bf24aa98817c`
-    (digest tree HEAD 856b815d, verified to contain the three-tier `reject_holdout`).
+    (digest tree HEAD 109e00fc, verified to contain the three-tier `reject_holdout`).
     Recorded in the PR, not in the artifact -- see the PR description for the rebuild batch.
 
     Case (h) in the selftest reads these keys off the functions' AST and fails if this

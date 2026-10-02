@@ -1,7 +1,7 @@
 ---
 question: Which eval-path places hard-code a V2 attention name, and do they block scoring a DeepSeek-V4.1 (CSA2) checkpoint with the HumanEval gate instrument?
 status: retracted
-source: grep over eval/ and scripts/loader.py at f463299f, 2026-09-10; PR #210 (docs/standards/v41_pivot.md, open). Retracted 2026-09-30 by 4357b65b (scripts/loader.py, v41f/lm.py) and c7e1e93a (the five raw decode loops).
+source: grep over eval/ and scripts/loader.py at bf19a25d, 2026-09-10; PR #210 (docs/standards/v41_pivot.md, open). Retracted 2026-09-30 by 9588ee2b (scripts/loader.py, v41f/lm.py) and 665d7bb2 (the five raw decode loops).
 ---
 
 # V4.1 eval-path architecture audit (66-2)
@@ -13,18 +13,18 @@ the verdict, not of the table.** The audit's own premise names its scope: "a V4.
 that is still a `HybridLM` with the same forward interface". v42 is neither. It is
 `v41f/lm.py` `V42LM` with 5,139 state-dict keys (`embed.weight`,
 `layers.0.attn.qproj.wq_a.weight`) against HybridLM's 35 (`tok.weight`,
-`blocks.0.mixer.qkv.weight`), zero overlap, and until 4357b65b its `forward` returned
+`blocks.0.mixer.qkv.weight`), zero overlap, and until 9588ee2b its `forward` returned
 `(hidden, hidden)` rather than logits.
 
 What that voids, by sentence:
 
 | voided claim | what was true at 2026-09-30 |
 |---|---|
-| "scores with **zero eval-side changes**" | `scripts/loader.py` constructed `HybridLM(cfg)` unconditionally, so every eval that goes through `load_checkpoint` could not score a v42 checkpoint at all. Fixed in 4357b65b, which calls `train.build_model`. |
-| "both evals then call `model(x)` and read logits" | They called `model(x)` and read a dim-1024 **hidden state**. It argmaxes to ids 0-1023, all valid in a 32,768-slot vocabulary, so nothing raised and the pass@1 was garbage. `V42LM.forward` now mirrors HybridLM's three-branch contract (4357b65b), and `scripts/decode_guard.last_logits` refuses a non-vocab width at each of the five raw decode loops (c7e1e93a). |
+| "scores with **zero eval-side changes**" | `scripts/loader.py` constructed `HybridLM(cfg)` unconditionally, so every eval that goes through `load_checkpoint` could not score a v42 checkpoint at all. Fixed in 9588ee2b, which calls `train.build_model`. |
+| "both evals then call `model(x)` and read logits" | They called `model(x)` and read a dim-1024 **hidden state**. It argmaxes to ids 0-1023, all valid in a 32,768-slot vocabulary, so nothing raised and the pass@1 was garbage. `V42LM.forward` now mirrors HybridLM's three-branch contract (9588ee2b), and `scripts/decode_guard.last_logits` refuses a non-vocab width at each of the five raw decode loops (665d7bb2). |
 | "The gate instrument hard-codes no attention name" | Still true, and it was never the load-blocking property. Naming no attention class is not the same as building the class the checkpoint names — the audit tested the first and concluded the second. |
 
-The **Places that DO name a V2 attention** table below stands as read at `f463299f` and is
+The **Places that DO name a V2 attention** table below stands as read at `bf19a25d` and is
 kept for that reason; it was the question the audit actually answered. Nothing in it was
 re-measured against v42, so treat every row as unmeasured for v42 rather than as carried
 over.
@@ -34,7 +34,7 @@ claim about the **construction** path and the **forward contract**, and a grep f
 names sees neither.
 
 
-## Verdict (retracted for v42 by the section above; read as of f463299f)
+## Verdict (retracted for v42 by the section above; read as of bf19a25d)
 
 The gate instrument hard-codes no attention name. `eval/humaneval_gen.py` and
 `eval/humaneval_sample.py` call `scripts/loader.py:load_checkpoint`, which builds

@@ -70,7 +70,7 @@ FRESH_BASELINE = {
     "plan_rows_total": 100000,
     "total_steps": 390,
     "cursor": {"a": 60000, "b": 40000},
-    # RECORDED on the pre-fix code (HEAD c4a9841, before any edit to build_mix), and stable
+    # RECORDED on the pre-fix code (HEAD b6f39dd, before any edit to build_mix), and stable
     # across three fresh processes -- the plan comes from a seeded generator, so an unstable
     # hash would mean the baseline could not detect a change at all.
     "plan_sha": "4c6037cbc0a4cb6242d1e29e5738c8f0",
@@ -214,7 +214,7 @@ def main():
         bad.append("the cursor flag is true with NO cursor, so it cannot mean 'a cursor seeded used[]'")
 
     # 5: build_mix PUBLISHES the fields save_checkpoint's cursor needs. This is a call, not a
-    # fixture, and that is the whole point (e1's finding 2 on 88be635a): every case in
+    # fixture, and that is the whole point (e1's finding 2 on ee67dcd3): every case in
     # test_cursor_sum.py sets _plan_world and _plan_domains_full on a fabricated cfg, so
     # deleting build_mix's publish left them all green -- the fixture supplied what the
     # producer should have produced. save_checkpoint now refuses without them rather than

@@ -4,7 +4,7 @@
     python3 scripts/test_cache_read_line.py
 
 WHY A PRINT NEEDS A TEST. de ruled the training path exempt from assert_not_co_resident
-(1fd88227): a launch is the job the lane exists for, so refusing it inverts the priority. What
+(31936982): a launch is the job the lane exists for, so refusing it inverts the priority. What
 that leaves is a read nobody measures at launch time -- train.py full-loads every domain cache,
 and the 166.2 GB figure for the E1 mix was computed offline by e1 and appeared in NO log, so the
 101 GB RSS that followed had to be recovered from /proc/<pid>/status after the fact. The line

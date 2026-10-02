@@ -38,7 +38,7 @@ def tok():
     time made every importer of this module unrunnable in a worktree that had never copied
     the file in: `count_code_dirs.py --selftest` raised `No such file or directory` from
     line 30 before reaching any test, and the pre-commit hook refused a ledger merge on it
-    at 8e536df7. CI and the pod both hold the file, which is why it was green in both
+    at 6fd2b6d0. CI and the pod both hold the file, which is why it was green in both
     (4c, 2026-09-08). The import-time load predates this; registering the selftest in
     SELFTEST_FILES is what made it reachable, so the defect arrived by being exposed.
     """

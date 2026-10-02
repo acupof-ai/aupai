@@ -355,7 +355,7 @@ _FOREIGN = [
      "typescript"),
 ]
 
-#: 44's hand-read of code_rp1t_dd09/b2 (docs/audits/code_rp1t_dd09_b2_hand_read.md @ ec74649b)
+#: 44's hand-read of code_rp1t_dd09/b2 (docs/audits/code_rp1t_dd09_b2_hand_read.md @ de1dffe6)
 #: names six rules for the non-code tail: ~22% of dd09 and ~14% of b2. Four of the six are
 #: exactly what my own 50-doc read of the no_language_evidence bucket found -- HTML 15/50,
 #: XML/config 9/50, CSS 5/50, license-only 1/50 -- so they are implemented here rather than as

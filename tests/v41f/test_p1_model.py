@@ -139,7 +139,7 @@ def test_whole_model_logits_allclose():
     routing decisions has a margin of 9.898e-4 (measured 2026-09-30), and the two sides reach
     the router through different op orders, so one bf16 ulp of hidden-state rounding on a
     host whose bf16 kernels round differently flips an expert and moves the logits by ~0.2.
-    The sibling engram-ON gate did exactly that on one GitHub runner (1.975e-1 at 2898e4b4
+    The sibling engram-ON gate did exactly that on one GitHub runner (1.975e-1 at e1e00c11
     against 3.970e-3 on the others). A route flip is a property of the seed and the host,
     not of the wiring this test asserts; fp32 puts the router ~1e3 ulps from the tie.
     Healthy fp32 value 2.682e-6; atol 1e-4 is 37x that and 1e3x below a flip. A head-weight

@@ -76,7 +76,7 @@ resolve_stamp_sha() {
   head_sha=$(git rev-parse HEAD)
   # THE SHA MUST BE MAIN'S, NOT THIS WORKTREE'S BRANCH TIP (de-14). Every session pushes
   # from its own worktree, so `rev-parse HEAD` is that branch's tip: measured 2026-09-03,
-  # this tree's HEAD was 1b85dd0c while main was 69c8bd87. The pod runs main -- push_one
+  # this tree's HEAD was 8cfa62c8 while main was f5210e64. The pod runs main -- push_one
   # already refuses any file that differs from main -- so a stamp naming a branch tip
   # describes a tree that does not exist anywhere: main's file contents under a sha only
   # one laptop has. run_ddp.sh then compares against a value nobody else can resolve.
@@ -531,7 +531,7 @@ if [ $ALL -eq 1 ]; then
   # REFUSE FROM THE INTEGRATION TREE. pod_push cds to `dirname $0/..`, so it runs in whichever
   # COPY you invoked -- and a copy lives in /Users/bytedance/code/aupai. Since the 2026-09-05
   # flip that tree is DETACHED, so every `git show HEAD:` underneath answered about a commit
-  # behind main: measured HEAD 0425accb vs main 1595220e, one rewritten file silently skipped
+  # behind main: measured HEAD 93948f38 vs main 38a743ba, one rewritten file silently skipped
   # (not refused -- a path the manifest omits is never offered to the per-file gate below) and
   # the stamp still claimed main. Same script, two behaviours, decided by which path you typed.
   #

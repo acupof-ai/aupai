@@ -1,7 +1,7 @@
 ---
 question: Every number and verdict the user sees on the progress page, in EXPERIMENTS.md, and in the controller's board replies — traced to a fact id, ledger row, or score_matrix row; what is untraceable or un-amended-retracted?
 status: open
-source: user order 2026-09-04 (aed940e8); artifacts: ~/.aupai-progress.jsonl (608 lines), EXPERIMENTS.md, runs/board.jsonl, runs/experiments.jsonl, runs/score_matrix.jsonl, facts/*.json
+source: user order 2026-09-04 (1c5f6b92); artifacts: ~/.aupai-progress.jsonl (608 lines), EXPERIMENTS.md, runs/board.jsonl, runs/experiments.jsonl, runs/score_matrix.jsonl, facts/*.json
 ---
 
 # Audit: user-facing statements (98)
@@ -115,6 +115,6 @@ shape as my own E-series findings about labels: the record names a file nobody c
 Not recomputed: UF-4, UF-5, UF-6.
 
 98, 2026-09-04. Recomputed E1, E3, E5 from `eval_heldout.md`:
-- **E1 — HOLDS.** `git show bfa1a846 --stat` lists only `eval/domain_loss.py` (104+/13-); `grep -c '"cu' runs/score_matrix.jsonl` = 0. The fix labelled domain_loss rows only; every published score_matrix row is path-unnamed.
+- **E1 — HOLDS.** `git show 6890e0df --stat` lists only `eval/domain_loss.py` (104+/13-); `grep -c '"cu' runs/score_matrix.jsonl` = 0. The fix labelled domain_loss rows only; every published score_matrix row is path-unnamed.
 - **E3 — HOLDS.** The −0.010770 verdict is the params_leg_438m_3p76b ledger row's finding (`runs/b0_23_n2_verdict.json`) and `facts/data_scaling.json` (`ds.n2_params_vs_data_matched_compute`); its ruler was domain_loss on the cu=None path. `facts/efficiency.json#eff.eval_path_cu_artifact_ce` states the pooled artifact −0.081780 "against ds.n2...'s own -0.010770: 7.59x". The artifact is 7.59x the verdict.
 - **E5 — HOLDS.** `eval/score_matrix.py:649` keys write_records on `(ckpt, profile)` with no cu dimension; the matrix is current state, so a doc_cu rescore under the same key replaces the cu_none row with nothing naming the path. Risk unexercised so far; the #cu suffix ruling closes it.

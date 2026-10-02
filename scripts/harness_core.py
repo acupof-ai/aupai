@@ -754,7 +754,7 @@ def refuse_in_integration_tree(what, path=None):
     THE PREDICATE IS "THIS IS THE MAIN WORKTREE OF A COMMON GIT DIR THAT HAS LINKED WORKTREES",
     in scripts/integration_tree.py, shared with scripts/hooks/pre-commit. It was `branch ==
     "main"` for the first hours of its life and that was wrong within the day: the integration
-    tree was DETACHED on purpose (tilerl's flip, main 0425accb, 2026-09-05), which makes
+    tree was DETACHED on purpose (tilerl's flip, main 93948f38, 2026-09-05), which makes
     symbolic-ref answer "HEAD" and turned all three guards OFF in the one tree they exist for.
     A branch is a label anyone can change; being the tree other worktrees hang off is
     structural. Read integration_tree.py before touching the predicate -- each of its clauses
@@ -991,7 +991,7 @@ def _main_touched(root):
     improvement (2 empties beats 616) and silently drops nearly half the history; the count of
     commits, not just the count of empties, is what separates them. `git show --stat` on one of
     the 607 lists 7 files, which is how the disagreement surfaced -- closing de-30 against
-    c889bc2.
+    8ee64ed.
 
     A merge under `-m` emits ONE BLOCK PER PARENT, each repeating the same %H, so the parse must
     UNION rather than assign: `out[sha] = paths` keeps only the last block. Measured, 588 shas
@@ -1144,7 +1144,7 @@ def _cite_sentence(line, pos, following=()):
 
     A LINE BREAK INSIDE A BLOCK CONTINUES THE SENTENCE (4c's second finding, 2026-09-07; the
     rule is stated here because either answer had to be). Measured: `# the cast at
-    train.py:2315 AT` / `# 169da865 held the fp8 branch.` -- the sha is on the second line, so
+    train.py:2315 AT` / `# 51bca1b8 held the fp8 branch.` -- the sha is on the second line, so
     the line-scoped search found none and the check reported a correctly ANCHORED citation as
     bare debt. That is the same class of false red as the position-keyed baseline: a spurious
     FAIL on a citation nobody touched, and here it also pushes an author toward deleting the

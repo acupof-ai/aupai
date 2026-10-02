@@ -102,7 +102,7 @@ def fp_filters(root=ROOT):
 
     HASHES THE PATTERNS, NOT THE FILE BYTES. It hashed bytes until 2026-09-17, and `filters/secrets.py`
     was not the only false positive that admits: a semantics-preserving edit to a pipeline filter
-    moved it while the drop decision could not change. Measured: commit 3a972f57 hoisted
+    moved it while the drop decision could not change. Measured: commit 584f3a34 hoisted
     `COMPILED = [re.compile(p) for p in PATTERNS]` and added a shared `drops()` -- same regexes,
     same order, same behavior -- and the byte hash went 88ee503b -> 9bbed36b. Every corpus built
     before that commit then read as stale for a refactor that removes no document. A fingerprint
@@ -353,7 +353,7 @@ def self_check():
             f.write(orig)
         assert fp_filters(froot) == only_pipeline, "restoring the file must restore the value"
         # 3. SEMANTICS-PRESERVING EDITS MUST NOT MOVE IT. This is the whole point of hashing
-        #    patterns rather than bytes: 3a972f57 hoisted COMPILED, added a shared drops(), and
+        #    patterns rather than bytes: 584f3a34 hoisted COMPILED, added a shared drops(), and
         #    the byte hash moved 88ee503b -> 9bbed36b with the same regexes in the same order, so
         #    nine domains read stale for a refactor that removes no document. Each variant below
         #    keeps PATTERNS identical and changes only the file's bytes around it.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The pre-commit hook must refuse a commit from a COPY of a linked worktree.
 
-cf3dbaea "probe 2": b0's `cp -r` of a linked worktree kept the `.git` FILE, which is only a
+1e2cfbfd "probe 2": b0's `cp -r` of a linked worktree kept the `.git` FILE, which is only a
 `gitdir:` pointer into .git/worktrees/<name> in the real repository. The copy therefore shared the
 original's HEAD, index and branch ref, so a commit made in /tmp/reg_moe landed on the real branch
 and merged to main carrying a SwiGLU mutant.

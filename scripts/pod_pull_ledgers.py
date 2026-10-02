@@ -4,11 +4,11 @@
 pod_push only ever pushes, and pod_drift only asserts that the files it LISTS match -- so a
 row appended to runs/*.jsonl on the pod is invisible to every check in this repo. Five
 score_matrix rows behind the closed A/Bs (3)/(2a)/(4) and b0-17's base lived only on the
-pod's emptyDir until ce6ea53a moved them by hand.
+pod's emptyDir until eae6e576 moved them by hand.
 
 MEASURED on 2026-09-03, which is the reason this is not a no-op: 2 pod-only score_matrix
 keys (p500m_20b_0902 step1500 and step2500, the live run's own measurements) and 14
-pod-only experiments rows. The task's reading predicted "0 missing after ce6ea53a"; that
+pod-only experiments rows. The task's reading predicted "0 missing after eae6e576"; that
 was wrong, and the pod had kept accumulating.
 
     python3 scripts/pod_pull_ledgers.py            # report only, touches nothing
@@ -455,7 +455,7 @@ def events_pod_lacks(pod_rows, local_rows, keyfn):
     (status, result, ended) triple while differing elsewhere; driven with pod=[a] local=[a,b], all 6
     offered 0 rows to push. Five are e1-21/25/27/29/30 differing only in `drop_reason`. The sixth is
     44-31: two `done` rows with an identical `result`, and the one the pod lacks is the one carrying
-    `reviewer: fb` and `commit: acbdbdd1`. Verified here: the row without them is what a pull would
+    `reviewer: fb` and `commit: 25a8eb28`. Verified here: the row without them is what a pull would
     leave the pod holding -- a close naming no reviewer and no commit, which is the state a review
     gate exists to prevent.
 
@@ -496,7 +496,7 @@ def events_pod_lacks(pod_rows, local_rows, keyfn):
         #
         #   sig alone, gated to all-absent rows: a correction inside a PARTIAL row is invisible.
         #     de found this live with a victim -- 44-31 holds two `done` rows with an identical
-        #     `result`, and the one the pod lacked carried `reviewer: fb` and `commit: acbdbdd1`,
+        #     `result`, and the one the pod lacked carried `reviewer: fb` and `commit: 25a8eb28`,
         #     so a pull left the pod holding a close naming no reviewer.
         #   sig alone, widened to every row: the ANCHOR stops matching across provenance drift.
         #     Pod's start carries a `note` the local start lacks -> no cut is found -> a real close
@@ -1234,7 +1234,7 @@ def _selftest():
     assert _part == [_p2], (
         f"a correction differing only outside the event fields was not offered: {_part}. This is "
         f"the shape that hid 44-31's second `done` row -- identical result, and the row the pod "
-        f"lacked was the one carrying `reviewer: fb` and `commit: acbdbdd1`, so a pull left the pod "
+        f"lacked was the one carrying `reviewer: fb` and `commit: 25a8eb28`, so a pull left the pod "
         f"holding a close that named no reviewer"
     )
     # THE PRECONDITION, asserted rather than assumed: this pair must actually carry an event field,

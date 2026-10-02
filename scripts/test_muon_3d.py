@@ -51,7 +51,7 @@ def _muon_without_the_flatten():
 
     Mutated as a STRING and exec'd. Nothing is written to disk: a mutation that touches the working
     tree is a mutation that can be committed, and that has already cost this repo a run
-    (cf. cf3dbaea). Raises if the lines it removes are not found, so this cannot silently become a
+    (cf. 1e2cfbfd). Raises if the lines it removes are not found, so this cannot silently become a
     copy of the fixed code and pass.
     """
     with open(os.path.join(ROOT, "train.py")) as f:

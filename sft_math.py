@@ -103,7 +103,7 @@ def build_sft_model(device):
     --arch v42, rebuilt from the checkpoint's own cfg.v42_cfg. Constructing HybridLM here made a
     v42 checkpoint unloadable -- the two state dicts have zero key overlap -- so the SFT path
     could not touch the v42 line at all (de, 2026-09-30; the same defect scripts/loader.py
-    carried, fixed at 4357b65b). A function rather than one line inside main() so the CPU
+    carried, fixed at 9588ee2b). A function rather than one line inside main() so the CPU
     known-answer test can drive the decision instead of restating it.
     """
     return build_model(Cfg).to(device)
@@ -249,7 +249,7 @@ def main():
                              "Muon momentum (1e option B). The model is cast bf16 even with "
                              "--no_fp8; without this flag --no_fp8 keeps fp32 weights")
     # Spelled --no-grad_ckpt (hyphen) to match train.py, whose BooleanOptionalAction
-    # generates that form (ead2d2b). Two entry points spelling the same switch differently
+    # generates that form (6337c30). Two entry points spelling the same switch differently
     # is a trap a person walks into once per script; the underscore form is kept for one
     # version and prints a deprecation so nothing in flight breaks silently.
     parser.add_argument(

@@ -6,7 +6,7 @@
 WHAT THIS IS FOR. train.py full-loaded every domain cache on every rank before step 0. The E1
 mix's caches sum to 166.2 GB, so a --plan run reached VmRSS 101 GB on the pod and was killed
 mid-zh_web (task e1-41, found by watching the process). de ruled the training path exempt from
-assert_not_co_resident (1fd88227) -- a launch is the job the lane exists for -- so there is no
+assert_not_co_resident (31936982) -- a launch is the job the lane exists for -- so there is no
 refusal to lean on and the fix has to be that the read itself is smaller.
 
 THE PROPERTY IS A RATIO, NOT A THRESHOLD, and that is the whole design of this test. "RSS stays

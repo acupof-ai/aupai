@@ -11,7 +11,7 @@
     "world": 1,
     "cmd": "scripts/profile_step_cost.py --mix data/mix_200m_8b.json --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 --batch 16 --accum 2 --steps 30 --peak-only --mem_values 2096704 --mem_top_k 32 --mem_layers 3,6,9 --no-mem_sparse",
     "log": "/work/aupai/runs/b0_mem_m3_peak.log",
-    "code": "6c5dbab1"
+    "code": "30949709"
   },
   "measured": {
     "peak_reserved_GiB": 88.15,

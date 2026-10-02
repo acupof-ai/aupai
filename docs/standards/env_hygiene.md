@@ -1,7 +1,7 @@
 ---
 question: How does this environment stay clean without a person watching it, and what does that cost?
 status: design
-source: audit findings PR-10, PR-11, PR-1/PR-2, cleanup C1 (ff035f77); measurements 2026-09-04 03:33-07:40Z
+source: audit findings PR-10, PR-11, PR-1/PR-2, cleanup C1 (7302067b); measurements 2026-09-04 03:33-07:40Z
 ---
 
 # Environment hygiene
@@ -21,7 +21,7 @@ user's. Where a number appears it was measured, not estimated.
 | wait-loops on an unresolvable target | **2, 17 h, still live** | — | yes, once (b) sees them |
 | host leftovers | **none found** | — | n/a — see §4 |
 
-C1 removed 314 processes (`ff035f77`). The zombies remain and cannot be removed by anything
+C1 removed 314 processes (`7302067b`). The zombies remain and cannot be removed by anything
 running inside the container.
 
 ## 1. The container: PID 1 must reap
@@ -280,7 +280,7 @@ that a person cleaned the same day.
 
 ## The populations these classes were measured on
 
-**Every class below was swept by C1 (`ff035f77`) at ~05:5xZ, so a process table read after
+**Every class below was swept by C1 (`7302067b`) at ~05:5xZ, so a process table read after
 that hour shows them empty.** db measured 37 live processes at ~07:4xZ and found (a) and
 (c) with no instances and (b) with one — that is the sweep working, not classes that never
 fired. The fixtures are the pre-sweep populations:

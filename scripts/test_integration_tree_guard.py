@@ -9,7 +9,7 @@ to, which is what this makes checkable.
 
 THE PREDICATE IS NOT THE BRANCH, AND THIS FILE'S FIRST VERSION GOT THAT WRONG. It tested
 `branch == "main"` and its worlds asserted branch semantics; hours later the integration tree
-was detached on purpose (tilerl's flip, main 0425accb) and all three guards silently turned
+was detached on purpose (tilerl's flip, main 93948f38) and all three guards silently turned
 OFF in the one tree they exist for. The predicate now lives in scripts/integration_tree.py --
 main worktree of a common git dir that HAS linked worktrees -- and these worlds BUILD that
 property with `git worktree add` instead of naming a branch.
@@ -325,7 +325,7 @@ def main():
                          "nothing about the flip")
         if not harness.refuse_in_integration_tree("w2", path=p_int):
             fails.append("W2: a DETACHED integration tree did not refuse -- this is exactly the "
-                         "state the flip created (main 0425accb), where a branch-name predicate "
+                         "state the flip created (main 93948f38), where a branch-name predicate "
                          "reads 'HEAD' and every guard silently turns off")
 
         # W3: a LINKED WORKTREE of the same repo does not refuse. Every session's normal write,
