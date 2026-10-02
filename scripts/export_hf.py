@@ -30,6 +30,9 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 SHARD_BYTES = 5 * 1000**3  # HF's conventional 5GB shard
+# The file the export carries its persistent=False buffers in. Named here because the wrapper
+# reads it by the same constant.
+NONPERSISTENT_BUFFERS = "nonpersistent_buffers.safetensors"
 
 
 def _write_json(path, obj):
@@ -112,6 +115,9 @@ def export(ckpt, out, tokenizer=None, card_numbers=None, verify=True):
     # directory is rebuilt from the checkpoint in minutes. An interrupt leaves a partial
     # directory that the next run overwrites; nothing upstream is consumed or mutated.
     from safetensors.torch import save_file
+
+    from v41f.config import V41FConfig
+    from v41f.lm import V42LM
 
     ck, v42 = _read_ckpt(ckpt)
     state = {f"model.{k}": v for k, v in ck["model"].items()}
@@ -199,6 +205,28 @@ def export(ckpt, out, tokenizer=None, card_numbers=None, verify=True):
         os.path.join(out, "generation_config.json"),
         {"eos_token_id": 1, "max_new_tokens": 280, "do_sample": False, "use_cache": False},
     )
+
+    # NON-PERSISTENT BUFFERS SHIP WITH THE EXPORT. 100 of them (25.2 MB, 25.17 of it the 24
+    # per-layer freqs_cis RoPE tables) are registered persistent=False, so they are absent from
+    # ck["model"] by design and a fresh build computes them in __init__. transformers never runs
+    # that __init__ against a real device: it materialises the module from the file alone, and
+    # every buffer the file does not carry comes back as uninitialised memory. The real
+    # step16000 export loaded with 0 missing keys, 0 unexpected keys and 0 NaN PARAMETERS, and
+    # produced NaN logits from 8-9 NaN buffers (compressor.kv_state, score_state, freqs_cis...);
+    # low_cpu_mem_usage=False does not help, because transformers 5.6 no longer honours it.
+    # So the values travel in the export and the wrapper copies them in after loading: no new
+    # dependency, and no reliance on which init path transformers takes.
+    buf_src = V42LM(V41FConfig(**v42))
+    bufs = {
+        name: b.clone() for name, b in buf_src.named_buffers() if name not in ck["model"] and b is not None
+    }
+    del buf_src
+    if bufs:
+        save_file(
+            {k: v.contiguous() for k, v in bufs.items()},
+            os.path.join(out, NONPERSISTENT_BUFFERS),
+            metadata={"format": "pt"},
+        )
 
     for mod in ("configuration_aupai.py", "modeling_aupai.py"):
         shutil.copy(os.path.join(ROOT, "hf", mod), os.path.join(out, mod))
@@ -496,7 +524,55 @@ def selftest():
             f"identical logits" + ("" if ok else f" -- {why}")
         )
 
-    print(f"export_hf: {7 - bad}/7 pass")
+        # (6) THE BUFFER FILE COVERS EVERY persistent=False BUFFER, AND ITS ABSENCE RAISES.
+        #     This case exists because cases (4) and (5) CANNOT catch the defect it guards: at
+        #     the tiny shape the uninitialised buffer memory happened to be benign and both
+        #     passed before the fix, while the real 3.2B export returned NaN logits. Luck is not
+        #     a criterion, so the assertion is set-equality on the names plus the refusal --
+        #     neither of which depends on what the allocator handed back.
+        import shutil as _sh
+
+        from safetensors.torch import load_file
+
+        from v41f.config import V41FConfig as _VC
+        from v41f.lm import V42LM as _VL
+
+        ref = _VL(_VC(**dataclasses.asdict(c)))
+        want_names = {n for n, _ in ref.named_buffers() if n not in mixed_sd}
+        del ref
+        bpath = os.path.join(d, "hf_mixed", NONPERSISTENT_BUFFERS)
+        have_names = set(load_file(bpath)) if os.path.exists(bpath) else set()
+        ok = bool(want_names) and have_names == want_names
+        bad += 0 if ok else 1
+        print(
+            f"  {'ok  ' if ok else 'BUG '} the export carries every one of the "
+            f"{len(want_names)} persistent=False buffer(s)"
+            + (
+                ""
+                if ok
+                else f" -- missing {sorted(want_names - have_names)[:4]}, "
+                f"extra {sorted(have_names - want_names)[:4]}"
+            )
+        )
+
+        # The negative: with the file gone, loading must RAISE rather than answer NaN.
+        gone = os.path.join(d, "hf_gone")
+        _sh.copytree(os.path.join(d, "hf_mixed"), gone)
+        os.remove(os.path.join(gone, NONPERSISTENT_BUFFERS))
+        from transformers import AutoModelForCausalLM as _AM
+
+        try:
+            _AM.from_pretrained(gone, trust_remote_code=True)
+            ok, why = False, "it loaded without the buffer file"
+        except Exception as e:  # noqa: BLE001 - any raise is the contract; NaN silence is not
+            ok, why = "nonpersistent_buffers" in str(e), str(e)[:80]
+        bad += 0 if ok else 1
+        print(
+            f"  {'ok  ' if ok else 'BUG '} loading an export whose buffer file was deleted "
+            f"RAISES by name" + ("" if ok else f" -- {why}")
+        )
+
+    print(f"export_hf: {9 - bad}/9 pass")
     return 1 if bad else 0
 
 

@@ -92,16 +92,52 @@ class AupaiV42ForCausalLM(PreTrainedModel):
         Passing torch_dtype=bfloat16 instead would round head.weight through bf16 and lose
         precision the training run deliberately kept.
         """
-        model = super().from_pretrained(*args, **kw)
+        result = super().from_pretrained(*args, **kw)
+        # output_loading_info=True makes transformers return (model, info); the dtype restore
+        # applies either way and the caller's shape is handed back unchanged.
+        model = result[0] if isinstance(result, tuple) else result
         default = getattr(model.config, "param_dtype_default", None)
         if default is None:
-            return model  # an export from before this field: leave what transformers loaded
+            return result  # an export from before this field: leave what transformers loaded
         exceptions = getattr(model.config, "param_dtype_exceptions", {}) or {}
         for name, p in model.model.named_parameters():
             want = getattr(torch, exceptions.get(name, default))
             if p.dtype != want:
                 p.data = p.data.to(want)
-        return model
+        model._restore_nonpersistent_buffers(args[0] if args else kw.get("pretrained_model_name_or_path"))
+        return result
+
+    def _restore_nonpersistent_buffers(self, model_dir):
+        """Copy in the persistent=False buffers the export carries.
+
+        100 of this stack's buffers (25.2 MB, almost all of it the 24 per-layer freqs_cis RoPE
+        tables) are registered persistent=False: absent from the checkpoint by design, computed
+        by each module's __init__. transformers materialises the module from the weight files
+        alone and never runs that __init__ against a real device, so every such buffer arrives
+        as uninitialised memory. Measured on the real step16000 export: 0 missing keys, 0
+        unexpected keys, 0 NaN parameters, and NaN LOGITS out of 8-9 NaN buffers.
+        low_cpu_mem_usage=False does not change it -- transformers 5.6 no longer honours the
+        flag -- which is why the fix lives in the export rather than in a load argument.
+
+        A missing file is a hard error, not a warning: without these buffers the model answers
+        NaN, and a model that loads and then answers NaN is the failure this whole wrapper is
+        built to prevent.
+        """
+        import os
+
+        from safetensors.torch import load_file
+
+        path = os.path.join(str(model_dir), "nonpersistent_buffers.safetensors")
+        if not os.path.exists(path):
+            raise FileNotFoundError(
+                f"{path} is missing. It carries the persistent=False buffers (freqs_cis, the "
+                f"compressor states, the MoE token counters); without them this model returns "
+                f"NaN. Re-export with scripts/export_hf.py, which writes it beside the shards."
+            )
+        live = dict(self.model.named_buffers())
+        for name, value in load_file(path).items():
+            if name in live:
+                live[name].copy_(value.to(live[name].dtype))
 
     def _autocast(self):
         """The dtype context the weights were trained in, enabled only when they are mixed.
