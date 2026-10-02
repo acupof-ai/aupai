@@ -30,6 +30,9 @@ if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
 SHARD_BYTES = 5 * 1000**3  # HF's conventional 5GB shard
+# The file the export carries its persistent=False buffers in. Named here because the wrapper
+# reads it by the same constant.
+NONPERSISTENT_BUFFERS = "nonpersistent_buffers.safetensors"
 
 
 def _write_json(path, obj):
@@ -86,17 +89,25 @@ def _read_ckpt(path):
 
 
 def _tokenizer_vocab_id(path):
-    """The same hash train.py stamps: over the id->token map, not the file bytes."""
-    import hashlib
+    """The fingerprint train.py stamps, by CALLING the repo's implementation rather than
+    restating it.
 
-    with open(path, encoding="utf-8") as f:
-        tok = json.load(f)
-    vocab = tok.get("model", {}).get("vocab", {})
-    pairs = sorted(((int(i), t) for t, i in vocab.items()))
-    h = hashlib.sha256()
-    for i, t in pairs:
-        h.update(f"{i}\t{t}\n".encode())
-    return h.hexdigest()[:16], len(pairs)
+    A hand-written version of this was wrong in two ways at once and refused a correct pair
+    (measured 2026-10-03 on the real gate tokenizer: it computed 9897b9f2 where the checkpoint
+    and AGENTS.md both say f1f860970d15d623). Both mistakes came from guessing the algorithm:
+    it hashed `f"{id}\\t{token}\\n"` where the real one hashes the token BYTES ALONE in id
+    order, and it read the raw JSON's `model.vocab` where the real one reads
+    `Tokenizer.get_vocab()`, which also carries the added tokens -- `<eos>` and `[NUM]` among
+    them. `scripts/loader.vocab_fingerprint` and `train.vocab_fingerprint` are line-for-line
+    the same function and agree on a fixture (selftest below); loader's is used here because
+    it has no torch dependency and imports in 0.1s against train.py's 21s.
+    """
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    from loader import vocab_fingerprint
+    from tokenizers import Tokenizer
+
+    tok = Tokenizer.from_file(path)
+    return vocab_fingerprint(tok), tok.get_vocab_size()
 
 
 def export(ckpt, out, tokenizer=None, card_numbers=None, verify=True):
@@ -104,6 +115,9 @@ def export(ckpt, out, tokenizer=None, card_numbers=None, verify=True):
     # directory is rebuilt from the checkpoint in minutes. An interrupt leaves a partial
     # directory that the next run overwrites; nothing upstream is consumed or mutated.
     from safetensors.torch import save_file
+
+    from v41f.config import V41FConfig
+    from v41f.lm import V42LM
 
     ck, v42 = _read_ckpt(ckpt)
     state = {f"model.{k}": v for k, v in ck["model"].items()}
@@ -142,6 +156,17 @@ def export(ckpt, out, tokenizer=None, card_numbers=None, verify=True):
             file=sys.stderr,
         )
 
+    # THE DTYPE POLICY IS READ OFF THE TENSORS, NOT ASSUMED. train.py holds v41f.lm.KEEP_FP32 in
+    # fp32 while the rest is bf16, and transformers loads everything into fp32 unless told
+    # otherwise -- which doubles the memory and moves the logits by bf16 rounding (measured
+    # 1.7e-2 on the tiny fixture). Recording the majority dtype plus the exceptions lets the
+    # wrapper restore exactly what was saved, for a mixed checkpoint and an all-fp32 one alike.
+    by_dtype = {}
+    for k, v in state.items():
+        by_dtype.setdefault(str(v.dtype).replace("torch.", ""), []).append(k[len("model.") :])
+    default_dtype = max(by_dtype, key=lambda d: len(by_dtype[d]))
+    exceptions = {k: d for d, ks in by_dtype.items() if d != default_dtype for k in ks}
+
     shards, weight_map = plan_shards(state)
     total = sum(_dtype_size(t) for t in state.values())
     for name, keys in shards:
@@ -171,13 +196,37 @@ def export(ckpt, out, tokenizer=None, card_numbers=None, verify=True):
         "max_position_embeddings": v42.get("max_seq_len", 4096),
         "tie_word_embeddings": False,
         "use_cache": False,
-        "torch_dtype": "bfloat16",
+        "torch_dtype": default_dtype,
+        "param_dtype_default": default_dtype,
+        "param_dtype_exceptions": exceptions,
     }
     _write_json(os.path.join(out, "config.json"), cfg_json)
     _write_json(
         os.path.join(out, "generation_config.json"),
         {"eos_token_id": 1, "max_new_tokens": 280, "do_sample": False, "use_cache": False},
     )
+
+    # NON-PERSISTENT BUFFERS SHIP WITH THE EXPORT. 100 of them (25.2 MB, 25.17 of it the 24
+    # per-layer freqs_cis RoPE tables) are registered persistent=False, so they are absent from
+    # ck["model"] by design and a fresh build computes them in __init__. transformers never runs
+    # that __init__ against a real device: it materialises the module from the file alone, and
+    # every buffer the file does not carry comes back as uninitialised memory. The real
+    # step16000 export loaded with 0 missing keys, 0 unexpected keys and 0 NaN PARAMETERS, and
+    # produced NaN logits from 8-9 NaN buffers (compressor.kv_state, score_state, freqs_cis...);
+    # low_cpu_mem_usage=False does not help, because transformers 5.6 no longer honours it.
+    # So the values travel in the export and the wrapper copies them in after loading: no new
+    # dependency, and no reliance on which init path transformers takes.
+    buf_src = V42LM(V41FConfig(**v42))
+    bufs = {
+        name: b.clone() for name, b in buf_src.named_buffers() if name not in ck["model"] and b is not None
+    }
+    del buf_src
+    if bufs:
+        save_file(
+            {k: v.contiguous() for k, v in bufs.items()},
+            os.path.join(out, NONPERSISTENT_BUFFERS),
+            metadata={"format": "pt"},
+        )
 
     for mod in ("configuration_aupai.py", "modeling_aupai.py"):
         shutil.copy(os.path.join(ROOT, "hf", mod), os.path.join(out, mod))
@@ -248,10 +297,17 @@ lives in `v41f/`, and `trust_remote_code` fetches only the .py modules it can re
 def verify_export(ckpt, out):
     """Logits from the exported directory must equal logits from V42LM built on the checkpoint.
 
-    Both sides run on CPU in float32 over the same fixed token ids. The assertion is exact
-    equality of the argmax and a tight allclose on the values: the wrapper adds no arithmetic,
-    so a difference means a key was renamed, a dtype was cast, or a config field was dropped --
-    each of which a looser tolerance would hide.
+    Both sides run on CPU over the same fixed token ids, and both are given the checkpoint's OWN
+    dtypes: `load_state_dict(..., assign=True)` replaces the freshly built fp32 parameters with
+    the saved tensors rather than copying into them, so the source carries the same bf16/fp32
+    split the export does. Without assign=True the source would be all-fp32 while the export is
+    mixed, and the comparison would measure bf16 rounding instead of the wrapper. The source is
+    then run through the wrapper's own autocast helper, for the same reason.
+
+    The assertion is exact equality of the argmax and a tight bound on the values: with the
+    weights and the dtype context identical, the wrapper adds no arithmetic, so any difference
+    is a renamed key, a cast dtype or a dropped config field -- each of which a looser tolerance
+    would hide.
     """
     import torch
     from transformers import AutoModelForCausalLM
@@ -264,9 +320,10 @@ def verify_export(ckpt, out):
     ids = torch.randint(0, v42["vocab_size"], (1, 16))
 
     src = V42LM(V41FConfig(**v42))
-    src.load_state_dict(ck["model"])
+    src.load_state_dict(ck["model"], assign=True)
     src.eval()
-    with torch.no_grad():
+    mixed = any(p.dtype == torch.bfloat16 for p in src.parameters())
+    with torch.no_grad(), torch.autocast(device_type="cpu", dtype=torch.bfloat16, enabled=mixed):
         want, _ = src(ids)
 
     got_model = AutoModelForCausalLM.from_pretrained(out, trust_remote_code=True)
@@ -321,23 +378,31 @@ def selftest():
         f"model.safetensors" + ("" if ok else f" -- got {shards1[0][0]}")
     )
 
-    # (2) VOCAB_ID IS OVER THE MAP, NOT THE BYTES. Two files with the same id->token map but
-    # different formatting must hash the same; swapping two ids must not.
+    # (2) THE FINGERPRINT IS THE REPO'S, NOT A RESTATEMENT. The known answer is arithmetic a
+    #     reader can check by hand: three tokens a,b,c at ids 0,1,2 hash the bytes "abc" in id
+    #     order, so the value is sha256("abc")[:16] = ba7816bf8f01cfea -- which is also what
+    #     train.vocab_fingerprint returns on the same object (verified 2026-10-03, both 16 chars
+    #     identical). A version that hashed ids alongside tokens, or read the raw JSON vocab
+    #     instead of get_vocab(), lands elsewhere and is what refused a correct pair on the pod.
+    #     The second file swaps two ids: the token ORDER changes, so the value must change.
+    import hashlib
+
+    from tokenizers import Tokenizer, models
+
     with tempfile.TemporaryDirectory() as d:
         a = os.path.join(d, "a.json")
-        b = os.path.join(d, "b.json")
         c = os.path.join(d, "c.json")
-        _write_json(a, {"model": {"vocab": {"x": 0, "y": 1}}})
-        _write_json(b, {"model": {"vocab": {"y": 1, "x": 0}}, "extra": [1, 2, 3]})
-        _write_json(c, {"model": {"vocab": {"x": 1, "y": 0}}})
-        ida, _ = _tokenizer_vocab_id(a)
-        idb, _ = _tokenizer_vocab_id(b)
+        Tokenizer(models.WordLevel(vocab={"a": 0, "b": 1, "c": 2}, unk_token="a")).save(a)
+        Tokenizer(models.WordLevel(vocab={"a": 2, "b": 1, "c": 0}, unk_token="a")).save(c)
+        ida, n_a = _tokenizer_vocab_id(a)
         idc, _ = _tokenizer_vocab_id(c)
-    ok = ida == idb and ida != idc
+    want = hashlib.sha256(b"abc").hexdigest()[:16]
+    ok = ida == want and n_a == 3 and idc != ida
     bad += 0 if ok else 1
     print(
-        f"  {'ok  ' if ok else 'BUG '} vocab_id ignores key order and whitespace, and CHANGES "
-        f"when two ids swap" + ("" if ok else f" -- {ida} {idb} {idc}")
+        f"  {'ok  ' if ok else 'BUG '} vocab_id is sha256 over the token bytes in id order "
+        f"({want}) and changes when two ids swap"
+        + ("" if ok else f" -- got {ida} (want {want}), n={n_a}, swapped={idc}")
     )
 
     # (3) THE REFUSALS EXIST. A non-v42 checkpoint must be refused by name rather than exported
@@ -423,7 +488,91 @@ def selftest():
                 f"the step and that no number was passed" + ("" if sub else f" -- index={has_index}")
             )
 
-    print(f"export_hf: {6 - bad}/6 pass")
+        # (5) THE SAME PATH ON A MIXED-DTYPE CHECKPOINT, which is what a real one is. Case (4)
+        #     saves a freshly built model, so every tensor is fp32 and the dtype split never
+        #     appears -- it passed on the day the real step16000 export wrote all ten files and
+        #     then died in its own verify with "expected m1 and m2 to have the same dtype". The
+        #     fixture lacked the precondition, so it could not refute anything. Here the saved
+        #     tensors carry the real split: v41f.lm._keep_fp32's set stays fp32, everything else
+        #     goes bf16, exactly as train.py writes it.
+        from v41f.lm import _keep_fp32
+
+        mixed_sd = {
+            k: (v.cpu() if _keep_fp32(k) else v.cpu().to(torch.bfloat16)) for k, v in m.state_dict().items()
+        }
+        n_fp32 = sum(1 for k in mixed_sd if _keep_fp32(k))
+        ckpt_m = os.path.join(d, "tiny_mixed.pt")
+        torch.save(
+            {
+                "model": mixed_sd,
+                "cfg": {"arch": "v42", "v42_cfg": dataclasses.asdict(c)},
+                "vocab_id": None,
+                "step": 8,
+            },
+            ckpt_m,
+        )
+        try:
+            export(ckpt_m, os.path.join(d, "hf_mixed"), tokenizer=os.devnull + "/absent", verify=True)
+            ok, why = True, ""
+        except (SystemExit, RuntimeError) as e:
+            ok, why = False, str(e)[:160]
+        ok = ok and 0 < n_fp32 < len(mixed_sd)
+        bad += 0 if ok else 1
+        print(
+            f"  {'ok  ' if ok else 'BUG '} a MIXED bf16/fp32 checkpoint ({n_fp32} of "
+            f"{len(mixed_sd)} tensors held fp32 by _keep_fp32) exports and reloads with "
+            f"identical logits" + ("" if ok else f" -- {why}")
+        )
+
+        # (6) THE BUFFER FILE COVERS EVERY persistent=False BUFFER, AND ITS ABSENCE RAISES.
+        #     This case exists because cases (4) and (5) CANNOT catch the defect it guards: at
+        #     the tiny shape the uninitialised buffer memory happened to be benign and both
+        #     passed before the fix, while the real 3.2B export returned NaN logits. Luck is not
+        #     a criterion, so the assertion is set-equality on the names plus the refusal --
+        #     neither of which depends on what the allocator handed back.
+        import shutil as _sh
+
+        from safetensors.torch import load_file
+
+        from v41f.config import V41FConfig as _VC
+        from v41f.lm import V42LM as _VL
+
+        ref = _VL(_VC(**dataclasses.asdict(c)))
+        want_names = {n for n, _ in ref.named_buffers() if n not in mixed_sd}
+        del ref
+        bpath = os.path.join(d, "hf_mixed", NONPERSISTENT_BUFFERS)
+        have_names = set(load_file(bpath)) if os.path.exists(bpath) else set()
+        ok = bool(want_names) and have_names == want_names
+        bad += 0 if ok else 1
+        print(
+            f"  {'ok  ' if ok else 'BUG '} the export carries every one of the "
+            f"{len(want_names)} persistent=False buffer(s)"
+            + (
+                ""
+                if ok
+                else f" -- missing {sorted(want_names - have_names)[:4]}, "
+                f"extra {sorted(have_names - want_names)[:4]}"
+            )
+        )
+
+        # The negative: with the file gone, loading must RAISE rather than answer NaN.
+        gone = os.path.join(d, "hf_gone")
+        _sh.copytree(os.path.join(d, "hf_mixed"), gone)
+        os.remove(os.path.join(gone, NONPERSISTENT_BUFFERS))
+        from transformers import AutoModelForCausalLM as _AM
+
+        try:
+            _AM.from_pretrained(gone, trust_remote_code=True)
+            ok, why = False, "it loaded without the buffer file"
+        except Exception as e:  # noqa: BLE001 - any raise is the contract; NaN silence is not
+            ok, why = "nonpersistent_buffers" in str(e), str(e)[:80]
+        bad += 0 if ok else 1
+        print(
+            f"  {'ok  ' if ok else 'BUG '} loading an export whose buffer file was deleted "
+            f"RAISES by name" + ("" if ok else f" -- {why}")
+        )
+
+    print(f"export_hf: {9 - bad}/9 pass")
     return 1 if bad else 0
 
 
