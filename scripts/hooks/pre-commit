@@ -1011,6 +1011,14 @@ def main():
     # is not run here, because "not in the map" and "cannot run here" are different
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
+        # The HF exporter (de). Registered because the way it is wrong is silent: HF's
+        # from_pretrained WARNS on a key it cannot place and returns a randomly initialised
+        # module, so a renamed prefix, a cast dtype or a dropped config field ships an export
+        # that loads and answers nonsense. The selftest builds a tiny V42LM, exports it, reloads
+        # the directory through transformers and asserts the logits are IDENTICAL -- measured
+        # 2026-10-03: changing the state-dict prefix to "mdl." turns it red with max|delta|=nan
+        # where every other case still passes. No GPU, no checkpoint, ~40s.
+        "scripts/export_hf.py",
         # The Feishu metrics feed (de). Registered because it is an INSTRUMENT whose output
         # people will read as the run's state, and its two defects are both silent: float()
         # accepts "nan" so a diagnostic that did not compute would draw as missing data, and
