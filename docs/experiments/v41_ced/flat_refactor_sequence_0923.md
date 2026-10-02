@@ -1,7 +1,7 @@
 # Flat-refactor sequence — draft PRs, none merges while `v41_ced_0923` runs
 
-Owner genB, 2026-09-23. Companion to `runs/non_ced_surface_analysis_0923.md` (§1 established
-that CED's encoder reuses the flat entry builder, so "remove flat" is a refactor).
+Owner genB, 2026-09-23. Companion to `non_ced_surface_analysis_0923.md` in this directory
+(§1 established that CED's encoder reuses the flat entry builder, so "remove flat" is a refactor).
 
 Ruling this executes (aupai-08/1e, accepted): **no PR touching `model.py`/`train.py` or any
 other file on the running job's import path merges while `v41_ced_0923` is running — a resume
