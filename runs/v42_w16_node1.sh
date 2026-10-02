@@ -22,7 +22,7 @@ docker run -d --name aupai_node1 \
     NCCL_SOCKET_IFNAME=eth0 NCCL_IB_HCA=^mlx5_0,mlx5_5 NCCL_IB_GID_INDEX=3 \
     ./run_ddp.sh --mix data/mix_v41_gate.json --name v42_gate_1001r \
     --arch v42 --moe_arm v42b \
-    --dim 1024 --layers 12 --heads 8 --ffn_hidden 6912 --batch 2 --accum 6 \
+    --dim 1024 --layers 12 --heads 8 --ffn_hidden 6912 --batch 4 --accum 3 \
     --lr_scale 1.0 --warmdown 0.65 --anneal_frac 0.10 --warmup 500 --save_every 2000 --no-grad_ckpt \
     --v42_impl attn_impl=fused,rope_impl=real,moe_stacked=1,hc_impl=liger,norm_impl=liger,attn_logit_softcap=50 \
     --v42_lr 1e-3 --v42_record --allow_env_drift \
