@@ -18,7 +18,7 @@
   "runs": {
     "baseline_no_master": {
       "name": "b0_mem_m3_peak_1195",
-      "code": "684268b4 profile_step_cost.py at 440bd579's parent -- NO TableMaster",
+      "code": "684268b4 profile_step_cost.py at 23f1bf51's parent -- NO TableMaster",
       "peak_reserved_GiB": 63.48, "peak_allocated_GiB": 63.15,
       "startup_reserved_GiB": 63.46, "startup_allocated_GiB": 63.12,
       "gap_GiB": 0.33,
@@ -30,7 +30,7 @@
     },
     "with_master": {
       "name": "b0_mem_m3_peak_1195_master",
-      "code": "440bd579 -- TableMaster constructed as train.py does",
+      "code": "23f1bf51 -- TableMaster constructed as train.py does",
       "peak_reserved_GiB": 77.52, "peak_allocated_GiB": 76.77,
       "startup_reserved_GiB": 77.01, "startup_allocated_GiB": 76.74,
       "gap_GiB": 0.75,

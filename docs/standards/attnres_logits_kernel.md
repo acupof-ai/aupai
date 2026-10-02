@@ -1,7 +1,7 @@
 ---
 question: What does a fused AttnRes logits+mixing kernel compute, what may it assume, and what proves it correct?
 status: measured (kernel 2026-09-03)
-source: trace_p200m_3step.json (measured); model.py:244-253; scripts/attnres_fused_reference.py (b0, commit ccbc089)
+source: trace_p200m_3step.json (measured); model.py:244-253; scripts/attnres_fused_reference.py (b0, commit d28880d)
 ---
 
 # AttnRes logits kernel — design
@@ -189,7 +189,7 @@ i.e. the answer is wrong by its own magnitude.
 
 ## Correctness gates
 
-b0's review of `7899ea1` (`b0-review-7899ea1`) rewrote three of these. The
+b0's review of `76a8fd3` (`b0-review-76a8fd3`) rewrote three of these. The
 originals are kept as struck reasoning where the correction is the point.
 
 1. **`dV` against autograd's total, relative, ≤ 1e-5.**
@@ -305,7 +305,7 @@ within 3e-2 of what ships" is not.
 
 **The 14% is a model finding, not a kernel one.** It lives in the softmax
 weights: `model.py:269` accumulates a D=1024 dot product in bf16, putting the
-logits 0.858 off against a 279.8 spread. `--attn_res_fp32_logits` (`169da865`)
+logits 0.858 off against a 279.8 spread. `--attn_res_fp32_logits` (`51bca1b8`)
 is the arm that prices it; default OFF, pre-registered prediction is reject.
 
 ### Answering the open question below

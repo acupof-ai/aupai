@@ -372,7 +372,7 @@ def _selftest():
 
     # tok/step comes off the cfg line. The arm's own line must give 786,432 and the batch-64
     # comparators' 262,144: if a future launch changes batch, the 3x ratio is wrong and this
-    # catches it. THIS WORLD WAS DEAD FROM 06a47515 UNTIL e1-46: my edit for the two-segment fix
+    # catches it. THIS WORLD WAS DEAD FROM dec3e66a UNTIL e1-46: my edit for the two-segment fix
     # inserted its new worlds plus a `return 0` ABOVE this block, so the block sat after a
     # return and never ran -- and the selftest still printed OK, because a world that does not
     # execute cannot fail. The tell was in the output all along: no "tok/step is read from the

@@ -713,7 +713,7 @@ def main():
     # The mix is a property of the CHECKPOINT, and this CLI defaulted to the ladder's -- so
     # scoring a non-ladder checkpoint read domain rows for domains it never trained on, and
     # cache_guard refused, correctly, since the seqs fingerprint belongs to another corpus. Fixed
-    # in score_matrix.py first (3415e9e); this is the same defect in the standalone entry point,
+    # in score_matrix.py first (8a6f749); this is the same defect in the standalone entry point,
     # found by 44 reviewing that commit.
     #
     # IMPORTED, not reimplemented. _mix_for carries five known answers built on real torch.save

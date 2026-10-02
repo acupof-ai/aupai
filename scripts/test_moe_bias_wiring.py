@@ -185,7 +185,7 @@ def main():
     # buffer became bf16 because train.py's --fp8 branch and its --bf16 branch both call
     # `raw_model.to(torch.bfloat16)`, which walks every floating buffer -- which is why
     # ckpt_b0_moe48_8b.pt.step1000 holds bf16 despite the declaration. So this world casts the
-    # way the arms cast, and asserts AFTER. On 87ef5985 (dtype= only, no _apply override) it is
+    # way the arms cast, and asserts AFTER. On a4c0c8d3 (dtype= only, no _apply override) it is
     # RED; with the override it is green. 4c caught that the first version of this check would
     # have passed on a module that never went through the cast.
     #
@@ -217,7 +217,7 @@ def main():
             print("   OK: a gamma step is representable at the magnitude the run reached")
 
     # ---- G: the CAST MUST NOT ROUND THE VALUES, not merely leave the dtype fp32. World F is
-    # blind to this and that blindness is the defect it missed (4c, reviewing 2f95a797): an
+    # blind to this and that blindness is the defect it missed (4c, reviewing a3685719): an
     # override that does `fn(eb).float()` restores the dtype AFTER fn has already rounded to
     # bf16's grid, so every dtype assertion passes on numbers that have lost their differences.
     #
@@ -226,7 +226,7 @@ def main():
     # [0.5, 0.5, 0.50390625]: three distinct values become two. That is the differential collapse
     # in miniature, and it is what would be applied ONCE PER RESUME, because train.py loads the
     # checkpoint at :3043 and casts at :3134/:3162 -- load before cast.
-    # RED on 2f95a797, green with the keep-the-original-tensor form.
+    # RED on a3685719, green with the keep-the-original-tensor form.
     m6 = build(g)
     probe = torch.tensor([0.5, 0.5 + g, 0.5 + 2 * g], dtype=torch.float32,
                          device=m6.expert_bias.device)

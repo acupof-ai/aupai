@@ -39,7 +39,7 @@ column-0 行之前，等于命令模型 dedent 开一个新顶层 def，于是�
 
 **裁决（用户，2026-09-23，经 aupai-1e 转达）：gate 采用行业协议——生成前 rstrip 掉末尾换行；
 旧协议（standard 裸换行）作为并列对照列同时报告，不删。** 落于 runs/prereg.jsonl
-v41_ced_0923 amendment_1（fc35cfd9）：验收数 = rstrip（--rstrip_nl）HumanEval pass@1，standard
+v41_ced_0923 amendment_1（faa10176）：验收数 = rstrip（--rstrip_nl）HumanEval pass@1，standard
 臂并列报告、不作 gate；阈值 ≥30% 与 n=164 不变；并要求最终 read 前先修 sampled 臂 entry_point bug。
 genA 的控制臂已从「末尾 4 空格」改为 `--rstrip_nl`，其读数归 genA，本 lesson 不代报。
 

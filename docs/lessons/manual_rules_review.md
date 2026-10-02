@@ -76,7 +76,7 @@ For de's `harness brief <kind>`. Rules 22+24 merged (same incident, same rule).
 ## Notes
 
 - Rules 22 and 24 are near-duplicates. Both have 1 incident (the same friction:#48 event). If merged, the combined rule has 1 incident → BRIEF.
-- Rule 15 (manifest NOT tracked) has the highest count (14) but the underlying issue was fixed by untracking the file (56fa71b5). The 14 incidents are historical. The rule stays as KEEP because the manifest's generated status is still a live discipline.
+- Rule 15 (manifest NOT tracked) has the highest count (14) but the underlying issue was fixed by untracking the file (63a8d02d). The 14 incidents are historical. The rule stays as KEEP because the manifest's generated status is still a live discipline.
 - Rules 19 and 20 are code conventions, not operational rules. They belong in the harness selftest contract, not in AGENTS.md's operational rule table. MOVE, not DELETE.
 - The 5 missing rules (A-E) are in `_MANUAL_RULES` but not in the coverage table. They are in AGENTS.md prose (lines 401, 240, 397, 61, 391). All have ≥1 incident.
 - Rule E (second reader) has 170 review rows, but those are routine practice, not incidents. The origin event (user order 2026-08-31) is the one incident.

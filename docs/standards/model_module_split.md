@@ -26,7 +26,7 @@ HF transformers 的 `modeling_*.py` 一个文件一个架构、torchtitan 的 `m
 ## 1. 搬什么：符号清单与行号
 
 **行号只在 train.py blob `ad0f6e130083379a309c0ea43577fef61fd8e0e9` 上有效**
-（`git hash-object train.py`；该 blob = `bb0c378:train.py`，2,751 行）。
+（`git hash-object train.py`；该 blob = `6b3441d:train.py`，2,751 行）。
 **sha 对不上就不要信下面的数字，按符号名重新定位**（`grep -n '^class RMSNorm'`
 之类；分支 `b0` 上有一个三通道校验脚本，但它按 fb 的裁定不进 main——这页的行号
 在 split 落地时会一起删掉，见 §6）——train.py 在 run 期间不动，但**合并会移动它，今晚已经移动过一次**
@@ -203,7 +203,7 @@ ddp_even_len, doc_cu_seqlens, opt_snapshot, save_checkpoint, set_schedule, setup
 
 **验收就是 fb 的那句**：行数净减，且 59 门检查结论完全不变。
 
-- **实测（`be845ec`）**：`train.py` 2,751 → 2,369（**-382**），`model.py` **+442**，
+- **实测（`b45911b`）**：`train.py` 2,751 → 2,369（**-382**），`model.py` **+442**，
   **净加 60 行**。不是估的净加 8。
 - **60 从哪来**：re-export **19 行**（13 个符号，不是 6）、`model.py` 自己的 docstring 与
   import 头 **62 行**（其中 kernel 的 try-import 块约 35 行）、`AttnRes` 新守卫约 19 行。

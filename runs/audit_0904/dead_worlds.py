@@ -1,6 +1,6 @@
 """Which broken() worlds are coupled to a live file's CURRENT bytes, and are those bytes still there?
 
-6e's item, from the world-8 stale-pycache race (e5b73d40) and from _broken_reported_path, which
+6e's item, from the world-8 stale-pycache race (1eca6256) and from _broken_reported_path, which
 STOPPED REPRODUCING ITS DEFECT AND STAYED GREEN for a day.
 
 Two classes are reported, and one of them is the class this scan was commissioned to add:
@@ -18,12 +18,12 @@ Two classes are reported, and one of them is the class this scan was commissione
 THE CEILING, MEASURED AGAINST THE FOUNDING CASE AND STATED RATHER THAN PAPERED OVER. The
 dead-marker predicate does NOT catch _broken_reported_path's failure. That world reverted
 `print(f"preds saved: {out_path}")` to `{preds_path}`, and its marker -- the out_path form -- is
-still in eval/l1_fewshot.py today. What died was the REPLACEMENT: e1's 29b31367 deleted the
+still in eval/l1_fewshot.py today. What died was the REPLACEMENT: e1's c370987f deleted the
 `preds_path` variable, so the reverted print referenced an unbound name and produced a NameError
 instead of the stale-name defect. A machine cannot see that without resolving names in the
 mutated file, which is a different tool. So this scan decides two properties and is blind to a
 third; the third is why every (b) world should carry its own post-mutation assertion, which is the
-second fix in e5b73d40.
+second fix in 1eca6256.
 
 Class (a), `git show <sha>:<path>`, is immune by construction and reported separately.
 scan_broken_worlds.py already separates hand-written content, which is out of scope here.
@@ -86,7 +86,7 @@ def _reads_real_files(fn):
     """Does the world get its bytes from the real tree at all -- by path, or by glob?
 
     THE LITERAL-PATH TEST ALONE MISSES THE ONE WORLD KNOWN TO HAVE DIED. _broken_reported_path (at
-    e1f8c56f~1, the version that stayed green for a day while reproducing nothing) copies
+    d9dd2cad~1, the version that stayed green for a day while reproducing nothing) copies
     `glob.glob(os.path.join(ROOT, "eval", "*.py"))` and then opens
     os.path.join(d, "eval", "l1_fewshot.py") -- three separate literals, no path literal at all.
     Scored by _repo_paths it came back c-or-linked, i.e. out of scope, which is the scan reporting

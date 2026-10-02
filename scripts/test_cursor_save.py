@@ -31,7 +31,7 @@ A fix that works for one and not the others is the same defect wearing a smaller
 
 The cfg here is hand-built, so it does not learn about new required fields from build_mix:
 when the writer gained _plan_world, this file broke and the hook did not run it, because it
-was on no trigger list (fixed on main in e2f83c5e).
+was on no trigger list (fixed on main in 31e3ccd1).
 
     python3 scripts/test_cursor_save.py
 

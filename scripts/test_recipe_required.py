@@ -250,11 +250,11 @@ def caller_command_lines():
     """[(label, argv|None, why)] -- every real command line that fixes recipe values.
 
     THE REVERSE HALF, and the reason it exists: every assertion above is on the REJECT
-    side ("omitting a knob is refused"), so they were all green the moment ead2d2b landed
+    side ("omitting a knob is refused"), so they were all green the moment 6337c30 landed
     -- while test_e2e, launch_30b, lr_probe and prove_resume were all being refused at
     exit 2 by the very parser this file was calling green. A test with only a reject side
     proves the constraint exists, not that the system still runs (gate_failure_shapes
-    §64). ead2d2b's diff touched four files and not one launcher.
+    §64). 6337c30's diff touched four files and not one launcher.
 
     Lines are READ from their sources, never copied here: a copy drifts silently and this
     file's whole subject is drift between two lists. Scripts are read as text and the
@@ -487,7 +487,7 @@ def main():
         print("A red-for-the-wrong-reason is not progress: fix those before reading the rest.")
         return 2
     if red:
-        # e1-16 has LANDED (ead2d2b), so the pre-landing lenience is gone: every red here
+        # e1-16 has LANDED (6337c30), so the pre-landing lenience is gone: every red here
         # is now a real regression. A refused caller in particular is a broken launch, and
         # exiting 0 on it is how a green test coexisted with four broken launchers for a
         # whole merge -- the reject-side-only defect this file's check 4 exists to catch.

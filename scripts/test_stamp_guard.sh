@@ -28,11 +28,11 @@ check() {
   echo "ACCEPT 40-char"
 }
 fails=0
-r=$(check "69c8bd87b48dc0cf1f509788de81a0636ecf2a62"); echo "  full sha        -> $r"
+r=$(check "f5210e6483f1d884dd3f398484ed470fda5356ed"); echo "  full sha        -> $r"
 [ "$r" = "ACCEPT 40-char" ] || { echo "  FAIL: a real full sha was refused"; fails=1; }
-r=$(check "8cd6834"); echo "  7-char (de-38)  -> $r"
+r=$(check "8922186"); echo "  7-char (de-38)  -> $r"
 [ "$r" = "REFUSE 7-char" ] || { echo "  FAIL: an abbreviated sha was accepted"; fails=1; }
-r=$(check "8cd68340"); echo "  8-char (de-38)  -> $r"
+r=$(check "8922186f"); echo "  8-char (de-38)  -> $r"
 [ "$r" = "REFUSE 8-char" ] || { echo "  FAIL: the 8-char form --short now emits was accepted"; fails=1; }
 r=$(check "deadbeefzz"); echo "  non-hex         -> $r"
 [ "$r" = "REFUSE non-hex" ] || { echo "  FAIL: a non-hex stamp was accepted"; fails=1; }

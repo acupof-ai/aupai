@@ -108,7 +108,7 @@ def main():
     # that tree printed NOTHING -- no FAIL list, no denominator, no authority line -- while this
     # selftest passed). The tail is therefore searched before the indent walk.
     #
-    # MEASURED: 0 on the correct tree, 1 on the pre-fix revision (a27c50b0^), and 1 in each of
+    # MEASURED: 0 on the correct tree, 1 on the pre-fix revision (ab3269d6^), and 1 in each of
     # de's worlds -- return above the FAIL print / above the banner / above the block's stage
     # call / between the banner and the FAIL print / the single-line guard form.
     i_main = src.rfind("\ndef main(", 0, i_auth)

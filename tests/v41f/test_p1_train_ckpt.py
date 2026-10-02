@@ -452,7 +452,7 @@ def gate_resume_equivalent_to_uninterrupted():
     """Save/load mid-run is bit-exact with the uninterrupted run; a fresh optimizer diverges.
     Each trajectory runs in its own process (each builds+updates an ~2.5 GB model).
 
-    BOUNDED RETRY, SIGNATURE-GATED. One measured red (2026-09-22, d1d4aef3) blocked a push while
+    BOUNDED RETRY, SIGNATURE-GATED. One measured red (2026-09-22, d261b0e1) blocked a push while
     every other observation of the same quantity reads exactly 0 -- 44/44 pairs over 4 host
     classes, 4 laptop processes, and the same runner image as the red. That red has no reproducer,
     so the gate stays bit-exact and the red would otherwise red again next time. This retries the

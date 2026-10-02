@@ -1,7 +1,7 @@
 ---
 question: When is a fitted parameter a measurement, and what does it take to know the difference before citing it?
 status: measured
-source: measured 2026-09-05 on runs/b0_headmix_armA_val_trace.log and runs/b0_headmix_armB_val_trace.log with probes/fit_data_exponent.py ; fact facts/data_scaling.json#ds.b_unidentified_from_val_traces (commit e0c912a7); the CPU-forward boundary in facts/efficiency.json#eff.model_cannot_forward_on_cpu (commit 7c20e080)
+source: measured 2026-09-05 on runs/b0_headmix_armA_val_trace.log and runs/b0_headmix_armB_val_trace.log with probes/fit_data_exponent.py ; fact facts/data_scaling.json#ds.b_unidentified_from_val_traces (commit 3b37bef0); the CPU-forward boundary in facts/efficiency.json#eff.model_cannot_forward_on_cpu (commit 7d403949)
 ---
 
 # A fit returns a number whether or not the data contains one

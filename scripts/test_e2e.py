@@ -70,9 +70,9 @@ from launch_gate import LAUNCH_SHAPE  # noqa: E402
 # not asking. Set E2E_MIX=data/mix_500m.json to run the joins on the mix being launched.
 E2E_MIX = os.environ.get("E2E_MIX", "").strip()
 MIX = E2E_MIX or "data/mix_sample.json"
-# The recipe knobs train.py requires (ead2d2b) that this test was previously taking from Cfg
+# The recipe knobs train.py requires (6337c30) that this test was previously taking from Cfg
 # without naming them. NOT new choices and NOT recipe_provenance.json's values: read from Cfg
-# at 32a7a4a, the last commit before ead2d2b, and confirmed identical at HEAD, so the test's
+# at 32a7a4a, the last commit before 6337c30, and confirmed identical at HEAD, so the test's
 # behaviour is unchanged. --layers 12 in particular keeps the "real 12x1024 architecture" the
 # E2E_LAYERS comment above promises; recipe_provenance's 32 belongs to the 500M run and would
 # silently turn an 8-step smoke test into a 500M one. E2E_SHAPE is appended AFTER these, so
@@ -529,7 +529,7 @@ def main():
             stage(11, "resume from the run-end save SUCCEEDS; a field-less checkpoint refuses")
             # INVERTED 2026-09-04 (6e, on b0's Stage E measurement). This asserted that a
             # resume from the run-end .pt REFUSES, which was true when the end-of-run save
-            # wrote neither step nor opt. c9011022 (de-31) changed that on purpose: the
+            # wrote neither step nor opt. 7971b8c8 (de-31) changed that on purpose: the
             # run-end save now passes both, and a check asserts it by AST. So the old
             # assertion tested that my own fix had not happened -- a stale expectation that
             # reads as a failing guard.
@@ -562,12 +562,12 @@ def main():
             _ck = _torch.load(ckpt, map_location="cpu", weights_only=False)
             assert "step" in _ck and "opt" in _ck, (
                 f"the run-end save {ckpt} carries {sorted(k for k in _ck if k != 'model')} "
-                f"-- c9011022 makes it pass step and opt, so this test's premise is gone "
+                f"-- 7971b8c8 makes it pass step and opt, so this test's premise is gone "
                 f"and the resume below would be testing something else"
             )
             p = _resume(ckpt, "_resume")
             assert p.returncode == 0, (
-                f"resume from the run-end save FAILED (rc={p.returncode}). Since c9011022 it "
+                f"resume from the run-end save FAILED (rc={p.returncode}). Since 7971b8c8 it "
                 f"carries step and opt, so it is a valid resume target\n"
                 f"{p.stdout[-1200:]}\n{p.stderr[-1200:]}"
             )

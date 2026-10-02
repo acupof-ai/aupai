@@ -942,13 +942,13 @@
   },
   {
    "id": "dq.code_mining_single_blob_zero",
-   "value": "Single-file-inline stdlib-only mining of code_with_tests from code_supply (The-Stack, shard 0000) yields ZERO runnable pairs. Number chain: 12,551 test files -> 6,819 unittest-pattern -> 580 strict-stdlib-only imports -> ~150 loose impl-basename candidates -> 0 strict join (all imports subset stdlib union {single target}). Github tests import their own module via dotted path (pkg != impl basename), relative import, or a framework; the bare-sibling-import + stdlib-only shape is ~unmeasurable. sandbox_exec (fixed c15c088) was not the cause of the earlier 0 (that was an impl-key .py suffix bug); the zero here is fundamental to the single-blob strategy.",
+   "value": "Single-file-inline stdlib-only mining of code_with_tests from code_supply (The-Stack, shard 0000) yields ZERO runnable pairs. Number chain: 12,551 test files -> 6,819 unittest-pattern -> 580 strict-stdlib-only imports -> ~150 loose impl-basename candidates -> 0 strict join (all imports subset stdlib union {single target}). Github tests import their own module via dotted path (pkg != impl basename), relative import, or a framework; the bare-sibling-import + stdlib-only shape is ~unmeasurable. sandbox_exec (fixed eca1c24) was not the cause of the earlier 0 (that was an impl-key .py suffix bug); the zero here is fundamental to the single-blob strategy.",
    "measured": "2026-09-02",
    "source": "datagen/mine_code_with_tests.py on pod shard data/raw/code_supply/0000.parquet (29,235 repos); ceiling scan; de corrected the sandbox attribution",
    "config": {
     "corpus": "code_supply/0000.parquet",
     "strategy": "single-blob inlined impl + module-alias + unittest runner, stdlib-only sandbox",
-    "sandbox": "datagen/sandbox_exec.py c15c088 (uid 65534, not root)",
+    "sandbox": "datagen/sandbox_exec.py eca1c24 (uid 65534, not root)",
     "decision": "fb 2026-09-02 option B: curated 3b-9 sets (Exercism+Aider SFT; EvalPlus eval/RL-only), not github mining"
    },
    "uncertainty": "Measured on shard 0000 only; other shards may differ marginally but the strict join is structurally ~0 across github py tests.",
@@ -958,7 +958,7 @@
    "id": "dq.near_dedup_code_rate",
    "value": "code domains (code_py_starcoder + code_py_rp1t) near-dup rate, FULL 6,389,842 docs, est-based (char 5-gram J): th0.7 0.0704 CI[0.07018,0.07058], th0.8 0.0418 CI[0.04166,0.04197], th0.9 0.0213 CI[0.02123,0.02145]",
    "measured": "2026-09-02",
-   "source": "commit 9b14c05f (near_dedup_scale.py v6) + runs/3b8_code_dedup.json (pod)",
+   "source": "commit cf417d61 (near_dedup_scale.py v6) + runs/3b8_code_dedup.json (pod)",
    "config": {
     "n_perm": 96,
     "bands": 12,

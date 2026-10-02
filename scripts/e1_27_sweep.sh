@@ -28,7 +28,7 @@ OUT=runs/e1_27_sweep
 mkdir -p "$OUT"
 
 # The pod has no git: a file here is whatever the last writer left, and a pod_push --all from
-# another session already rolled this flag back once mid-launch (22:20:01Z, from a63359ec),
+# another session already rolled this flag back once mid-launch (22:20:01Z, from dac628ea),
 # killing two arms in two seconds. One grep turns that into a refusal before four cards are
 # claimed.
 grep -q -- "--stop_after" sft_math.py || {

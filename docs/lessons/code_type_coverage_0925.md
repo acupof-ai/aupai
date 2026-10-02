@@ -153,7 +153,7 @@ model had to *produce* counting tasks under supervision — which this data cann
 
 **Only the RL pool clears HumanEval** (170.2 vs 146.3). `ultra_l3` is 139.0, i.e. *below*
 HumanEval — an earlier draft of this section said both exceed it, which is wrong and was
-corrected in review (genB c61ac333). Every other source is below: `ultra_l2` 77.0, `apps`
+corrected in review (genB 6f0bc326). Every other source is below: `ultra_l2` 77.0, `apps`
 106.0, `starcoder` 58.0, `sc2` 50.0, `code_if` 36.0.
 
 The verdict is unchanged, on the stronger form of the same fact: the three SFT-A sources run

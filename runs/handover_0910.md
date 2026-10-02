@@ -102,7 +102,7 @@ behind the fast path it needs.
   training globs `data/corpus/<domain>/*.jsonl`, and `data/corpus/code_dedup08` is already the
   clean post-deletion copy.
 - Open PRs: 13. On the gate path: **#158** (exercise checker, 7 findings) and **#169** (tokenizer
-  scripts, 4 findings all verified by fb's own read of the diff at `7b08bca7`). The other eleven
+  scripts, 4 findings all verified by fb's own read of the diff at `253e9fe2`). The other eleven
   are off it.
 
 ## Addressing

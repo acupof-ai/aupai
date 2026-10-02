@@ -89,15 +89,15 @@ def selftest():
     """
     fails = []
     cases = [
-        # The two legs of the params-vs-data experiment. 6925ce02 is the sha
+        # The two legs of the params-vs-data experiment. 2978ff10 is the sha
         # runs/data_leg_206m_8b.log records as the pod's code at launch; the one commit
-        # between it and e28ddc06 that touched these files is 169da865
+        # between it and 46c3b478 that touched these files is 51bca1b8
         # (--attn_res_fp32_logits, default off), which lands entirely in the wiring layer.
-        ("6925ce02", "e28ddc06", [], "the two legs: default-off flag, no math"),
+        ("2978ff10", "46c3b478", [], "the two legs: default-off flag, no math"),
         # A real arithmetic change that MUST be named: Muon's shape-based lr, A/B (2a).
-        ("2a0096c7^", "2a0096c7", ["train:Muon"], "A/B (2a) Muon shape-based lr"),
+        ("cfd5521c^", "cfd5521c", ["train:Muon"], "A/B (2a) Muon shape-based lr"),
         # A wiring-only commit adjacent to the range above: an optimizer group label.
-        ("4c86dc71^", "4c86dc71", [], "b0-14 per-group lr on the step line"),
+        ("0d046cff^", "0d046cff", [], "b0-14 per-group lr on the step line"),
     ]
     for a, b, want, why in cases:
         try:

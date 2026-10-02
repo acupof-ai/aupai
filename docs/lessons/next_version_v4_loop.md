@@ -56,7 +56,7 @@ Whether the first arm may run without HCA and partial RoPE is a user question
 put 2026-09-09; this spec proceeds on the assumption it may, and the arm is
 reversible if the answer is no.
 
-**CSA as merged** (b0-35, `e9195327`, behind `Cfg.csa`, off by default and off
+**CSA as merged** (b0-35, `3297f2d6`, behind `Cfg.csa`, off by default and off
 means absent): three branches over the q/k/v GatedMLA already builds, summed by
 a zero-init gate — coarse attention over KV pooled every `csa_compress`
 positions, full-resolution attention over the top-k blocks those coarse scores
@@ -264,7 +264,7 @@ a self-correcting excursion.
 
 ## Owners
 
-- b0: CSA+DSA+SWA implementation (LANDED, e9195327, behind Cfg.csa); HCA + partial RoPE when the user rules the first arm's sequencing insufficient
+- b0: CSA+DSA+SWA implementation (LANDED, 3297f2d6, behind Cfg.csa); HCA + partial RoPE when the user rules the first arm's sequencing insufficient
 - de: loop + schedule
 - e1: data
 - 3b: mix/deriver/compat

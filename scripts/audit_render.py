@@ -448,7 +448,7 @@ def render_page(reports, findings, unparsed, old_html):
         f'{chip("ND " + str(sev_counts["ND"]), "nd")}'
         f'<span class="strip-item">报告 {landed}/7</span>'
         f'<span class="strip-item">ledger 记为在跑（24h 内启动，可能含未关闭的死行）：{_esc("、".join(jobs)) if jobs else "无"}</span>'
-        f'<span class="strip-item">删档 12:03Z（charter aed940e8）</span>'
+        f'<span class="strip-item">删档 12:03Z（charter 1c5f6b92）</span>'
         f'<span class="strip-item">生成 {now} · main {sha}</span></div>'
     )
 

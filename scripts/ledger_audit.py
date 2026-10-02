@@ -29,30 +29,30 @@ in-repo, see WRITE_STYLE):
 Row counts and key sets are both wrong, each in its own direction, and so were my own two
 attempts at a fix:
 
-  LINE COUNT over-reports. 6018c62ad folds 127 duplicate rows -- 292 lines to 195 -- losing
+  LINE COUNT over-reports. b472d771d folds 127 duplicate rows -- 292 lines to 195 -- losing
   nothing. Acting on that alarm means "restoring" rows that were never lost.
 
   KEY PRESENCE under-reports, and this is the subtle one. An amendment carries the SAME key as
-  the row it amends; that is what last-wins means. a59ac1f dropped the newest ab_zeroinit row
+  the row it amends; that is what last-wins means. d71bb44 dropped the newest ab_zeroinit row
   while all four rows shared ('ab_zeroinit', '2026-09-02 16:39'), so the key set was untouched
   (192 -> 192) and the ledger's meaning silently reverted to the previous amendment. I reported
   "no losses beyond the restored one" on the strength of this predicate. That report was wrong.
 
   VERBATIM last-line (1e's first form) over-reports: these ledgers are edited in place by
-  scripts/exp.py, so 6018c62ad legitimately rewrites a row to fill its empty fields
+  scripts/exp.py, so b472d771d legitimately rewrites a row to fill its empty fields
   (status running -> probe, result "" -> 130 chars) and a verbatim test reads that as a delete.
 
   FIELD-LENGTH dominance (mine) over-reports too: it rejects `status: "running" -> "ok"`
   because the new value is shorter. Subsumption compares VALUES, so it needs no narrative-field
   allowlist and no length heuristic -- both of which were me approximating what de measured.
 
-DECLARED REWRITES ARE A SEPARATE CLASS, not a negative. 6018c62ad and 7359a56f9 both rewrite
+DECLARED REWRITES ARE A SEPARATE CLASS, not a negative. b472d771d and 7359a56f9 both rewrite
 history deliberately (a fold, and the 0830v1 reset). The scan reports them under their own
 heading; a commit message carrying `ledger-rewrite:` is returned with its manifest so the caller
 decides, rather than being silently exempted here.
 
 SECOND READING, reported and never blocking: how many non-empty result/finding/decision/notes
-VALUES vanish from the whole file after folding. 6018c62ad loses 71 of them -- including
+VALUES vanish from the whole file after folding. b472d771d loses 71 of them -- including
 sft_p324_v3's code-500 40.0% measurement, which afterwards survives only in a rendered artifact
 (de). Subsumption cannot see this: those values belong to keys whose live row is intact, so no
 key regresses while measurements still leave the ledger.
@@ -62,17 +62,17 @@ have reported these ledgers CLEAN or raised false alarms:
 
   v1  `rev-list --merges` only -- the real loss is a PLAIN commit, so it reported clean.
   v2  all commits, DEFAULT history simplification, which prunes commits git judges
-      uninteresting for a path: 66 walked of the 182 that touch the file, and a59ac1f was among
+      uninteresting for a path: 66 walked of the 182 that touch the file, and d71bb44 was among
       the 116 pruned. Still missed the known loss.
-  v3  --full-history, row count. Found a59ac1f, flagged six innocent commits.
-  v4  key presence. Clean on the false alarms and BLIND to a59ac1f -- the wrong report above.
-  v5  any field shrinking. Caught a59ac1f, false-alarmed on `status: running -> probe`.
+  v3  --full-history, row count. Found d71bb44, flagged six innocent commits.
+  v4  key presence. Clean on the false alarms and BLIND to d71bb44 -- the wrong report above.
+  v5  any field shrinking. Caught d71bb44, false-alarmed on `status: running -> probe`.
   v6  narrative fields only, by length. Separated both known cases, but only by a heuristic
       that a status enum changing to a shorter value would have broken again.
   v7  de's subsumption on values. Separates all seven worlds.
 
-So this file asserts BOTH known cases: a59ac1f flagged (positive) and c3a5a23 clean (negative --
-a commit that only appends a done event, chosen because 6018c62ad is a declared rewrite and
+So this file asserts BOTH known cases: d71bb44 flagged (positive) and af1ac56 clean (negative --
+a commit that only appends a done event, chosen because b472d771d is a declared rewrite and
 therefore not a clean negative). A scan that sweeps the whole repository and cannot see the case
 you already know about certifies nothing -- docs/lessons/gate_failure_shapes.md §69 one level
 out: there the criterion had no power to fail, here the SEARCH had no power to find. And one
@@ -251,7 +251,7 @@ REWRITE_MARKER = "ledger-rewrite:"  # a declared rewrite: return the manifest, d
 MAX_COMMITS = 20000                 # iteration cap: every history walk carries one
 
 # de's predicates, imported rather than reimplemented (de-33, scripts/test_ledger_predicates.py,
-# main 88155d9): nine worlds, including the assertion that key_present is strictly weaker than
+# main fea6179): nine worlds, including the assertion that key_present is strictly weaker than
 # subsume. A second copy here would be a second thing to keep correct, and the copy that drifts
 # is the one nobody runs the selftest for.
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -353,7 +353,7 @@ def regressions(path, head_lines, index_lines, message="", root=None):
     interleaved read-modify-write cycles but does NOT stop a STALE process from writing back
     state it read before someone else's update. Two writers that never overlap in time still
     lose a record if the second read early, and this audit cannot see it either -- the key
-    survives, the row is simply older. The 22 duplicates b0-15 folded (3422731) were NOT this
+    survives, the row is simply older. The 22 duplicates b0-15 folded (2376c0e) were NOT this
     blind spot: 21 were the 7464dc1 profile-field migration (byte-identical pairs, one row
     without the field) and 1 a genuine re-score -- the axis was schema migration, not stale
     writers.
@@ -463,7 +463,7 @@ def repeated_lines(path, index_lines):
     THE CLAIM THIS REPLACES WAS FALSE. DUP_IS_FAULT's rationale block said of
     ab_shapelr's 11 rows "not one of them is byte-identical to an earlier row (measured)".
     Measured again 2026-09-03: 11 rows, 4 distinct, one line present EIGHT times. They
-    entered in 41f6f8db, a plain non-merge commit, so the union-merge mechanism the same
+    entered in 9496bcaf, a plain non-merge commit, so the union-merge mechanism the same
     block names does not explain them either. A wrong justification in the place that
     decides scope is worse than none, because the scope then looks derived.
 
@@ -482,7 +482,7 @@ def vanished_values(path, head_lines, index_lines):
     """How many non-empty VALUE_FIELDS values leave the file entirely (second reading).
 
     Subsumption cannot see this: a value can disappear from a key whose live row is intact,
-    which is how 6018c62ad drops 71 values -- among them sft_p324_v3's code-500 40.0%, left
+    which is how b472d771d drops 71 values -- among them sft_p324_v3's code-500 40.0%, left
     only in a rendered artifact.
     """
     def vals(text):
@@ -542,11 +542,11 @@ def _selftest():
         if missing:
             fails.append(f"union-merged but unaudited (no key definition): {sorted(missing)}")
 
-    # 1. KNOWN POSITIVE: a59ac1f dropped the newest ab_zeroinit amendment, whose key is SHARED
+    # 1. KNOWN POSITIVE: d71bb44 dropped the newest ab_zeroinit amendment, whose key is SHARED
     #    with the rows it amends -- invisible to merges-only, to default simplification, and to
     #    key presence.
     # Fixtures refreshed after the 2026-10-02 history rewrite (commit messages only, trees
-    # unchanged): old positive a59ac1f -> d71bb447; old negative c3a5a23 -> af1ac565.
+    # unchanged): old positive d71bb44 -> d71bb447; old negative af1ac56 -> af1ac565.
     known = _git("rev-parse", "d71bb447").strip()
     if not known:
         fails.append("d71bb447 absent; the known-positive case cannot run")
@@ -559,7 +559,7 @@ def _selftest():
             fails.append("d71bb447 walked but NOT flagged: the PREDICATE is wrong (v4's error -- "
                          "its key is shared with the rows it amends)")
 
-        # 2. KNOWN NEGATIVE: c3a5a23 only appends a done event. 6018c62ad is NOT usable here --
+        # 2. KNOWN NEGATIVE: af1ac56 only appends a done event. b472d771d is NOT usable here --
         #    it is a declared rewrite, and 1e/44 ruled it a third class rather than a negative.
         clean = _git("rev-parse", "af1ac565").strip()
         if clean and clean in flagged:
@@ -574,12 +574,12 @@ def _selftest():
     if regressions(P, base, base + R(name="f", started="u", notes="b") + "\n"):
         fails.append("appending a NEW key reports a regression")
     if regressions(P, base, R(status="running", notes="aa", result="measured 1.23") + "\n"):
-        fails.append("FILLING an empty field reports a regression (6018c62ad's shape)")
+        fails.append("FILLING an empty field reports a regression (b472d771d's shape)")
     amended = base + R(status="done", notes="aaLONGER") + "\n"
     if regressions(P, base, amended):
         fails.append("an amendment that adds a row reports a regression")
     if not regressions(P, amended, base):
-        fails.append("DROPPING the amendment is not reported -- this is a59ac1f and the "
+        fails.append("DROPPING the amendment is not reported -- this is d71bb44 and the "
                      "predicate cannot fail")
     if not regressions(P, base, R(status="running", notes="CHANGED", result="") + "\n"):
         fails.append("CHANGING a non-empty value is not reported")
@@ -629,7 +629,7 @@ def _selftest():
     # 4d. THE MISSING `profile` FIELD MUST DEFAULT TO "full" (1e, on 44's b0-15 fold). Read
     #     literally, a row without the field keys as (ckpt, None) and can never collide with
     #     (ckpt, "full") -- so duplicates() sees NOTHING. Measured on the pre-fold blob
-    #     (3422731^): 65 rows, 65 distinct keys under a literal read and 43 under the default,
+    #     (2376c0e^): 65 rows, 65 distinct keys under a literal read and 43 under the default,
     #     which is exactly the 22 duplicates 44 folded. A literal keyfn would have reported that
     #     file clean while every one of the 22 sat in it.
     KF = KEYS["runs/score_matrix.jsonl"]
@@ -637,16 +637,16 @@ def _selftest():
         fails.append("score_matrix's keyfn does not default a missing `profile` to 'full', so a "
                      "row written before the field existed can never collide with an equivalent "
                      "row that has it and duplicates() goes blind")
-    pre = _blob("3422731^", "runs/score_matrix.jsonl")
+    pre = _blob("2376c0e^", "runs/score_matrix.jsonl")
     if pre:
         n_rows = len(_rows("runs/score_matrix.jsonl", pre))
         n_dup = len(duplicates("runs/score_matrix.jsonl", pre))
         if n_dup != 22:
             fails.append(f"duplicates() finds {n_dup} duplicated key(s) in the pre-fold blob, "
-                         f"expected the 22 that 44 folded in 3422731 (rows {n_rows})")
+                         f"expected the 22 that 44 folded in 2376c0e (rows {n_rows})")
         if not duplicates("runs/score_matrix.jsonl", pre):
             fails.append("duplicates() is blind on the blob it was written for")
-    post = _blob("3422731", "runs/score_matrix.jsonl")
+    post = _blob("2376c0e", "runs/score_matrix.jsonl")
     if post and duplicates("runs/score_matrix.jsonl", post):
         fails.append("duplicates() still reports duplicates AFTER 44's fold; either the fold is "
                      "incomplete or the predicate is wrong")
@@ -761,9 +761,9 @@ def _selftest():
     if fails:
         print(f"\n{len(fails)} failure(s)")
         return 1
-    print("ledger_audit selftest OK: flags a59ac1f (a plain commit reverting an amendment whose "
+    print("ledger_audit selftest OK: flags d71bb44 (a plain commit reverting an amendment whose "
           "key is shared with the rows it amends -- invisible to merges-only, default history "
-          "simplification, and key presence), clean on c3a5a23 (appending a done event), "
+          "simplification, and key presence), clean on af1ac56 (appending a done event), "
           "accepts filling blanks and rejects changed/cleared/dropped values without any "
           "length heuristic, per-file dispatch verified to differ (subsume vs key_present), "
           "score_matrix keyed on the writer's (ckpt, profile) with a missing profile defaulted "

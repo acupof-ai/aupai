@@ -211,8 +211,8 @@ pre_absmax: 14.62 / 14.69 / 14.54     ← 三点全平
 
 ## 已做与未做
 
-`_plan_trimmed` → `_cursor_seeded` 已改(8c61642),两个消费点已重判。
-`_noted_gone` 的同句要求由 44 落地(31093f9)。
+`_plan_trimmed` → `_cursor_seeded` 已改(ede514b),两个消费点已重判。
+`_noted_gone` 的同句要求由 44 落地(32200ed)。
 `train.py:189` / `:217` 的注释未改:`train.py` 在 p200m_4b_0902 续训期间冻结,
 排在下一个 stop window,和 resume 修复同一个解冻窗口。
 `eff.batch_ceiling` 的 value 仍然两半不分,`status: recorded` 是它现在唯一的

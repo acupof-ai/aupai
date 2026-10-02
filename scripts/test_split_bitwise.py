@@ -26,7 +26,7 @@ from pathlib import Path
 import torch
 
 # The last commit where train.py still held the model: the parent of the split.
-SPLIT_COMMIT = "be845ec"
+SPLIT_COMMIT = "b45911b"
 
 
 def load_pre_split_module(tmpdir):

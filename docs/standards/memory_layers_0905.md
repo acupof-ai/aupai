@@ -49,7 +49,7 @@ Design fixed for both arms; b0 chooses the rest inside these bounds:
   only replaces `nn.Linear`, so torchao never reaches it. The three projections
   (`query`, `gate`, `out`) ARE reachable and are excluded by path — verified by listing
   what the real filter converts, 0 of 3, against 3 of 3 under a leaf-name test
-  (`probes/mem_boundary_audit.py`, reviewed against `4d0319cf`). The reason to exclude
+  (`probes/mem_boundary_audit.py`, reviewed against `00dfd9a2`). The reason to exclude
   them is not cost but that `query` feeds a top-k selection, so FP8 noise in the scores
   changes WHICH rows are read — a discrete effect the block-paired readout cannot
   separate from the memory's own (4c, 2026-09-05).

@@ -1,6 +1,6 @@
 # scripts/n8_kda_kernel_repro.py -- run output, the citation for eff.kda_document_isolation_violated
 # pod, card 4 (CUDA_VISIBLE_DEVICES=4), captured 2026-09-04
-# repo commit at capture: c2b20f3cbf42f1132e128e6e986e8f49768e109c
+# repo commit at capture: d3f4134ddad17918c64189f5ad87efb691a94a62
 # Includes the attention twin b0 asked for. NOTE on that section: an earlier version printed
 #   'THE ATTENTION ALSO LEAKS' at 4.328125 -- a probe bug (the span offset never advanced, so
 #   document 1 was compared against document 0's rows). An SDPA reference settled it: packed and

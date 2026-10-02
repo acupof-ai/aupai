@@ -35,7 +35,7 @@ the ledgers cannot carry is null with the missing field named, never an estimate
                            roster sweep, which hit `db` -- the ListAgents label for
                            roster name `de` -- in review.jsonl).
   6 message length         words/msg to the controller, from runs/msg_log.jsonl
-                           (from, words, ts; scripts/msg_log.py, c1e146a6),
+                           (from, words, ts; scripts/msg_log.py, 8e530629),
                            one row per peer message received. Counting starts
                            2026-09-05 09:58Z -- the 2026-09-05 baseline is
                            partial; n_msgs in the row says how partial.

@@ -5,7 +5,7 @@
 
 # restartable: builds temp git repos and runs the real hook in each. Costs ~7s.
 
-2026-09-08 05:40:09Z, b0 committed 484a9528 onto refs/heads/main from aupai-b0, which had main
+2026-09-08 05:40:09Z, b0 committed 2858c1f3 onto refs/heads/main from aupai-b0, which had main
 checked out. At 05:45:45 they ran `branch: Reset to origin/main` and main moved off that commit --
 a sideways move, which main_advances_by_ancestry caught and which then refused every commit in the
 repository until PR #54 recorded the pair by hand. The commit survived only because b0 created
@@ -13,8 +13,8 @@ refs/heads/b0 from HEAD in the same second (both reflog entries read 05:45:45): 
 not a near miss.
 
 THE PREDICATE IS "HEAD IS main", NOT "main != origin/main", and this test is what settles it.
-4c proposed the latter. It would not have fired: at 05:40:09 local main was 7049750c and
-origin/main had been pushed to 7049750c at 05:39:05, so the two were EQUAL and the divergence was
+4c proposed the latter. It would not have fired: at 05:40:09 local main was ded6c4dc and
+origin/main had been pushed to ded6c4dc at 05:39:05, so the two were EQUAL and the divergence was
 created BY the commit the hook runs before. M2 below is that proposal, and it goes red on the
 world it was designed for.
 

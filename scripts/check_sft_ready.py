@@ -214,7 +214,7 @@ def check_sft_math_parser(out):
         out.append(("FAIL", "could not delimit sft_math.py's parser region"))
         return False
     # Module-level CONSTANTS the parser region references (SAVE_INTERVAL since
-    # 148e6027 made --save_every's default the constant instead of a literal).
+    # a0743864 made --save_every's default the constant instead of a literal).
     # Read from source, not hardcoded: a hardcoded copy tests the wrong default
     # the day sft_math changes the value, and this check went red for exactly
     # this gap -- the region gained a module-level reference and the ns dict was

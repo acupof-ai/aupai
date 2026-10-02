@@ -1,5 +1,5 @@
 # scripts/n7c_pack_isolation.py -- run output, pod card 4, 2026-09-04
-# repo commit at capture: 4c47d0e01d3055a15295912f5ed0ab10e0b06b2d
+# repo commit at capture: 6319a1ad256a38914afa3192f046ba38fe0dba6e
 # FLAG OFF (conv_doc_isolated False): the defect as it shipped. First divergence block 0 (KDA),
 #   48.88 = 76.3 bf16 ulps at that layer's scale, 20-394 ulps across all 12 blocks.
 # Reproduce: CUDA_VISIBLE_DEVICES=4 python3 scripts/n7c_pack_isolation.py

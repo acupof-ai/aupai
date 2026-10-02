@@ -69,7 +69,7 @@ its draw equals the pool's lowest-ordinal n. Until 2026-09-08 the draw was
 `rng.shuffle(list(mixed.keys()))` — a no-op, because shuffle mutates in place and the list was
 discarded on the same line, so the sample was the 40 lowest-ordinal clusters: a contiguous slice
 of the first shards. Ordinal is corpus position, and position correlates with source file, so that
-sample could not speak for the stratum. Fixed at `796fec85`.
+sample could not speak for the stratum. Fixed at `372d5b19`.
 
 Any sheet produced before that commit is discarded rather than read with a caveat. The 60
 pure-starcoder clusters are blinding: they carry no rp1t member, so a reader who is inferring the

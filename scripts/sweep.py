@@ -5,7 +5,7 @@
     python3 scripts/sweep.py --selftest      # known answers, no processes touched
 
 WHAT THIS IS FOR. 307 orphaned watchers accumulated over ~24 h on the pod and were killed by
-hand on 2026-09-04 (ff035f77, 314 processes across three classes). The classes recur; the hand
+hand on 2026-09-04 (7302067b, 314 processes across three classes). The classes recur; the hand
 sweep does not scale and its evidence lives in a commit message.
 
 WHAT IT DELIBERATELY DOES NOT DO.
@@ -26,7 +26,7 @@ WHAT IT DELIBERATELY DOES NOT DO.
   keyed on GPU UUID plus cmdline, which are the only cross-boundary identities.
 
   A CLASS WITH NO RECORDED INSTANCE GETS NO MATCHER. (a), (b) and (c) are built because
-  ff035f77 recorded 306, 3 and 5 real instances. Nothing else is.
+  7302067b recorded 306, 3 and 5 real instances. Nothing else is.
 
   UNCLASSIFIED IS NEVER KILLED. Two traps make this load-bearing rather than cautious:
   b0's own first two runs of the (a) test reported "1 shared" because the scan counted its own
@@ -173,7 +173,7 @@ def _pipe_holders(inode, live_pids, me):
 
 
 _WAIT_RE = re.compile(r"(?:until|while)\s+(?:!\s*)?\[+\s*-([fed])\s+([^\s\]]+)\s*\]+")
-#: The SECOND form of class (b) (env_hygiene 0314a2d6 §2(b)): `until grep -q PAT F; do sleep N`.
+#: The SECOND form of class (b) (env_hygiene ae3a18ac §2(b)): `until grep -q PAT F; do sleep N`.
 #: Same class, different test -- no mtime reasoning is needed, because a target that cannot
 #: resolve against the loop's OWN cwd can never satisfy the condition however the loop is
 #: ordered. tilerl measured two live instances at 17 h, both `bash -lc until grep -q ... runs/x.log`
@@ -256,7 +256,7 @@ def classify(procs, zombies, root=ROOT, now=None, me=None, gpu_pids=None):
             verdicts.append((p, UNCLASSIFIED,
                              f"cwd {cwd} is on a never-in-scope filesystem (env_hygiene §2)"))
             continue
-        # THE CWD SCOPE GATE IS GONE (tilerl's ruling, env_hygiene 0314a2d6 §2 "Scope, and the
+        # THE CWD SCOPE GATE IS GONE (tilerl's ruling, env_hygiene ae3a18ac §2 "Scope, and the
         # paths that are never in it"). It rejected two of our own dead loops before class (b)
         # could evaluate them, and the cwd that rejected them -- /sgl-workspace/sglang, the
         # container's default -- IS the reason they are stuck. Scope is decided by paths a process
@@ -468,7 +468,7 @@ def sweep(execute=False, root=ROOT, out=sys.stdout):
 
 
 def _selftest():
-    """Known answers built from ff035f77's REAL populations, not invented shapes.
+    """Known answers built from 7302067b's REAL populations, not invented shapes.
 
     Each case is a process shape that sweep actually saw on the pod, with the verdict the hand
     sweep reached. A fixture that cannot reproduce the recorded population certifies nothing.
@@ -550,7 +550,7 @@ def _selftest():
         case(v[999001][0] == UNCLASSIFIED and "younger" in v[999001][1],
              f"a young process is out of scope whatever its shape: {v[999001][1][:50]}")
 
-        # (b) SECOND FORM -- tilerl's two live loops, 17 h each (env_hygiene 0314a2d6 §2(b)).
+        # (b) SECOND FORM -- tilerl's two live loops, 17 h each (env_hygiene ae3a18ac §2(b)).
         # ABSOLUTE targets here, because the real instances are relative and resolve against
         # /proc/<pid>/cwd, which no fixture can fabricate without testing the fake. The property
         # the form asserts is the same either way: a target that does not exist as the loop
@@ -592,7 +592,7 @@ def _selftest():
              "scope constants match env_hygiene.md §2 verbatim (/work/aupai in, /data0* never)")
         # THE CWD SCOPE GATE IS GONE, and this case is what used to assert it: "this checkout's
         # cwd is outside scope, so a laptop run sweeps nothing". That was true and is now the
-        # wrong property -- per env_hygiene 0314a2d6, cwd places nothing in either direction, and
+        # wrong property -- per env_hygiene ae3a18ac, cwd places nothing in either direction, and
         # the gate rejected two of our own dead loops before class (b) could evaluate them. What
         # replaces it is each class's own positive test, so the assertion becomes: a process whose
         # cwd is outside /work/aupai and which matches NO class is still unclassified. Asserted

@@ -452,7 +452,7 @@ CITATION = re.compile(
     # two ever written (e1-9, 2026-09-02) tripped it immediately. The trailing (?![\w])
     # stops a prefix match from standing in for the whole extension.
     #
-    # The optional @<rev> is the repo's OWN retirement form, not a new proposal: 30b9010
+    # The optional @<rev> is the repo's OWN retirement form, not a new proposal: e45e4fa
     # (44-13) deleted 22 probes and rewrote 39 refs in facts/*.json plus
     # scripts/harness.py:386,647,693 to probes/<name>.py@<sha>. All 26 distinct ones
     # resolve. This gate could not read one of them -- the pattern stopped at the

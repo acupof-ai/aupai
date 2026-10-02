@@ -189,7 +189,7 @@ def main():
         import harness
         # --no-merges, and that is not a detail: main's tip is usually a merge commit, and
         # `git show --name-only` on a merge prints NO files (the diff against two parents is
-        # ambiguous, so git shows none by default). Asking for the tip found sha=8cba65f1 with
+        # ambiguous, so git shows none by default). Asking for the tip found sha=33c2a05d with
         # touched=[] and the world had no evidence path to cite -- a fixture that looked broken
         # while the code was fine.
         sha = subprocess.run(["git", "-C", ROOT, "rev-list", "-1", "--no-merges", _main_ref()],
@@ -215,7 +215,7 @@ def main():
                 os.makedirs(os.path.join(d, "runs"))
                 _point_tasks_at(harness, os.path.join(d, "runs", "tasks.jsonl"))
                 # NO produces/decides HERE, and that absence is measured rather than assumed.
-                # `task done` does refuse an empty produces/decides (74a69cb4), so filling them
+                # `task done` does refuse an empty produces/decides (1c59858f), so filling them
                 # looked like the fix -- but reverting them alone leaves this test GREEN while
                 # reverting the both-bindings helper alone turns it RED (/tmp/de_which_fix.py:
                 # control rc=0, revert-keys rc=0, revert-helper rc=1 on worlds 5-6). The refusal is

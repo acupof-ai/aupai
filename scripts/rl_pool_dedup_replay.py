@@ -2,7 +2,7 @@
 
 WHY THIS EXISTS: the coverage table (runs/code_type_coverage_0925.jsonl) reports the RL pool
 as `rl_pool_deduped`, reproduced from the pool's own dedup rule. That number is only
-checkable if the rule and the resulting counts are both in the tree -- genB review c61ac333
+checkable if the rule and the resulting counts are both in the tree -- genB review 6f0bc326
 found the stats file and this replay were pod-only, so the column's provenance did not
 resolve.
 

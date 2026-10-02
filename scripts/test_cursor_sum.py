@@ -6,7 +6,7 @@ THE IDENTITY. An ABSOLUTE row cursor sums to exactly the rows the run has consum
     sum(row_cursor) == row_cursor_as_of_step x batch x accum x world
 
 ds.second_resume_rereads_one_segment named this as the check that would have caught the
-segment-only cursor the day it landed, and it did not exist. 52aec31 fixed the cursor;
+segment-only cursor the day it landed, and it did not exist. bc2cb9e fixed the cursor;
 this asserts it stays fixed.
 
 THE KNOWN ANSWERS, read off ckpt_p200m_4b_0902 on the pod (rows/step = 16x2x8 = 256):
@@ -363,7 +363,7 @@ def _check_striping(bad, tmp):
         return
 
     # THE DISCARD PATH FIRST, mid-plan, because it is the path with NO backstop (e1,
-    # 2026-09-06, finding 1 on ba05651e). `_discarded` non-empty skips the sum identity by
+    # 2026-09-06, finding 1 on 63b60da1). `_discarded` non-empty skips the sum identity by
     # design -- a domain that restarted at row 0 is legitimately short -- so here the
     # per-domain assertion is the only thing that can fire. It ran LAST until this commit,
     # after a `return` on the no-discard raise, and all three mutants of the bound die on the
@@ -534,7 +534,7 @@ def _check_world_source(bad, tmp):
 def _check_no_plan_world_refuses(bad, tmp):
     """A plan vector with no _plan_world beside it must REFUSE at world > 1.
 
-    e1's finding 2 on 88be635a: the reader was `_plan_world or int(os.environ[...])`, so
+    e1's finding 2 on ee67dcd3: the reader was `_plan_world or int(os.environ[...])`, so
     deleting build_mix's publish fell back to the environment and restored the two-independent-
     sources condition that commit removed -- silently, with every test green. The fallback is
     gone; absence is a refusal above world 1, and the message says WHICH of the two fields is
@@ -738,7 +738,7 @@ def main():
                        f"{ck['row_cursor_sum_unchecked'][:110]}")
 
     # NEGATIVE, and built at origin 832 on purpose: base dropped, which is exactly what
-    # the pre-52aec31 code did. At origin 0 this same mutation is invisible -- base is
+    # the pre-bc2cb9e code did. At origin 0 this same mutation is invisible -- base is
     # empty there and absolute == segment-only -- so a negative case built at origin 0
     # would pass against the defect it is meant to catch.
     p, ck, err = _save(tmp, 1192, 832, {})

@@ -11,7 +11,7 @@
 # i B4/accum4 measured 72.64 GiB/rank (facts/v41.json#v41.smoke_compiled_flash_h_i_0911). accum
 # does not change peak bytes, so accum8 grows the effective batch to 4*8*6*4096 = 786,432
 # tokens/step while the per-rank peak stays at i's 72.6 GiB, under the 80 GiB ceiling.
-# 30.0B tokens (data/mix_v41_gate.json total_tokens, main 7ba4568f) / 786,432 ~= 38.1K steps.
+# 30.0B tokens (data/mix_v41_gate.json total_tokens, main d35b6d69) / 786,432 ~= 38.1K steps.
 #
 # LR SCHEDULE RULED BY fb 2026-09-11 (prereg v41_gate_0911 amendment 1): warmup 500 absolute
 # steps (1.3% of 38.1K; the 30B run of 09-07 used the same order; 20 is a smoke warmup),

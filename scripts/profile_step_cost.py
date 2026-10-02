@@ -18,7 +18,7 @@ is the real thing, in train.py's own order (HybridLM, then DDP, then torch.compi
     torch.compile(dynamic=False)      when Cfg.compile and amp
     autocast(bfloat16) + --fp8        run_ddp.sh:44 passes --fp8; the flag is honoured here
 
-Shape flags come from the p200m launch line (e19eeb7): d1024 L12 heads 8 ffn 3072, batch 32,
+Shape flags come from the p200m launch line (a315abc): d1024 L12 heads 8 ffn 3072, batch 32,
 accum 1, --no-grad_ckpt, seq 4096 from Cfg. Anything not on that line is Cfg's default, which
 is the point of naming the commit rather than restating the values.
 
@@ -61,7 +61,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-# The p200m launch line, e19eeb7. Kept as data so --selftest can assert the defaults match it
+# The p200m launch line, a315abc. Kept as data so --selftest can assert the defaults match it
 # without a card: a profiler configured differently from the run measures another program, and
 # that is exactly fb's condition.
 P200M = {"dim": 1024, "layers": 12, "heads": 8, "ffn_hidden": 3072, "batch": 32, "accum": 1,
@@ -334,7 +334,7 @@ def _selftest():
 
     ok = P200M["fp8"] and not P200M["grad_ckpt"] and P200M["batch"] == 32
     bad += 0 if ok else 1
-    print(f"  {'ok  ' if ok else 'BUG '} the recorded p200m shape matches e19eeb7's line")
+    print(f"  {'ok  ' if ok else 'BUG '} the recorded p200m shape matches a315abc's line")
 
     # fp8 must be APPLIED, not just recorded. The first GPU attempt wrote fp8=True while
     # calling neither of train.py's two fp8 steps, so the model stayed fp32, every activation
@@ -1154,7 +1154,7 @@ def main():
     # assignments of the same quantity is how the two paths came to disagree in the first place:
     # this one was right and the printed one dropped accum, and nothing compared them.
     rec = {"mix": a.mix, "world": world, "params_m": round(n_par / 1e6, 2),
-           "shape": "step = e19eeb7's p200m launch line", "batch": B, "accum": train.Cfg.accum,
+           "shape": "step = a315abc's p200m launch line", "batch": B, "accum": train.Cfg.accum,
            "seq": SEQ, "layers": train.Cfg.layers, "dim": train.Cfg.d,
            "fp8": fp8, "grad_ckpt": a.grad_ckpt,
            # The memory config IN THE ROW, for the same reason the print line carries it:

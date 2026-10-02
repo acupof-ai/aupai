@@ -1,6 +1,6 @@
 # Local aupai cleanup — 2026-09-28 (jan, coordinator 1e)
 # Scope: laptop only. Format: path <TAB> size <TAB> reason.
-# Branch merge basis: origin/main @ 35729eaa.
+# Branch merge basis: origin/main @ 9db758e5.
 
 ## DELETE — worktrees: merged into origin/main, clean, not on protected list
 /Users/bytedance/code/aupai-3b	106M	worktree 3b-rl-stdin-0925, branch merged, clean, 0 open fds
@@ -59,7 +59,7 @@ de-router-scale-20k	-	merged, no worktree
 ## DO NOT DELETE — dirty worktrees
 # /Users/bytedance/code/aupai-de-scalemon   80M, M runs/router_scale_0926.jsonl + ?? runs/monitor_logs/
 # /Users/bytedance/code/aupai-subreadme     79M, ?? .awb/ (branch itself merged)
-# /private/tmp/sr_main                      76M, detached at merged 05b15d34 but ?? _probe_muon.py (554B, 0925)
+# /private/tmp/sr_main                      76M, detached at merged 675e9da8 but ?? _probe_muon.py (554B, 0925)
 
 ## DO NOT DELETE — detached-from-git dirs, uncertain
 # /Users/bytedance/code/aupai-l0code        72M, gitfile points to pruned worktree metadata; holds old data/ (25M), 0916-era checkout
@@ -123,12 +123,12 @@ fd5e615caf3d7b99955751efe3d79ac61940e0b1  pr728
 # /Users/bytedance/code/aupai-de-muonremove  de-muon-ns-remove @ ce46dec3  status clean
 # /Users/bytedance/code/aupai-de-sftbf16  de-sft-bf16-weights @ cb946493  status clean
 # /Users/bytedance/code/aupai-expdoc  1e-expdoc-0923 @ eb85649a  status clean
-# /Users/bytedance/code/aupai-de-scalemon  de-router-scale-monitor(已合并) @ 3b5c9f57
+# /Users/bytedance/code/aupai-de-scalemon  de-router-scale-monitor(已合并) @ 224974d2
 #   status: " M runs/router_scale_0926.jsonl" + "?? runs/monitor_logs/"
 #   补丁: ~/aupai_trash_0928/scalemon_tracked.patch, ~/aupai_trash_0928/scalemon_untracked.tgz
-# /Users/bytedance/code/aupai-subreadme  1e-subreadme-0923(已合并) @ a3cdc326
+# /Users/bytedance/code/aupai-subreadme  1e-subreadme-0923(已合并) @ 6e89b7fc
 #   status: "?? .awb/"（看板事件日志）  备份: ~/aupai_trash_0928/subreadme_untracked.tgz
-# /private/tmp/sr_main  detached @ 05b15d34(已合并提交)
+# /private/tmp/sr_main  detached @ 675e9da8(已合并提交)
 #   status: "?? _probe_muon.py"(554B)  备份: ~/aupai_trash_0928/sr_main_probe_muon.py
 # 脱离 git 的普通目录（无 worktree 元数据，直接 rm）：
 # /Users/bytedance/code/aupai-l0code  72M  0916 期旧检出，gitfile 指向已 prune 元数据，含旧 data/ 25M

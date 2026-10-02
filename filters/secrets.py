@@ -124,7 +124,7 @@ def _selftest():
             fails.append(f"{want} counted {n} but wrote no placeholder")
 
     # THE KNOWN-ANSWER CASE 44's spec named, and it does NOT hold as specified. The audit
-    # sample at runs/fable5_audit_sample.jsonl carries `gsk_REDACTED`, not the key: 9a11b9ea
+    # sample at runs/fable5_audit_sample.jsonl carries `gsk_REDACTED`, not the key: cc2689fd
     # redacted it before committing, which is correct handling and leaves no positive fixture.
     # So the assertion is inverted -- the committed row must yield ZERO, because a redactor
     # that fires on `gsk_REDACTED` is one that would fire on every already-clean row and
@@ -140,7 +140,7 @@ def _selftest():
             total += c
         if total:
             fails.append(f"the committed audit sample yielded {total} redaction(s); it was "
-                         f"already scrubbed at 9a11b9ea, so the expected count is 0 and a "
+                         f"already scrubbed at cc2689fd, so the expected count is 0 and a "
                          f"non-zero one means a pattern fires on the placeholder")
         # The row 44 that HELD the key must still be reachable and still carry the marker, or
         # this fixture has silently stopped covering anything.
@@ -148,7 +148,7 @@ def _selftest():
             fails.append("row 44's redaction marker is gone from the audit sample; the "
                          "known-answer case no longer has a subject")
 
-    # A SYNTHETIC RECONSTRUCTION of what row 44 looked like BEFORE 9a11b9ea, since the real
+    # A SYNTHETIC RECONSTRUCTION of what row 44 looked like BEFORE cc2689fd, since the real
     # pre-redaction bytes are not in the tree. 3 occurrences, matching the fact's count.
     pre = (f"I have a key from the earlier context: `{gsk}`. I should embed this into the "
            f"config under `env`.\n"
@@ -203,7 +203,7 @@ def _selftest():
           f"corpus-specific), the reconstructed row-44 shape yields exactly 3 replacements, "
           f"{len(neg)} near-misses including the audit sample's own `gsk{_u}REDACTED` marker "
           f"yield 0, and the committed 50-row sample yields 0 because it was scrubbed at "
-          f"9a11b9ea")
+          f"cc2689fd")
     return 0
 
 

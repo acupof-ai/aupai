@@ -224,7 +224,7 @@ def roadmap_section():
     return "".join(out)
 
 
-# 98-4: per-member liveness from board.liveness (de's cec7a077). One line per member,
+# 98-4: per-member liveness from board.liveness (de's b940e945). One line per member,
 # stalled ones first; the stalled tag must agree with harness check_peer_stalled.
 PEER_STALL_MIN = 120
 
@@ -265,7 +265,7 @@ def liveness_section():
     return "".join(out)
 
 
-# 98-5: one friction line under the per-member section (6e request, main fc4e7efe).
+# 98-5: one friction line under the per-member section (6e request, main 243b1368).
 # Reads runs/friction.jsonl directly: rows, distinct causes, top (kind, cause) pair.
 def friction_section():
     fp = os.path.join(REPO, "runs", "friction.jsonl")

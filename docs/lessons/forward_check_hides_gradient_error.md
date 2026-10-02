@@ -1,7 +1,7 @@
 ---
 question: Why did a forward comparison stay green while the gradient it was standing in for was 7.6% wrong?
 status: measured
-source: algorithms/attnres_fused.py self-check; model.py:244 (Source.of), :269-273; b0-review-7899ea1
+source: algorithms/attnres_fused.py self-check; model.py:244 (Source.of), :269-273; b0-review-76a8fd3
 ---
 
 # A forward check cannot stand in for a gradient check
@@ -42,7 +42,7 @@ does not NaN, and does not obviously diverge — it trains, slightly wrong.
 
 b0 reached "the gate must be on `dV`, against autograd's **total**, subtracting
 nothing" by reading `known_answer()` and finding it asserted only the forward
-(`b0-review-7899ea1`). I reached it by walking into an actual wrong
+(`b0-review-76a8fd3`). I reached it by walking into an actual wrong
 implementation. **A rule derived from code structure and a rule derived from a
 live failure are separate evidence**; either alone is a hypothesis about where
 the gate belongs, and together they are a measurement.

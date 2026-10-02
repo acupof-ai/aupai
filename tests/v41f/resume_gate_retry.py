@@ -11,7 +11,7 @@ reads NO. Almost every known-answer world below is a refusal, and two of them ar
 matter most: the smallest real mutant (so the band cannot drift into mutant space) and an arm whose
 RNG differed before the save (so a pre-save bifurcation can never be rescued).
 
-MEASURED BASIS (2026-09-23; artifact 10673482497 of run 35677058625 at d1d4aef3, recomputed from the
+MEASURED BASIS (2026-09-23; artifact 10673482497 of run 35677058625 at d261b0e1, recomputed from the
 raw dumped bytes, not from the log line):
     tag "fp32 master", rel_l2 0.0161551, n_diff 506533/524288 (frac 0.9661), n_nan 0,
     control/rng_atK == restart/rng_preSave bit-equal, bf16 compare did not fail.

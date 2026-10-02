@@ -7,7 +7,7 @@ the path the A/B will score on. Not within a tolerance: a tolerance-passing diff
 how a changed compiled graph hides, and the whole point of the reuse is that the current arm's
 numbers are the ones already measured.
 
-WHY NOT CITE e1's OWN GATE. 28ae5917's table reports "cu=None, both settings bitwise identical,
+WHY NOT CITE e1's OWN GATE. fef4afd9's table reports "cu=None, both settings bitwise identical,
 0.0". That is a real check and it is not this one. The A/B will score WITH cu (6e ruled
 domain_loss passes doc cu), and the flag's branch condition is `self.conv_doc_isolated and cu is
 not None` -- so at cu=None the new branch cannot be reached by construction and the check is
@@ -15,7 +15,7 @@ vacuous for the reuse question. The reachable-but-off case is flag OFF with cu P
 what this measures.
 
 THE REFERENCE IS THE RECORD, NOT A RECOMPUTE. runs/b0_sd_blocks_cu.jsonl was written by
-scripts/b0_sd_cu_rescore.py under the PRE-flag code (pod sync 01103bf0, before 28ae5917 landed).
+scripts/b0_sd_cu_rescore.py under the PRE-flag code (pod sync 2102b349, before fef4afd9 landed).
 Comparing today's forward against those stored per-block ce_sum values asks the question that
 matters -- does the checkpoint still score as it scored -- rather than comparing new code to
 itself, which would pass regardless.

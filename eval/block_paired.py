@@ -440,7 +440,7 @@ def _selftest():
 
     # THE REFUSALS, by exception TYPE. A crash is not a refusal: deleting the block-set guard
     # leaves a KeyError from the length loop, and `except Exception` reads that as the guard
-    # working. Same shape the domain-level version was caught by (c5b4d002 check 5).
+    # working. Same shape the domain-level version was caught by (883ef18f check 5).
     short = mk("S", {"d1": [(10.0, 10), (90.0, 90)]})
     try:
         block_paired({"A": A, "S": short}, "A", "S")

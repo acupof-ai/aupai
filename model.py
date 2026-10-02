@@ -2264,7 +2264,7 @@ class MoEFFN(nn.Module):
         # :3134 and :3162 both call `raw_model.to(torch.bfloat16)`, which casts every floating
         # buffer -- so it became bf16 before step 0 either way. That is why the failed run's
         # checkpoint holds bf16. _apply below is what actually keeps it fp32; the argument is
-        # kept only so the declaration states the intent (4c, reviewing 87ef5985).
+        # kept only so the declaration states the intent (4c, reviewing a4c0c8d3).
         self.register_buffer("expert_bias", torch.zeros(self.n_routed, dtype=torch.float32),
                              persistent=True)
         # READOUT 4's counters. Non-persistent: they describe a window, and a resume that restored
@@ -2330,7 +2330,7 @@ class MoEFFN(nn.Module):
         common mode kept climbing. 2,304 values, 9 KiB.
 
         THE ORIGINAL TENSOR IS KEPT, NOT RE-FLOATED AFTER THE FACT, and that distinction is the
-        whole point (4c, reviewing 2f95a797). `fn(eb).float()` restores the DTYPE and has already
+        whole point (4c, reviewing a3685719). `fn(eb).float()` restores the DTYPE and has already
         destroyed the VALUES: fn rounds to bf16's grid first, so .float() returns rounded numbers
         in an fp32 box and every dtype assertion passes. MEASURED on [0.5, 0.501, 0.502] ->
         [0.5, 0.5, 0.50390625]: three distinct biases became two, which is exactly the

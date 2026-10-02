@@ -88,7 +88,7 @@ def main():
             fails.append(f"score({gen!r}, lang={lang}) != 0.0 -- a wrong answer marked correct")
 
     # 4b. A DECIMAL ANSWER SURVIVES THE MARKER, in both languages. The ASCII period is also the
-    #     decimal point, and from 8ab15148 until 2026-09-08 it was in ANS_RE's terminator class,
+    #     decimal point, and from a4a82906 until 2026-09-08 it was in ANS_RE's terminator class,
     #     so the non-greedy capture stopped inside the number: `答案是 3.5。` scored as "3".
     #
     #     ASSERT score(), NOT THE CAPTURED STRING. The two disagree, and the string is the more

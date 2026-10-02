@@ -5,7 +5,7 @@
 
 # restartable: builds temp git repos. Costs ~3s.
 
-06ed3b2a replaced "N commits behind" with the intersection of the staged paths and what main
+60238629 replaced "N commits behind" with the intersection of the staged paths and what main
 changed since the branch diverged, and shipped with NO test of the predicate: it appears once in
 scripts/hooks/pre-commit and nowhere else in the tree. The world tilerl asked for is W3 -- the
 file is COMMITTED on a branch behind main and main has also moved it -- because that is the case
@@ -20,7 +20,7 @@ THE WORLDS, and what each one alone would let through:
 
   W1  main moved on OUR staged path        -> the path, refuse.  Without it the predicate could
                                               return [] always and pass everything else.
-  W2  main moved on a DIFFERENT path       -> [], allow.  This is 06ed3b2a's whole point: the old
+  W2  main moved on a DIFFERENT path       -> [], allow.  This is 60238629's whole point: the old
                                               count refuses here and the overlap must not.
   W3  our path is COMMITTED and behind,    -> the path, refuse.  Committed-vs-staged is not the
       main moved it too                       question the predicate asks; a version keying on
@@ -35,7 +35,7 @@ THE WORLDS, and what each one alone would let through:
                                               commit because of its own edits.
 
 W2 IS THE LOAD-BEARING NEGATIVE. A predicate that returns every staged path passes W1 and W3 and
-is exactly the behaviour 06ed3b2a removed, so a fixture without W2 would certify the old bug.
+is exactly the behaviour 60238629 removed, so a fixture without W2 would certify the old bug.
 
 ACCEPTANCE, measured 2026-09-07 -- three mutants, each killing a DIFFERENT world set:
   count-not-overlap (return every staged path)  -> W2, W3c, W6
@@ -172,7 +172,7 @@ def selftest():
 
         # W3-CONTROL: the same committed-and-behind shape where main moved the OTHER file. Without
         # it, a predicate that refuses whenever HEAD is behind main would pass W3 for the wrong
-        # reason -- the count predicate 06ed3b2a removed does exactly that.
+        # reason -- the count predicate 60238629 removed does exactly that.
         d = _repo()
         worlds.append(d)
         _base(d)

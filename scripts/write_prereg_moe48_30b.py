@@ -19,7 +19,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LEDGER = os.path.join(ROOT, "runs", "prereg.jsonl")
 ROW_ID = "moe48_30b_0907"
 
-# THE LAUNCH SHAPE, from the grant on the pod (main 3dc79f16), not from a peer message.
+# THE LAUNCH SHAPE, from the grant on the pod (main 0c9ef9a6), not from a peer message.
 BATCH, ACCUM, WORLD, SEQ = 8, 4, 6, 4096
 PER_STEP = BATCH * ACCUM * WORLD * SEQ            # 786,432 tokens/step
 RESUME_STEP = 9000
@@ -101,7 +101,7 @@ def main():
         "by": "b0",
         "charter": (
             f"runs/prereg.jsonl#{ROW_ID} (this row). Grant: runs/card_assignment.json note "
-            f"2026-09-07T05:2xZ (main 3dc79f16, pod stamp 3dc79f16) -- launch_block_granted true, "
+            f"2026-09-07T05:2xZ (main 0c9ef9a6, pod stamp 0c9ef9a6) -- launch_block_granted true, "
             f"block_cards 2,3,4,5,6,7. Written by scripts/write_prereg_moe48_30b.py, which derives "
             f"every step count from train.py's own formulas."
         ),

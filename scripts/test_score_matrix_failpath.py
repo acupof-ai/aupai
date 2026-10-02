@@ -20,7 +20,7 @@ exited 0, and wrote no record. Three defects in one line:
    ~28 planned milestones this fires 28 times and score_matrix_present stays red
    throughout.
 
-THE SECOND SHAPE, added 2026-09-06 (e1's finding 1 on 91531b49). Everything above is
+THE SECOND SHAPE, added 2026-09-06 (e1's finding 1 on b7a31046). Everything above is
 score() RAISING, which main()'s whole-checkpoint handler catches. The other shape is
 score() returning NORMALLY with every metric inside it an {"error": ...} dict -- what
 the cache_guard self-deadlock produced -- and that exited 0 too, writing three rows to

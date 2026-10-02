@@ -246,7 +246,7 @@ def metric_domain_loss(model, tok, seq, device, mix_path, cu_path="cu_none"):
         # is unaffected -- domain_loss_seqs keeps the flat reduction="sum" as its return
         # value and adds the rows beside it (verified: the rescore reproduced all 9 domains
         # and the mean 1.9443 to the digit).
-        # cu_path REACHES THE ROWS. E1: bfa1a846 labelled domain_loss.py's CLI and left this
+        # cu_path REACHES THE ROWS. E1: 6890e0df labelled domain_loss.py's CLI and left this
         # call taking the cu_none DEFAULT, so all 60 published rows were scored without the
         # document mask while training used doc_cu_seqlens.
         loss, ntok, per = domain_loss_seqs(model, rows, device, per_row=True, cu_path=cu_path)
@@ -513,7 +513,7 @@ def metric_l1_fewshot(ckpt_path):
     whether any were written -- de's disk inventory read that 0 as "design-only". Nothing in runs/
     cites them, which is why this metric records `refused_sidecar` in the row: a refusal that
     happened and left no ledger trace is how the seven E22 rows stayed unexamined through two
-    audits. Note the sidecar is named after the ARTIFACT, so before `5a989647` put the checkpoint
+    audits. Note the sidecar is named after the ARTIFACT, so before `7b7ffbea` put the checkpoint
     in the artifact name, six refusals on six checkpoints all wrote ONE sidecar -- which is why
     there are 6 sidecars for 7 refusal rows.
     """
@@ -1286,7 +1286,7 @@ def selftest():
         f"metric_mc does not route its parse miss through _failure_cause: {_mc_err}"
 
     # domain_loss.py's standalone CLI must take the mix from the checkpoint too -- the same
-    # defect, the same fix, and 44 found it by reading 3415e9e rather than by running anything.
+    # defect, the same fix, and 44 found it by reading 8a6f749 rather than by running anything.
     # Asserted HERE because domain_loss.py's own --selftest requires a --ckpt, so the pre-commit
     # hook lists it as unrunnable: a check living in that file would never execute. An AST read,
     # not a substring, and it asserts the CLI CALLS _mix_for rather than that the name appears --
@@ -1673,7 +1673,7 @@ def _metric(name, fn, record, *args, **kwargs):
     measured, minutes of card time, and the checkpoint's row in the ledger, thrown away by a
     metric that was never going to work on that checkpoint. A partial record is the useful
     artifact -- the point of `metrics` and `skipped` being separate keys is that a record says
-    what it could and could not carry (44, reviewing 3415e9e).
+    what it could and could not carry (44, reviewing 8a6f749).
 
     The traceback goes into the record, not just the message: an eval that fails inside a
     dependency (cache_guard, a tokenizer mismatch, a shard read) is diagnosed by where, and the
@@ -1987,7 +1987,7 @@ def main():
     # caller names its card and the claim protects it. When CVD names several cards the claim
     # covers all of them and _pick_card uses one, which is conservative in the safe direction.
     #
-    # GATED ON CUDA BEING AVAILABLE, which e0253c78 applied to the three test_* entry points and
+    # GATED ON CUDA BEING AVAILABLE, which afadd308 applied to the three test_* entry points and
     # missed here -- it turned CI red on main, 6 cases of test_score_matrix_failpath.py, because
     # the refusal fires before the scoring-failure path the test exercises and CI has neither a
     # card nor CVD. The refusal is only meaningful where there is a card to take: on a CUDA-less
@@ -2047,7 +2047,7 @@ def main():
         # Absence of `error`, not presence of a number: a SKIPPED metric is omitted from
         # metrics entirely (rec["skipped"]), so "every value is numeric" would call a
         # legitimately partial row a failure. Same predicate as harness's
-        # score_matrix_present (main 5c0319dc), for the same reason.
+        # score_matrix_present (main c750c798), for the same reason.
         _scored = [m for m, v in rec["metrics"].items()
                    if not (isinstance(v, dict) and "error" in v)]
         if rec["metrics"] and not _scored:

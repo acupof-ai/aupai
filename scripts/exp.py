@@ -176,7 +176,7 @@ def git_commit():
     stopped agreeing: --short is git's AUTO-SCALING abbreviation, and once the object
     count crossed a threshold it began returning 8 characters while the stamp path still
     truncated to 7. The same commit then wrote two different strings depending on which
-    branch ran -- 8cd68340 against 8cd6834, measured 2026-09-03 -- so p500m_20b_0902's
+    branch ran -- 8922186f against 8922186, measured 2026-09-03 -- so p500m_20b_0902's
     00:03 row disagreed with the pod's copy in the `commit` field alone and read as a
     provenance conflict. Identical defect to de-35's `%h` in harness.merge_reverted_content:
     an identity whose text depends on repository size is not an identity. Readers

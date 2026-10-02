@@ -1397,7 +1397,7 @@ def _gpu_check(cfg, B, T, cu):
     # train.py's `from model import` block re-exports 14 names -- flash_attn_varlen_func is not one of them.
     # So this line raised AttributeError and _gpu_check NEVER RAN, taking all three asserts
     # below with it (2026-09-04, found while running this before the head-hybrid edit; the
-    # symbol has never been on train, at 28ae5917 which added this or at any commit since).
+    # symbol has never been on train, at fef4afd9 which added this or at any commit since).
     # GatedMLA.forward resolves it as a model-module global, so model is the only binding that
     # changes what the mixer calls; patching train would not have counted anything either.
     real = _model.flash_attn_varlen_func

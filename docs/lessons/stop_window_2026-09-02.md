@@ -25,9 +25,9 @@ In the window: torch.profiler over 3 steps at the live shape; A/B of 40 steps ea
 
 ## Code that merges, in order, each behind `test_arch_compat`
 
-de-13 cursor (the first resume is this window; the second re-reads without it) → de-23 train half → de-20 → d57273f (domain_loss reads the checkpoint's mix) → e1-23 required flags → e1-22 dispatch and continuation prompts → e1-16 → tilerl-14/15 → b0-8 model split → b0-14 (step line logs every optimizer group's lr; the embedding group runs at 0.1 while the line prints Muon's 1e-2) → de-31 (run-end save passes step; today ckpt_p200m_4b_0902.pt claims 0.87B unread tokens and only .ep1 is a valid resume target). Then `prove_resume`, `harness check` 0 FAIL, `pod_push --all`, relaunch with `--resume ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt` through `supervise_run.sh`, first 50 steps read against the pre-stop loss.
+de-13 cursor (the first resume is this window; the second re-reads without it) → de-23 train half → de-20 → 9b33aed (domain_loss reads the checkpoint's mix) → e1-23 required flags → e1-22 dispatch and continuation prompts → e1-16 → tilerl-14/15 → b0-8 model split → b0-14 (step line logs every optimizer group's lr; the embedding group runs at 0.1 while the line prints Muon's 1e-2) → de-31 (run-end save passes step; today ckpt_p200m_4b_0902.pt claims 0.87B unread tokens and only .ep1 is a valid resume target). Then `prove_resume`, `harness check` 0 FAIL, `pod_push --all`, relaunch with `--resume ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt` through `supervise_run.sh`, first 50 steps read against the pre-stop loss.
 
-Excluded: de-2 (changes data), 44-12 (startup path, run end), any corpus change. `eval/score_matrix.py:765` still defaults `--mix` to the ladder mix (44's challenge on d57273f, 09:52Z): correct as a fact, deferred to de-26 because the file is in the frozen set and `cache_guard` turns the defect into a refusal, not a wrong number.
+Excluded: de-2 (changes data), 44-12 (startup path, run end), any corpus change. `eval/score_matrix.py:765` still defaults `--mix` to the ladder mix (44's challenge on 9b33aed, 09:52Z): correct as a fact, deferred to de-26 because the file is in the frozen set and `cache_guard` turns the defect into a refusal, not a wrong number.
 
 ## Token budget (user, 09:52Z: model unchanged, mix unchanged, fewer tokens)
 
@@ -35,7 +35,7 @@ Candidate: `total_tokens` 19,999,997,952 → 9,999,998,976 in `data/mix_500m.jso
 
 ## Decision (user, 10:06Z): 200M first, then 300M; the 500M is not resumed
 
-The 500M stops at step 3000 and stays pinned as `ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt`; the resume line above is void. The token-budget section above is superseded by this one. Composition unchanged: `data/mix_200m_4b.json` and `data/mix_300m_6b.json` carry the 500M weights at 4B and 6B (`write_mix_500m.py --total`, generated on the pod, 863143b).
+The 500M stops at step 3000 and stays pinned as `ckpt_p500m_20b_0902.milestone_stopwindow1_step3000.pt`; the resume line above is void. The token-budget section above is superseded by this one. Composition unchanged: `data/mix_200m_4b.json` and `data/mix_300m_6b.json` carry the 500M weights at 4B and 6B (`write_mix_500m.py --total`, generated on the pod, 9e9d42a).
 
 | run | config | steps | measured or estimated tok/s/gpu | wall |
 |---|---|---|---|---|
@@ -53,7 +53,7 @@ Sprint split: tilerl profiles (3-step trace, compile on/off, batch 32/64, fla ch
 
 ## Card split (user, 12:35Z): cards 4-7 belong to the user, aupai works on 0-3, performance first
 
-p200m_4b_0902 was stopped by fb at 12:35:57Z with SIGTERM to the torchrun leader (verified cmdline); `ckpt_p200m_4b_0902.pt.interrupt.step832` (959,435,257 bytes) is the resume point, later on four cards as `--batch 16 --accum 4` (tokens/step unchanged). The supervisor had already been removed at 12:29Z so that run_ddp's end-of-run scoring, which used the ladder default `--mix`, could not trigger a spurious resume; 3415e9e now reads the mix from the checkpoint. Cards 4, 5, 6, 7 are the user's until further notice: no aupai process touches them. On 0-3, one job at a time, announced to fb first, in this order: de's 3-step trace at b16a2 (busy vs idle, per-class measured vs roofline) → 300M A/B (`--grad_ckpt` b16a2 vs `--no-grad_ckpt` b8a4) → kernel and computation A/Bs (tilerl: kernels, b0: model-level), each 20 steps with loss parity ≤ 1e-3 per step. The user allows replacing or hand-writing kernels and changing the computation.
+p200m_4b_0902 was stopped by fb at 12:35:57Z with SIGTERM to the torchrun leader (verified cmdline); `ckpt_p200m_4b_0902.pt.interrupt.step832` (959,435,257 bytes) is the resume point, later on four cards as `--batch 16 --accum 4` (tokens/step unchanged). The supervisor had already been removed at 12:29Z so that run_ddp's end-of-run scoring, which used the ladder default `--mix`, could not trigger a spurious resume; 8a6f749 now reads the mix from the checkpoint. Cards 4, 5, 6, 7 are the user's until further notice: no aupai process touches them. On 0-3, one job at a time, announced to fb first, in this order: de's 3-step trace at b16a2 (busy vs idle, per-class measured vs roofline) → 300M A/B (`--grad_ckpt` b16a2 vs `--no-grad_ckpt` b8a4) → kernel and computation A/Bs (tilerl: kernels, b0: model-level), each 20 steps with loss parity ≤ 1e-3 per step. The user allows replacing or hand-writing kernels and changing the computation.
 
 ## Stop window open for engineering (user, 12:57Z): idle owners take the train-path items and the surveys with demand
 
@@ -80,7 +80,7 @@ performance sprint's numbers comparable:
 
 ## No pod push while a card job runs (13:34Z)
 
-44 pushed a9c5952 while arm 1 of de's 300M A/B was on cards 0-3 under stamp 7660c00. The
+44 pushed e045128 while arm 1 of de's 300M A/B was on cards 0-3 under stamp 5ad7c7f. The
 diff (AGENTS.md, the manifest, facts/efficiency.json, harness.py, trace_classes.py) lies
 outside the profiler's import path, so the A/B stands, and its report carries each arm's
 stamp. The rule that the launch-window freeze already implied: while any job holds a card,

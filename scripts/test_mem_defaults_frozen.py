@@ -5,7 +5,7 @@ WHY THIS EXISTS, AND WHY NOW. b0 is adding --mem_sel_lr and --mem_query_norm {no
 acceptance criterion as reviewer (4c, 2026-09-05) is that the DEFAULTS reproduce today's arm
 bit-for-bit. That is a claim about the tree as it stands BEFORE the flags land, and after they
 land there is nothing left to compare against -- "today's arm" is then whatever the new default
-branch computes. So the reference has to be taken now, on origin/main f6611742, or the criterion
+branch computes. So the reference has to be taken now, on origin/main 4a1f921e, or the criterion
 is unfalsifiable by the time it is testable.
 
 WHAT IS PINNED, AND WHY NOT A GOLDEN VECTOR. Not the output values: this runs on CPU here and on

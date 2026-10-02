@@ -69,7 +69,7 @@ ids=[int(x) for x in open('$IDS') if x.strip()]
 print(f'{len(ids)} {ids_sha(ids)}')") || { echo "REFUSING: could not digest $IDS"; exit 2; }
 [ "$got" = "$WANT_N $WANT_SHA" ] || {
   echo "REFUSING: $IDS is $got, expected $WANT_N $WANT_SHA"
-  echo "  The clean subset is defined by 70718736; a different digest means a different population."
+  echo "  The clean subset is defined by a7f8eb5b; a different digest means a different population."
   exit 2; }
 echo "population verified: $got"
 

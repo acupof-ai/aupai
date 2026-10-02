@@ -487,7 +487,7 @@ def build(tokenizer_path, ckpt_path, mix_path, cache_path, per_region, seed, out
     # beside a live claim this raises. It is called HERE and not left to assert_caches_fresh
     # because this file never goes through train._domain_seqs -- it opens the cache by path,
     # which is the population the guard's harness check did not cover when I landed it
-    # (38af3d47). Freshness is deliberately NOT asserted: the item file pins the cache's
+    # (9765c108). Freshness is deliberately NOT asserted: the item file pins the cache's
     # srcfp and vocab_id, and a rebuild would change those rather than silently agree.
     from cache_guard import assert_not_co_resident
 

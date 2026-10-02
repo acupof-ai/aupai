@@ -12,7 +12,7 @@ test:
     on name alone, so a re-run of a name silently replaced the earlier run's row).
   - exp.py's own rows() folded by POSITION until e1-18, with a docstring asserting the divergent
     shape was impossible in a repo whose harness.py recorded it happening.
-  - launch_gate._recorded_cmd folded by position until 53c62229, and it BLOCKED a launch:
+  - launch_gate._recorded_cmd folded by position until ead81bb8, and it BLOCKED a launch:
     e1_c11_doccu_rescore closed `ok` at 05:41, a pod pull re-appended its `running` row after the
     close, and the gate then saw two runs claiming running and had no command to check.
 
@@ -219,7 +219,7 @@ def main():
     cmd, src = got["gate"]
     assert cmd == "python train.py --name beta", (
         f"launch_gate named {cmd!r} as the running command. Position-based folding sees TWO runs "
-        f"running and returns None -- the 53c62229 shape, which blocked b0's launch")
+        f"running and returns None -- the ead81bb8 shape, which blocked b0's launch")
     print("  case 1: close beats a later start in all three readers; the gate names beta")
 
     # CASE 2: THE NEGATIVE CONTROL. exp.py hidden, so both inline fallbacks run. A fallback that

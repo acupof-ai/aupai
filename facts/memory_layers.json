@@ -37,7 +37,7 @@
       "id": "mem.m1_key_usage_collapse",
       "value": "M1's selection distribution concentrated monotonically over 1000 steps: pool_touched_frac per 100-step window 0.306 (step 100) -> 0.214 -> 0.137 -> 0.113 -> 0.099 -> 0.095 -> 0.094 -> 0.094 -> 0.092 -> 0.0945 (step 1000), key_gini 0.781 -> 0.9192, topk_entropy 2.371 -> 0.927 against a ln(32) = 3.466 maximum. M3 (1,428,025 values) was steeper: 0.070 by step 600. Readout 4's stop rule (below 0.20 at step 1000) fired.",
       "measured": "2026-09-05",
-      "source": "runs/memory_diag.jsonl (25 rows, rescued from the pod at 8edeb1a0); memory_diag.stop_rules re-derives the firing from the repo",
+      "source": "runs/memory_diag.jsonl (25 rows, rescued from the pod at ad94060f); memory_diag.stop_rules re-derives the firing from the repo",
       "config": {
         "windows": "the 100-step rows are uniform from step 100 onward; the step-100 row covers steps 31-100 (70 steps) and the 10/20/30 rows cover 10 each, because diagnostics(reset=True) clears the counters -- so the early rows are NOT comparable to the later ones and are excluded from the trend above except as the step-100 anchor",
         "arms": "m1 13 rows (steps 10-1000), m2 3 rows (10-30), m3 9 rows (10-600)",

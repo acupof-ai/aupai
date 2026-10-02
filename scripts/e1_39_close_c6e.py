@@ -42,7 +42,7 @@ ROW = {
     "reading": "a matching artifact transcribes with from_artifact=true; a rewritten checkpoint or "
                "a header-less file refuses with a named reason; the transcription rescores from the "
                "rows with the script's own scorer rather than trusting the row's ok= field",
-    "result": "DELIVERED at 29b31367. Identity is the checkpoint FILE's sha256, not the cfg's "
+    "result": "DELIVERED at c370987f. Identity is the checkpoint FILE's sha256, not the cfg's "
               "vocab_id -- vocab_id is None on exactly the checkpoints that need it "
               "(ckpt_b0_sd_equalcompute.pt is one), so a vocab_id identity compares None to None "
               "and matches on the whole population. The filename rule moved into "
@@ -63,7 +63,7 @@ ROW = {
               "the path moved, on a file whose behaviour was identical. The equalcompute number "
               "stays UNTRANSCRIBED per ruling (2) -- the real artifact is still header-less, so it "
               "takes the refuse branch, verified on the pod.",
-    "evidence": "29b31367 (eval/l1_fewshot.py, eval/score_matrix.py, eval/l1_2x2_diagnose.py, "
+    "evidence": "c370987f (eval/l1_fewshot.py, eval/score_matrix.py, eval/l1_2x2_diagnose.py, "
                 "eval/test_l1_fewshot_2x2.py, eval/README.md); "
                 "runs/audit_0904/eval_heldout.md (E18, E21, E22)",
     "note": "RULING (4) CORRECTION, for de's disk inventory: the .REFUSED sidecars are NOT "
@@ -71,7 +71,7 @@ ROW = {
             "data/eval/, never in runs/ -- `find /work/aupai/runs -name '*.REFUSED*'` returns 0 "
             "and says nothing about whether any were written. Six exist on the pod, all under "
             "/work/aupai/data/eval/ (2026-09-02 06:17 to 2026-09-04 01:13). There are 6 for 7 "
-            "refusal rows because the sidecar is named after the artifact: before 5a989647 put the "
+            "refusal rows because the sidecar is named after the artifact: before 7b7ffbea put the "
             "checkpoint into the artifact name, six refusals on six checkpoints shared one "
             "sidecar. Recorded in eval/README.md and the metric's docstring.",
 }

@@ -50,7 +50,7 @@ ISSUE_PR = {
     532: 543,
     533: 543,
     534: 543,
-    535: 543,  # merged with #543 (9f88e9fb)
+    535: 543,  # merged with #543 (e564fa4e)
     536: None,
     537: None,  # ae: ledger main-ref / JSONL diagnostics
     538: None,  # ae: sweep fixture (os.getpid pollution)
@@ -356,8 +356,8 @@ def head_agrees_with_reviews(pr, root=ROOT):
     push while the run is being set up.
     """
     # FETCH FIRST. A stale local origin/main makes this gate report a FALSE refusal --
-    # measured on digest 2026-09-18: its clone was at 856b815d while main had moved to
-    # a57ca04f, so the gate named "no review row from ['de']" when de's row was on main
+    # measured on digest 2026-09-18: its clone was at 109e00fc while main had moved to
+    # 9831464b, so the gate named "no review row from ['de']" when de's row was on main
     # already. A refusal is the safe direction, but it is still a wrong answer, and it
     # costs a person a round trip to disprove. The tip read below is a live ls-remote, so
     # only the row source needs refreshing.

@@ -36,7 +36,7 @@ source: readout_30b_prereg.md (RL 门) + algorithms/README.md (RLVR 配方) + tr
 
 ## 3. RL 段:两条并行轨道
 
-用户 2026-09-02 16:05 裁定(docs/lessons/claude_code_rl.md Ruling,main 52ff763):RL 主线 = Claude Code 外壳 + tileRL 引擎/训练器 + 容器 + 测试奖励。数学 RLVR 是两条并行轨道之一,不是唯一。
+用户 2026-09-02 16:05 裁定(docs/lessons/claude_code_rl.md Ruling,main cda4879):RL 主线 = Claude Code 外壳 + tileRL 引擎/训练器 + 容器 + 测试奖励。数学 RLVR 是两条并行轨道之一,不是唯一。
 
 ### 3a. 数学 RLVR(GSPO,boxed 奖励)
 
