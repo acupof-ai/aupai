@@ -207,5 +207,93 @@
         "why": "the registered minimum detectable ACCURACY per program (0.4497/0.3755), two-proportion, two-sided alpha=0.05, power=0.80, n=500 per program, null variance at p1 for both arms. Stored per row so the number a reader compares against travels with the measurement. As a required LIFT over the prior lower bound that is 8.57pt and 8.15pt."
       }
     }
+  },
+  "eval_watch": {
+    "path": "runs/eval_watch.jsonl",
+    "written_by": "scripts/eval_watch.py (pod only, not tracked), append_ledger via harness_core, one row per HumanEval CPU score per checkpoint step every 2000 steps; a failed step writes status=fail and is re-scored on a later poll under a new ts",
+    "read_by": "scripts/metrics_feed.py for the AWB board and Lark card HumanEval curve (the 156-denominator pass@1); step2000+ backfill 2026-10-01",
+    "row_identity": [
+      "name",
+      "step",
+      "ts"
+    ],
+    "append_only": true,
+    "fields": {
+      "name": {
+        "type": "str",
+        "required": true,
+        "why": "training run name, e.g. v42_gate_1001r; row identity"
+      },
+      "step": {
+        "type": "int",
+        "required": true,
+        "why": "checkpoint step scored, multiple of --every 2000; row identity"
+      },
+      "ts": {
+        "type": "str",
+        "required": true,
+        "why": "score completion timestamp; row identity because a watcher relaunch re-scores step numbers"
+      },
+      "status": {
+        "type": "str",
+        "required": true,
+        "why": "ok or fail; done_steps only admits ok, and a fail is never a 0 score -- the w*.log is inspected"
+      },
+      "ckpt": {
+        "type": "str",
+        "required": true,
+        "why": "checkpoint file basename scored"
+      },
+      "n_dc": {
+        "type": "int",
+        "required": false,
+        "why": "decontaminated denominator, constant 156 = 164 HumanEval minus the 8 in runs/contam_r3_he_union.json#r3_humaneval_union; the acceptance invariant"
+      },
+      "pass_dc": {
+        "type": "int",
+        "required": false,
+        "why": "passes over the 156 decontaminated problems; the metric of record"
+      },
+      "pct_dc": {
+        "type": "float",
+        "required": false,
+        "why": "100*pass_dc/n_dc, the number the card plots"
+      },
+      "n_all": {
+        "type": "int",
+        "required": false,
+        "why": "denominator over all 164; secondary, includes contaminated problems"
+      },
+      "pass_all": {
+        "type": "int",
+        "required": false,
+        "why": "passes over all 164"
+      },
+      "pct_all": {
+        "type": "float",
+        "required": false,
+        "why": "100*pass_all/n_all"
+      },
+      "excluded_present": {
+        "type": "list",
+        "required": true,
+        "why": "the excluded problem ids actually observed in this run; must equal the 8-id union"
+      },
+      "secs": {
+        "type": "int",
+        "required": false,
+        "why": "wall seconds of the 4x40 CPU score"
+      },
+      "device": {
+        "type": "str",
+        "required": true,
+        "why": "cpu: the watcher never takes a GPU"
+      },
+      "runner": {
+        "type": "str",
+        "required": false,
+        "why": "the exact invocation producing the score"
+      }
+    }
   }
 }
