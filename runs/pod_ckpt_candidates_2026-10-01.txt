@@ -115,3 +115,4 @@
 #   2026-09-25_05:30 section C ckpt_v41_ced_0923.pt.step36000
 #   2026-09-25_06:01 section C ckpt_v41_ced_0923.pt.step36500
 #   2026-09-22_03:41 section C ckpt_v41_gate_0922.pt.interrupt.step8196
+# KEEP (claim de 2026-10-02): ckpt_v41_ced_0923.pt -- v41 CED gate base; user-confirmed retained 2026-10-01; source of its score_matrix row; host backup /data01/aupai_backup holds a copy

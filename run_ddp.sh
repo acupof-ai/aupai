@@ -134,7 +134,13 @@ if [ -z "${AUPAI_LAUNCHED_BY:-}" ] && [ "${ALLOW_DIRECT_RUN:-}" != "1" ]; then
 fi
 
 # PREC_FLAG=--bf16 runs the bf16-masters arm (train.py refuses --fp8 and --bf16 together)
-torchrun --nproc_per_node="${NGPU:-8}" --master_port="${PORT:-29500}" train.py "${PREC_FLAG:---fp8}" "$@"
+# Multi-node: NNODES/NODE_RANK/MASTER_ADDR, all defaulted so that unset they reproduce the
+# single-node invocation byte for byte. The 2026-10-02 world-16 resume (pod + the borrowed
+# h20b sibling, same /24, 4-rail RoCE) is the first user; tokens/step stays 786,432 by
+# halving accum, so the step schedule and optimizer math are unchanged.
+torchrun --nnodes="${NNODES:-1}" --node_rank="${NODE_RANK:-0}" \
+  --master_addr="${MASTER_ADDR:-127.0.0.1}" \
+  --nproc_per_node="${NGPU:-8}" --master_port="${PORT:-29500}" train.py "${PREC_FLAG:---fp8}" "$@"
 rc=$?
 # A training run without a score-matrix record is what the score_matrix_present
 # check catches; score here so the record exists by construction.
