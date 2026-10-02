@@ -12,8 +12,20 @@ RESUME="${1:?usage: v42_w16_node0.sh <interrupt-ckpt>}"
 export PREC_FLAG=--bf16
 export NGPU=8 NNODES=2 NODE_RANK=0 MASTER_ADDR=192.168.29.37 PORT=29500
 export NCCL_SOCKET_IFNAME=eth0
-MB=4
-ACC=3
+# RoCE over the four rails. The VM flattens PCI, so NCCL needs the vendor topology
+# (/var/run/nvidia-topologyd/virtualTopology.xml, copied from the host -- without it every
+# cross-node collective picked the dead mlx5_5 or found "no local path" and hung); mlx5_0 is
+# the mgmt NIC and mlx5_5 has no GID, so both are excluded; GID 3 is the RoCEv2 entry
+# (ib_write_bw cross-node at GID 3: 385 Gb/s).
+mkdir -p /var/run/nvidia-topologyd
+cp -n runs/virtualTopology.xml /var/run/nvidia-topologyd/ 2>/dev/null || true
+export NCCL_IB_HCA='^mlx5_0,mlx5_5'
+export NCCL_IB_GID_INDEX=3
+MB=2
+ACC=6
+# MB 2 (was 4): h20b is borrowed and its owner runs a resident sglang serving job at ~20 GiB
+# per card, leaving ~75 GiB; MB4 peaks ~82 GiB and OOMed rank GPU6 there. 2*6*16*4096 is the
+# same 786,432 tokens/step, so the schedule is untouched; only per-step kernel shape changes.
 exec python3 scripts/harness.py launch v42_gate_1001r \
   --training --class incremental --gate-timeout 3000 \
   --hypothesis 'the world-16 resume preserves the world-8 trajectory (tokens/step identical at 786432 via accum 6->3) and halves wall clock; the falsifier is s/step >= 9 (interconnect-bound, revert to world-8) or val rising over any 3 consecutive marks' \
