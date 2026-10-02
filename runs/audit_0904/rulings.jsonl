@@ -15,8 +15,8 @@
 {"id": "UF-5", "ruling": "accepted", "by": "fb", "note": "accepted S3"}
 {"id": "UF-6", "ruling": "accepted", "by": "fb", "note": "accepted S3"}
 {"id": "DL-11", "ruling": "accepted", "by": "fb", "note": "accepted S1; one transport for every runs/*.jsonl, union by event, second on queue"}
-{"id": "DL-4", "ruling": "accepted", "by": "fb", "note": "accepted S1; fix already on main via merge (c8f9f25f), recorded as freeze breach"}
-{"id": "DL-5", "ruling": "accepted", "by": "fb", "note": "accepted S1; inverted on main at b98cd784"}
+{"id": "DL-4", "ruling": "accepted", "by": "fb", "note": "accepted S1; fix already on main via merge (0168faf7), recorded as freeze breach"}
+{"id": "DL-5", "ruling": "accepted", "by": "fb", "note": "accepted S1; inverted on main at 2dc16815"}
 {"id": "MT-1", "ruling": "accepted", "by": "fb", "note": "accepted S1; superseded-not-wrong: correct at 2026-08-30, hardcoded 256 removed 48ae458 2026-09-02; post-audit tilerl retracts + refits against current line, citing commit"}
 {"id": "PR-1", "ruling": "accepted", "by": "fb", "note": "accepted S2 after restatement (label conflation; card 7 ownership put to the user)"}
 {"id": "PR-3", "ruling": "accepted", "by": "fb", "note": "accepted S2 after restatement"}
