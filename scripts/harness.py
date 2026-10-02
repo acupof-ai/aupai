@@ -4607,7 +4607,20 @@ def check_main_advances_by_ancestry(root):
                  # controlled ref write, which is why the residual risk is real and why the
                  # form above is stated as narrowly as it is.
                  ("3785d78c25a7033dcf6adee663ce98c81156b223",
-                  "99cdb7e03158b2d73dcbdf720bf3724ae672ab1a")}
+                  "99cdb7e03158b2d73dcbdf720bf3724ae672ab1a"),
+                 # 2026-10-02: user-ordered HISTORY REWRITE, not a reset -- every branch was
+                 # passed through `git filter-branch --msg-filter` stripping Claude-Session
+                 # trailer lines from commit messages, then force-pushed. The pair is old main
+                 # tip -> rewritten main tip. NOTHING was discarded in content terms:
+                 # `git diff 7a2929a0 0e455372` is empty (trees byte-identical along the whole
+                 # first-parent sequence, verified commit-by-commit at rewrite time), authors
+                 # and dates unchanged, only messages differ. The "added lines lost" listing
+                 # this check prints for the pair is the ancestry heuristic misreading a
+                 # message-only rewrite: the old commits are gone as OBJECTS, their content is
+                 # all present under new shas. Old-sha citations in facts/ were remapped in the
+                 # same commit that records this pair.
+                 ("7a2929a0517f69ad8c4a1fded7a5bb101b99499c",
+                  "0e45537256b6ea0909ffb82ea651fcfe268d4326")}
     jumps = []
     unsigned = []
     for ln in lines:
