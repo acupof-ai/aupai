@@ -14,8 +14,21 @@ from transformers import PretrainedConfig
 class AupaiV42Config(PretrainedConfig):
     model_type = "aupai_v42"
 
-    def __init__(self, v42_cfg=None, vocab_id=None, train_step=None, **kw):
+    def __init__(
+        self,
+        v42_cfg=None,
+        vocab_id=None,
+        train_step=None,
+        param_dtype_default=None,
+        param_dtype_exceptions=None,
+        **kw,
+    ):
         self.v42_cfg = dict(v42_cfg or {})
+        # The dtypes the checkpoint actually held, per tensor: the majority plus the exceptions.
+        # The wrapper restores them after loading, because transformers otherwise puts every
+        # tensor in the model's default dtype.
+        self.param_dtype_default = param_dtype_default
+        self.param_dtype_exceptions = dict(param_dtype_exceptions or {})
         self.vocab_id = vocab_id
         self.train_step = train_step
         c = self.v42_cfg
