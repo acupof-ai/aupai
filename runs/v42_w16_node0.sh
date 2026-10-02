@@ -21,11 +21,11 @@ mkdir -p /var/run/nvidia-topologyd
 cp -n runs/virtualTopology.xml /var/run/nvidia-topologyd/ 2>/dev/null || true
 export NCCL_IB_HCA='^mlx5_0,mlx5_5'
 export NCCL_IB_GID_INDEX=3
-MB=2
-ACC=6
-# MB 2 (was 4): h20b is borrowed and its owner runs a resident sglang serving job at ~20 GiB
-# per card, leaving ~75 GiB; MB4 peaks ~82 GiB and OOMed rank GPU6 there. 2*6*16*4096 is the
-# same 786,432 tokens/step, so the schedule is untouched; only per-step kernel shape changes.
+MB=4
+ACC=3
+# Back to MB 4 (user order 2026-10-02): the owner sglang job that held ~20 GiB/card on h20b
+# was stopped with the user authorization, so the full 96 GiB is the training cards again.
+# 4*3*16*4096 = the same 786,432 tokens/step either way.
 exec python3 scripts/harness.py launch v42_gate_1001r \
   --training --class incremental --gate-timeout 3000 \
   --hypothesis 'the world-16 resume preserves the world-8 trajectory (tokens/step identical at 786432 via accum 6->3) and halves wall clock; the falsifier is s/step >= 9 (interconnect-bound, revert to world-8) or val rising over any 3 consecutive marks' \
