@@ -21,7 +21,7 @@
    "anneal_rows": 411558,
    "total_rows": 3718991,
    "epochs_used": 0.4216,
-   "epochs_pool_source": "mmap of /data00/tokens_code_ultra_l2_dc.pt at write time (packed 8,826,264 seq-rows minus 5,000 val)"
+   "epochs_pool_source": "mmap of the domain token cache tokens_code_ultra_l2_dc.pt at write time (packed 8,826,264 seq-rows minus 5,000 val)"
   },
   "code_ultra_l3_noexec_dc": {
    "weight": 0.2941348,
@@ -35,7 +35,7 @@
    "anneal_rows": 303808,
    "total_rows": 2745326,
    "epochs_used": 0.4216,
-   "epochs_pool_source": "mmap of /data00/tokens_code_ultra_l3_noexec_dc.pt at write time (packed 6,516,781 seq-rows minus 5,000 val)"
+   "epochs_pool_source": "mmap of the domain token cache tokens_code_ultra_l3_noexec_dc.pt at write time (packed 6,516,781 seq-rows minus 5,000 val)"
   },
   "code_py_starcoder_dc": {
    "weight": 0.0874118,
@@ -49,21 +49,21 @@
    "anneal_rows": 90286,
    "total_rows": 815863,
    "epochs_used": 0.4216,
-   "epochs_pool_source": "mmap of /data00/tokens_code_py_starcoder_dc.pt at write time (packed 1,940,189 seq-rows minus 5,000 val)"
+   "epochs_pool_source": "mmap of the domain token cache tokens_code_py_starcoder_dc.pt at write time (packed 1,940,189 seq-rows minus 5,000 val)"
   },
-  "math_owm_stage2_dc": {
+  "math_owm_stage2_g4_dc": {
    "weight": 0.1,
    "anneal": 0.05326,
    "epochs": 1,
-   "fingerprint": "6201b92bf4ca4e1c",
-   "pool_rows_measured": 2305276,
-   "cache_seq_rows": 2310276,
+   "fingerprint": "ab6f052d443e4b74",
+   "pool_rows_measured": 2305129,
+   "cache_seq_rows": 2310129,
    "val_rows_held_out": 5000,
    "main_rows": 830067,
    "anneal_rows": 78016,
    "total_rows": 908083,
    "epochs_used": 0.3939,
-   "epochs_pool_source": "mmap of /data00/tokens_math_owm_stage2_dc.pt at write time (packed 2,310,276 seq-rows minus 5,000 val)"
+   "epochs_pool_source": "mmap of the domain token cache tokens_math_owm_stage2_g4_dc.pt at write time (packed 2,310,129 seq-rows minus 5,000 val)"
   },
   "math_cot2_dc": {
    "weight": 0.0,
@@ -77,7 +77,7 @@
    "anneal_rows": 288190,
    "total_rows": 288190,
    "epochs_used": 1.0,
-   "epochs_pool_source": "mmap of /data00/tokens_math_cot2_dc.pt at write time (packed 293,190 seq-rows minus 5,000 val)"
+   "epochs_pool_source": "mmap of the domain token cache tokens_math_cot2_dc.pt at write time (packed 293,190 seq-rows minus 5,000 val)"
   },
   "en_c4_stage2_dc": {
    "weight": 0.05,
@@ -91,7 +91,7 @@
    "anneal_rows": 73241,
    "total_rows": 488274,
    "epochs_used": 0.3471,
-   "epochs_pool_source": "mmap of /data00/tokens_en_c4_stage2_dc.pt at write time (packed 1,411,698 seq-rows minus 5,000 val)"
+   "epochs_pool_source": "mmap of the domain token cache tokens_en_c4_stage2_dc.pt at write time (packed 1,411,698 seq-rows minus 5,000 val)"
   },
   "zh_web_dc": {
    "weight": 0.07,
@@ -105,21 +105,21 @@
    "anneal_rows": 175779,
    "total_rows": 756826,
    "epochs_used": 0.6376,
-   "epochs_pool_source": "mmap of /data00/tokens_zh_web_dc.pt at write time (packed 1,191,899 seq-rows minus 5,000 val)"
+   "epochs_pool_source": "mmap of the domain token cache tokens_zh_web_dc.pt at write time (packed 1,191,899 seq-rows minus 5,000 val)"
   },
-  "cot_dc": {
+  "cot_g4_dc": {
    "weight": 0.0,
    "anneal": 0.03,
    "epochs": 1,
-   "fingerprint": "22c9a8274155111e",
-   "pool_rows_measured": 92745,
-   "cache_seq_rows": 97626,
+   "fingerprint": "71f1d18ef5abab35",
+   "pool_rows_measured": 92744,
+   "cache_seq_rows": 97625,
    "val_rows_held_out": 4881,
    "main_rows": 0,
    "anneal_rows": 43944,
    "total_rows": 43944,
    "epochs_used": 0.4738,
-   "epochs_pool_source": "mmap of /data00/tokens_cot_dc.pt at write time (packed 97,626 seq-rows minus 4,881 val)"
+   "epochs_pool_source": "mmap of the domain token cache tokens_cot_g4_dc.pt at write time (packed 97,625 seq-rows minus 4,881 val)"
   }
  }
 }
