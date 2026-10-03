@@ -23,11 +23,13 @@ Composition (controller 2026-10-03):
 Domain mapping / supply-driven choices:
   code   = the three Ultra/starcoder pools, split in trainable-pool proportion (each lands
            at ~0.42 epochs, no repeat).
-  math   = math_owm_stage2_dc + math_cot2_dc. cot2's whole trainable pool (288,190 rows) is
-           the most a no-repeat run can draw; it is placed in the anneal and owm fills the
-           rest of the 25% math share. math sub-source decontamination/supply is the
-           math-supply audit's input; if it returns a smaller usable cot2 pool, re-run this.
-  en/zh/cot are single-source (en_c4_stage2_dc / zh_web_dc / cot_dc).
+  math   = math_owm_stage2_g4_dc + math_cot2_dc. The g4 owm domain is the v41 owm pool
+           re-gated against GSM8K/MATH-500 as well (controller ruling v42-40b-decisions,
+           2026-10-04); the v41 gate keeps reading the old frozen domain, so g4 is a separate
+           name. cot2's whole trainable pool (288,190 rows) is the most a no-repeat run can
+           draw; it sits in the anneal and owm fills the rest of the 25% math share (owm
+           backfill accepted, no pure-CoT requirement).
+  en/zh single-source (en_c4_stage2_dc / zh_web_dc); cot is cot_g4_dc (cot_dc four-way re-gated).
 
 Every domain is 13-gram decontaminated for the gate benchmarks (suffix _dc) and every cache
 carries the vocab/srcfp/seed triple; `fingerprint` records each cache's srcfp for the reader.
@@ -55,10 +57,11 @@ CODE_DOMAINS = (
     "code_ultra_l3_noexec_dc",
     "code_py_starcoder_dc",
 )
-MATH_DOMAINS = ("math_owm_stage2_dc", "math_cot2_dc")
+MATH_DOMAINS = ("math_owm_stage2_g4_dc", "math_cot2_dc")
+OWM_DOMAIN = MATH_DOMAINS[0]
 EN_DOMAIN = "en_c4_stage2_dc"
 ZH_DOMAIN = "zh_web_dc"
-COT_DOMAIN = "cot_dc"
+COT_DOMAIN = "cot_g4_dc"
 DOMAINS = (*CODE_DOMAINS, *MATH_DOMAINS, EN_DOMAIN, ZH_DOMAIN, COT_DOMAIN)
 
 # Category shares within each phase.
@@ -108,22 +111,62 @@ def measure_pools():
     return pools, details
 
 
-def pools_from_mix(path):
-    """Reuse pools/triple-stamps recorded by an earlier write, so the mix regenerates on a
-    laptop with zero pod IO while a gate holds the cards. Only valid for FROZEN domains: the
-    srcfp per domain is carried through and train's start gate re-checks it against the cache.
+# Domains carried verbatim from the prior (pre-g4) mix under the same name; the two g4
+# refiltered domains are NOT here and must come from a measured override (refilter drops 132
+# docs, so their packed pools must be read from the rebuilt caches, not carried over).
+REUSED_FROM_PRIOR = (
+    "code_ultra_l2_dc",
+    "code_ultra_l3_noexec_dc",
+    "code_py_starcoder_dc",
+    "math_cot2_dc",
+    "en_c4_stage2_dc",
+    "zh_web_dc",
+)
+# Prior mix name -> g4 refiltered name, for a clear error if the override is missing.
+G4_DOMAINS = {
+    "math_owm_stage2_g4_dc": "math_owm_stage2_dc",
+    "cot_g4_dc": "cot_dc",
+}
+
+
+def pools_from_mix(path, override_path):
+    """Reuse the six unchanged domains' pools/triple-stamps recorded by an earlier write
+    (frozen domains), and take the two g4-refiltered domains from a measured override JSON.
+
+    override JSON: {<g4 domain>: {"pool_rows_measured": int, "cache_seq_rows": int,
+    "val_rows_held_out": int, "srcfp": str}}. The g4 pools are rebuilt caches; never infer
+    them from the pre-refilter numbers.
     """
     with open(path, encoding="utf-8") as fh:
-        old = json.load(fh)
+        old = json.load(fh)["domains"]
+    if override_path:
+        with open(override_path, encoding="utf-8") as fh:
+            override = json.load(fh)
+    else:
+        override = {}
     pools, details = {}, {}
-    for name in DOMAINS:
-        d = old["domains"][name]
+    for name in REUSED_FROM_PRIOR:
+        d = old[name]
         pools[name] = d["pool_rows_measured"]
         details[name] = {
             "cache_seq_rows": d["cache_seq_rows"],
             "val_rows_held_out": d["val_rows_held_out"],
             "pool_rows_measured": d["pool_rows_measured"],
             "srcfp": d["fingerprint"],
+        }
+    for name in G4_DOMAINS:
+        if name not in override:
+            raise SystemExit(
+                f"missing measured pool override for refiltered domain {name}; rebuild its "
+                "cache and supply --g4-pools with pool_rows_measured/cache_seq_rows/"
+                "val_rows_held_out/srcfp")
+        o = override[name]
+        pools[name] = int(o["pool_rows_measured"])
+        details[name] = {
+            "cache_seq_rows": int(o["cache_seq_rows"]),
+            "val_rows_held_out": int(o["val_rows_held_out"]),
+            "pool_rows_measured": int(o["pool_rows_measured"]),
+            "srcfp": o["srcfp"],
         }
     return pools, details
 
@@ -148,7 +191,7 @@ def build(pools, details):
     for c in CODE_DOMAINS:
         share[c]["m"] = MAIN_CAT["code"] * code_frac[c]
         share[c]["a"] = ANNEAL_CAT["code"] * code_frac[c]
-    share["math_owm_stage2_dc"]["m"] = MAIN_CAT["math"]
+    share[OWM_DOMAIN]["m"] = MAIN_CAT["math"]
     share[EN_DOMAIN]["m"] = MAIN_CAT["en"]
     share[ZH_DOMAIN]["m"] = MAIN_CAT["zh"]
     share[EN_DOMAIN]["a"] = ANNEAL_CAT["en"]
@@ -161,7 +204,7 @@ def build(pools, details):
         mrows[d] = int(MAIN_BUDGET * share[d]["m"])
         arows[d] = int(ANN_BUDGET * share[d]["a"])
     arows["math_cot2_dc"] = cot2_rows
-    arows["math_owm_stage2_dc"] = owm_ann_rows
+    arows[OWM_DOMAIN] = owm_ann_rows
 
     domains = {}
     for name in DOMAINS:
@@ -241,8 +284,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check")
     ap.add_argument("--pools-from",
-                    help="reuse measured pools/srcfp from an earlier mix JSON (frozen domains; "
-                         "no pod mmap). Default mmaps the caches.")
+                    help="reuse the six unchanged domains' measured pools/srcfp from an "
+                         "earlier mix JSON (frozen domains; no pod mmap). Default mmaps all caches.")
+    ap.add_argument("--g4-pools",
+                    help="with --pools-from, JSON of measured pools for the two g4 "
+                         "refiltered domains (required).")
     args = ap.parse_args()
     if args.check:
         m = validate(args.check)
@@ -250,7 +296,7 @@ def main():
               f"{m['anneal_rows_drawn']:,} rows, every draw reproduced by build_mix and within pool")
         return 0
     if args.pools_from:
-        pools, details = pools_from_mix(args.pools_from)
+        pools, details = pools_from_mix(args.pools_from, args.g4_pools)
     else:
         pools, details = measure_pools()
     mix = build(pools, details)
