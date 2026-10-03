@@ -4711,8 +4711,17 @@ def main():
                 if step > 0 and step % args.save_every == 0 and is_main:
                     save_checkpoint(ckpt_path + f".step{step}", good_state, Cfg, VOCAB_ID, good_opt, step)
                     # keep the newest 3; resume only needs the latest
+                    # Rotate only periodic step ckpts whose tail is all digits. A file
+                    # pinned by hand with a suffix matches ".step*" too: ".step10000.keep"
+                    # made int() raise and took the run down right after step 18000
+                    # (2026-10-03). The supported pin is a milestone hardlink, but a
+                    # non-rotatable name is excluded and left on disk, never parsed.
+                    step_ckpts = [
+                        p for p in glob.glob(ckpt_path + ".step*")
+                        if p.rsplit(".step", 1)[1].isdigit()
+                    ]
                     stale = sorted(
-                        glob.glob(ckpt_path + ".step*"),
+                        step_ckpts,
                         key=lambda p: int(p.rsplit(".step", 1)[1]),
                     )[:-3]
                     # ...but never a step something has pinned. A milestone checkpoint is
