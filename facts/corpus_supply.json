@@ -2365,8 +2365,8 @@
   },
   {
    "id": "cs.swallow_math_built_1005",
-   "value": 6427412,
-   "unit": "docs kept by datagen/build_corpus.py --filters light (length/bytes/holdout) + exact dedup over tokyotech-llm/swallow-math (2 jsonl shards, 12.7GB, ~2.3B advertised tokens, English, text column, FineMath-4+ LLM rewrite), BEFORE 13-gram gate decontam and BEFORE token packing; in data/corpus/swallow_math (124 shards, fingerprint 1ce7c6adb8b1643b, stamp near_dedup=false). Exact kept_tokens in the stamp is a CHARS_PER_TOKEN proxy (~8.15B chars/4); the exact gate-vocab token count is set after pretokenize.",
+   "value": 3611942912,
+   "unit": "trainable tokens of swallow_math_dc in gate vocab f1f860970d15d623: 886,822 packed 4097-rows (3,633,309,734 pool) minus 5000 val rows = 3,611,942,912 trainable tokens, from 6,360,518 docs after light+exact build, LLM placeholder postpass (-0.976%) and 13-gram 4-gate decontam (-0.0654%). Cache /data00/tokens_swallow_math_dc.pt; domain fp aac054814908427e.",
    "measured": "2026-10-05",
    "status": "measured",
    "config": {
@@ -2385,9 +2385,62 @@
      "largest_cluster": 597
     },
     "placeholder_template_findings": "the largest near-dup cluster (597 of the 100k sample) is NOT math content: LLM rewriter boilerplate refusals ('There is no specific math problem to solve...', 'The provided text does not contain a math problem...'). A full-domain regex over the first 400 chars (there is/appears to be no [specific] math problem / does not contain a ... math problem / if you could provide a ... math problem) counts 124,741 placeholder docs = 1.941% of 6,427,412, uniformly spread (~1,070-1,100 per shard). These are zero-math-content rewrite failures, not true near-duplicates; a cheap rule removes them -- proposed, pending de/mix approval, not yet applied.",
-    "next_steps": "pending: optional placeholder-template rule (1.94%) -> scripts/filter_gate_domains.py --extra_math 4-gate decontam to swallow_math_dc -> pretokenize_domains pack; none done yet"
+    "next_steps": "DONE: placeholder filter + 4-gate decontam + pack all complete and stamps verified",
+    "placeholder_filter": {
+     "script": "scripts/filter_llm_placeholder.py (independent reproducible postpass on built corpus, applied before decontam)",
+     "rule": "6 conservative regex arms matching explicit LLM-rewriter 'no specific math problem/question' declarations, anchored in first 250 chars; rule_fp sha256(HEAD+patterns)=c5d0d7e46e590504",
+     "scanned": 6427412,
+     "dropped": 62732,
+     "removed_fraction": 0.00976,
+     "removed_fraction_note": "gross upper bound: includes the measured mixed-document false-kill class",
+     "two_sided_hand_read": {
+      "hits_n": 100,
+      "kept_n": 100,
+      "sampling": "fixed-stride, scripts/swallow_math_placeholder_audit_sample.py",
+      "false_kill_pct_of_hits": 2.0,
+      "missed_in_kept_pct": 0.0,
+      "false_kill_type": "opening declares no specific math problem/question but the document tail adds a real worked problem/solution (mixed rewriter output)",
+      "false_kill_examples": "ph_drop100 #53 (3D distance P/Q in tail), ph_drop100 #72 (real word problems after one placeholder item); retained verbatim in audit file",
+      "estimated_false_kills_full_domain": 1255,
+      "estimated_false_kill_fraction_of_domain": 0.000195
+     },
+     "audit_artifacts": "pod-only sibling dir data/corpus/swallow_math_audit/ (template_hits_sample.jsonl + template_audit_drop100/keep100.jsonl); kept outside the domain dir because fp_dir hashes top-level entries as files and training/decontam globs *.jsonl",
+     "post_filter_docs": 6364680,
+     "source_domain_fp_after": "f26ab66130f1710a"
+    },
+    "gate_decontam": {
+     "command": "scripts/filter_gate_domains.py --root /work/aupai --domains swallow_math --out_names swallow_math_dc --extra_math --workers 24",
+     "gates": "Decontaminator.load_default(extra_math=True) gate set: HumanEval-164, MBPP holdouts, GSM8K test, MATH-500 (four benchmark files resolved by scripts/filter_gate_domains.py HUMANEVAL_REL/MBPP_REL/GSM8K_REL/MATH500_REL); whitespace word 13-gram containment. Gate-file bytes are attested by decontam_fp c53a9e86c74fd859, which hashes the module plus the four gate files; exact rel paths are in the committed script and in the _dc stamp on the pod.",
+     "scanned": 6364680,
+     "dropped": 4162,
+     "drop_fraction": 0.000654,
+     "distinct_problems_hit": 181,
+     "shards_total": 124,
+     "shards_rewritten": 124,
+     "decontam_fp": "c53a9e86c74fd859",
+     "out_domain": "swallow_math_dc",
+     "out_fp": "aac054814908427e",
+     "kept": 6360518
+    },
+    "pretokenize": {
+     "command": "CUDA_VISIBLE_DEVICES= RAYON_NUM_THREADS=2 scripts/pretokenize_domains.py swallow_math_dc --workers 40",
+     "cache": "/data00/tokens_swallow_math_dc.pt",
+     "bytes": 14533241606,
+     "seconds": 275,
+     "packed_rows": 886822,
+     "seq": 4096,
+     "pool_tokens": 3633309734,
+     "val_rows": 5000,
+     "val_rule": "min(int(packed_rows*0.05),5000)",
+     "trainable_tokens": 3611942912,
+     "sha256_16": "456a032ee403f1ca",
+     "srcfp": "aac054814908427e",
+     "vocab": "f1f860970d15d623",
+     "seed": 42,
+     "note": "packed rows concatenate the 6,360,518 docs into 4097-token rows; pool_tokens counts the +1 label token per row"
+    }
    },
-   "source": "pod (git-ignored bytes, not in this tree): build stamp /work/aupai/data/corpus/swallow_math/build_corpus_stats.json (fp 1ce7c6adb8b1643b); build log /work/aupai/runs/build_swallow_math.log and /work/aupai/runs/swallow_globalfast.log; read-only audits run 2026-10-05 by the committed scripts scripts/swallow_math_sample_near_rate.py, scripts/swallow_math_sample_exact_jaccard.py (n=99,944) and scripts/swallow_math_count_placeholders.py (full-domain placeholder count).",
+   "source": "pod: /work/aupai/data/corpus/swallow_math/build_corpus_stats.json (fp f26ab66130f1710a, template_filter block), /work/aupai/data/corpus/swallow_math_dc/build_corpus_stats.json (fp aac054814908427e), /work/aupai/runs/sw_stamp_only.log, /work/aupai/runs/sw_decontam.log, /work/aupai/runs/gate_decontam_summary.json; committed scripts scripts/filter_llm_placeholder.py, scripts/swallow_math_placeholder_audit_sample.py, scripts/filter_gate_domains.py; /work/aupai/runs/sw_pack.log (REPORT rows=886822 pool_tokens=3633309734 sha256=456a032ee403f1ca)",
    "uncertainty": "Sample near-dup rate 1.20% is on 99,944 docs (first 806/shard), spread across all 124 shards but not a simple random draw; the full-domain rate could differ, and extrapolated ~77k/100M is an estimate. Exact-J>=0.5 is the calibrated decider; no 50-pair/100-cluster hand-read acceptance was run for this domain (44 calibration not ported). Placeholder regex targets only the observed boilerplate family; other low-content rewrite failures may exist outside it. Kept_tokens proxy is bytes-based, not gate-vocab exact.",
    "boundary": "Measures one build/sample of swallow_math before decontam and packing. Says nothing about downstream math accuracy. Near-dedup rate is specific to English word-3-gram J0.5 and must NOT be extrapolated to the code domain (normalise_code / char-5gram, measured separately by mix)."
   }
