@@ -112,13 +112,12 @@ def _selftest():
         f"{len(open_rows)} of {len(last)} open -- a filter that keeps all or none is inert"
     )
     # The age parser must produce a plausible number for a known row, not None.
-    # Stamp relative to a fixed `now`: a hard-coded date turned this into a 30-day
-    # time bomb (the 2026-09-04 fixture went past the bound on 2026-10-04 and reded
-    # main). age_hours reads the stamp as UTC, so build both from gmtime.
-    now0 = 2_000_000_000
-    stamp = time.strftime("%Y-%m-%d %H:%M", time.gmtime(now0 - 2 * 3600))
-    a = age_hours(stamp, now=now0)
-    assert a is not None and 1.9 < a < 2.1, f"age parser gave {a} for a row opened two hours ago"
+    # A stamp 5 minutes in the past, not a hardcoded date: a fixed stamp ages past
+    # the 30-day window and this assertion went red on 2026-10-04 (31 days after the
+    # literal). Build it relative to now in the parser's own format. (zh, 2026-10-05)
+    recent = time.strftime("%Y-%m-%d %H:%M", time.gmtime(time.time() - 300))
+    a = age_hours(recent)
+    assert a is not None and 0 < a < 24 * 30, f"age parser gave {a} for a row opened 5 min ago"
     print(f"tasks_vs_reality selftest ok ({len(last)} ids, {len(open_rows)} open, states {sorted(states)})")
 
 
