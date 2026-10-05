@@ -53,7 +53,13 @@ def build_compressed_token_map(tokenizer) -> tuple[list[int], int]:
     )
 
     backend = getattr(tokenizer, "backend_tokenizer", tokenizer)
-    nv = len(tokenizer)  # every tokenizer shape carries __len__; a backend may not
+    # tokenizers.Tokenizer exposes get_vocab_size; a HF wrapper carries __len__.
+    # Neither is guaranteed on the other, so probe both (measured 2026-10-06: the
+    # loader hands the raw Tokenizer, step40000 eval died on len() before this fix).
+    if hasattr(tokenizer, "get_vocab_size"):
+        nv = tokenizer.get_vocab_size(with_added_tokens=True)
+    else:
+        nv = len(tokenizer)
     key_to_new: dict[str, int] = {}
     lookup = [0] * nv
     for token_id in range(nv):
