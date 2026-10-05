@@ -122,8 +122,16 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True, claim=True, lo
     _prev = torch.get_default_dtype()
     if low_mem and dtype is not None:
         torch.set_default_dtype(dtype)
+    # engram-on checkpoints need the tokenizer at build time: the compressed vocab size is
+    # measured from it and with_derived_engram raises without one. Load data/tokenizer.json;
+    # the bare tokenizer is enough (engram.build_compressed_token_map accepts it). engram-off
+    # checkpoints keep _tok=None and the original path.
+    _tok = None
+    if getattr(cfg, "v42_engram", ""):
+        from tokenizers import Tokenizer as _Tokenizer
+        _tok = _Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
     try:
-        model = build_model(cfg).to(device)
+        model = build_model(cfg, tokenizer=_tok).to(device)
     finally:
         torch.set_default_dtype(_prev)
     if "model" in ck:

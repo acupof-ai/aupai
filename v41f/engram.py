@@ -52,10 +52,11 @@ def build_compressed_token_map(tokenizer) -> tuple[list[int], int]:
         ]
     )
 
-    backend = tokenizer.backend_tokenizer
+    backend = getattr(tokenizer, "backend_tokenizer", tokenizer)
+    nv = len(tokenizer)  # every tokenizer shape carries __len__; a backend may not
     key_to_new: dict[str, int] = {}
-    lookup = [0] * len(tokenizer)
-    for token_id in range(len(tokenizer)):
+    lookup = [0] * nv
+    for token_id in range(nv):
         text = backend.decode([token_id], skip_special_tokens=False)
         if "�" in text:
             key = backend.id_to_token(token_id)

@@ -280,6 +280,7 @@ class Cfg:
     # moe_stacked=1). Numerically equivalent paths (tests/v41f/test_p1_fused.py), so they may
     # change across a resume; the shape fields stay in v42_cfg.
     v42_impl = ""
+    v42_engram = ""
     # --v42_record: per-module activation/grad-output/param-grad statistics for the last micro-batch
     # of every health step, and of every step once a non-finite grad has been seen; one JSON line per
     # step to runs/<name>.record.jsonl (v41f/record.py). Hooks attach and detach around the step.
@@ -849,7 +850,7 @@ def patch_liger_flce_fp8():
     return True
 
 
-def build_model(cfg):
+def build_model(cfg, tokenizer=None):
     """HybridLM, or under --arch v42 the v41f V42LM. The V41FConfig is v42_s24 at cfg.vocab unless
     cfg.v42_cfg already holds one (a resumed Cfg); either way it is written back to cfg.v42_cfg so
     the checkpoint's cfg records the exact shape."""
@@ -870,9 +871,14 @@ def build_model(cfg):
         over[k] = (v in ("1", "true", "True") if k in ("moe_stacked", "qk_norm")
                    else float(v) if k == "attn_logit_softcap" else v)
     vc = replace(vc, block_ckpt=bool(cfg.grad_ckpt), **over)
+    _en = getattr(cfg, "v42_engram", "") or ""
+    if _en:
+        _ids = tuple(int(x) for x in _en.split(","))
+        vc = replace(vc, engram_layer_ids=_ids)
+        vc = vc.with_derived_engram(tokenizer)
     vc.validate()
     cfg.v42_cfg = asdict(vc)
-    return V42LM(vc, balance_alpha=cfg.moe_balance_alpha, bias_gamma=cfg.moe_bias_gamma)
+    return V42LM(vc, balance_alpha=cfg.moe_balance_alpha, bias_gamma=cfg.moe_bias_gamma, tokenizer=tokenizer)
 
 
 def _softcap():
@@ -3614,6 +3620,7 @@ def main():
     parser.add_argument("--v42_record", action="store_true",
                         help="v42: record per-module act/grad-output/param-grad stats on health steps (and every "
                              "step after a non-finite grad) to runs/<name>.record.jsonl; hooks only on those steps")
+    parser.add_argument("--v42_engram", type=str, default="", help="comma layer ids to enable engram memory, e.g. 1,5,9,13,17,21")
     parser.add_argument("--v42_impl", type=str, default=None,
                         help="v42: implementation switches k=v,k=v over V41FConfig, e.g. "
                              "attn_impl=fused,rope_impl=real,moe_stacked=1,hc_impl=liger,norm_impl=liger "
@@ -3921,7 +3928,7 @@ def main():
         )
         for _ in range(2)
     ]
-    raw_model = build_model(Cfg).to(device)
+    raw_model = build_model(Cfg, tokenizer=tok).to(device)
     resume_step = 0
     if args.resume:
         ck = torch.load(args.resume, map_location="cpu", weights_only=False)
@@ -3940,7 +3947,9 @@ def main():
                 )
             if is_main:
                 print(f"env fingerprint {'OK' if ck_fp == live_fp else 'DRIFT (overridden)'} ({live_fp})", flush=True)
-        raw_model.load_state_dict(ck["model"])
+        _miss, _unexp = raw_model.load_state_dict(ck["model"], strict=False)
+        assert all("engram" in _k for _k in _miss), _miss
+        assert not _unexp, _unexp
         m = re.search(r"step(\d+)", args.resume)
         if m:
             resume_step = int(m.group(1))
@@ -4182,8 +4191,24 @@ def main():
             f"and recover, looking like noise. This checkpoint cannot be safely resumed."
         )
     if args.resume and "opt" in ck:
-        for opt, sd in zip(optimizers, ck["opt"], strict=True):
-            opt.load_state_dict(sd)  # momentum/moments continue instead of restarting from 0
+        from v41f.optim import v42_param_groups as _vpg  # noqa: PLC0415
+        _gg = _vpg(raw_model)
+        _order = [
+            [n for n, _ in _gg["muon"]],
+            [n for n, _ in _gg["sinkhorn"]],
+            [n for n, _ in _gg["adamw_decay"]] + [n for n, _ in _gg["adamw_nodecay"]],
+        ]
+        for _oi, (_opt, _sd) in enumerate(zip(optimizers, ck["opt"], strict=True)):
+            _on = _order[_oi]
+            _off = [n for n in _on if "engram" not in n]
+            _oidx = {n: k for k, n in enumerate(_off)}
+            _nst = {}
+            for _j, _n in enumerate(_on):
+                if "engram" not in _n and _oidx[_n] in _sd["state"]:
+                    _nst[_j] = _sd["state"][_oidx[_n]]
+            _cur = _opt.state_dict()
+            _cur["state"] = _nst
+            _opt.load_state_dict(_cur)
         reapply_router_wd(optimizers, Cfg)
 
     if args.loop:

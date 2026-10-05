@@ -28128,6 +28128,8 @@ _UNFROZEN_ALLOWLIST = {
     "v42_record",         # v42 diagnostics recorder (v41f/record.py): observation only, no effect on the run
     "v42_impl",           # v42 implementation switches (fused attention, real rope, stacked MoE): same
                           # numbers to the bf16 floor (tests/v41f/test_p1_fused.py), not architecture
+    "v42_engram",         # explicit engram memory layers: a structural choice per run, handled by
+                          # the resume path (strict=False + partial optimizer load), not frozen
     "name", "mix", "resume", "max_steps", "stop_at_step",  # run management
     "save_every",         # checkpoint cadence, an operational knob, not a recipe key
     "build_only",         # inspection flag (scripts/active_params.py): builds the model, prints params, exits before training
