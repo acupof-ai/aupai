@@ -2362,6 +2362,34 @@
     "gsm8k_test.jsonl": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14",
     "math_500_en_test.jsonl": "35dc41080a3680858b27fa7e0533d2d547825316fc5dafe5d316f4ccc5a06132"
    }
+  },
+  {
+   "id": "cs.swallow_math_built_1005",
+   "value": 6427412,
+   "unit": "docs kept by datagen/build_corpus.py --filters light (length/bytes/holdout) + exact dedup over tokyotech-llm/swallow-math (2 jsonl shards, 12.7GB, ~2.3B advertised tokens, English, text column, FineMath-4+ LLM rewrite), BEFORE 13-gram gate decontam and BEFORE token packing; in data/corpus/swallow_math (124 shards, fingerprint 1ce7c6adb8b1643b, stamp near_dedup=false). Exact kept_tokens in the stamp is a CHARS_PER_TOKEN proxy (~8.15B chars/4); the exact gate-vocab token count is set after pretokenize.",
+   "measured": "2026-10-05",
+   "status": "measured",
+   "config": {
+    "input": "tokyotech-llm/swallow-math train-00001/00002-of-00002.jsonl (9,999,999,745 + 2,763,060,249 bytes), fetched via hf-mirror into data/hq_raw; single text column; derived from HuggingFaceTB/finemath via Llama-3.3-70B rewriting",
+    "clean": "build_corpus.py --filters light --host_cap 0 --workers 40 then --global-only --no_near_dedup (holdout + exact dedup only); ~6.68M input -> 6,427,412 kept after worker light rejects + global holdout/exact",
+    "near_dedup_decision": "NOT RUN on the full domain (de technical ruling 2026-10-05). The default calibrated banding is infeasible at 6.43M docs: serial _global_pass MinHash ~30ms/doc ETA ~20h; the parallel _near_dedup_postpass phase-A signatures complete but serial _lsh_candidates O(k^2) bucket enumeration grew to 105GB RSS and >1h with no candidate set.",
+    "near_dedup_sample": {
+     "n_docs": 99944,
+     "method": "first 806 docs of each of 124 shards; MinHash 128 perms / 64 bands x 2 rows (seed 17), normalized word-3-gram shingles, LSH candidate pairs then EXACT normalized word-3-gram Jaccard>=0.5 with union-find (44 method: LSH is candidate generator, exact-J decider)",
+     "lsh_candidate_pairs": 2800066,
+     "candidate_false_positive_rate": 0.9962,
+     "candidate_false_positive_rate_note": "only 10,515/2,800,066 LSH pairs had exact J>=0.5 (0.38%); the 2-row band is far too loose for English math/LaTex, largest band-0 bucket held 292 docs",
+     "exact_near_dup_removed_docs": 1198,
+     "exact_near_dup_rate": 0.01199,
+     "extrapolated_full_domain_docs": "~77k docs / ~100M tokens (<1.5%) removed if run full-scale",
+     "largest_cluster": 597
+    },
+    "placeholder_template_findings": "the largest near-dup cluster (597 of the 100k sample) is NOT math content: LLM rewriter boilerplate refusals ('There is no specific math problem to solve...', 'The provided text does not contain a math problem...'). A full-domain regex over the first 400 chars (there is/appears to be no [specific] math problem / does not contain a ... math problem / if you could provide a ... math problem) counts 124,741 placeholder docs = 1.941% of 6,427,412, uniformly spread (~1,070-1,100 per shard). These are zero-math-content rewrite failures, not true near-duplicates; a cheap rule removes them -- proposed, pending de/mix approval, not yet applied.",
+    "next_steps": "pending: optional placeholder-template rule (1.94%) -> scripts/filter_gate_domains.py --extra_math 4-gate decontam to swallow_math_dc -> pretokenize_domains pack; none done yet"
+   },
+   "source": "pod (git-ignored bytes, not in this tree): build stamp /work/aupai/data/corpus/swallow_math/build_corpus_stats.json (fp 1ce7c6adb8b1643b); build log /work/aupai/runs/build_swallow_math.log and /work/aupai/runs/swallow_globalfast.log; read-only audits run 2026-10-05 by the committed scripts scripts/swallow_math_sample_near_rate.py, scripts/swallow_math_sample_exact_jaccard.py (n=99,944) and scripts/swallow_math_count_placeholders.py (full-domain placeholder count).",
+   "uncertainty": "Sample near-dup rate 1.20% is on 99,944 docs (first 806/shard), spread across all 124 shards but not a simple random draw; the full-domain rate could differ, and extrapolated ~77k/100M is an estimate. Exact-J>=0.5 is the calibrated decider; no 50-pair/100-cluster hand-read acceptance was run for this domain (44 calibration not ported). Placeholder regex targets only the observed boilerplate family; other low-content rewrite failures may exist outside it. Kept_tokens proxy is bytes-based, not gate-vocab exact.",
+   "boundary": "Measures one build/sample of swallow_math before decontam and packing. Says nothing about downstream math accuracy. Near-dedup rate is specific to English word-3-gram J0.5 and must NOT be extrapolated to the code domain (normalise_code / char-5gram, measured separately by mix)."
   }
  ]
 }
