@@ -937,7 +937,7 @@ def _assert_canonical_stats(stats, where):
     assert not missing, f"{where} stats missing canonical keys: {missing}"
 
 
-ZH_WEB_ALLOWED = {"zh_web", "web_hq", "chatml", "chat_qa", "wiki_chat", "chat", "zh_cfwe"}
+ZH_WEB_ALLOWED = {"zh_web", "web_hq", "chatml", "chat_qa", "wiki_chat", "chat", "zh_cfwe", "zh_cosmo"}
 
 
 def _check_filter_tier(domain, filters):
@@ -1846,7 +1846,8 @@ def _selftest_preflight():
         ok += 1
     _check_filter_tier("zh_web", "web")  # must NOT raise
     _check_filter_tier("zh_web", "light")
-    ok += 2
+    _check_filter_tier("zh_cosmo", "web")  # 92.85% CJK on 6k-sample probe (openceg/chinese-cosmopedia)
+    ok += 3
 
     # (b) frozen-name output -> REFUSE
     frozen = _ladder_frozen_domains()
