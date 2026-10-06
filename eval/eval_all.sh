@@ -54,11 +54,14 @@ NGPU=$NGPU TOKENIZER=$TOK bash eval/eval_math.sh "$CKPT" "$NGPU" 2>&1 | tee -a "
 source eval/_devs.sh 1
 
 # 3. MC suite -- a 200M Chinese model at the 25% chance line; a regression tripwire,
-#    not a capability measure.
+#    not a capability measure. Run the default ALL_BENCHMARKS, not an explicit list:
+#    hellaswag/piqa were removed from ALL_BENCHMARKS (pod HF egress broken), and naming
+#    them here made argparse abort the whole suite before any set ran. Sets without local
+#    data or egress SKIP loudly, one line each, instead of taking the suite down.
 say "--- MC suite (regression tripwire; chance is 25%)"
 say "    ceval is the only Chinese one; the rest are English and this is a Chinese model."
 CUDA_VISIBLE_DEVICES=${_DEVS[0]} python3 eval/run_eval.py --ckpt "$CKPT" --tokenizer "$TOK" \
-  --benchmarks ceval mmlu arc-easy hellaswag piqa 2>&1 | tee -a "$LOG" | tail -10 || say "  FAILED"
+  2>&1 | tee -a "$LOG" | tail -14 || say "  FAILED"
 
 # 4. FoNE digit head -- --fone checkpoints only; raw accuracy is unreadable without
 #    the always-0 and copy-previous baselines.
