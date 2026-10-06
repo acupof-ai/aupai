@@ -12,6 +12,11 @@ MAXNEW=${MAXNEW:-512}               # raise to test reasoning-length scaling
 # The vocabulary the checkpoint was trained on: a rebuild changes ids, and a
 # mismatch scores as noise.
 TOK=${TOKENIZER:-data/tokenizer.json}
+# Rescores must work without editing this file: FORCE=1 replaces, RUN=<name> versions.
+# eval_math.sh has carried both to its shards since 2026-09-01; this one never did, so
+# every math-hard shard errored at ArtifactExists against a prior interrupted run.
+FORCE_ARG=""; [ "${FORCE:-}" = "1" ] && FORCE_ARG="--force"
+RUN_ARG=""; [ -n "${RUN:-}" ] && RUN_ARG="--run ${RUN}"
 cd "$(dirname "$0")/.."
 bash scripts/assert_vocab.sh "$CKPT" "$TOK"
 LOGDIR=$(mktemp -d)                      # never reuse /tmp/evalsh_*.log across runs
@@ -27,7 +32,8 @@ pids=()
 source eval/_devs.sh "$N"
 for i in $(seq 0 $((N-1))); do
   CUDA_VISIBLE_DEVICES=${_DEVS[$i]} python3 eval/math_hard.py --ckpt "$CKPT" --tokenizer "$TOK" --shards "$N" --shard "$i" \
-    --k "$K" --temperature "$TEMP" --max_new "$MAXNEW" > "$LOGDIR/shard_$i.log" 2>&1 &
+    --k "$K" --temperature "$TEMP" --max_new "$MAXNEW" $FORCE_ARG $RUN_ARG \
+    > "$LOGDIR/shard_$i.log" 2>&1 &
   pids+=($!)
 done
 rc=0
@@ -42,8 +48,13 @@ grep -h "math-hard" "$LOGDIR"/shard_*.log
 python3 - "$CKPT" "$N" "$ROWS" "$K" <<'PY'
 import json, os, sys
 ck, n, expected, k = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+run = os.environ.get("RUN") or None
+force = os.environ.get("FORCE") == "1"
 base = f"data/eval/hard_{os.path.basename(ck)}"
-rows = [json.loads(l) for i in range(n) for l in open(f"{base}.{i}.jsonl", encoding="utf-8")]
+# Shard writers apply --run themselves, AFTER the shard index, so the merge must read
+# hard_x.0.<run>.jsonl; the unversioned glob would merge a previous run's shards.
+shard = lambda i: f"{base}.{i}{'.' + run if run else ''}.jsonl"
+rows = [json.loads(l) for i in range(n) for l in open(shard(i), encoding="utf-8")]
 assert len(rows) == expected, f"merged {len(rows)} preds, expected {expected} — a shard is short"
 if k > 1:
     # pass@1 is the greedy row; pass@k is any-correct over the question's sampled rows.
