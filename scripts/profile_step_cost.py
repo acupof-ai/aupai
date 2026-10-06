@@ -322,7 +322,7 @@ def _selftest():
     with open(os.path.join(ROOT, "train.py"), encoding="utf-8") as fh:
         src = fh.read()
     for frag, why in (
-        ("raw_model = build_model(Cfg).to(device)", "the model class"),
+        ("raw_model = build_model(Cfg, tokenizer=tok).to(device)", "the model class"),
         ("optimizers = build_optimizers(", "the optimizer construction"),
         ("LigerFusedLinearCrossEntropyLoss(ignore_index=-100, softcap=SOFTCAP)", "the loss"),
         ("model = torch.compile(model, dynamic=False", "the compile call"),
