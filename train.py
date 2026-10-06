@@ -4191,25 +4191,33 @@ def main():
             f"and recover, looking like noise. This checkpoint cannot be safely resumed."
         )
     if args.resume and "opt" in ck:
-        from v41f.optim import v42_param_groups as _vpg  # noqa: PLC0415
-        _gg = _vpg(raw_model)
-        _order = [
-            [n for n, _ in _gg["muon"]],
-            [n for n, _ in _gg["sinkhorn"]],
-            [n for n, _ in _gg["adamw_decay"]] + [n for n, _ in _gg["adamw_nodecay"]],
-        ]
-        for _oi, (_opt, _sd) in enumerate(zip(optimizers, ck["opt"], strict=True)):
-            _on = _order[_oi]
-            _off = [n for n in _on if "engram" not in n]
-            _oidx = {n: k for k, n in enumerate(_off)}
-            _nst = {}
-            for _j, _n in enumerate(_on):
-                if "engram" not in _n and _oidx[_n] in _sd["state"]:
-                    _nst[_j] = _sd["state"][_oidx[_n]]
-            _cur = _opt.state_dict()
-            _cur["state"] = _nst
-            _opt.load_state_dict(_cur)
-        reapply_router_wd(optimizers, Cfg)
+        if Cfg.arch == "v42":
+            # v42 has 3 optimizers (muon/sinkhorn/adamw) and may carry engram layers whose params
+            # are absent from an engram-off checkpoint; remap state by name, skipping engram.
+            from v41f.optim import v42_param_groups as _vpg  # noqa: PLC0415
+            _gg = _vpg(raw_model)
+            _order = [
+                [n for n, _ in _gg["muon"]],
+                [n for n, _ in _gg["sinkhorn"]],
+                [n for n, _ in _gg["adamw_decay"]] + [n for n, _ in _gg["adamw_nodecay"]],
+            ]
+            for _oi, (_opt, _sd) in enumerate(zip(optimizers, ck["opt"], strict=True)):
+                _on = _order[_oi]
+                _off = [n for n in _on if "engram" not in n]
+                _oidx = {n: k for k, n in enumerate(_off)}
+                _nst = {}
+                for _j, _n in enumerate(_on):
+                    if "engram" not in _n and _oidx[_n] in _sd["state"]:
+                        _nst[_j] = _sd["state"][_oidx[_n]]
+                _cur = _opt.state_dict()
+                _cur["state"] = _nst
+                _opt.load_state_dict(_cur)
+            reapply_router_wd(optimizers, Cfg)
+        else:
+            # classic CED/hybrid stack: 4 optimizers (muon/embed/scalar/head, moe interleaved),
+            # no engram; load each optimizer's state in build order.
+            for opt, sd in zip(optimizers, ck["opt"], strict=True):
+                opt.load_state_dict(sd)  # momentum/moments continue instead of restarting from 0
 
     if args.loop:
         # N7 Stage D: TRAIN with blocks LO..HI visited twice, from step 0.
