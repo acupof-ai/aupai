@@ -4191,24 +4191,35 @@ def main():
             f"and recover, looking like noise. This checkpoint cannot be safely resumed."
         )
     if args.resume and "opt" in ck:
-        from v41f.optim import v42_param_groups as _vpg  # noqa: PLC0415
-        _gg = _vpg(raw_model)
-        _order = [
-            [n for n, _ in _gg["muon"]],
-            [n for n, _ in _gg["sinkhorn"]],
-            [n for n, _ in _gg["adamw_decay"]] + [n for n, _ in _gg["adamw_nodecay"]],
-        ]
-        for _oi, (_opt, _sd) in enumerate(zip(optimizers, ck["opt"], strict=True)):
-            _on = _order[_oi]
-            _off = [n for n in _on if "engram" not in n]
-            _oidx = {n: k for k, n in enumerate(_off)}
-            _nst = {}
-            for _j, _n in enumerate(_on):
-                if "engram" not in _n and _oidx[_n] in _sd["state"]:
-                    _nst[_j] = _sd["state"][_oidx[_n]]
-            _cur = _opt.state_dict()
-            _cur["state"] = _nst
-            _opt.load_state_dict(_cur)
+        if Cfg.arch == "v42":
+            # v42's three optimizers are muon/sinkhorn/adamw(decay+nodecay merged). The
+            # engram n-gram cache params were added after older v42 checkpoints were saved,
+            # so their absent optimizer state must be skipped by renaming indices: the
+            # checkpoint's state dict is keyed by the no-engram position. Legacy CED has no
+            # engram params and builds FOUR optimizers (muon/embed/...), so this remap -- and
+            # its 3-list _order -- does not apply to it; running it indexed _oi=3 past the
+            # end and the CED resume-continuity gate died at IndexError.
+            from v41f.optim import v42_param_groups as _vpg  # noqa: PLC0415
+            _gg = _vpg(raw_model)
+            _order = [
+                [n for n, _ in _gg["muon"]],
+                [n for n, _ in _gg["sinkhorn"]],
+                [n for n, _ in _gg["adamw_decay"]] + [n for n, _ in _gg["adamw_nodecay"]],
+            ]
+            for _oi, (_opt, _sd) in enumerate(zip(optimizers, ck["opt"], strict=True)):
+                _on = _order[_oi]
+                _off = [n for n in _on if "engram" not in n]
+                _oidx = {n: k for k, n in enumerate(_off)}
+                _nst = {}
+                for _j, _n in enumerate(_on):
+                    if "engram" not in _n and _oidx[_n] in _sd["state"]:
+                        _nst[_j] = _sd["state"][_oidx[_n]]
+                _cur = _opt.state_dict()
+                _cur["state"] = _nst
+                _opt.load_state_dict(_cur)
+        else:
+            for _opt, _sd in zip(optimizers, ck["opt"], strict=True):
+                _opt.load_state_dict(_sd)
         reapply_router_wd(optimizers, Cfg)
 
     if args.loop:
