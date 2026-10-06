@@ -4212,12 +4212,16 @@ def main():
                 _cur = _opt.state_dict()
                 _cur["state"] = _nst
                 _opt.load_state_dict(_cur)
-            reapply_router_wd(optimizers, Cfg)
         else:
             # classic CED/hybrid stack: 4 optimizers (muon/embed/scalar/head, moe interleaved),
             # no engram; load each optimizer's state in build order.
             for opt, sd in zip(optimizers, ck["opt"], strict=True):
                 opt.load_state_dict(sd)  # momentum/moments continue instead of restarting from 0
+        # Unconditional, as it was before the engram remap: only the legacy build_optimizers
+        # path tags a group aupai_group=="moe_router" (v42's router uses static wd 0.1, so this
+        # returns None there). Gating it inside the v42 branch silently dropped the router-wd
+        # re-application on a classic MoE resume, the exact stale-hyperparam this call prevents.
+        reapply_router_wd(optimizers, Cfg)
 
     if args.loop:
         # N7 Stage D: TRAIN with blocks LO..HI visited twice, from step 0.
