@@ -176,6 +176,14 @@ class NgramHashState(nn.Module):
         self, input_ids: torch.Tensor, start_pos: int, token_mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         batch, seqlen = input_ids.shape
+        # Eval batches can exceed the training max_batch_size the cache was sized for
+        # (GEN_BATCH=16 vs microbatch 4). Grow the non-persistent cache on demand.
+        need_b = max(self.cache.shape[0], batch)
+        need_t = max(self.cache.shape[1], start_pos + seqlen)
+        if need_b != self.cache.shape[0] or need_t != self.cache.shape[1]:
+            grown = torch.empty(need_b, need_t, dtype=self.cache.dtype, device=self.cache.device)
+            grown[: self.cache.shape[0], : self.cache.shape[1]] = self.cache
+            self.cache = grown
         compressed = self.token_map[input_ids]
         if token_mask is not None:
             compressed = torch.where(token_mask, compressed, self.DEAD)
