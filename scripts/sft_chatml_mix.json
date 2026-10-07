@@ -1,0 +1,61 @@
+{
+  "plan": "v42_sft_v1 chatml mix (docs/standards/v42_sft_recipe_1007.md)",
+  "weights": {"code": 0.50, "math": 0.30, "general": 0.20},
+  "sources": [
+    {
+      "name": "ocr_cot",
+      "glob": "data/distill/ocr_sft.jsonl",
+      "prompt": "prompt",
+      "answer": "output",
+      "bucket": "code",
+      "lang": "code",
+      "cap": 20000,
+      "system": "You are a competitive programming assistant. Reason step by step, then give the final runnable Python solution."
+    },
+    {
+      "name": "codefeedback",
+      "glob": "data/raw/sft_open/codefeedback/data.jsonl",
+      "prompt": "query",
+      "answer": "answer",
+      "bucket": "general",
+      "lang": "en",
+      "cap": 25000
+    },
+    {
+      "name": "gsm8k_claude_zh",
+      "glob": "data/distill/gsm8k_claude_sh*.jsonl",
+      "prompt": "prompt",
+      "answer": "output",
+      "bucket": "math",
+      "lang": "zh",
+      "cap": 10000
+    },
+    {
+      "name": "metamath_en",
+      "glob": "data/raw/metamath/default_train.jsonl",
+      "prompt": "question",
+      "answer": "answer",
+      "bucket": "math",
+      "lang": "en",
+      "cap": 40000
+    },
+    {
+      "name": "orca_math_en",
+      "glob": "data/raw/orca_math/*.parquet",
+      "prompt": "question",
+      "answer": "answer",
+      "bucket": "math",
+      "lang": "en",
+      "cap": 20000
+    },
+    {
+      "name": "alpacazh_general",
+      "glob": "data/raw/sft_open/alpacazh/data.json",
+      "prompt": "instruction",
+      "answer": "output",
+      "bucket": "general",
+      "lang": "zh",
+      "cap": 20000
+    }
+  ]
+}
