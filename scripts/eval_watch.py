@@ -35,6 +35,7 @@ import json
 import os
 import re
 import subprocess
+import shutil
 import sys
 import time
 
@@ -152,6 +153,7 @@ def run_sharded(name, step, ckpt, workers, threads, data, max_new, timeout):
     so fixed modulo positions idle the fast workers.
     """
     queue = os.path.join(ROOT, "runs", f"he_queue_{name}_step{step}")
+    shutil.rmtree(queue, ignore_errors=True)  # stale tasks from a killed run must not shrink the set
     outs = shard_paths(ckpt, workers)
     env = {k: v for k, v in os.environ.items() if k != "ALLOW_UNISOLATED"}
     env["CUDA_VISIBLE_DEVICES"] = ""
