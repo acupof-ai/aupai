@@ -2508,6 +2508,35 @@
    "tokens_status": "measured",
    "guard_phrases": [],
    "retracted_value": []
+  },
+  {
+   "id": "cs.en_fwe4_dc_landed_1007",
+   "value": 6306285912,
+   "unit": "tokens (ids + one <eos> per document, train.py encode; int32 cache 25.22GB /4 = 6,305,937,576 elems, agrees)",
+   "measured": "2026-10-07",
+   "source": "pod-only full pipeline. raw HuggingFaceFW/fineweb-edu sample/350BT via hf-mirror (curl -4, resume, manifest size-verified), 89 parquet (~194GB, segments 000-003,011,014,016); datagen/fineweb_edu_ge4.py (int_score>=4 + reject_light + per-worker exact, --delete_raw) -> datagen/build_corpus.py --global-only --filters light --no_near_dedup (cross-file exact+holdout+stamp) -> datagen/near_postpass_drive.py (bands64 rows2 J>=0.5, BUCKET_CAP100) -> scripts/filter_gate_domains.py --domains en_fwe4 (HumanEval+MBPP) -> scripts/pretokenize_domains.py en_fwe4_dc (32 workers x RAYON 4, /data00/tokens_en_fwe4_dc.pt). count: count_tokens.count_shards sample=0 full population -> /data00/fwe350/tokcount.txt",
+   "config": {
+    "domain": "en_fwe4_dc",
+    "convention": "ids + one <eos> per document (train.py encode), full population not extrapolated",
+    "funnel_docs": {
+     "ge4_stage1_kept": 8484749,
+     "after_global_exact": 6649849,
+     "exact_dup_removed_cross_file": 1834900,
+     "after_near_minhash": 5639982,
+     "near_removed_fraction": 0.15186314756921548,
+     "decontam_rows_dropped": 205,
+     "decontam_drop_fraction": 3.634763373358284e-05
+    },
+    "score_cut": "int_score >= 4 (parquet official column); sample/350BT is itself the >=3 curated subset",
+    "near_dedup": "MinHash 128perm bands64 rows2 (recall~1 at J0.5), exact word-3gram decision, _norm_skeleton; per-band BUCKET_CAP=100 bounds candidate generation at 6.65M scale (uncapped run never finished, RSS 36->46GB in 4h)",
+    "shards": 268,
+    "cache": "/data00/tokens_en_fwe4_dc.pt 25,223,750,307 bytes; stamps .vocab f1f860970d15d623 .srcfp 3919e0dc9566986c .seed 42",
+    "corpus_fingerprint": "3919e0dc9566986c (en_fwe4_dc)",
+    "decontam_fp": "2e227fb59c411690"
+   },
+   "uncertainty": "Full population tokenizer count (no sampling) under train.py ids+eos convention; cache int32 element count agrees to 0.006%. The 18.04B kept_tokens field in build_corpus_stats is the coarse chars/1.5 estimate and reads high; the 6.40B 3/268-shard byte extrapolation there read low on an unlucky sample -- this full pass supersedes both. Exact for en_fwe4_dc/ at fingerprint 3919e0dc9566986c.",
+   "status": "measured",
+   "tokens_status": "measured"
   }
  ]
 }
