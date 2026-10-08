@@ -2881,6 +2881,14 @@ def main():
         # (reward 0.0, escaped true, /Users/bytedance/.ssh named in the failure).
         "algorithms/rollout.py": "every assertion runs rollouts in a sandbox; needs a host "
                                  "with process isolation, which CI is not",
+        # MLX Metal runtime. The commit hook runs under /usr/bin/env python3, which does
+        # not have mlx. The weight tests also read gitignored ckpt_local. Run them with
+        # the project .venv on the Apple Silicon box.
+        "v41f/mlx/runtime/opt_selftest.py": "imports mlx; the hook interpreter has no mlx. Run with the project .venv on the Apple Silicon box",
+        "v41f/mlx/tests/runtime_v2/test_native_gold.py": "loads a gitignored ckpt_local checkpoint and imports mlx; neither is on the hook interpreter or in CI",
+        "v41f/mlx/tests/test_decode_consistency.py": "loads gitignored ckpt_local weights and imports mlx; neither is on the hook interpreter or in CI",
+        "v41f/mlx/tests/test_sft_generator.py": "loads gitignored ckpt_local weights through run_sft.py and imports mlx",
+        "v41f/mlx/tests/test_sft_step_consistency.py": "loads gitignored ckpt_local weights at import and imports mlx",
     }
     # The STAGED blob, never the working tree. The gate's whole claim is "the version
     # being committed passes its own selftest", and running the working-tree copy tests
