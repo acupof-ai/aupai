@@ -4,12 +4,13 @@ Endpoints:
   GET  /            -> web UI
   GET  /healthz     -> liveness
   GET  /metrics     -> Engram hit/miss, RSS, queue depth
-  POST /api/chat    -> {"messages":[...]} -> full JSON completion
+  POST /api/chat    -> SSE {"delta"} events, then {"done": true, "timing"}
   POST /v1/chat/completions -> OpenAI-compatible, SSE stream when stream=true
 """
 from __future__ import annotations
 
 import json
+import os
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -67,8 +68,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path in ("/", "/index.html"):
+            page = os.path.join(os.path.dirname(__file__), "web", "index.html")
             try:
-                with open("v41f/mlx/runtime/web/index.html", "rb") as f:
+                with open(page, "rb") as f:
                     self._send(200, f.read(), "text/html; charset=utf-8")
             except FileNotFoundError:
                 self._send(200, "<h1>v42 runtime</h1>", "text/html")
@@ -106,14 +108,17 @@ class Handler(BaseHTTPRequestHandler):
         prompt = _chatml(messages)
         max_tokens = int(body.get("max_tokens", DEFAULT_MAX_TOKENS))
         temperature = float(body.get("temperature", 0.0))
+        top_p = float(body.get("top_p", 1.0))
         stream = bool(body.get("stream", False))
         _requests += 1
 
         svc = _svc_get()
+        if self.path == "/api/chat":
+            return self._page_sse(svc, prompt, max_tokens, temperature, top_p)
         if stream and self.path == "/v1/chat/completions":
             return self._stream(svc, prompt, max_tokens, temperature, body)
         res = generate(svc.model, svc.tokenizer, prompt, max_tokens=max_tokens,
-                       temperature=temperature)
+                       temperature=temperature, top_p=top_p)
         self._send(200, {
             "id": f"chatcmpl-{uuid.uuid4().hex[:8]}",
             "text": res.text,
@@ -122,6 +127,70 @@ class Handler(BaseHTTPRequestHandler):
             "timing": {"prefill_s": res.t_prefill_s, "decode_s": res.t_decode_s,
                        "decode_tps": res.decode_tps},
         })
+
+    def _page_sse(self, svc, prompt, max_tokens, temperature, top_p):
+        """SSE one committed suffix per token. The page appends each delta as it arrives.
+
+        A single id is not a character. Decode the prefix, drop a trailing
+        U+FFFD, and send only the new suffix.
+        """
+        from mlx_lm.generate import generate_step
+        from mlx_lm.sample_utils import make_sampler
+
+        ids_in = list(svc.tokenizer.encode(prompt).ids)
+        sampler = make_sampler(temp=temperature, top_p=top_p) if temperature > 0 else None
+        cache = svc.model.make_cache()
+        step = generate_step(
+            mx.array(ids_in, mx.int32), svc.model, max_tokens=max_tokens,
+            sampler=sampler, prompt_cache=cache, prefill_step_size=512)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        try:
+            self.wfile.write(b": open\n\n")
+            self.wfile.flush()
+            gen = []
+            shown = ""
+            n = 0
+            t0 = time.perf_counter()
+            first = None
+            for tok, _lp in step:
+                now = time.perf_counter()
+                if first is None:
+                    first = now
+                t = int(tok)
+                if t == IM_END:
+                    break
+                gen.append(t)
+                n += 1
+                text = svc.tokenizer.decode(gen).rstrip("\ufffd")
+                if text.startswith(shown):
+                    delta = text[len(shown):]
+                    shown = text
+                else:
+                    delta = ""
+                if delta:
+                    self._sse({"delta": delta})
+                if n >= max_tokens:
+                    break
+            t_end = time.perf_counter()
+            t_prefill = (first - t0) if first else 0.0
+            t_decode = (t_end - first) if first else 0.0
+            tps = (n / t_decode) if t_decode > 0 and n > 1 else 0.0
+            self._sse({"done": True, "timing": {
+                "prefill_s": round(t_prefill, 3),
+                "decode_s": round(t_decode, 3),
+                "decode_tps": round(tps, 2),
+                "n_gen": n,
+            }})
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
+    def _sse(self, obj):
+        self.wfile.write(f"data: {json.dumps(obj, ensure_ascii=False)}\n\n".encode())
+        self.wfile.flush()
 
     def _stream(self, svc, prompt, max_tokens, temperature, body):
         from mlx_lm.generate import generate_step
@@ -156,10 +225,16 @@ def main():
     ap.add_argument("--port", type=int, default=PORT)
     args = ap.parse_args()
     print(f"[server] prewarming model on :{args.port} ...", flush=True)
-    _svc_get()
-    print(f"[server] ready on :{args.port} rss={_svc.rss_gb():.2f}GB "
-          f"build={_svc.build_s:.1f}s prewarm={_svc.prewarm_s:.1f}s", flush=True)
-    srv = HTTPServer(("0.0.0.0", args.port), Handler)
+    svc = _svc_get()
+    print("[server] probe generate ...", flush=True)
+    probe = generate(
+        svc.model, svc.tokenizer,
+        "<|im_start|>user\n1+1\n<|im_end|>\n<|im_start|>assistant\n",
+        max_tokens=4, temperature=0.0)
+    print(f"[server] ready on :{args.port} rss={svc.rss_gb():.2f}GB "
+          f"build={svc.build_s:.1f}s prewarm={svc.prewarm_s:.1f}s "
+          f"probe_n={probe.n_gen} probe_prefill={probe.t_prefill_s:.2f}s", flush=True)
+    srv = HTTPServer(("127.0.0.1", args.port), Handler)
     srv.serve_forever()
 
 
