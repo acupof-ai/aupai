@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>v42 本地推理</title>
+<style>
+  :root {
+    --bg:#0f1216; --panel:#161a20; --panel2:#1d222a; --line:#272d36;
+    --text:#e6e9ee; --muted:#8b94a1; --user:#243040; --accent:#4c9aff;
+    --code:#0b0e12;
+  }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; }
+  body { background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    display:flex; flex-direction:column; }
+  header { padding:12px 18px; border-bottom:1px solid var(--line);
+    display:flex; align-items:center; gap:14px; background:var(--panel); }
+  header h1 { font-size:15px; margin:0; font-weight:600; }
+  header .meta { color:var(--muted); font-size:12px; }
+  header .spacer { flex:1; }
+  .controls { display:flex; gap:10px; align-items:center; color:var(--muted); font-size:12px; }
+  .controls label { display:flex; align-items:center; gap:5px; }
+  .controls input { width:64px; background:var(--panel2); border:1px solid var(--line);
+    color:var(--text); border-radius:6px; padding:3px 6px; font-size:12px; }
+  main { flex:1; overflow-y:auto; padding:20px; }
+  .wrap { max-width:860px; margin:0 auto; display:flex; flex-direction:column; gap:16px; }
+  .msg { display:flex; gap:12px; }
+  .msg.user { justify-content:flex-end; }
+  .bubble { max-width:78%; padding:10px 14px; border-radius:12px;
+    line-height:1.65; font-size:14.5px; white-space:normal; overflow-wrap:anywhere; }
+  .msg.user .bubble { background:var(--user); border:1px solid var(--line); }
+  .msg.assistant .bubble { background:var(--panel); border:1px solid var(--line);
+    max-width:100%; width:100%; }
+  .who { color:var(--muted); font-size:12px; margin-bottom:4px; }
+  pre.code { background:var(--code); border:1px solid var(--line); border-radius:8px;
+    padding:10px 12px; overflow-x:auto; margin:8px 0; }
+  pre.code code { font-family:"SF Mono",Menlo,Consolas,monospace; font-size:13px;
+    color:#d6e2ee; white-space:pre; }
+  .cursor { display:inline-block; width:7px; height:15px; background:var(--accent);
+    margin-left:2px; vertical-align:-2px; animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  footer { border-top:1px solid var(--line); background:var(--panel); padding:12px 18px; }
+  .foot { max-width:860px; margin:0 auto; display:flex; gap:10px; align-items:flex-end; }
+  textarea { flex:1; resize:none; background:var(--panel2); border:1px solid var(--line);
+    color:var(--text); border-radius:10px; padding:10px 12px; font-size:14px;
+    font-family:inherit; line-height:1.5; max-height:180px; }
+  textarea:focus { outline:none; border-color:var(--accent); }
+  button { border:1px solid var(--line); background:var(--panel2); color:var(--text);
+    border-radius:10px; padding:10px 16px; font-size:14px; cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .hint { color:var(--muted); font-size:11px; text-align:center; margin-top:6px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>v42 本地推理</h1>
+  <span class="meta">MLX / Metal · accurate · 含 Engram</span>
+  <span class="spacer"></span>
+  <div class="controls">
+    <label>温度<input id="temp" type="number" min="0" max="1.5" step="0.05" value="0.7"></label>
+    <label>top-p<input id="topp" type="number" min="0.1" max="1" step="0.01" value="0.95"></label>
+    <label>长度<input id="maxtok" type="number" min="16" max="2048" step="16" value="1024"></label>
+    <button id="clear">清空</button>
+  </div>
+</header>
+<main id="main"><div class="wrap" id="list"></div></main>
+<footer>
+  <div class="foot">
+    <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+    <button id="stop" class="primary" style="display:none">停止</button>
+    <button id="send" class="primary">发送</button>
+  </div>
+  <div class="hint">模型为 v42 SFT 试验版，输出质量以实际品鉴为准。</div>
+</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+const list = $("list"), input = $("input");
+let messages = [], running = false, ctrl = null;
+
+function esc(s){
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+function renderText(t){
+  // split on fenced code; tolerate an unclosed fence while streaming
+  const parts = t.split("```");
+  let html = "";
+  for (let i=0;i<parts.length;i++){
+    if (i % 2 === 1){
+      let body = parts[i];
+      const nl = body.indexOf("\n");
+      if (nl >= 0) body = body.slice(nl+1);
+      html += '<pre class="code"><code>'+esc(body)+'</code></pre>';
+    } else {
+      html += esc(parts[i]).replace(/\n/g,"<br>");
+    }
+  }
+  return html;
+}
+function scrollDown(){ const m=$("main"); m.scrollTop = m.scrollHeight; }
+
+function addMsg(role){
+  const row = document.createElement("div");
+  row.className = "msg " + role;
+  const inner = document.createElement("div");
+  inner.style.width = role==="assistant" ? "100%" : "";
+  const who = document.createElement("div");
+  who.className = "who"; who.textContent = role==="user" ? "你" : "v42";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble";
+  inner.appendChild(who); inner.appendChild(bubble);
+  row.appendChild(inner); list.appendChild(row);
+  return bubble;
+}
+
+function autosize(){
+  input.style.height = "auto";
+  input.style.height = Math.min(input.scrollHeight, 180) + "px";
+}
+input.addEventListener("input", autosize);
+input.addEventListener("keydown", e => {
+  if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); send(); }
+});
+
+function setRunning(v){
+  running = v;
+  $("send").style.display = v ? "none" : "";
+  $("stop").style.display = v ? "" : "none";
+  input.disabled = v;
+}
+
+async function send(){
+  const text = input.value.trim();
+  if (!text || running) return;
+  messages.push({role:"user", content:text});
+  addMsg("user").innerHTML = renderText(text);
+  input.value = ""; autosize();
+  const bubble = addMsg("assistant");
+  let acc = "";
+  setRunning(true);
+  ctrl = new AbortController();
+  try {
+    const resp = await fetch("/api/chat", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        messages: messages,
+        temperature: parseFloat($("temp").value),
+        top_p: parseFloat($("topp").value),
+        max_tokens: parseInt($("maxtok").value)
+      }),
+      signal: ctrl.signal
+    });
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    while (true){
+      const {value, done} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream:true});
+      const lines = buf.split("\n\n");
+      buf = lines.pop();
+      for (const block of lines){
+        const line = block.split("\n").find(l => l.startsWith("data: "));
+        if (!line) continue;
+        const ev = JSON.parse(line.slice(6));
+        if (ev.delta){
+          acc += ev.delta;
+          bubble.innerHTML = renderText(acc) + '<span class="cursor"></span>';
+          scrollDown();
+        }
+        if (ev.done){
+          bubble.innerHTML = renderText(acc);
+          messages.push({role:"assistant", content:acc});
+        }
+        if (ev.error){ bubble.textContent = "错误：" + ev.error; }
+      }
+    }
+  } catch(e){
+    if (e.name === "AbortError"){
+      bubble.innerHTML = renderText(acc);
+      if (acc) messages.push({role:"assistant", content:acc});
+    } else {
+      bubble.textContent = "请求失败：" + e.message;
+    }
+  } finally {
+    bubble.querySelector(".cursor")?.remove();
+    setRunning(false);
+    input.focus(); scrollDown();
+  }
+}
+
+$("send").addEventListener("click", send);
+$("stop").addEventListener("click", () => ctrl && ctrl.abort());
+$("clear").addEventListener("click", () => {
+  if (running) return;
+  messages = []; list.innerHTML = ""; input.focus();
+});
+autosize(); input.focus();
+</script>
+</body>
+</html>
