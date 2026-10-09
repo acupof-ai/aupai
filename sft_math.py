@@ -33,6 +33,7 @@ from train import (
     _softcap,
     build_model,
     build_optimizers,
+    build_tokenizer,
     convert_to_fp8_compute,
     ddp_even_len,
     doc_cu_seqlens,
@@ -105,8 +106,14 @@ def build_sft_model(device):
     could not touch the v42 line at all (de, 2026-09-30; the same defect scripts/loader.py
     carried, fixed at 9588ee2b). A function rather than one line inside main() so the CPU
     known-answer test can drive the decision instead of restating it.
+
+    The tokenizer is required when the checkpoint uses engram layers: build_model derives
+    the compressed-token map from it (V41FConfig.with_derived_engram), so building without it
+    raises "engram_layer_ids is non-empty but no tokenizer was supplied". ckpt_v42s2 carries
+    v42_engram='1,5,9,13,17,21'.
     """
-    return build_model(Cfg).to(device)
+    tokenizer = build_tokenizer([]) if getattr(Cfg, "v42_engram", "") else None
+    return build_model(Cfg, tokenizer).to(device)
 
 
 def build_sft_optimizers(raw_model, master=None):

@@ -3,13 +3,23 @@
   "weights": {"code": 0.50, "math": 0.30, "general": 0.20},
   "sources": [
     {
-      "name": "ocr_cot",
+      "name": "ocr_cot_full",
+      "glob": "data/sft/ocr_pairs/ocr_sft_pairs.jsonl",
+      "prompt": "prompt",
+      "answer": "output",
+      "bucket": "code",
+      "lang": "code",
+      "cap": 100000,
+      "system": "You are a competitive programming assistant. Reason step by step, then give the final runnable Python solution."
+    },
+    {
+      "name": "ocr_cot_seed",
       "glob": "data/distill/ocr_sft.jsonl",
       "prompt": "prompt",
       "answer": "output",
       "bucket": "code",
       "lang": "code",
-      "cap": 20000,
+      "cap": 100000,
       "system": "You are a competitive programming assistant. Reason step by step, then give the final runnable Python solution."
     },
     {
@@ -19,7 +29,7 @@
       "answer": "answer",
       "bucket": "general",
       "lang": "en",
-      "cap": 25000
+      "cap": 30000
     },
     {
       "name": "gsm8k_claude_zh",
@@ -40,22 +50,13 @@
       "cap": 40000
     },
     {
-      "name": "orca_math_en",
-      "glob": "data/raw/orca_math/*.parquet",
-      "prompt": "question",
-      "answer": "answer",
-      "bucket": "math",
-      "lang": "en",
-      "cap": 20000
-    },
-    {
       "name": "alpacazh_general",
       "glob": "data/raw/sft_open/alpacazh/data.json",
       "prompt": "instruction",
       "answer": "output",
       "bucket": "general",
       "lang": "zh",
-      "cap": 20000
+      "cap": 15000
     }
   ]
 }
