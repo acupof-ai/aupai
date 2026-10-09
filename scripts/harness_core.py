@@ -491,8 +491,11 @@ def _tmp_repo_shaped(mix_obj=None):
     # third_party is linked alongside the code dirs so suites that locate a vendored ref as a
     # sibling of the repo root resolve inside the sandbox, not the real ROOT (a resolving
     # __file__ escaped and made a suite ignore a missing dep, issue #426).
+    # v41f is linked because the hook map names files under it. Omit the link and
+    # every shaped world fails the stale-entry arm of check_selftests_are_gated
+    # before its own mutation (five v41f/mlx NEEDS_DATA paths, empty git init).
     for name in ("scripts", "eval", "datagen", "probes", "mathbank", "algorithms",
-                 "filters", "docs", "facts", "tests", "v41f_l2", "third_party"):
+                 "filters", "docs", "facts", "tests", "v41f", "v41f_l2", "third_party"):
         if os.path.isdir(os.path.join(ROOT, name)) and not os.path.exists(os.path.join(d, name)):
             os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
     for f in os.listdir(ROOT):

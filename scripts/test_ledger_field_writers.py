@@ -192,13 +192,23 @@ def main():
         # ambiguous, so git shows none by default). Asking for the tip found sha=33c2a05d with
         # touched=[] and the world had no evidence path to cite -- a fixture that looked broken
         # while the code was fine.
-        sha = subprocess.run(["git", "-C", ROOT, "rev-list", "-1", "--no-merges", _main_ref()],
-                             capture_output=True, text=True, timeout=60).stdout.strip()
-        touched = subprocess.run(
-            ["git", "-C", ROOT, "show", "--pretty=", "--name-only", sha],
+        # An empty non-merge does the same. origin/main's first --no-merges commit on
+        # 2026-10-08 was 1e5e2d67 ("ci: retrigger checks"), which touches nothing, so the
+        # single-sha read failed every PR checkout that has no local main. Walk until a
+        # commit names a path the done-gate accepts. The extensions match _commit_delivers.
+        cite_exts = (".py", ".json", ".md", ".sh", ".jsonl")
+        shas = subprocess.run(
+            ["git", "-C", ROOT, "rev-list", "--no-merges", "-n", "30", _main_ref()],
             capture_output=True, text=True, timeout=60).stdout.split()
-        ev_path = next((f for f in touched
-                        if f.endswith((".py", ".md", ".json", ".jsonl", ".sh", ".txt"))), None)
+        sha, ev_path, touched = "", None, []
+        for candidate in shas:
+            names = subprocess.run(
+                ["git", "-C", ROOT, "show", "--pretty=", "--name-only", candidate],
+                capture_output=True, text=True, timeout=60).stdout.split()
+            hit = next((f for f in names if f.endswith(cite_exts)), None)
+            if hit:
+                sha, ev_path, touched = candidate, hit, names
+                break
         if not sha or not ev_path:
             fails.append(f"worlds 5-6 have no subject: could not read a commit on main with a "
                          f"file to cite (sha={sha!r}, touched={touched[:4]}). FAILING rather than "
