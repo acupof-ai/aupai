@@ -2,7 +2,7 @@
 
 ## 结论
 
-Stage-3 已稳定运行。当前运行名是 `s3a_seg1`。训练从 `ckpt_v42s2.pt` 的 step 54051 恢复。首个 10B token 评测门是 step 66767。
+Stage-3 使用中性运行名 `c100_seg1`。训练从 `ckpt_v42s2.pt` 的 step 54051 恢复。首个 10B token 评测门是 step 66767。
 
 ## 当前状态
 
@@ -10,7 +10,7 @@ Stage-3 已稳定运行。当前运行名是 `s3a_seg1`。训练从 `ckpt_v42s2.
 | --- | --- |
 | 训练目标 | 累计 100B tokens |
 | 当前分段 | 从 step 54051 到 step 66767 |
-| 最新验收点 | step 54080，累计 42.53B tokens |
+| 最近完成但未保存 | 旧 `s3a_seg1` 到 step 54160；权威恢复点仍为 step 54051 |
 | 模型参数 | 3,910.9M |
 | Engram 层 | 1、5、9、13、17、21 |
 | GPU | 8 卡，world=8 |
@@ -18,20 +18,20 @@ Stage-3 已稳定运行。当前运行名是 `s3a_seg1`。训练从 `ckpt_v42s2.
 | 精度与算子 | FP8、FlashAttention |
 | 首段数据 | 9 个许可 allowed 数据域 |
 | 数据供给 | 57.52B tokens |
-| 运行 claim | `s3a_seg1` 占用 0–7 卡 |
-| 日志 | `/work/aupai/runs/s3a_seg1.log` |
-| 退出码 | `/work/aupai/runs/s3a_seg1.rc`；运行中不存在 |
+| 运行 claim | `c100_seg1` 占用 0–7 卡 |
+| 日志 | `/work/aupai/runs/c100_seg1.log` |
+| 退出码 | `/work/aupai/runs/c100_seg1.rc`；运行中不存在 |
 
 ## 权威文件
 
 | 用途 | 路径 |
 | --- | --- |
-| 数据 mix | `data/mix_s3a.json` |
-| 训练脚本 | `runs/s3a_seg1.sh` |
-| claim 监督器 | `runs/launch_s3a_claimed.py` |
+| 数据 mix | `data/mix_c100.json` |
+| 训练脚本 | `runs/c100_seg1.sh` |
+| claim 监督器 | `runs/launch_c100_claimed.py` |
 | 旧 SFT 隔离脚本 | `runs/isolate_obsolete_sft.py` |
 | 基础 checkpoint | `/work/aupai/ckpt_v42s2.pt` |
-| 运行日志 | `/work/aupai/runs/s3a_seg1.log` |
+| 运行日志 | `/work/aupai/runs/c100_seg1.log` |
 | 宿主清理审计 | `/work/aupai/runs/obsolete_recovery_cleanup_20261011.txt` |
 
 权威代码分支是 `stage3-100b`。权威工作区是 `/Users/bytedance/code/aupai_stage3_main`。
@@ -55,19 +55,19 @@ Stage-3 已稳定运行。当前运行名是 `s3a_seg1`。训练从 `ckpt_v42s2.
 ```bash
 cd /work/aupai
 python3 scripts/card_claim.py status
-tail -120 runs/s3a_seg1.log
+tail -120 runs/c100_seg1.log
 nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader
-sha256sum runs/s3a_seg1.sh data/mix_s3a.json runs/launch_s3a_claimed.py
+sha256sum runs/c100_seg1.sh data/mix_c100.json runs/launch_c100_claimed.py
 ```
 
 运行健康时必须同时满足：
 
-- claim 名为 `s3a_seg1`，卡范围是 0–7。
-- 父进程 `launch_s3a_claimed.py` 和子进程 `run_ddp.sh` 均存活。
+- claim 名为 `c100_seg1`，卡范围是 0–7。
+- 父进程 `launch_c100_claimed.py` 和子进程 `run_ddp.sh` 均存活。
 - 日志 step 持续增加。
 - 8 卡持续有训练负载。
 - 日志无 NaN、OOM、NCCL 错误或未处理的 Traceback。
-- `runs/s3a_seg1.rc` 不存在。
+- `runs/c100_seg1.rc` 不存在。
 
 ## 旧恢复链处理
 
@@ -75,17 +75,19 @@ sha256sum runs/s3a_seg1.sh data/mix_s3a.json runs/launch_s3a_claimed.py
 
 - 4 个隐藏 wrapper。
 - 4 个 Python 守护进程。
-- 4 个每分钟 cron。
+- 5 个每分钟 cron。最后一个是 `aupai-chain-watchdog`。
 - `stage_watchdog` 源目录。
 - `.system-state` 缓存。
+- pod 内 `runs/recovery_v42/main_ctrl` 控制器。
 - 两个兼容服务已停止。
 
 pod 内保留可逆副本。活动路径使用目录占位：
 
 - `runs/ladder/guard/d1e_chain.sh`
 - `sft_math.py`
+- `runs/recovery_v42/main_ctrl`
 
-恢复旧 SFT 前，必须先停止 100B 训练并释放 `s3a_seg1` claim。随后解除目录 immutable 属性，并从 `.disabled-for-100b` 副本恢复文件。不得在 100B 训练运行期间恢复这些入口。
+恢复旧 SFT 前，必须先停止 100B 训练并释放 `c100_seg1` claim。随后解除目录 immutable 属性，并从 `.disabled-for-100b` 副本恢复文件。不得在 100B 训练运行期间恢复这些入口。
 
 ## 下一步
 

@@ -12,7 +12,7 @@ import subprocess
 import sys
 
 ROOT = "/work/aupai"
-NAME = "s3a_seg1"
+NAME = "c100_seg1"
 CARDS = [str(i) for i in range(8)]
 
 os.chdir(ROOT)
@@ -44,15 +44,15 @@ env.update(
 )
 
 child = subprocess.Popen(
-    ["bash", "runs/s3a_seg1.sh"],
+    ["bash", "runs/c100_seg1.sh"],
     env=env,
     cwd=ROOT,
     start_new_session=True,
 )
-with open("runs/s3a_seg1.child.pid", "w", encoding="utf-8") as handle:
+with open("runs/c100_seg1.child.pid", "w", encoding="utf-8") as handle:
     handle.write(f"{child.pid}\n")
 rc = child.wait()
-with open("runs/s3a_seg1.rc", "w", encoding="utf-8") as handle:
+with open("runs/c100_seg1.rc", "w", encoding="utf-8") as handle:
     handle.write(f"{rc}\n")
 card_claim.release(NAME)
 raise SystemExit(rc)
