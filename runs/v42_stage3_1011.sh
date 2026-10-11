@@ -16,5 +16,5 @@ exec bash run_ddp.sh \
   --batch 4 --accum 6 --warmup 500 --warmdown 0.20 --anneal_frac 0.20 --lr_scale 1.0 \
   --arch v42 --moe_arm v42b --dim 1024 --layers 12 --heads 8 --ffn_hidden 6912 \
   "--v42_impl=attn_impl=fused,rope_impl=real,moe_stacked=1,hc_impl=liger,norm_impl=liger,attn_logit_softcap=50" \
-  --v42_lr 1e-3 --no-grad_ckpt --save_every 12716 \
+  --v42_lr 1e-3 --no-grad_ckpt --save_every 5000 \
   --allow_corpus_drift --allow_pod_drift --allow_env_drift
