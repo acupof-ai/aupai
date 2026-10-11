@@ -28155,7 +28155,7 @@ _UNFROZEN_ALLOWLIST = {
     # WSD stage-2 schedule rebase (mix-0928): the join step is run-specific and the peak
     # fraction is an experiment choice; neither changes architecture. Unset reproduces the
     # single-stage schedule byte-for-byte (test_arch_compat pins that).
-    "lr_origin_step", "lr_peak_mult",
+    "lr_origin_step", "lr_peak_mult", "lr_origin_stable",
     # Newton-Schulz rank sharding changes WHERE the Muon orthogonalisation computes (across
     # DDP ranks) but not WHAT: each stacked same-shape matrix is still fully orthogonalised
     # and scripts/test_muon_ns_shard.py pins bit-parity, so on/off is an execution-speed
