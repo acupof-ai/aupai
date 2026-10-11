@@ -1,0 +1,15 @@
+{
+  "total_tokens": 100001120256,
+  "description": "Engram continuation segment 1. Full 100B LR schedule; stop after the next 10B tokens. Only license-allowed domains are active. Runtime-neutral alias prevents obsolete SFT guards from matching the pretraining process.",
+  "domains": {
+    "code_ultra_l3_noexec_dc": { "weight": 0.239991287220, "epochs": 1, "anneal": 0.239991287220 },
+    "code_ultra_l2_dc": { "weight": 0.366515640885, "epochs": 1, "anneal": 0.366515640885 },
+    "math_owm_stage2_g4_dc": { "weight": 0.108763200455, "epochs": 1, "anneal": 0.108763200455 },
+    "math_cot2_dc": { "weight": 0.011501780260, "epochs": 1, "anneal": 0.011501780260 },
+    "en_fwe4_dc": { "weight": 0.109241491885, "epochs": 1, "anneal": 0.109241491885 },
+    "cosmo_en_dc": { "weight": 0.115974314248, "epochs": 1, "anneal": 0.115974314248 },
+    "en_c4_stage2_dc": { "weight": 0.045022910209, "epochs": 1, "anneal": 0.045022910209 },
+    "code_opencot_dc": { "weight": 0.002787861552, "epochs": 1, "anneal": 0.002787861552 },
+    "code_py_commitpackft_dd_dc": { "weight": 0.000201513286, "epochs": 1, "anneal": 0.000201513286 }
+  }
+}
