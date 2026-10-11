@@ -12,7 +12,9 @@ from pathlib import Path
 ROOT = Path("/work/aupai")
 TARGET_MARKERS = (
     "/work/aupai/runs/ladder/guard/d1e_chain.sh",
+    "/work/aupai/runs/recovery_v42/main_ctrl/chain.sh",
     "sft_math.py --resume /work/aupai/runs/recovery_v42",
+    "sft_train.py --resume /work/aupai/runs/recovery_v42",
 )
 
 
@@ -67,9 +69,24 @@ def preserve_and_block(path: Path, note: str) -> None:
     (path / "README").write_text(note + "\n", encoding="utf-8")
 
 
+def preserve_dir_and_block(path: Path, note: str) -> None:
+    disabled = path.with_name(path.name + ".disabled-for-100b")
+    if path.is_dir() and (path / "README").exists() and len(list(path.iterdir())) == 1:
+        (path / "README").write_text(note + "\n", encoding="utf-8")
+        return
+    if path.exists():
+        if disabled.exists():
+            stamped = path.with_name(path.name + f".disabled-for-100b.{int(time.time())}")
+            shutil.move(path, stamped)
+        else:
+            shutil.move(path, disabled)
+    path.mkdir(parents=False, exist_ok=True)
+    (path / "README").write_text(note + "\n", encoding="utf-8")
+
+
 os.chdir(ROOT)
 stop_targets()
-for name in ("recovery_d1e", "s3a_seg1"):
+for name in ("recovery_d1e", "s3a_seg1", "c100_seg1"):
     subprocess.run(
         ["python3", "scripts/card_claim.py", "release", "--name", name],
         stdout=subprocess.DEVNULL,
@@ -85,7 +102,15 @@ preserve_and_block(
     ROOT / "sft_math.py",
     "Disabled during the 100B Engram run. The preserved program is ../sft_math.py.disabled-for-100b.",
 )
+preserve_dir_and_block(
+    ROOT / "runs/recovery_v42/main_ctrl",
+    "Disabled during the 100B Engram run. The preserved controller is ../main_ctrl.disabled-for-100b.",
+)
 
 print("obsolete SFT isolated")
-for path in (ROOT / "runs/ladder/guard/d1e_chain.sh", ROOT / "sft_math.py"):
+for path in (
+    ROOT / "runs/ladder/guard/d1e_chain.sh",
+    ROOT / "sft_math.py",
+    ROOT / "runs/recovery_v42/main_ctrl",
+):
     print(path, "directory" if path.is_dir() else "NOT_BLOCKED")
