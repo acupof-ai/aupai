@@ -3921,11 +3921,10 @@ def main():
     Wtr = num_tr[:, 1:].contiguous() if Cfg.fone else None
     Vva = num_va[:, :-1].contiguous() if Cfg.fone else None
     Wva = num_va[:, 1:].contiguous() if Cfg.fone else None
-    data, X = seqs, seqs  # for the params print below
+    data, X = Xtr, Xtr  # for the params print below
     Cfg.epochs = 1  # repeats are encoded in the schedule
-    Xtr, Ytr = Xtr.contiguous().pin_memory(), Ytr.contiguous().pin_memory()
-    if Cfg.fone:
-        Vtr, Wtr = Vtr.contiguous().pin_memory(), Wtr.contiguous().pin_memory()
+    # Keep the full schedule pageable. The loop copies each microbatch through a pinned buffer.
+    # Pinning the full schedule is slow and uses excess host memory.
     # Xtr[idx] allocates an unpinned temp, which makes .to(non_blocking=True) synchronous. Stage
     # through two pinned buffers, each reused only after its previous H2D copy's event completes.
     pin = [
