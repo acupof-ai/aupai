@@ -10,6 +10,7 @@ trap '' TERM HUP QUIT
 export TORCHELASTIC_SIGNALS_TO_HANDLE=""
 exec bash run_ddp.sh \
   --mix data/mix_v42_stage3.json --resume ckpt_v42s2.pt \
+  --v42_engram 1,5,9,13,17,21 \
   --lr_origin_step 54051 --lr_peak_mult 0.10 --lr_origin_stable \
   --name v42_stage3 --max_steps 127157 \
   --batch 4 --accum 6 --warmup 500 --warmdown 0.20 --anneal_frac 0.20 --lr_scale 1.0 \
