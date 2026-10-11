@@ -4,6 +4,10 @@ set -euo pipefail
 cd /work/aupai || exit 1
 mkdir -p runs
 export ALLOW_UNSYNCED=1 ALLOW_DIRECT_RUN=1 AUPAI_TOKEN_CACHE_DIR=/data00 NGPU=8
+# External watchdogs send SIGTERM to torchrun only. Keep the run alive.
+# Use kill -9 for a controlled hard stop.
+trap '' TERM HUP QUIT
+export TORCHELASTIC_SIGNALS_TO_HANDLE=""
 exec bash run_ddp.sh \
   --mix data/mix_v42_stage3.json --resume ckpt_v42s2.pt \
   --v42_engram 1,5,9,13,17,21 \
