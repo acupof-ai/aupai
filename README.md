@@ -4,6 +4,8 @@ aupai is the V4.1 coding/math model: a 24-layer v42 stack at 614M active params,
 scratch on a 30B-token UltraData gate mix, targeting **HumanEval pass@1 ≥ 30%**. Full rules
 are in `AGENTS.md`.
 
+> 当前主线：完成 100B Engram 预训练。统一入口见 [`docs/standards/pretrain_100b_runbook.md`](docs/standards/pretrain_100b_runbook.md)。
+
 ## Model
 
 The gate stack is **v42** (`--arch v42`): the v41f V4.1 implementation, `v41f/lm.V42LM` at
