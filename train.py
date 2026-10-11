@@ -341,6 +341,7 @@ class Cfg:
     # cosine fills the whole post-warmup segment.
     lr_origin_step = None
     lr_peak_mult = 1.0
+    lr_origin_stable = False
     # Fractional warmup for short SFT runs: None means ABSOLUTE warmup in `warmup` steps (the
     # pretraining path, where a fixed step count is the measured choice). When set, warmup is
     # round(frac*total) steps, resolved per call in lr_mult because total arrives there.
@@ -3338,7 +3339,15 @@ def lr_mult(step, total, cfg):
             return cfg.lr_peak_mult * (s + 1) / wu
         if seg <= wu:
             return 0.0
-        progress = min(1.0, (s - wu) / (seg - wu))
+        if not getattr(cfg, "lr_origin_stable", False):
+            progress = min(1.0, (s - wu) / (seg - wu))
+            return cfg.lr_peak_mult * 0.5 * (1 + math.cos(math.pi * progress))
+        # Segment-relative warmdown. The stable phase holds peak LR. The final phase anneals.
+        wd_start = max(wu, seg - warmdown_start(seg, cfg))
+        if s < wd_start:
+            return cfg.lr_peak_mult
+        wd_steps = seg - wd_start
+        progress = min(1.0, (s - wd_start) / wd_steps)
         return cfg.lr_peak_mult * 0.5 * (1 + math.cos(math.pi * progress))
     wu = _warmup_steps(cfg, total)
     if step < wu:
@@ -3470,6 +3479,7 @@ def main():
         "ced_kc_norm": "QK-norm: per-head F.rms_norm of the CED decoder global entry keys W_KV(H_6); off keeps old checkpoints byte-identical",
         "muon_ns_shard": "Muon: shard Newton-Schulz over DDP ranks along stacked same-shape instances and all_gather (bit-identical; default off)",
         "stochastic_round": "option B: fp32 candidate Bernoulli-rounded into bf16 weights on every optimizer write, fp32 Muon momentum (default off; 1e order 2026-09-25)",
+        "lr_origin_stable": "WSD join: hold peak LR during the stable phase, then anneal at the segment end",
     }.items():
         parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
                             default=None, required=name in RECIPE_REQUIRED, help=help_)
