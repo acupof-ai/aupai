@@ -33,6 +33,7 @@ FIXED_TEXTS = [
 ]
 CANARY_CODE = "7319"
 CANARY_WRONG = ["1234", "2856", "9041"]
+TARGET_MODULE_RE = re.compile(r"^(layers|engrams)\.(\d+)$")
 
 
 def set_cpu_env(threads):
@@ -102,6 +103,157 @@ def finite_stats(torch, model):
         "finite_param_fraction": round(finite / total, 6) if total else None,
         "max_abs_param": round(worst_abs, 3),
     }
+
+
+def target_modules(model):
+    rows = []
+    for name, module in model.named_modules():
+        match = TARGET_MODULE_RE.fullmatch(name)
+        if match:
+            rows.append((int(match.group(2)), name, module))
+    return sorted(rows, key=lambda x: (x[0], x[1]))
+
+
+def flatten_tensors(torch, obj):
+    if torch.is_tensor(obj):
+        return [obj]
+    if isinstance(obj, (tuple, list)):
+        out = []
+        for item in obj:
+            out.extend(flatten_tensors(torch, item))
+        return out
+    if isinstance(obj, dict):
+        out = []
+        for item in obj.values():
+            out.extend(flatten_tensors(torch, item))
+        return out
+    return []
+
+
+def persistent_buffers(module):
+    out = []
+    seen = set()
+    for _name, submodule in module.named_modules():
+        non_persistent = getattr(submodule, "_non_persistent_buffers_set", set())
+        for buffer_name, buffer in submodule._buffers.items():
+            if buffer is None or buffer_name in non_persistent:
+                continue
+            key = (buffer.data_ptr(), tuple(buffer.shape))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(buffer)
+    return out
+
+
+def module_state_stats(torch, module):
+    finite = total = 0
+    square_sum = 0.0
+    max_abs = 0.0
+    float_tensors = 0
+    all_tensors = 0
+    tensors = list(module.parameters()) + persistent_buffers(module)
+    for tensor in tensors:
+        all_tensors += 1
+        if not tensor.is_floating_point():
+            continue
+        float_tensors += 1
+        value = tensor.detach().float()
+        mask = torch.isfinite(value)
+        finite += int(mask.sum())
+        total += int(mask.numel())
+        good = value[mask]
+        if good.numel():
+            square_sum += float(good.square().sum())
+            max_abs = max(max_abs, float(good.abs().max()))
+    return {
+        "finite_fraction": round(finite / total, 6) if total else None,
+        "norm": round(square_sum ** 0.5, 3),
+        "max_abs": round(max_abs, 3),
+        "float_tensors": float_tensors,
+        "all_tensors": all_tensors,
+    }
+
+
+def tensor_collection_stats(torch, tensors):
+    finite = total = 0
+    abs_sum = 0.0
+    max_abs = 0.0
+    float_tensors = 0
+    for tensor in tensors:
+        if not tensor.is_floating_point():
+            continue
+        float_tensors += 1
+        value = tensor.detach().float()
+        mask = torch.isfinite(value)
+        finite += int(mask.sum())
+        total += int(mask.numel())
+        good = value[mask]
+        abs_sum += float(good.abs().sum())
+        if good.numel():
+            max_abs = max(max_abs, float(good.abs().max()))
+    return {
+        "finite_fraction": round(finite / total, 6) if total else None,
+        "mean_abs": round(abs_sum / finite, 6) if finite else None,
+        "max_abs": round(max_abs, 3),
+        "tensor_count": float_tensors,
+    }
+
+
+@torch.no_grad()
+def collect_activations(torch, model, tok, max_len=96):
+    modules = target_modules(model)
+    records = {}
+
+    def hook(name):
+        def _hook(_module, _inputs, output):
+            records[name] = tensor_collection_stats(
+                torch, flatten_tensors(torch, output)
+            )
+        return _hook
+
+    handles = [module.register_forward_hook(hook(name)) for _, name, module in modules]
+    try:
+        ids = encode_text(tok, FIXED_TEXTS[0])[:max_len]
+        x = torch.tensor([ids], dtype=torch.long)
+        model(x)
+    finally:
+        for handle in handles:
+            handle.remove()
+    return records
+
+
+def layer_rows(torch, model, activations):
+    out = []
+    for _idx, name, module in target_modules(model):
+        out.append({
+            "module": name,
+            "state": module_state_stats(torch, module),
+            "activation": activations.get(name),
+        })
+    return out
+
+
+def layer_errors(rows):
+    errors = []
+    for row in rows:
+        name = row["module"]
+        state = row["state"]
+        activation = row["activation"]
+        if state.get("float_tensors", 0) == 0:
+            errors.append(f"{name} has no floating state")
+        if state.get("finite_fraction") != 1.0:
+            errors.append(f"{name} non-finite state")
+        if activation is None:
+            errors.append(f"{name} missing activation")
+            continue
+        if activation.get("tensor_count", 0) == 0:
+            errors.append(f"{name} has no floating activation")
+        if activation.get("finite_fraction") != 1.0:
+            errors.append(f"{name} non-finite activation")
+        if activation.get("mean_abs") in (None, 0):
+            errors.append(f"{name} zero activation")
+    return errors
 
 
 @torch.no_grad()
@@ -198,6 +350,12 @@ def run_one(path, step, threads):
         row["finite"] = finite_stats(torch, model)
         if row["finite"]["finite_param_fraction"] != 1.0:
             row.update(status="fail", errors=["non-finite parameter found"])
+            return row
+        activations = collect_activations(torch, model, tok)
+        row["layers"] = layer_rows(torch, model, activations)
+        layer_failures = layer_errors(row["layers"])
+        if layer_failures:
+            row.update(status="fail", errors=layer_failures)
             return row
         text_rows = score_texts(torch, model, tok)
         canary = score_canary(torch, model, tok)
