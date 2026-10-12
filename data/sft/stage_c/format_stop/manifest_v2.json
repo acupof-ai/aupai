@@ -1,0 +1,377 @@
+{
+  "set": "format_stop_v2",
+  "stage": "C1 format and stop (docs/standards/stage_cd_training_plan_1009.md section 2, row C1)",
+  "built_utc": "2026-10-09T13:30:50Z",
+  "builder": "data/sft/stage_c/format_stop/build.py",
+  "builder_sha256": "51d62acbab10e8f85717f29afbb35fc3a20336e34d43187836a800c0a04bf6f8",
+  "bank_sha256": "6467ecc1078cd8b2112ede038de63256a1be520a2f3d3de04a6b86bdc6ce428b",
+  "seed": 20261009,
+  "rows": 205979,
+  "protocol": {
+    "format": "chatml",
+    "system": "empty",
+    "prompt_builder": "scripts.loader.format_prompt(question, None)",
+    "prompt_prefix": "<|im_start|>user\\n{question}<|im_end|>\\n<|im_start|>assistant\\n",
+    "answer_terminator": "<|im_end|>",
+    "answer_max_tokens": 64,
+    "packer": "datagen.prepare_sft.pack_and_save split_encode=True seq=4096"
+  },
+  "sources": {
+    "curated_define": {
+      "rows": 269,
+      "license": "generated_for_aupai",
+      "note": "one-sentence definitions written for this set"
+    },
+    "curated_refusal": {
+      "rows": 62,
+      "license": "generated_for_aupai",
+      "note": "refusal and clarification answers written for this set"
+    },
+    "curated_translation": {
+      "rows": 410,
+      "license": "generated_for_aupai",
+      "note": "phrase pairs written for this set"
+    },
+    "fact_core": {
+      "rows": 660,
+      "license": "public_domain",
+      "note": "public-domain reference facts (SI unit definitions, named constants, world capitals, Roman numerals) typed into build.py"
+    },
+    "stdlib_oneliner": {
+      "rows": 171,
+      "license": "PSF-2.0",
+      "note": "Python one-liners over documented standard-library APIs; each entry executed by build.py before it ships"
+    },
+    "synthetic_base": {
+      "rows": 17583,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; the target form is recomputed with format(n, 'b'/'o'/'x')"
+    },
+    "synthetic_date": {
+      "rows": 25081,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; every weekday, month, year and day count is computed with datetime, not tabulated"
+    },
+    "synthetic_error_fix": {
+      "rows": 2481,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; the correct value is recomputed and the wrong one is built from it"
+    },
+    "synthetic_list_py": {
+      "rows": 2868,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; the one-line answer is executed against the generated list before it ships"
+    },
+    "synthetic_number_theory": {
+      "rows": 11831,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; math.gcd / math.lcm recompute the value"
+    },
+    "synthetic_one_step": {
+      "rows": 87924,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; operands from a seeded RNG, the value recomputed in Python"
+    },
+    "synthetic_percent": {
+      "rows": 703,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; Fraction(pct, 100) * total recomputes the value exactly"
+    },
+    "synthetic_record": {
+      "rows": 2495,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; the record tables are invented, so no real person or measurement is described"
+    },
+    "synthetic_series": {
+      "rows": 1054,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; the sum or mean is recomputed from the range"
+    },
+    "synthetic_string": {
+      "rows": 4187,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; character index, count and reversal are computed in Python on a generated ASCII string"
+    },
+    "synthetic_two_step": {
+      "rows": 42977,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; both results are recomputed from the operands"
+    },
+    "synthetic_unit": {
+      "rows": 4699,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; the conversion factor is an exact fraction and the value is recomputed"
+    },
+    "synthetic_unit_fix": {
+      "rows": 524,
+      "license": "generated_for_aupai",
+      "note": "generated in build.py; the correct conversion is recomputed from an exact fraction factor"
+    }
+  },
+  "licenses": {
+    "public_domain": 184616,
+    "generated_for_aupai": 21192,
+    "PSF-2.0": 171
+  },
+  "revision": {
+    "tokenizer": {
+      "path": "data/tokenizer.json",
+      "vocab_id": "f1f860970d15d623",
+      "sha256": "c6d5eec97c6af1ba2f8d9a69c3b6fd0be9731d80fea37c758850057f1e6e3d00",
+      "size": 32768
+    },
+    "eval_gates": {
+      "humaneval_164": {
+        "path": "data/pretrain_100b/codemath/holdouts/data/eval/humaneval/humaneval_164.jsonl",
+        "sha256": "1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2"
+      },
+      "gsm8k_test": {
+        "path": "data/eval/gsm8k_test.jsonl",
+        "sha256": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14"
+      },
+      "math_500_en_for_eval": {
+        "path": "data/eval/math_500_en_test.jsonl",
+        "sha256": "35dc41080a3680858b27fa7e0533d2d547825316fc5dafe5d316f4ccc5a06132"
+      },
+      "mbpp_holdouts": {
+        "path": "data/pretrain_100b/codemath/holdouts/data/eval/mbpp_holdouts.jsonl",
+        "sha256": "ccf64ceae9c5403bf50a044cb6d505bfd2a2963ee58338ba268fd65beab92a9f"
+      }
+    },
+    "holdout_hashes": {
+      "path": "data/eval/holdout_hashes.txt",
+      "sha256": "b382de09159701c0dd01a684f2fa461f6640f8646284abbefe4b21f26fa9ce12",
+      "pack_holdout_fp": "b382de09159701c0"
+    },
+    "packer_fp": "04757b82dc7a1be2"
+  },
+  "vocab_id": "f1f860970d15d623",
+  "tokens": {
+    "rows": 205979,
+    "answer_tokens": {
+      "min": 2,
+      "median": 3,
+      "p90": 7,
+      "max": 44,
+      "mean": 3.96,
+      "n": 205979
+    },
+    "question_tokens": {
+      "min": 5,
+      "median": 16,
+      "p90": 23,
+      "max": 50,
+      "mean": 16.85,
+      "n": 205979
+    },
+    "answer_tokens_zh": {
+      "min": 2,
+      "median": 3,
+      "p90": 7,
+      "max": 44,
+      "mean": 4.03,
+      "n": 107716
+    },
+    "answer_tokens_en": {
+      "min": 2,
+      "median": 3,
+      "p90": 7,
+      "max": 23,
+      "mean": 3.88,
+      "n": 98263
+    },
+    "by_lang": {
+      "zh": 107716,
+      "en": 98263
+    },
+    "lang_ratio": {
+      "zh": 0.5229,
+      "en": 0.4771
+    },
+    "by_source": {
+      "synthetic_one_step": 87924,
+      "synthetic_two_step": 42977,
+      "synthetic_date": 25081,
+      "synthetic_base": 17583,
+      "synthetic_list_py": 2868,
+      "synthetic_string": 4187,
+      "synthetic_series": 1054,
+      "synthetic_error_fix": 2481,
+      "synthetic_number_theory": 11831,
+      "synthetic_unit": 4699,
+      "fact_core": 660,
+      "synthetic_percent": 703,
+      "synthetic_record": 2495,
+      "curated_define": 269,
+      "synthetic_unit_fix": 524,
+      "curated_translation": 410,
+      "stdlib_oneliner": 171,
+      "curated_refusal": 62
+    },
+    "by_license": {
+      "public_domain": 184616,
+      "generated_for_aupai": 21192,
+      "PSF-2.0": 171
+    },
+    "by_quality": {
+      "numeric_verified": 196086,
+      "code_verified_exec": 3039,
+      "short_exact": 6113,
+      "one_sentence_definition": 269,
+      "curated_bilingual": 410,
+      "policy_refusal": 62
+    },
+    "supervised_answer_tokens_jsonl": 1020818,
+    "supervised_tokens_in_pack": 1020818,
+    "masked_pad_tokens": 13860,
+    "total_tokens_in_pack": 6153694
+  },
+  "files": {
+    "format_stop_v2.jsonl": {
+      "sha256": "7f1b67699e2a6e3a2f543377fb10c9ec1d5b83049f268b3fd1cfac169aa45af1",
+      "bytes": 54442326,
+      "rows": 205979
+    },
+    "format_stop_v2.pt": {
+      "sha256": "574caa0599eb380524a37fbae189a8f51fcb626778ef65390c00edafaa53c51b",
+      "bytes": 49231989,
+      "rows": 1502,
+      "seq": 4097
+    },
+    "spotcheck_200_v2.jsonl": {
+      "sha256": "cb14622620263a0b7c2f99d46fcabdfece4aa2b97543b056347fc95eadd44c15",
+      "bytes": 59676
+    },
+    "report_v2.json": {
+      "sha256": "34b934f1cd923de8b23b8e9725590184a35f8926ce4bb69df0026a4145249da8",
+      "bytes": 17720
+    }
+  },
+  "supervised_budget": {
+    "curated_define": {
+      "rows": 269,
+      "supervised_tokens": 6299,
+      "sup_per_row": 23.42
+    },
+    "curated_refusal": {
+      "rows": 62,
+      "supervised_tokens": 1008,
+      "sup_per_row": 16.26
+    },
+    "curated_translation": {
+      "rows": 410,
+      "supervised_tokens": 4654,
+      "sup_per_row": 11.35
+    },
+    "fact_core": {
+      "rows": 660,
+      "supervised_tokens": 3612,
+      "sup_per_row": 5.47
+    },
+    "stdlib_oneliner": {
+      "rows": 171,
+      "supervised_tokens": 1627,
+      "sup_per_row": 9.51
+    },
+    "synthetic_base": {
+      "rows": 17583,
+      "supervised_tokens": 79398,
+      "sup_per_row": 4.52
+    },
+    "synthetic_date": {
+      "rows": 25081,
+      "supervised_tokens": 138996,
+      "sup_per_row": 5.54
+    },
+    "synthetic_error_fix": {
+      "rows": 2481,
+      "supervised_tokens": 7833,
+      "sup_per_row": 3.16
+    },
+    "synthetic_list_py": {
+      "rows": 2868,
+      "supervised_tokens": 20528,
+      "sup_per_row": 7.16
+    },
+    "synthetic_number_theory": {
+      "rows": 11831,
+      "supervised_tokens": 42440,
+      "sup_per_row": 3.59
+    },
+    "synthetic_one_step": {
+      "rows": 87924,
+      "supervised_tokens": 306081,
+      "sup_per_row": 3.48
+    },
+    "synthetic_percent": {
+      "rows": 703,
+      "supervised_tokens": 2197,
+      "sup_per_row": 3.13
+    },
+    "synthetic_record": {
+      "rows": 2495,
+      "supervised_tokens": 10073,
+      "sup_per_row": 4.04
+    },
+    "synthetic_series": {
+      "rows": 1054,
+      "supervised_tokens": 3209,
+      "sup_per_row": 3.04
+    },
+    "synthetic_string": {
+      "rows": 4187,
+      "supervised_tokens": 23606,
+      "sup_per_row": 5.64
+    },
+    "synthetic_two_step": {
+      "rows": 42977,
+      "supervised_tokens": 347254,
+      "sup_per_row": 8.08
+    },
+    "synthetic_unit": {
+      "rows": 4699,
+      "supervised_tokens": 19848,
+      "sup_per_row": 4.22
+    },
+    "synthetic_unit_fix": {
+      "rows": 524,
+      "supervised_tokens": 2155,
+      "sup_per_row": 4.11
+    },
+    "TOTAL": {
+      "rows": 205979,
+      "supervised_tokens": 1020818,
+      "sup_per_row": 4.96
+    }
+  },
+  "decontamination": {
+    "ngram": 13,
+    "gate_sets": {
+      "humaneval_164": {
+        "path": "data/pretrain_100b/codemath/holdouts/data/eval/humaneval/humaneval_164.jsonl",
+        "rows": 164,
+        "grams": 20457,
+        "sha256": "1d49078ba3e2b196b9344535bef34a43021f038fad9561d6ee7c53450609a6a2"
+      },
+      "gsm8k_test": {
+        "path": "data/eval/gsm8k_test.jsonl",
+        "rows": 1319,
+        "grams": 98945,
+        "sha256": "3730d312f6e3440559ace48831e51066acaca737f6eabec99bccb9e4b3c39d14"
+      },
+      "math_500_en_for_eval": {
+        "path": "data/eval/math_500_en_test.jsonl",
+        "rows": 500,
+        "grams": 47276,
+        "sha256": "35dc41080a3680858b27fa7e0533d2d547825316fc5dafe5d316f4ccc5a06132"
+      },
+      "mbpp_holdouts": {
+        "path": "data/pretrain_100b/codemath/holdouts/data/eval/mbpp_holdouts.jsonl",
+        "rows": 974,
+        "grams": 15386,
+        "sha256": "ccf64ceae9c5403bf50a044cb6d505bfd2a2963ee58338ba268fd65beab92a9f"
+      }
+    },
+    "hits": 0
+  }
+}

@@ -1,0 +1,53 @@
+#!/bin/bash
+# D1: the decisive H1 experiment -- format/stop data ONLY, on the correct Engram base.
+#
+# Question it answers: does the C1 dataset (short answers, every one terminated by
+# <|im_end|>, no echo, no second <|im_start|>) fix E2's four failed judgments, or does
+# the repetition live in the base and need something else (H3: decoding/termination)?
+#
+# SHAPE IS SET BY THE DATA, NOT BY HABIT. format_stop_v2.pt is 100 rows of 4097 tokens
+# (65,393 supervised), so world 8 x micro 2 x accum 16 -- 224 packs/step -- exceeds one
+# whole epoch per step and sft_math.py refuses the schedule ("needs at least two optimizer
+# steps", measured 2026-10-09 on v1's 100 rows). v2 carries 1,654 rows, so micro 2 x accum 4
+# x world 8 = 64 rows/step gives ~26 steps/epoch, ~156 over 6 epochs -- the same order of
+# example-views D1b got (430K) with 15x more unique data (908K views over 227,338 examples).
+#
+# --no-grad_ckpt: measured on the pod the same day at micro 2 x accum 16 x 7 cards:
+# grad_ckpt ON 34.7 s/step (step 20-30 window), OFF 10.4 s/step -- 3.3x. micro 2 is exactly
+# the shape that measurement ran at, so this is inside the verified envelope (peak 48.90 GiB
+# against a 95 GiB card); micro 4 and micro 8 OOM without recompute.
+#
+# Claim pattern: start the job, then claim ITS pid, and stop if the claim fails
+# (runs/claim_pattern_selftest.sh is the control; `--pid $$` is refused by card_claim).
+set -euo pipefail
+cd /work/aupai
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0,1,2,3,4,5,6,7}
+NAME=v42_d1c_format_stop_1009
+OUT=ckpt_v42_d1c_format_stop_1009.pt
+BASE=ckpt_v42s2.pt
+PACK=data/sft/stage_c/format_stop/format_stop_v2.pt
+[ -f "$BASE" ] || { echo REFUSING_missing_base; exit 2; }
+[ -f "$PACK" ] || { echo REFUSING_missing_pack; exit 2; }
+[ ! -e "$OUT" ] || { echo REFUSING_output_exists; exit 2; }
+LOG=runs/${NAME}.out
+: > "$LOG"
+torchrun --nproc_per_node=8 --master_port=29671 sft_math.py \
+  --resume "$BASE" \
+  --sft_path "$PACK" \
+  --out "$OUT" \
+  --epochs 6 --batch 2 --accum 4 --no-grad_ckpt \
+  --sft_peak_lr 2e-5 --sft_final_lr_frac 0.1 --warmup_frac 0.03 \
+  --lr_decay cosine --save_every 100000 \
+  > "$LOG" 2>&1 &
+TRAIN_PID=$!
+if ! python3 scripts/card_claim.py acquire --name "$NAME" --cards 0,1,2,3,4,5,6,7 \
+     --note "D1c format/stop v2 (227k rows), ckpt_v42s2 base, 6 epochs, micro2xaccum4, no grad_ckpt" \
+     --wait 0 --pid "$TRAIN_PID"; then
+  echo "REFUSING_claim_failed -- killing torchrun $TRAIN_PID, nothing runs unclaimed"
+  kill -TERM "$TRAIN_PID" 2>/dev/null || true
+  wait "$TRAIN_PID" 2>/dev/null || true
+  exit 4
+fi
+trap 'python3 scripts/card_claim.py release --name "$NAME" >/dev/null 2>&1 || true' EXIT
+wait "$TRAIN_PID"

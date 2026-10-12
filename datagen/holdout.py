@@ -210,6 +210,41 @@ REGISTRY = {
                "is decided; registered so the completeness check sees it and nobody reads its "
                "absence as 'not an eval file'",
     },
+    # The E0-E6 ladder's operational exam sets (docs/standards/eval_ladder_v1_1009.md).
+    # Registered because an unregistered eval file is one the holdout guard has never heard
+    # of -- the shape that let ten eval files sit outside the population before 2026-09-04.
+    "ladder_e1_prompts": {
+        "path": "data/eval/ladder/e1_prompts.jsonl",
+        "kind": "eval",
+        "question_field": ["prompt"],
+        "added": "2026-10-09",
+        "why": "E1 base-continuation prompt set (16 rows, zh/en), scored by eval/ladder/"
+               "e1_base_gen.py; the row's `prompt` is the text handed to the model",
+    },
+    "ladder_e2_prompts": {
+        "path": "data/eval/ladder/e2_prompts.jsonl",
+        "kind": "eval",
+        "question_field": ["question"],
+        "added": "2026-10-09",
+        "why": "E2 ChatML format-and-stop prompt set (10 rows), scored by eval/ladder/"
+               "e2_chatml.py; `question` is wrapped by scripts/loader.format_prompt",
+    },
+    "ladder_e3_arith": {
+        "path": "data/eval/ladder/arith_v1.jsonl",
+        "kind": "eval",
+        "question_field": ["prompt"],
+        "added": "2026-10-09",
+        "why": "E3 one-step arithmetic operational set (72 rows, six kinds); each row carries "
+               "its own independent recompute in `check`, scored by eval/ladder/e3_arith.py",
+    },
+    "ladder_e4_wordprob": {
+        "path": "data/eval/ladder/wordprob_v1.jsonl",
+        "kind": "eval",
+        "question_field": ["prompt"],
+        "added": "2026-10-09",
+        "why": "E4 short-chain word-problem operational set (24 rows, zh/en, 2-3 steps); "
+               "`check` holds the per-step expressions, scored by eval/ladder/e4_wordprob.py",
+    },
     "lambada_zh_src": {
         "path": "data/eval/holdout_v2/lambada_zh_src.jsonl",
         "kind": "eval",
@@ -356,6 +391,11 @@ REGISTRY_SHA1 = {
     "mbpp_sanitized_427": "8e6b6c0a1d746e060a492df8efcd5ee2270ace13",
     "mbpp_holdouts_974": "c0bb8355ddc670dd61c71a826fddef0532c98a76",
     "phi_l3_stub_holdout_manifest": "fc86175871b6ff6bfbec70859fed48f19241e1b0",
+    # read on the pod 2026-10-09; the laptop copies are byte-identical (checked).
+    "ladder_e1_prompts": "68b9c7d0ffdd5e59777932ffccd57731eba16117",
+    "ladder_e2_prompts": "58e9c2423a820616e5edf8dffa7c4f7020ccb1a1",
+    "ladder_e3_arith": "8fad0b2f4db15ade784dcb45258fca675be8feff",
+    "ladder_e4_wordprob": "300095ae12d9ce68fdb37c849fc8a3ead99dbdb1",
     "lambada_en": "7cf46a68e4e2d89b0fbcf98cef843b00cc8a221c",
     "lambada_zh": "52771e5909a032393447278c51017dba302aef5c",
     "lambada_zh_src": "930bc8d5e6ea9c16be0b1e90ef6bd6dac77da7a3",

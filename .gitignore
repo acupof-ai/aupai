@@ -85,3 +85,31 @@ data/pod_head_manifest.txt
 # large HF classifier weights, downloaded at need (see docs/lessons/fineweb_edu_classifier_locked.md)
 models/
 runs/fwe_score.err
+
+# The 100B Engram data workstream (user-ordered 2026-10-09): raw clones, shards, packs and
+# the pipeline scripts that build them. It is an agent workspace, not repo source, and two
+# harness invariants (selftests_are_gated, ci_selftest_partition) read `git ls-files --others
+# --exclude-standard`, so anything untracked and NOT ignored counts as a selftest carrier that
+# nothing runs. R4 (docs/standards/eval_ladder_v1_1009.md) already says raw corpora are never
+# tracked; this makes the tree agree with that rule. Deliverables stay reviewable through
+# data/pretrain_100b/*/report.json (force-add if one must be committed) and are summarised in
+# docs/audits/pretrain_100b_status_1009.md.
+data/pretrain_100b/
+
+# Scratch verifiers of the ABORTED v6 / engbase line (2026-10-09). They are evidence of runs
+# that are already recorded in docs/audits/, not source: they carry a --selftest flag, so
+# `git ls-files --others --exclude-standard` counts them as selftest carriers that no hook
+# bucket runs. Registering them would claim coverage of a line the handover doc retires
+# (section 12: v6 is a failure control, not a branch to continue); the files stay on disk.
+runs/chat_smoke_verified_1008.py
+runs/chat_smoke_verified_engbase_1009.py
+runs/verify_mathfix_engbase_1009.py
+runs/verify_mathfix_v6_gate.py
+scripts/build_math_sft_v4.py
+
+# The E6 merge selftest's scratch world (eval/ladder/e6_bench.py). It builds four synthetic
+# shard worlds to prove the merge gate FAILs on a missing shard, a duplicate id, a bad seal
+# and a gap -- 150 files, 2.9 MB, regenerated on every run. Writing them into the tracked
+# runs/ tree made them dirty every time the ladder selftest ran, which is what blocked the
+# first merge of this branch: "behind main" plus 150 uncommitted scratch paths.
+runs/ladder/_e6_merge_selftest/

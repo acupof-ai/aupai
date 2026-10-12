@@ -50,6 +50,16 @@ ALLOWED = [
     # scripts/pretokenize_domains.py --exclude-manifest. Text contract, not corpus bytes.
     "data/sft/*.gate_exclude_manifest.jsonl",
     "data/sft/phi_l3_stub_holdout_manifest.jsonl",
+    # The stage C/D SFT sets (c1/c2, 2026-10-09): per set, the builder and its gate scripts, plus
+    # the two TEXT CONTRACTS -- manifest (rows, supervised tokens, answer-length distribution,
+    # vocab_id, per-file sha256) and report (family and language split, decontamination and
+    # dedup counts, near-duplicate Jaccard). The .jsonl rows and .pt packs next to them are
+    # corpus bytes: megabytes, gitignored, and refused by no_oversized_blob if staged.
+    "data/sft/stage_c/*/*.py",
+    "data/sft/stage_c/*/*.sh",
+    "data/sft/stage_c/*/manifest*.json",
+    "data/sft/stage_c/*/report*.json",
+    "data/sft/stage_c/*/README.md",
     "data/t2s_table.json",
     "data/REBUILD_PLAN_*.md",
     "data/rl/*",
@@ -1011,6 +1021,12 @@ def main():
     # is not run here, because "not in the map" and "cannot run here" are different
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
+        # The holdout chain's single entry point (dsh2, 2026-10-09). Registered because it is
+        # the instrument that decides WHICH rows are excluded from every corpus build: its
+        # failure mode is a hash set that shrank silently when a registered file was absent, so
+        # the script refuses on a sha1 mismatch, reports absences by name, and is additive --
+        # `--selftest` verifies the two local steps and touches nothing. ~8s, no GPU, no pod.
+        "scripts/holdout_refresh.sh",
         # The HF exporter (de). Registered because the way it is wrong is silent: HF's
         # from_pretrained WARNS on a key it cannot place and returns a randomly initialised
         # module, so a renamed prefix, a cast dtype or a dropped config field ships an export
@@ -2757,6 +2773,24 @@ def main():
         # gitignored multi-GB APPS jsonl and TACO parquets and is CPU-minutes long; it
         # runs by hand on the digest box (ALLOW_UNISOLATED=1), not at commit time.
         "algorithms/test_stdin_reward_known.py": "needs gitignored multi-GB APPS/TACO raw data and executes dataset references; run by hand on the digest box",
+        # c1 2026-10-09. Its --selftest runs the REAL generators, so it reads three
+        # untracked inputs: data/tokenizer.json (pod-only), the HumanEval/MBPP gate sets
+        # under data/eval/, and its own oneliner_bank.json. Measured in a linked worktree
+        # with none of them: "REFUSE: data/tokenizer.json is absent", then the gate set,
+        # then FileNotFoundError on the bank. It passes in a full checkout; what it cannot
+        # do is run in CI, where those files are absent by construction.
+        "data/sft/stage_c/format_stop/build.py": "needs the untracked gate vocabulary and HumanEval/MBPP gate sets plus its oneliner_bank.json; passes in a full checkout, cannot run in CI",
+        # The E0-E6 evaluation ladder (dsh2, 2026-10-09). Its failure mode is a stage that
+        # reports success without evaluating anything -- `e1 --skip-forward` validated its
+        # prompt set, evaluated nothing and exited 0, so the rung above it climbed onto a
+        # stage that never ran (fixed; the selftest now asserts rc=2). It carries the
+        # known-answer worlds for stop_reason, coverage and the refuse path, and those run
+        # anywhere. What does NOT run anywhere is e6's control world: measured 2026-10-09, it
+        # exits 0 with verdict SKIP in a full checkout but rc=3 in a bare linked worktree,
+        # because the controls read the host's gate sets (data/eval/humaneval, mbpp). A
+        # registration the commit hook cannot execute is the inert registration this map
+        # exists to prevent, so it is exempt with the reason rather than claimed.
+        "eval/eval_ladder.py": "e6's control world needs the host's gate sets (humaneval/mbpp); rc=0 with a SKIP verdict in a full checkout, rc=3 in a bare worktree -- run by hand, not at commit time",
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
         # 1e 2026-09-29: liger_kernel Triton kernels vs our torch hyperconn/RMSNorm; needs CUDA and
         # liger_kernel (pod only). Prints SKIP and exits 0 off CUDA, so a commit-time run would be

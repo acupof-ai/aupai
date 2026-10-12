@@ -1,0 +1,10 @@
+{"id": "zh-q01", "question": "用一句话说明什么是二分查找。"}
+{"id": "zh-q02", "question": "19 加 23 等于多少？只给数字。"}
+{"id": "zh-q03", "question": "把“今天天气很好”翻译成英文。"}
+{"id": "zh-q04", "question": "Python 里怎么读取一个文本文件？给一行代码。"}
+{"id": "zh-q05", "question": "解释一下什么是时间复杂度 O(n log n)。"}
+{"id": "en-q01", "question": "What does a hash table do? Answer in one sentence."}
+{"id": "en-q02", "question": "Compute 17 * 6. Reply with the number only."}
+{"id": "en-q03", "question": "Write a Python one-liner that reverses a string."}
+{"id": "en-q04", "question": "Explain the difference between a list and a tuple in Python."}
+{"id": "en-q05", "question": "Translate “good morning” into Chinese."}
