@@ -31,6 +31,19 @@ FIXED_TEXTS = [
     "The cache holds a key and a value. The lookup returns the value when the key matches.",
     "If the measurement is outside the valid range, the monitor sets an alarm and writes a log entry.",
 ]
+DOMAIN_TEXTS = [
+    ("code", "def add(a, b):\n    return a + b\n\nprint(add(2, 3))"),
+    ("math", "A box contains 12 blocks. An operator removes 4 blocks. 8 blocks remain."),
+    ("technical", "Install the part. Tighten the screws. Check the part for movement."),
+    ("chinese", "系统将数据写入块。每个块有唯一编号。读取器按编号请求数据。"),
+    ("dialogue", "Question: What is a log entry? Answer: A log entry records one event and its time."),
+    ("prose", "The meeting starts at nine. The operator checks the agenda and opens the related document."),
+]
+CHAT_PROMPTS = [
+    "Question: How do you check a service for errors? Answer with one short sentence.",
+    "Question: What does a valid procedure include? Answer with one short sentence.",
+]
+GEN_MAX_NEW = 32
 CANARY_CODE = "7319"
 CANARY_WRONG = ["1234", "2856", "9041"]
 TARGET_MODULE_RE = re.compile(r"^(layers|engrams)\.(\d+)$")
@@ -275,6 +288,106 @@ def score_texts(torch, model, tok, max_len=128):
 
 
 @torch.no_grad()
+def score_domain_texts(torch, model, tok, max_len=96):
+    rows = []
+    for domain, text in DOMAIN_TEXTS:
+        ids = encode_text(tok, text)[:max_len]
+        x = torch.tensor([ids], dtype=torch.long)
+        logits, _ = model(x)
+        targets = x[:, 1:]
+        log_probs = torch.log_softmax(logits[:, :-1].float(), dim=-1)
+        nll = -log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+        rows.append({
+            "domain": domain,
+            "tokens": len(ids),
+            "mean_nll": round(float(nll.mean()), 6),
+        })
+    return rows
+
+
+def repetition_stats(ids, text):
+    count = len(ids)
+    unique_fraction = round(len(set(ids)) / count, 6) if count else None
+    max_run = 0
+    run = 0
+    previous = None
+    for token in ids:
+        run = run + 1 if token == previous else 1
+        max_run = max(max_run, run)
+        previous = token
+    grams = [tuple(ids[i:i + 4]) for i in range(max(0, count - 3))]
+    duplicate_4gram_fraction = None
+    if grams:
+        duplicate_4gram_fraction = round(
+            (len(grams) - len(set(grams))) / len(grams), 6
+        )
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    duplicate_line_fraction = None
+    if lines:
+        duplicate_line_fraction = round(
+            (len(lines) - len(set(lines))) / len(lines), 6
+        )
+    return {
+        "tokens": count,
+        "unique_token_fraction": unique_fraction,
+        "max_token_run": max_run,
+        "duplicate_4gram_fraction": duplicate_4gram_fraction,
+        "duplicate_line_fraction": duplicate_line_fraction,
+    }
+
+
+@torch.no_grad()
+def generate_chats(torch, model, tok, max_new=GEN_MAX_NEW):
+    rows = []
+    for prompt_id, prompt in enumerate(CHAT_PROMPTS):
+        prompt_ids = encode_text(tok, prompt)
+        generated = []
+        stop_reason = "max_new"
+        for _step in range(max_new):
+            x = torch.tensor([prompt_ids + generated], dtype=torch.long)
+            logits, _ = model(x)
+            next_logits = logits[0, -1]
+            if not torch.isfinite(next_logits).all():
+                raise ValueError(f"non-finite chat logits at prompt {prompt_id}")
+            next_id = int(next_logits.argmax())
+            if next_id == 1:
+                stop_reason = "eos"
+                break
+            generated.append(next_id)
+        text = tok.decode(generated)
+        stats = repetition_stats(generated, text)
+        stats.update({
+            "id": prompt_id,
+            "stop_reason": stop_reason,
+            "text": text,
+        })
+        rows.append(stats)
+    return rows
+
+
+def extended_warnings(chat_rows, domain_rows):
+    warnings = []
+    if chat_rows and all(row.get("tokens", 0) == 0 for row in chat_rows):
+        warnings.append("all chat outputs are empty")
+    if chat_rows and all(row.get("stop_reason") == "max_new" for row in chat_rows):
+        warnings.append("all chat outputs reach max length")
+    for row in chat_rows:
+        prefix = f"chat{row.get('id')}"
+        if row.get("tokens", 0) == 0:
+            warnings.append(f"{prefix} output is empty")
+        if row.get("unique_token_fraction") is not None and row["unique_token_fraction"] < 0.25:
+            warnings.append(f"{prefix} token diversity is low")
+        if row.get("max_token_run", 0) >= 8:
+            warnings.append(f"{prefix} has a long repeated token run")
+        if row.get("duplicate_4gram_fraction") is not None and row["duplicate_4gram_fraction"] >= 0.5:
+            warnings.append(f"{prefix} has high repeated 4-gram rate")
+    for row in domain_rows:
+        if row.get("mean_nll") is not None and row["mean_nll"] > 8:
+            warnings.append(f"domain {row['domain']} has high NLL")
+    return warnings
+
+
+@torch.no_grad()
 def score_canary(torch, model, tok):
     filler = " The procedure writes one log line after each operation." * 3
     prompt = (
@@ -358,12 +471,22 @@ def run_one(path, step, threads):
             row.update(status="fail", errors=layer_failures)
             return row
         text_rows = score_texts(torch, model, tok)
+        domain_rows = score_domain_texts(torch, model, tok)
+        chat_rows = generate_chats(torch, model, tok)
         canary = score_canary(torch, model, tok)
         row["fixed_text"] = text_rows
+        row["domains"] = domain_rows
+        row["chat"] = chat_rows
         row["canary"] = canary
         row["mean_nll"] = round(sum(x["mean_nll"] for x in text_rows) / len(text_rows), 6)
-        # The canary is a signal, not a hard stop during early pretraining.
-        # Hard failures use configuration and finite-weight checks.
+        row["multi_domain_mean_nll"] = round(
+            sum(x["mean_nll"] for x in domain_rows) / len(domain_rows), 6
+        )
+        warnings = extended_warnings(chat_rows, domain_rows)
+        if warnings:
+            row["warnings"] = warnings
+        # Canary and chat outputs are signals, not hard stops during early pretraining.
+        # Hard failures use configuration and finite-state checks.
         row.update(status="ok")
         return row
     except Exception as exc:

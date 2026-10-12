@@ -43,6 +43,9 @@
 | 分层状态检查 | 24 个 layer、6 个 Engram 的 persistent state | 每个 checkpoint |
 | 分层激活检查 | 固定短文本前向，激活有限性、均值、最大值 | 每个 checkpoint |
 | 固定文本 NLL | 4 条 ASD-STE100 风格技术句 | 每个 checkpoint |
+| 多领域 NLL | code、math、technical、Chinese、dialogue、prose | 每个 checkpoint |
+| 普通对话生成 | 2 条固定问题，greedy 生成 32 token | 每个 checkpoint |
+| 输出长度与重复度 | 长度、EOS、unique token、连续重复、4-gram、重复行 | 每个 checkpoint |
 | access-code canary | 固定多选记忆信号 | 每个 checkpoint |
 | HumanEval quick8 | 前 8 题 greedy pass@1 | 每个 checkpoint |
 
@@ -63,6 +66,9 @@
 | CPU smoke | 通过 |
 | finite parameter fraction | 1.0 |
 | 固定文本 mean NLL | 3.305436 |
+| 多领域 mean NLL | 2.988640 |
+| 普通对话 | 2 条均生成 32 token；warning：未到 EOS |
+| 输出重复度 | unique token fraction 0.56、0.59；无长重复 |
 | access-code canary | 正确，margin 2.681441 |
 | HumanEval quick8 | 4/8 = 50.0%，空输出 0/8 |
 | HumanEval 全量 | 43/164 = 26.22%，空输出 0/164 |

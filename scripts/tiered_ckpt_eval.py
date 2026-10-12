@@ -146,6 +146,7 @@ def evaluate(step, path, name, workers, smoke_threads, code_threads, quick_tasks
     row["smoke_status"] = smoke_row.get("status") if smoke_row else None
     if smoke_row:
         row["mean_nll"] = smoke_row.get("mean_nll")
+        row["multi_domain_mean_nll"] = smoke_row.get("multi_domain_mean_nll")
         row["canary_correct"] = smoke_row.get("canary", {}).get("correct")
     if not smoke_row or smoke_row.get("status") != "ok":
         row.update(status="fail", errors=["CPU smoke failed"], secs=round(time.time() - t0, 2))
@@ -166,7 +167,7 @@ def evaluate(step, path, name, workers, smoke_threads, code_threads, quick_tasks
         "quick_pass_rate": round(100 * passed / total, 2) if total else None,
         "quick_empty": empty,
     })
-    warnings = []
+    warnings = list(smoke_row.get("warnings", []))
     if passed == 0:
         warnings.append("quick HumanEval pass is zero")
     if total and empty / total >= 0.25:
