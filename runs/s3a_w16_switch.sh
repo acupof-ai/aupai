@@ -29,7 +29,7 @@ fi
 python3 scripts/card_claim.py release --name s3a_seg1 >/dev/null 2>&1 || true
 
 echo "Start H20B node1"
-ssh -o BatchMode=yes "$H20B" /data00/aupai_work/s3a_w16_node1.sh "$CKPT"
+ssh -o BatchMode=yes "$H20B" /data00/aupai_work/aupai/s3a_w16_node1.sh "$CKPT"
 sleep 5
 
 echo "Start pod node0"

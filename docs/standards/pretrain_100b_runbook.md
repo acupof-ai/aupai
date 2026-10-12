@@ -46,7 +46,7 @@
 | 等待器 | `runs/start_s3a_w16_switch_waiter.sh` |
 | 切换脚本 | `runs/s3a_w16_switch.sh` |
 | node0 claim | `runs/launch_s3a_w16_claimed.py` |
-| node1 host 脚本 | H20B `/data00/aupai_work/s3a_w16_node1.sh` |
+| node1 host 脚本 | H20B `/data00/aupai_work/aupai/s3a_w16_node1.sh` |
 | 精度 | 默认 FP8；保持当前训练轨迹 |
 | 口径 | batch 4、accum 3、world16、seq 4096，每 step 786,432 tokens |
 
