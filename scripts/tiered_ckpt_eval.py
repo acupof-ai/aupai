@@ -16,6 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import cpu_ckpt_smoke as smoke  # noqa: E402
+import eval_watch as full_humaneval_watch  # noqa: E402
 
 RUNS = ROOT / "runs"
 EVAL = ROOT / "data" / "eval"
@@ -166,7 +167,17 @@ def run_standard_quick(ckpt, step, threads):
         return json.load(fh), []
 
 
-def evaluate(step, path, name, workers, smoke_threads, code_threads, quick_tasks):
+def run_full_humaneval(name, step, path, workers, threads, timeout):
+    """Run full HumanEval after quick checks. Append one eval_watch row."""
+    row = full_humaneval_watch.run_cpu(
+        name, step, str(path), workers, threads, None, 280, timeout
+    )
+    full_humaneval_watch.append(row)
+    return row
+
+
+def evaluate(step, path, name, workers, smoke_threads, code_threads, quick_tasks,
+             full_workers, full_threads, full_timeout):
     t0 = time.time()
     ckpt = os.path.basename(path)
     row = {"ckpt": ckpt, "step": step, "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())}
@@ -202,6 +213,27 @@ def evaluate(step, path, name, workers, smoke_threads, code_threads, quick_tasks
         row.update(status="fail", errors=standard_errors, secs=round(time.time() - t0, 2))
         return row
     row["standard_quick"] = standard_quick
+    full_row = run_full_humaneval(
+        name, step, path, full_workers, full_threads, full_timeout
+    )
+    row["full_humaneval"] = {
+        "status": full_row.get("status"),
+        "pct_dc": full_row.get("pct_dc"),
+        "pass_dc": full_row.get("pass_dc"),
+        "n_dc": full_row.get("n_dc"),
+        "pct_all": full_row.get("pct_all"),
+        "pass_all": full_row.get("pass_all"),
+        "n_all": full_row.get("n_all"),
+        "secs": full_row.get("secs"),
+        "error": full_row.get("error"),
+    }
+    if full_row.get("status") != "ok":
+        row.update(
+            status="fail",
+            errors=[f"full HumanEval failed: {full_row.get('error', 'unknown error')}"],
+            secs=round(time.time() - t0, 2),
+        )
+        return row
     warnings = list(smoke_row.get("warnings", []))
     if passed == 0:
         warnings.append("quick HumanEval pass is zero")
@@ -214,11 +246,15 @@ def evaluate(step, path, name, workers, smoke_threads, code_threads, quick_tasks
     return row
 
 
-def run_pending(name, workers, smoke_threads, code_threads, quick_tasks):
+def run_pending(name, workers, smoke_threads, code_threads, quick_tasks,
+                full_workers, full_threads, full_timeout):
     done = done_checkpoints(name)
     pending = [(s, p) for s, p in smoke.discover(name) if os.path.basename(p) not in done]
     for step, path in pending:
-        row = evaluate(step, path, name, workers, smoke_threads, code_threads, quick_tasks)
+        row = evaluate(
+            step, path, name, workers, smoke_threads, code_threads, quick_tasks,
+            full_workers, full_threads, full_timeout
+        )
         append_row(name, row)
         print(json.dumps(row, sort_keys=True), flush=True)
     return len(pending)
@@ -231,6 +267,9 @@ def main():
     ap.add_argument("--smoke_threads", type=int, default=4)
     ap.add_argument("--code_threads", type=int, default=2)
     ap.add_argument("--quick_tasks", type=int, default=8)
+    ap.add_argument("--full_workers", type=int, default=4)
+    ap.add_argument("--full_threads", type=int, default=40)
+    ap.add_argument("--full_timeout", type=int, default=7200)
     ap.add_argument("--poll", type=int, default=300)
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--watch", action="store_true")
@@ -239,13 +278,15 @@ def main():
     if args.once or not args.watch:
         run_pending(
             args.name, args.workers, args.smoke_threads,
-            args.code_threads, args.quick_tasks
+            args.code_threads, args.quick_tasks,
+            args.full_workers, args.full_threads, args.full_timeout
         )
         return
     while True:
         run_pending(
             args.name, args.workers, args.smoke_threads,
-            args.code_threads, args.quick_tasks
+            args.code_threads, args.quick_tasks,
+            args.full_workers, args.full_threads, args.full_timeout
         )
         time.sleep(args.poll)
 
