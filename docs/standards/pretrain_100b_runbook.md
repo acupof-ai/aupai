@@ -117,6 +117,19 @@
 
 quick32 只用于趋势监控。样本量小，结果不能替代完整 benchmark。普通对话仍全部达到 32 token 上限，状态为 warn。
 
+## step66767 统一评测
+
+训练停止后，按顺序执行下列命令。所有结果写入 `runs/` 和 `data/eval/`。评测完成前，不启动下一段。
+
+| 顺序 | 评测 | 命令 |
+| --- | --- | --- |
+| 1 | CPU smoke | `python3 scripts/cpu_ckpt_smoke.py --name s3a_seg1 --once --threads 4` |
+| 2 | HumanEval full164 | `python3 scripts/eval_watch.py --name s3a_seg1 --device cpu --step 66767 --once --workers 4 --threads 40 --timeout 7200` |
+| 3 | 标准 GPU 套件 | `python3 eval/run_eval.py --ckpt ckpt_s3a_seg1.pt.step66767 --device cuda --batch 32 --benchmarks hellaswag piqa arc-easy arc-challenge winogrande boolq openbookqa mmlu gsm8k --json_out runs/s3a_seg1_step66767_standard.json` |
+| 4 | 分领域 loss | `python3 eval/domain_loss.py --ckpt ckpt_s3a_seg1.pt.step66767 --mix data/mix_s3a.json --json runs/s3a_seg1_step66767_domain.json` |
+
+正式代码门只采用 `eval_watch.jsonl` 的 dc156 结果。标准 GPU 套件用于能力画像，不替代代码门。
+
 ## 训练契约
 
 1. 必须保留 Engram 层 1、5、9、13、17、21。
