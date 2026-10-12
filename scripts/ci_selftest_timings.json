@@ -1,6 +1,6 @@
 {
  "_measured": "2026-09-24",
- "_source": "https://github.com/acupof-ai/aupai/actions/runs/35992833222 (job check, step 'harness ci-selftests'; each value is the wall gap between consecutive CI-SELFTESTS RUN lines, so the last target's value includes process teardown noise) scripts/metrics_feed.py: 0.2 is LAPTOP-measured (0.15s wall, pure stdlib, no corpus, no network), NOT from this run -- it is a bin-packing weight for a target the partition check requires to exist; regenerate with the others. scripts/export_hf.py: 8.3 is LAPTOP-measured wall of its own --selftest (the tiny-model export/reload roundtrip dominates; torch import plus two 285K-param builds), NOT from this run -- regenerate with the others.",
+ "_source": "https://github.com/acupof-ai/aupai/actions/runs/35992833222 (job check, step 'harness ci-selftests'; each value is the wall gap between consecutive CI-SELFTESTS RUN lines, so the last target's value includes process teardown noise) scripts/metrics_feed.py: 0.2 is LAPTOP-measured (0.15s wall, pure stdlib, no corpus, no network), NOT from this run -- it is a bin-packing weight for a target the partition check requires to exist; regenerate with the others. scripts/export_hf.py: 8.3 is LAPTOP-measured wall of its own --selftest (the tiny-model export/reload roundtrip dominates; torch import plus two 285K-param builds), NOT from this run -- regenerate with the others.  scripts/holdout_refresh.sh: 0.2 is LAPTOP-measured wall of its own --selftest (two sha1 passes over the registry plus a row-set diff; no GPU, no pod; measured 2026-10-09), NOT from this run -- a bin-packing weight for a target the partition check requires to exist; regenerate with the others.",
  "_unit": "seconds per driver target on the GitHub-hosted ubuntu-latest CI image",
  "_use": "LPT bin packing for `harness ci-selftests --shard K/N`; check_ci_selftest_partition requires these keys to equal the hook map's driver bucket exactly. To regenerate, download a completed ci run log (`gh run view <id> --log`) and take the wall gap between consecutive CI-SELFTESTS RUN lines in the ci-selftests step; laptop timings are not CI-representative.",
  "targets": {
@@ -307,6 +307,7 @@
   "tests/v41f/test_p1_fused.py": 40.0,
   "tests/v41f/test_p1_grouped_dispatch.py": 5.0,
   "tests/v41f/test_p1_train_resume_smoke.py": 60,
-  "v41f_l2/l2_census_scan.py": 0.2
+  "v41f_l2/l2_census_scan.py": 0.2,
+  "scripts/holdout_refresh.sh": 0.2
  }
 }

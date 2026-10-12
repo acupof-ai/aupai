@@ -1,0 +1,16 @@
+{"id": "zh-cont-01", "lang": "zh", "kind": "continuation", "prompt": "饭后立即躺下睡觉，大脑的血液会流向胃部，"}
+{"id": "zh-cont-02", "lang": "zh", "kind": "continuation", "prompt": "对于那些手腕不够灵活的人群，电动牙刷是更人性化的选择，"}
+{"id": "zh-cont-03", "lang": "zh", "kind": "continuation", "prompt": "从实际使用体验来看，这款产品最大的优点在于"}
+{"id": "zh-cont-04", "lang": "zh", "kind": "continuation", "prompt": "学习一门新的编程语言时，最重要的不是记住语法，而是"}
+{"id": "zh-qa-01", "lang": "zh", "kind": "qa", "prompt": "问：地球到月球的距离大约是多少？\n答："}
+{"id": "zh-qa-02", "lang": "zh", "kind": "qa", "prompt": "问：人体每天需要喝多少水？\n答："}
+{"id": "zh-qa-03", "lang": "zh", "kind": "qa", "prompt": "问：一个长方形的长是 8 厘米，宽是 5 厘米，它的面积是多少？\n答："}
+{"id": "zh-qa-04", "lang": "zh", "kind": "qa", "prompt": "问：老年痴呆症有没有遗传倾向？\n答："}
+{"id": "en-cont-01", "lang": "en", "kind": "continuation", "prompt": "He will teach you everything you need to know to compete in a KCBS BBQ competition,"}
+{"id": "en-cont-02", "lang": "en", "kind": "continuation", "prompt": "Before you clone the drive, you should first check whether"}
+{"id": "en-cont-03", "lang": "en", "kind": "continuation", "prompt": "def normalize(x):\n    \"\"\"Scale the values to the range [0, 1].\"\"\"\n    "}
+{"id": "en-cont-04", "lang": "en", "kind": "continuation", "prompt": "Simplify and solve the following equation for x:\n\\[ 2x + 7 = 3x - 5 \\]\n"}
+{"id": "en-qa-01", "lang": "en", "kind": "qa", "prompt": "Q: I enjoy mentoring younger people. Is coaching right for me? A:"}
+{"id": "en-qa-02", "lang": "en", "kind": "qa", "prompt": "Problem: A train travels at 60 miles per hour for 2.5 hours. How far does it travel?\nSolution:"}
+{"id": "en-qa-03", "lang": "en", "kind": "qa", "prompt": "Question: What is the boiling point of water at sea level?\nAnswer:"}
+{"id": "en-qa-04", "lang": "en", "kind": "qa", "prompt": "Question: What is the difference between a list and a tuple in Python?\nAnswer:"}
