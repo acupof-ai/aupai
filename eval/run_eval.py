@@ -12,6 +12,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -50,6 +51,14 @@ def _load_module(name):
 
 
 def _load_context_mc(name):
+    from eval import local_bench
+
+    rows = local_bench.load(name)
+    if rows is not None:
+        return [
+            {"prompt": d["prompt"], "options": d["options"], "label": d["label"]}
+            for d in rows
+        ]
     m = _load_module(name)
     return [
         {"prompt": d["context"], "options": d["options"], "label": d["label"]}
@@ -58,6 +67,11 @@ def _load_context_mc(name):
 
 
 def load_piqa():
+    from eval import local_bench
+
+    rows = local_bench.load("piqa")
+    if rows is not None:
+        return rows
     m = _load_module("piqa")
     return [
         {
@@ -70,6 +84,12 @@ def load_piqa():
 
 
 def _load_arc(config):
+    from eval import local_bench
+
+    key = "arc-easy" if config == "ARC-Easy" else "arc-challenge"
+    rows = local_bench.load(key)
+    if rows is not None:
+        return rows
     m = _load_module("arc")
     items = []
     for d in m.load_dataset(config):
@@ -150,7 +170,7 @@ MC_BENCHMARKS = {
 # `--benchmarks hellaswag piqa` on a box with egress. The at-chance note in
 # score_matrix SKIP_REASON applies to the English MC set as a whole and is a
 # separate reason.
-ALL_BENCHMARKS = [b for b in MC_BENCHMARKS if b not in ("hellaswag", "piqa")] + ["gsm8k"]
+ALL_BENCHMARKS = list(MC_BENCHMARKS) + ["gsm8k"]
 
 
 # --- Batched log-likelihood scorer (shared by all multiple-choice benchmarks) ---
@@ -337,7 +357,11 @@ def run_gsm8k(model, tok, device, batch_size=GEN_BATCH, temperature=0.0, fmt=Non
 
 def load_model(ckpt_path, device):
     model, cfg = load_checkpoint(ckpt_path, device=device)
-    return model.to(torch.bfloat16), cfg
+    if device == "cuda":
+        model = model.to(torch.bfloat16)
+    else:
+        model = model.float()
+    return model, cfg
 
 
 def main():
@@ -354,6 +378,7 @@ def main():
                         help="GSM8K sampling temperature; 0 = greedy")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--tokenizer", default=TOK_PATH, help="vocabulary the checkpoint was trained on")
+    parser.add_argument("--json_out", default=None, help="write benchmark results to a JSON file")
     args = parser.parse_args()
 
     names = args.benchmarks or ALL_BENCHMARKS
@@ -373,7 +398,8 @@ def main():
     if num_id is not None:
         print(f"FoNE checkpoint: prompts encode numbers as [NUM] (id {num_id})")
     n_params = sum(p.numel() for p in model.parameters()) / 1e6
-    print(f"Loaded {args.ckpt}: {n_params:.1f}M params, bf16, device={device}")
+    dtype_name = "bf16" if device == "cuda" else "fp32"
+    print(f"Loaded {args.ckpt}: {n_params:.1f}M params, {dtype_name}, device={device}")
 
     results = {}  # display name -> (accuracy, seconds)
     for key in names:
@@ -411,8 +437,18 @@ def main():
     for name, (acc, _) in results.items():
         print(f"{name:<16} {acc:>7.1%}")
     print("─" * 24)
-    avg = sum(a for a, _ in results.values()) / len(results)
-    print(f"{'Average':<16} {avg:>7.1%}")
+    avg = sum(a for a, _ in results.values()) / len(results) if results else None
+    if avg is not None:
+        print(f"{'Average':<16} {avg:>7.1%}")
+    if args.json_out:
+        payload = {
+            "ckpt": args.ckpt,
+            "device": device,
+            "results": {name: {"accuracy": acc, "secs": secs} for name, (acc, secs) in results.items()},
+            "average": avg,
+        }
+        with open(args.json_out, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2, ensure_ascii=False)
 
 
 if __name__ == "__main__":

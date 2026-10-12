@@ -790,6 +790,10 @@ def main():
     else:
         print(f"  {n_done} tasks claimed from the queue", flush=True)
     attest(out_path)
+    if n_done == 0:
+        print("\nHUMANEVAL pass@1: no tasks claimed by this worker.", flush=True)
+        print(f"preds saved: {out_path}", flush=True)
+        return
     if args.n > 1:
         ntask = n_done
         print(f"\nHUMANEVAL n={args.n} T={args.temperature}: sample pass rate "

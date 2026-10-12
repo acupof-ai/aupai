@@ -84,7 +84,7 @@ def quick_worker_command(ckpt, run, queue_dir, workers, idx, threads, quick_task
 
 def run_quick(ckpt, step, workers, threads, quick_tasks):
     run = f"quick{quick_tasks}_{step}"
-    queue_dir = str(RUNS / "queues" / run)
+    queue_dir = str(RUNS / "queues" / f"{run}.{os.getpid()}.{int(time.time())}")
     env = os.environ.copy()
     env.update({
         "CUDA_VISIBLE_DEVICES": "",
@@ -137,6 +137,35 @@ def run_quick(ckpt, step, workers, threads, quick_tasks):
             log.close()
 
 
+STANDARD_QUICK_BENCHMARKS = ["hellaswag", "piqa", "arc-easy", "arc-challenge", "winogrande"]
+
+
+def run_standard_quick(ckpt, step, threads):
+    json_path = RUNS / f"quick_mc_{step}.json"
+    cmd = [
+        sys.executable, "eval/run_eval.py",
+        "--ckpt", ckpt,
+        "--device", "cpu",
+        "--batch", "8",
+        "--benchmarks", *STANDARD_QUICK_BENCHMARKS,
+        "--json_out", str(json_path),
+    ]
+    env = os.environ.copy()
+    env.update({
+        "CUDA_VISIBLE_DEVICES": "",
+        "OMP_NUM_THREADS": str(threads),
+        "MKL_NUM_THREADS": str(threads),
+        "PYTHONUNBUFFERED": "1",
+    })
+    proc = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None, [proc.stdout[-2000:], proc.stderr[-2000:]]
+    if not json_path.exists():
+        return None, ["standard quick JSON missing"]
+    with json_path.open(encoding="utf-8") as fh:
+        return json.load(fh), []
+
+
 def evaluate(step, path, name, workers, smoke_threads, code_threads, quick_tasks):
     t0 = time.time()
     ckpt = os.path.basename(path)
@@ -147,6 +176,7 @@ def evaluate(step, path, name, workers, smoke_threads, code_threads, quick_tasks
     if smoke_row:
         row["mean_nll"] = smoke_row.get("mean_nll")
         row["multi_domain_mean_nll"] = smoke_row.get("multi_domain_mean_nll")
+        row["fixed_mc"] = smoke_row.get("fixed_mc")
         row["canary_correct"] = smoke_row.get("canary", {}).get("correct")
     if not smoke_row or smoke_row.get("status") != "ok":
         row.update(status="fail", errors=["CPU smoke failed"], secs=round(time.time() - t0, 2))
@@ -167,6 +197,11 @@ def evaluate(step, path, name, workers, smoke_threads, code_threads, quick_tasks
         "quick_pass_rate": round(100 * passed / total, 2) if total else None,
         "quick_empty": empty,
     })
+    standard_quick, standard_errors = run_standard_quick(ckpt, step, code_threads)
+    if standard_errors:
+        row.update(status="fail", errors=standard_errors, secs=round(time.time() - t0, 2))
+        return row
+    row["standard_quick"] = standard_quick
     warnings = list(smoke_row.get("warnings", []))
     if passed == 0:
         warnings.append("quick HumanEval pass is zero")

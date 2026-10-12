@@ -43,6 +43,24 @@ CHAT_PROMPTS = [
     "Question: How do you check a service for errors? Answer with one short sentence.",
     "Question: What does a valid procedure include? Answer with one short sentence.",
 ]
+FIXED_MC_QUESTIONS = [
+    {"domain": "commonsense", "question": "What item opens a locked door?",
+     "options": ["shoe", "key", "cup", "book"], "label": 1},
+    {"domain": "science", "question": "At what temperature does water freeze at sea level?",
+     "options": ["25 degrees Celsius", "50 degrees Celsius", "0 degrees Celsius", "100 degrees Celsius"], "label": 2},
+    {"domain": "math", "question": "What is 7 multiplied by 8?",
+     "options": ["48", "54", "64", "56"], "label": 3},
+    {"domain": "code", "question": "Which keyword starts a function definition in Python?",
+     "options": ["def", "func", "fn", "function"], "label": 0},
+    {"domain": "chinese", "question": "用什么唯一标识一个数据块？",
+     "options": ["颜色", "编号", "温度", "长度"], "label": 1},
+    {"domain": "procedure", "question": "What must an operator do before the next step starts?",
+     "options": ["remove the manual", "delete the log", "complete the current step", "disable the alarm"], "label": 2},
+    {"domain": "logic", "question": "If all blocks have an identifier, and item X is a block, what does item X have?",
+     "options": ["a wheel", "a battery", "a window", "an identifier"], "label": 3},
+    {"domain": "safety", "question": "Which condition must trigger an alarm?",
+     "options": ["measurement outside valid range", "normal log entry", "completed step", "matching key"], "label": 0},
+]
 GEN_MAX_NEW = 32
 CANARY_CODE = "7319"
 CANARY_WRONG = ["1234", "2856", "9041"]
@@ -388,6 +406,45 @@ def extended_warnings(chat_rows, domain_rows):
 
 
 @torch.no_grad()
+def score_fixed_mc(torch, model, tok):
+    letters = ["A", "B", "C", "D"]
+    letter_tokens = [encode_text(tok, " " + letter)[-1] for letter in letters]
+    rows = []
+    for item in FIXED_MC_QUESTIONS:
+        prompt = "Question: " + item["question"] + "\n"
+        for letter, option in zip(letters, item["options"]):
+            prompt += f"{letter}. {option}\n"
+        prompt += "Answer:"
+        ids = encode_text(tok, prompt)
+        x = torch.tensor([ids], dtype=torch.long)
+        logits, _ = model(x)
+        next_log_probs = torch.log_softmax(logits[0, -1].float(), dim=-1)
+        if not torch.isfinite(next_log_probs).all():
+            raise ValueError(f"non-finite MC logits for {item['domain']}")
+        scores = [round(float(next_log_probs[token]), 6) for token in letter_tokens]
+        pred = int(max(range(len(scores)), key=lambda idx: scores[idx]))
+        correct = pred == item["label"]
+        rows.append({
+            "domain": item["domain"],
+            "pred": pred,
+            "label": item["label"],
+            "correct": correct,
+            "scores": scores,
+            "margin": round(scores[item["label"]] - max(
+                score for idx, score in enumerate(scores) if idx != item["label"]
+            ), 6),
+        })
+    correct_count = sum(1 for row in rows if row["correct"])
+    summary = {
+        "correct": correct_count,
+        "total": len(rows),
+        "accuracy": round(100 * correct_count / len(rows), 2) if rows else None,
+        "items": rows,
+    }
+    return summary
+
+
+@torch.no_grad()
 def score_canary(torch, model, tok):
     filler = " The procedure writes one log line after each operation." * 3
     prompt = (
@@ -473,16 +530,20 @@ def run_one(path, step, threads):
         text_rows = score_texts(torch, model, tok)
         domain_rows = score_domain_texts(torch, model, tok)
         chat_rows = generate_chats(torch, model, tok)
+        fixed_mc = score_fixed_mc(torch, model, tok)
         canary = score_canary(torch, model, tok)
         row["fixed_text"] = text_rows
         row["domains"] = domain_rows
         row["chat"] = chat_rows
+        row["fixed_mc"] = fixed_mc
         row["canary"] = canary
         row["mean_nll"] = round(sum(x["mean_nll"] for x in text_rows) / len(text_rows), 6)
         row["multi_domain_mean_nll"] = round(
             sum(x["mean_nll"] for x in domain_rows) / len(domain_rows), 6
         )
         warnings = extended_warnings(chat_rows, domain_rows)
+        if fixed_mc.get("correct", 0) <= 2:
+            warnings.append("fixed MC accuracy is at or below chance")
         if warnings:
             row["warnings"] = warnings
         # Canary and chat outputs are signals, not hard stops during early pretraining.
