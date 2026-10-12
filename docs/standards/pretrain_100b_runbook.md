@@ -50,6 +50,7 @@
 | 标准多选 quick32 | HellaSwag、PIQA、ARC-Easy、ARC-Challenge、WinoGrande 各 32 题 | 每个 checkpoint |
 | access-code canary | 固定多选记忆信号 | 每个 checkpoint |
 | HumanEval quick8 | 前 8 题 greedy pass@1 | 每个 checkpoint |
+| HumanEval full164 | 164 题 greedy pass@1，输出 dc156 和 all164，写入 `eval_watch.jsonl` | 每个 checkpoint，quick32 后顺序执行 |
 
 关键文件：
 
@@ -61,6 +62,7 @@
 | 分层评测 driver | `scripts/tiered_ckpt_eval.py` |
 | watcher 启动器 | `runs/start_tiered_ckpt_eval.sh` |
 | HumanEval 分片合并器 | `runs/merge_humaneval_shards.py` |
+| 正式 HumanEval ledger | `/work/aupai/runs/eval_watch.jsonl` |
 | tiered ledger | `/work/aupai/runs/tiered_ckpt_eval_s3a_seg1.jsonl` |
 
 ## step55000 已验证结果
@@ -92,6 +94,8 @@
 | ARC-Challenge quick32 | 9.4% |
 | WinoGrande quick32 | 56.2% |
 | 五项平均值 | 40.0% |
+| HumanEval dc156 | 44/156 = 28.21% |
+| HumanEval all164 | 44/164 = 26.83%，空输出 0/164 |
 
 quick32 只用于趋势监控。样本量小，结果不能替代完整 benchmark。普通对话仍全部达到 32 token 上限，状态为 warn。
 

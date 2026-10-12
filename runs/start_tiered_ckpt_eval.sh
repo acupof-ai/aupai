@@ -24,6 +24,9 @@ nohup python3 scripts/tiered_ckpt_eval.py \
   --smoke_threads 4 \
   --code_threads 2 \
   --quick_tasks 8 \
+  --full_workers 4 \
+  --full_threads 40 \
+  --full_timeout 7200 \
   --poll 300 \
   --watch \
   >> "$LOG" 2>&1 &
