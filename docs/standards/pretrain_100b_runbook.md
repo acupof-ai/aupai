@@ -2,23 +2,25 @@
 
 ## 结论
 
-当前活动运行为 `s3a_seg1`。训练已从 step55000 checkpoint 恢复，目标为 step66767。checkpoint 间隔为 4000 step，每个 checkpoint 自动执行 CPU 分层评测。
+当前活动运行为 `s3a_seg1`。训练保持 world8 到 step60000。step60000 checkpoint 稳定后，自动切换到 pod + H20B 的 world16。目标仍为 step66767。每个 checkpoint 自动执行 CPU 分层评测。
 
 ## 当前状态
 
 | 项目 | 当前值 |
 | --- | --- |
-| 更新时间 | 2026-10-12 16:18 CST |
+| 更新时间 | 2026-10-12 19:28 CST |
 | 活动运行名 | `s3a_seg1` |
-| 当前 step | 56230 |
+| 当前 step | 57340 |
 | 停止 step | 66767 |
-| 剩余 step | 10537 |
+| 剩余 step | 9427 |
 | 最新 checkpoint | `ckpt_s3a_seg1.pt.step56000` |
-| 下一个 checkpoint | step60000 |
+| 无损切换 checkpoint | step60000 |
 | checkpoint 间隔 | 4000 step，按绝对 step 对齐 |
-| 常规速度 | 10.20 s/step |
-| 预计到达停止点 | 2026-10-13 22:09 CST |
-| GPU | 8 卡，world=8，利用率 100% |
+| world8 速度 | 约 10.3 s/step |
+| 预计到达 step60000 | 2026-10-13 03:05 CST |
+| world16 预估速度 | 约 5.15 s/step，切换后实测 |
+| world16 预估停止点 | 2026-10-13 13:00 CST，含切换余量 |
+| GPU | 当前 8 卡 world8；切换后 16 卡 world16 |
 | 每 step tokens | 786,432 |
 | Engram 层 | 1、5、9、13、17、21 |
 | 数据 mix | `data/mix_s3a.json` |
@@ -33,6 +35,22 @@
 | 工作目录 | `/Users/bytedance/code/aupai_stage3_main` | `/work/aupai` |
 
 本地脚本保留段启动配置。运行期脚本可指向最新 checkpoint。两者必须保留 Engram 参数。
+
+## world16 自动切换
+
+| 项目 | 内容 |
+| --- | --- |
+| node0 | pod 节点 `192.168.29.37`，ranks 0-7 |
+| node1 | H20B 节点 `192.168.29.36`，ranks 8-15 |
+| 切换点 | `ckpt_s3a_seg1.pt.step60000` |
+| 等待器 | `runs/start_s3a_w16_switch_waiter.sh` |
+| 切换脚本 | `runs/s3a_w16_switch.sh` |
+| node0 claim | `runs/launch_s3a_w16_claimed.py` |
+| node1 host 脚本 | H20B `/data00/aupai_work/s3a_w16_node1.sh` |
+| 精度 | 默认 FP8；保持当前训练轨迹 |
+| 口径 | batch 4、accum 3、world16、seq 4096，每 step 786,432 tokens |
+
+切换前必须满足三项条件：checkpoint 文件大小连续 10 秒不变；H20B corpus 校验通过；node1 容器先启动。切换后必须核验 16 卡显存、利用率、首个 step 和日志错误。
 
 ## 自动评测
 
