@@ -1,0 +1,11 @@
+{
+  "sample_count": 32,
+  "built_at": "2026-10-12T08:06:02.797844+00:00",
+  "sources": {
+    "hellaswag": "https://huggingface.co/datasets/Rowan/hellaswag/resolve/main/data/validation-00000-of-00001.parquet",
+    "piqa": "https://huggingface.co/datasets/lighteval/piqa/resolve/main/plain_text/validation-00000-of-00001.parquet",
+    "arc-easy": "https://huggingface.co/datasets/allenai/ai2_arc/resolve/main/ARC-Easy/test-00000-of-00001.parquet",
+    "arc-challenge": "https://huggingface.co/datasets/allenai/ai2_arc/resolve/main/ARC-Challenge/test-00000-of-00001.parquet",
+    "winogrande": "https://huggingface.co/datasets/allenai/winogrande/resolve/main/winogrande_xl/validation-00000-of-00001.parquet"
+  }
+}

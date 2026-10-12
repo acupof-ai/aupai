@@ -8,16 +8,16 @@
 
 | 项目 | 当前值 |
 | --- | --- |
-| 更新时间 | 2026-10-12 12:55 CST |
+| 更新时间 | 2026-10-12 16:18 CST |
 | 活动运行名 | `s3a_seg1` |
-| 当前 step | 55050 |
+| 当前 step | 56230 |
 | 停止 step | 66767 |
-| 剩余 step | 11717 |
-| 最新 checkpoint | `ckpt_s3a_seg1.pt.step55000` |
-| 下一个 checkpoint | step56000 |
+| 剩余 step | 10537 |
+| 最新 checkpoint | `ckpt_s3a_seg1.pt.step56000` |
+| 下一个 checkpoint | step60000 |
 | checkpoint 间隔 | 4000 step，按绝对 step 对齐 |
-| 常规速度 | 10.39 s/step |
-| 预计到达停止点 | 2026-10-13 22:42 CST |
+| 常规速度 | 10.20 s/step |
+| 预计到达停止点 | 2026-10-13 22:09 CST |
 | GPU | 8 卡，world=8，利用率 100% |
 | 每 step tokens | 786,432 |
 | Engram 层 | 1、5、9、13、17、21 |
@@ -46,6 +46,8 @@
 | 多领域 NLL | code、math、technical、Chinese、dialogue、prose | 每个 checkpoint |
 | 普通对话生成 | 2 条固定问题，greedy 生成 32 token | 每个 checkpoint |
 | 输出长度与重复度 | 长度、EOS、unique token、连续重复、4-gram、重复行 | 每个 checkpoint |
+| 固定多选快测 | 8 题，覆盖常识、科学、数学、代码、中文、流程、逻辑、安全 | 每个 checkpoint |
+| 标准多选 quick32 | HellaSwag、PIQA、ARC-Easy、ARC-Challenge、WinoGrande 各 32 题 | 每个 checkpoint |
 | access-code canary | 固定多选记忆信号 | 每个 checkpoint |
 | HumanEval quick8 | 前 8 题 greedy pass@1 | 每个 checkpoint |
 
@@ -54,6 +56,8 @@
 | 用途 | 路径 |
 | --- | --- |
 | CPU smoke | `scripts/cpu_ckpt_smoke.py` |
+| quick benchmark 构建器 | `scripts/build_quick_bench.py` |
+| 离线 quick 数据读取 | `eval/local_bench.py` |
 | 分层评测 driver | `scripts/tiered_ckpt_eval.py` |
 | watcher 启动器 | `runs/start_tiered_ckpt_eval.sh` |
 | HumanEval 分片合并器 | `runs/merge_humaneval_shards.py` |
@@ -74,6 +78,22 @@
 | HumanEval 全量 | 43/164 = 26.22%，空输出 0/164 |
 
 正式 gate 使用 156 题去污染口径。当前 43/164 为全量口径。汇报正式 gate 前，必须读取 `runs/contam_r3_he_union.json` 并重新过滤。
+
+## step56000 已验证结果
+
+| 评测 | 结果 |
+| --- | --- |
+| CPU smoke | 通过 |
+| 固定多选快测 | 3/8 = 37.5% |
+| HumanEval quick8 | 4/8 = 50.0%，空输出 0/8 |
+| HellaSwag quick32 | 31.2% |
+| PIQA quick32 | 68.8% |
+| ARC-Easy quick32 | 34.4% |
+| ARC-Challenge quick32 | 9.4% |
+| WinoGrande quick32 | 56.2% |
+| 五项平均值 | 40.0% |
+
+quick32 只用于趋势监控。样本量小，结果不能替代完整 benchmark。普通对话仍全部达到 32 token 上限，状态为 warn。
 
 ## 训练契约
 

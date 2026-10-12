@@ -1,0 +1,32 @@
+{"prompt": "Sarah was a much better surgeon than Maria so", "options": ["Sarah always got the easier cases.", "Maria always got the easier cases."], "label": 1}
+{"prompt": "Sarah was a much better surgeon than Maria so", "options": ["Sarah always got the harder cases.", "Maria always got the harder cases."], "label": 0}
+{"prompt": "They were worried the wine would ruin the bed and the blanket, but the", "options": ["blanket was't ruined.", "bed was't ruined."], "label": 1}
+{"prompt": "Terry tried to bake the eggplant in the toaster oven but the", "options": ["eggplant was too big.", "toaster was too big."], "label": 0}
+{"prompt": "At night, Jeffrey always stays up later than Hunter to watch TV because", "options": ["Jeffrey wakes up late.", "Hunter wakes up late."], "label": 0}
+{"prompt": "The cat of Sarah has some mouth problems, so she takes it to see Maria.", "options": ["Sarah is a responsible cat owner.", "Maria is a responsible cat owner."], "label": 0}
+{"prompt": "The home that my parents had when I was in school was a lot nicer than my house now because the", "options": ["home was sophisticated.", "house was sophisticated."], "label": 0}
+{"prompt": "The home that my parents had when I was in school was a lot nicer than my house now because the", "options": ["home is trashy.", "house is trashy."], "label": 1}
+{"prompt": "Natalie has a rich husband and lots of money, Jennifer is poor", "options": ["Natalie needs to make her clothes.", "Jennifer needs to make her clothes."], "label": 1}
+{"prompt": "Joe immediately went to bakery before the bank because the", "options": ["bakery had a limited supply of what he wanted.", "bank had a limited supply of what he wanted."], "label": 0}
+{"prompt": "Joe immediately went to bakery before the bank because the", "options": ["bakery had a substantial supply of what he wanted.", "bank had a substantial supply of what he wanted."], "label": 1}
+{"prompt": "I had to read an entire story for class tomorrow. Luckily, the", "options": ["story was canceled.", "class was canceled."], "label": 1}
+{"prompt": "I had to read an entire story for class tomorrow. Luckily, the", "options": ["story was short.", "class was short."], "label": 0}
+{"prompt": "He had enough time between classes to go to a cafe or to the library. He went to the", "options": ["cafe because his paper could wait.", "library because his paper could wait."], "label": 0}
+{"prompt": "He had enough time between classes to go to a cafe or to the library. He went to the", "options": ["cafe because his paper was due soon.", "library because his paper was due soon."], "label": 1}
+{"prompt": "Lindsey like to read graphic novels but Natalie liked classic literature to read.", "options": ["Lindsey bought the new Frank Miller comic at the book store.", "Natalie bought the new Frank Miller comic at the book store."], "label": 0}
+{"prompt": "Michael just bought brand new wheels for his truck unlike Leslie because", "options": ["Michael wheels were new and perfect.", "Leslie wheels were new and perfect."], "label": 1}
+{"prompt": "Michael just bought brand new wheels for his truck unlike Leslie because", "options": ["Michael wheels were old and used.", "Leslie wheels were old and used."], "label": 0}
+{"prompt": "Leslie was nervous around parrots but Neil was not, since", "options": ["Leslie was bitten by a bird early in life.", "Neil was bitten by a bird early in life."], "label": 0}
+{"prompt": "Christmas was a special holiday to Eric but not Adam since", "options": ["Eric was a Jew.", "Adam was a Jew."], "label": 1}
+{"prompt": "To make frosting I needed pudding that was at a store 15 minutes away but pre-made frosting was at a store 5 minutes away.  The", "options": ["pudding was closer.", "frosting was closer."], "label": 1}
+{"prompt": "Benjamin was chosen instead of Brett to be the makeup artist for the play because", "options": ["Benjamin was less experienced.", "Brett was less experienced."], "label": 1}
+{"prompt": "Cynthia violated the rights of Amy, because", "options": ["Cynthia had too much passivity with other people.", "Amy had too much passivity with other people."], "label": 1}
+{"prompt": "They had to eat a lot to gain the strength they had lost and be able to work, the", "options": ["work was too much.", "strength was too much."], "label": 0}
+{"prompt": "They had to eat a lot to gain the strength they had lost and be able to work, the", "options": ["work was too little.", "strength was too little."], "label": 1}
+{"prompt": "The roof of Rachel's home is old and falling apart, while Betty's is new. The home value of", "options": ["Rachel is lower.", "Betty is lower."], "label": 0}
+{"prompt": "All the clutter in the house excited Leslie but not Derrick because cleaning energized", "options": ["Leslie very much.", "Derrick very much."], "label": 0}
+{"prompt": "The portions of food today were bigger than the sizes yesterday because the", "options": ["portions fed more people.", "sizes fed more people."], "label": 0}
+{"prompt": "Since Craig threw aluminum cans in the trash and Benjamin recycled,", "options": ["Craig was environmentally irresponsible.", "Benjamin was environmentally irresponsible."], "label": 0}
+{"prompt": "Christine was going to Jessica's house to do some cleaning in the kitchen, because", "options": ["Christine was a energetic person.", "Jessica was a energetic person."], "label": 0}
+{"prompt": "The students were at their desks taking tests with pencils, they used the", "options": ["desks to hold the papers.", "pencils to hold the papers."], "label": 0}
+{"prompt": "Mary thought poodles were a cool dog but Rachel thought Great Danes were cooler.", "options": ["Mary bought a small dog bed for their pet.", "Rachel bought a small dog bed for their pet."], "label": 0}
