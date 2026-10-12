@@ -1,10 +1,8 @@
 # aupai
 
-aupai is the V4.1 coding/math model: a 24-layer v42 stack at 614M active params, trained from
-scratch on a 30B-token UltraData gate mix, targeting **HumanEval pass@1 ≥ 30%**. Full rules
-are in `AGENTS.md`.
+aupai is an experimental code and math model. The current mainline is **100B Engram continued pretraining**. The active runtime is `s3a_seg1`. It resumes from step55000 and stops at step66767 for unified evaluation.
 
-> 当前主线：完成 100B Engram 预训练。统一入口见 [`docs/standards/pretrain_100b_runbook.md`](docs/standards/pretrain_100b_runbook.md)。
+Entry and operating rules: [`docs/standards/pretrain_100b_runbook.md`](docs/standards/pretrain_100b_runbook.md).
 
 ## Model
 
@@ -14,17 +12,17 @@ CED line (`v41_ced_0923`) is retired; its code still loads old checkpoints.
 
 | | |
 |---|---|
-| size | **3,256,557,328 total / 614,145,808 active** (meta-device count at the gate shape) |
+| size | **3.91B total parameters in the active runtime** |
 | shape | 24 layers, d=1024, 16 heads, head_dim 256, rope_head_dim 64, vocab 32,768 |
 | attention | per-layer compression ratios `(0,0,2×10,1×12)`; indexer top-k 512; KV source layers (2,8,12) |
 | MoE | 64 routed experts, top-8 + 1 shared, `moe_inter_dim` 640, `torch._grouped_mm` |
-| numerics | bf16, `torch.compile`, Liger mHC + RMSNorm, attention logit softcap 50, `attn_impl=fused`, `rope_impl=real` |
+| numerics | FP8, FlashAttention, Liger mHC + RMSNorm, attention logit softcap 50, `attn_impl=fused`, `rope_impl=real` |
 | vocabulary | 32,768 slots, `<eos>=1`, `[NUM]=32767`; not tracked, build with `python scripts/build_gate_tokenizer.py` |
 
 Config: `v41f/config.py`; the entry point and flag resolution are in `train.py`; facts in
 `facts/v41.json`.
 
-## The gate run
+## Historical gate run
 
 **v42_gate_1001r** — 30B tokens, 38,146 steps, seq 4096, **world 16** across two nodes
 (pod 192.168.29.37 ranks 0-7, h20b 192.168.29.36 ranks 8-15). Micro-batch 4 × accum 3 ×

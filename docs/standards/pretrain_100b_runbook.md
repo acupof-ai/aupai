@@ -2,97 +2,101 @@
 
 ## 结论
 
-Stage-3 使用中性运行名 `c100_seg1`。训练从 `ckpt_v42s2.pt` 的 step 54051 恢复。首个 10B token 评测门是 step 66767。
+当前活动运行为 `s3a_seg1`。训练已从 step55000 checkpoint 恢复，目标为 step66767。checkpoint 间隔为 4000 step，每个 checkpoint 自动执行 CPU 分层评测。
 
 ## 当前状态
 
-| 项目 | 已验证值 |
+| 项目 | 当前值 |
 | --- | --- |
-| 训练目标 | 累计 100B tokens |
-| 当前分段 | 从 step 54051 到 step 66767 |
-| 最近完成但未保存 | 旧 `s3a_seg1` 到 step 54160；权威恢复点仍为 step 54051 |
-| 模型参数 | 3,910.9M |
+| 更新时间 | 2026-10-12 12:55 CST |
+| 活动运行名 | `s3a_seg1` |
+| 当前 step | 55050 |
+| 停止 step | 66767 |
+| 剩余 step | 11717 |
+| 最新 checkpoint | `ckpt_s3a_seg1.pt.step55000` |
+| 下一个 checkpoint | step56000 |
+| checkpoint 间隔 | 4000 step，按绝对 step 对齐 |
+| 常规速度 | 10.39 s/step |
+| 预计到达停止点 | 2026-10-13 22:42 CST |
+| GPU | 8 卡，world=8，利用率 100% |
+| 每 step tokens | 786,432 |
 | Engram 层 | 1、5、9、13、17、21 |
-| GPU | 8 卡，world=8 |
-| 每步 tokens | 786,432 |
-| 精度与算子 | FP8、FlashAttention |
-| 首段数据 | 9 个许可 allowed 数据域 |
-| 数据供给 | 57.52B tokens |
-| 运行 claim | `c100_seg1` 占用 0–7 卡 |
-| 日志 | `/work/aupai/runs/c100_seg1.log` |
-| 退出码 | `/work/aupai/runs/c100_seg1.rc`；运行中不存在 |
+| 数据 mix | `data/mix_s3a.json` |
 
-## 权威文件
+## 本地与运行期映射
+
+| 用途 | 本地权威路径 | 运行期路径 |
+| --- | --- | --- |
+| 训练脚本 | `runs/c100_seg1.sh` | `runs/s3a_seg1.sh` |
+| claim 监督器 | `runs/launch_c100_claimed.py` | `runs/launch_s3a_claimed.py` |
+| 数据 mix | `data/mix_c100.json` | `data/mix_s3a.json` |
+| 工作目录 | `/Users/bytedance/code/aupai_stage3_main` | `/work/aupai` |
+
+本地脚本保留段启动配置。运行期脚本可指向最新 checkpoint。两者必须保留 Engram 参数。
+
+## 自动评测
+
+| 层级 | 检查内容 | 触发点 |
+| --- | --- | --- |
+| 配置检查 | checkpoint step、`arch=v42`、Engram 层列表 | 每个 checkpoint |
+| 权重检查 | 参数有限性、最大绝对值 | 每个 checkpoint |
+| 分层状态检查 | 24 个 layer、6 个 Engram 的 persistent state | 每个 checkpoint |
+| 分层激活检查 | 固定短文本前向，激活有限性、均值、最大值 | 每个 checkpoint |
+| 固定文本 NLL | 4 条 ASD-STE100 风格技术句 | 每个 checkpoint |
+| access-code canary | 固定多选记忆信号 | 每个 checkpoint |
+| HumanEval quick8 | 前 8 题 greedy pass@1 | 每个 checkpoint |
+
+关键文件：
 
 | 用途 | 路径 |
 | --- | --- |
-| 数据 mix | `data/mix_c100.json` |
-| 训练脚本 | `runs/c100_seg1.sh` |
-| claim 监督器 | `runs/launch_c100_claimed.py` |
-| 旧 SFT 隔离脚本 | `runs/isolate_obsolete_sft.py` |
-| 基础 checkpoint | `/work/aupai/ckpt_v42s2.pt` |
-| 运行日志 | `/work/aupai/runs/c100_seg1.log` |
-| 宿主清理审计 | `/work/aupai/runs/obsolete_recovery_cleanup_20261011.txt` |
+| CPU smoke | `scripts/cpu_ckpt_smoke.py` |
+| 分层评测 driver | `scripts/tiered_ckpt_eval.py` |
+| watcher 启动器 | `runs/start_tiered_ckpt_eval.sh` |
+| HumanEval 分片合并器 | `runs/merge_humaneval_shards.py` |
+| tiered ledger | `/work/aupai/runs/tiered_ckpt_eval_s3a_seg1.jsonl` |
 
-权威代码分支是 `stage3-100b`。权威工作区是 `/Users/bytedance/code/aupai_stage3_main`。
+## step55000 已验证结果
+
+| 评测 | 结果 |
+| --- | --- |
+| CPU smoke | 通过 |
+| finite parameter fraction | 1.0 |
+| 固定文本 mean NLL | 3.305436 |
+| access-code canary | 正确，margin 2.681441 |
+| HumanEval quick8 | 4/8 = 50.0%，空输出 0/8 |
+| HumanEval 全量 | 43/164 = 26.22%，空输出 0/164 |
+
+正式 gate 使用 156 题去污染口径。当前 43/164 为全量口径。汇报正式 gate 前，必须读取 `runs/contam_r3_he_union.json` 并重新过滤。
 
 ## 训练契约
 
-1. 保留 Engram。不得删除或关闭 Engram 层。
-2. 使用完整 100B 学习率计划。`max_steps` 固定为 127157。
-3. 每新增 10B tokens 停止一次。首个停止点是 step 66767。
-4. 每个停止点执行统一评测。评测完成前不得进入下一段。
+1. 必须保留 Engram 层 1、5、9、13、17、21。
+2. `max_steps` 固定为 127157。
+3. 到 step66767 必须停止。
+4. 停止后执行统一评测。评测完成前不得进入下一段。
 5. 连续两次无提升时暂停训练。能力明显退化时立即暂停。
-6. 只使用许可 allowed 的数据域。许可 unknown 数据保持隔离。
+6. 只使用许可 allowed 的数据域。
 7. 旧 SFT、tiny CSA2 和远端 CI 不阻塞主线。
 8. 不修改 MLX。
-9. 合成数据默认使用 ASD-STE100。
+9. 合成数据默认遵循 ASD-STE100。
 
-## 验收命令
+## 运维限制
 
-在 pod 中执行：
+- 对整个训练进程组发送 SIGTERM 未生成 interrupt checkpoint。该次运行从 step57730 回退到 step55000。
+- 后续停止操作必须先确认保存路径和保存逻辑。不得假设 SIGTERM 会生成 interrupt checkpoint。
+- compressor 的 non-persistent `score_state` 使用 `-inf` 哨兵。该值不是训练故障。
+- HyperConn 参数保持 fp32。不得将 CPU checkpoint 的全部浮点参数强制转为 bf16。
+
+## 巡检命令
 
 ```bash
 cd /work/aupai
 python3 scripts/card_claim.py status
-tail -120 runs/c100_seg1.log
+tail -n 80 runs/s3a_seg1.log
 nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader
-sha256sum runs/c100_seg1.sh data/mix_c100.json runs/launch_c100_claimed.py
+ls -l runs/s3a_seg1.rc 2>/dev/null || true
+tail -n 20 runs/tiered_ckpt_eval_s3a_seg1.jsonl
 ```
 
-运行健康时必须同时满足：
-
-- claim 名为 `c100_seg1`，卡范围是 0–7。
-- 父进程 `launch_c100_claimed.py` 和子进程 `run_ddp.sh` 均存活。
-- 日志 step 持续增加。
-- 8 卡持续有训练负载。
-- 日志无 NaN、OOM、NCCL 错误或未处理的 Traceback。
-- `runs/c100_seg1.rc` 不存在。
-
-## 旧恢复链处理
-
-旧 SFT 恢复链曾反复覆盖启动器并发送 SIGTERM。已移除以下宿主资产：
-
-- 4 个隐藏 wrapper。
-- 4 个 Python 守护进程。
-- 5 个每分钟 cron。最后一个是 `aupai-chain-watchdog`。
-- `stage_watchdog` 源目录。
-- `.system-state` 缓存。
-- pod 内 `runs/recovery_v42/main_ctrl` 控制器。
-- 两个兼容服务已停止。
-
-pod 内保留可逆副本。活动路径使用目录占位：
-
-- `runs/ladder/guard/d1e_chain.sh`
-- `sft_math.py`
-- `runs/recovery_v42/main_ctrl`
-
-恢复旧 SFT 前，必须先停止 100B 训练并释放 `c100_seg1` claim。随后解除目录 immutable 属性，并从 `.disabled-for-100b` 副本恢复文件。不得在 100B 训练运行期间恢复这些入口。
-
-## 下一步
-
-1. 持续监控 step、loss、吞吐、显存和异常。
-2. 在周期保存点确认 checkpoint 可恢复。
-3. 在 step 66767 停止训练。
-4. 执行统一评测。
-5. 根据评测结果决定下一段 10B tokens。
+健康条件：step 增加；claim 持有 0–7 卡；8 卡有负载；rc 不存在；日志无 NaN、OOM、NCCL 错误、未处理 Traceback；watcher 存活。
