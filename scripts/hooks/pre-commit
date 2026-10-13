@@ -2752,6 +2752,19 @@ def main():
         # by construction (whitespace+case normalisation, max-test-count survivor), so a
         # replay that kept everything would not pass. Pure strings, no pool needed. ~0.05s.
         "scripts/rl_pool_dedup_replay.py",
+        # Plateau-break tools (2026-10-13). Registered because each one's failure is silent:
+        # paired_compare reporting "no difference" on a broken pairing, decode_diag counting a
+        # passing task as a failure mode, the anneal writer drawing a different row count than
+        # build_mix will, the SFT builder admitting an answer that never ran, the RL gate
+        # accepting a pool that overlaps the eval set, the HumanEval+ rescorer scoring a task
+        # whose base tests already failed. Each selftest fixes its case on a fixture with a
+        # known answer. No torch, no pod, no sandbox. <0.1s each.
+        "eval/paired_compare.py",
+        "eval/decode_diag.py",
+        "eval/humaneval_plus_rescore.py",
+        "scripts/write_mix_plateau_anneal.py",
+        "scripts/build_plateau_code_sft.py",
+        "scripts/plateau_rl_gate.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
